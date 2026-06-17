@@ -162,17 +162,25 @@ describe("RosettaService", () => {
     const listed = svc.listClaudeAccounts().accounts;
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ email: "cl@x.com", enabled: true, planType: "max", hasToken: true });
-    // 缺省字段即默认入池,与 codex/antigravity 一致。
+    // Missing legacy field is still presented as true for old clients.
     expect(listed[0].poolEnabled).toBe(true);
 
     const id = listed[0].id;
     svc.toggleClaudeAccount({ accountId: id });
     expect(svc.listClaudeAccounts().accounts[0].enabled).toBe(false);
 
-    // 出池 → poolEnabled:false;再切回 → true。
-    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({ poolEnabled: false });
+    // poolEnabled is retained as legacy state only; it no longer gates runtime supply.
+    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({
+      poolEnabled: false,
+      legacy: true,
+      runtimeSupplyEffect: false,
+    });
     expect(svc.listClaudeAccounts().accounts[0].poolEnabled).toBe(false);
-    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({ poolEnabled: true });
+    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({
+      poolEnabled: true,
+      legacy: true,
+      runtimeSupplyEffect: false,
+    });
     expect(svc.listClaudeAccounts().accounts[0].poolEnabled).toBe(true);
 
     svc.deleteClaudeAccount({ accountId: id });
@@ -1442,10 +1450,9 @@ describe("RosettaService", () => {
       expect(key.bindings).toEqual({ codex: freshId });
     });
 
-    it("auto-binds to an out-of-pool account (出池 only gates pool-card 租号, not binding)", () => {
+    it("auto-binds to an account with legacy poolEnabled=false", () => {
       const svc = new RosettaService({ dataDir: tempDir });
-      // 出池号(poolEnabled:false)本就是留给绑定卡专用的;绑定卡运行时无视 poolEnabled,
-      // 所以建卡的自动分配也必须能绑到它,否则会误报「可用账号不足」。
+      // poolEnabled is legacy state only, so it must not block account assignment.
       writeJson(path.join(tempDir, "codex-accounts.json"), {
         accounts: [
           { id: 9, email: "out@x.com", refreshToken: "rt", enabled: true, poolEnabled: false, planType: "plus" },

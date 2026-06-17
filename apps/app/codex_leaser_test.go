@@ -74,3 +74,49 @@ func TestCodexLeaseTokenParsesEgressInfo(t *testing.T) {
 		t.Fatalf("codex lease must be optional (EgressRequired=false)")
 	}
 }
+
+func TestCodexLeaseSyncsAccessKeyStatusToMainLeaser(t *testing.T) {
+	prev := globalLeaser
+	globalLeaser = &Leaser{}
+	t.Cleanup(func() { globalLeaser = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":          true,
+			"accessToken": "codex-leased",
+			"accountId":   11,
+			"leaseId":     "lease-codex",
+			"accessKeyStatus": map[string]interface{}{
+				"quotaMode":     "static",
+				"products":      []interface{}{"codex"},
+				"shareSeats":    2,
+				"shareCapacity": 8,
+				"buckets": []interface{}{
+					map[string]interface{}{"bucket": "codex-gpt", "used": 5, "limit": 20},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	withCodexAPIBase(t, srv.URL)
+
+	l := &CodexLeaser{}
+	if _, err := l.LeaseToken("card-1", "dev", true, map[string]interface{}{"modelKey": "gpt-5-codex"}, ""); err != nil {
+		t.Fatalf("LeaseToken: %v", err)
+	}
+
+	status := GetLeaser().GetStatus()
+	aks, ok := status["accessKeyStatus"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("main leaser accessKeyStatus not synced: %#v", status["accessKeyStatus"])
+	}
+	if aks["quotaMode"] != "static" {
+		t.Fatalf("quotaMode = %v, want static", aks["quotaMode"])
+	}
+	if got := aks["products"].([]interface{})[0]; got != "codex" {
+		t.Fatalf("products[0] = %v, want codex", got)
+	}
+	if got := aks["shareSeats"]; got != float64(2) {
+		t.Fatalf("shareSeats = %v, want 2", got)
+	}
+}

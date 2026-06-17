@@ -14,6 +14,8 @@ import {
   isSubscriptionActive,
   pickRepresentativeSubscription,
   productEntitlementBadge,
+  quotaMeterPercent,
+  quotaMeterValueLabel,
   subscriptionPlanLabel,
 } from "@/lib/account/subscription-status";
 
@@ -93,7 +95,7 @@ describe("deriveMembershipStatus", () => {
 describe("subscriptionPlanLabel", () => {
   // The overview endpoint sends planName=null for every sub, so the discriminator
   // for "迁移卡密订阅" must be the explicit migratedFromCard flag — NOT planName==null.
-  type SubLike = { planName: string | null; migratedFromCard: boolean; products: string[] };
+  type SubLike = { planName: string | null; migratedFromCard: boolean; products: string[]; seatsLabel?: string };
   const label = (over: Partial<SubLike>): string =>
     subscriptionPlanLabel({ planName: null, migratedFromCard: false, products: [], ...over });
 
@@ -117,8 +119,26 @@ describe("subscriptionPlanLabel", () => {
     expect(label({ products: ["codex", "claude"] })).toBe("codex+claude");
   });
 
+  it("appends the backend seats label for a unified bind subscription", () => {
+    expect(label({ products: ["codex", "claude"], seatsLabel: "2/8 席" })).toBe("codex+claude · 2/8 席");
+  });
+
   it("falls back to a generic name for a nameless, non-migrated, product-less sub", () => {
     expect(label({})).toBe("会员订阅");
+  });
+});
+
+describe("quota meter display", () => {
+  it("uses remaining percent for the quota bar", () => {
+    expect(quotaMeterPercent({ bucket: "anthropic-claude", used: 4_000_000, limit: 20_000_000 })).toBe(80);
+  });
+
+  it("exposes a percent label, not raw token counts", () => {
+    const label = quotaMeterValueLabel({ bucket: "anthropic-claude", used: 4_000_000, limit: 20_000_000 });
+
+    expect(label).toBe("80%");
+    expect(label).not.toContain("4000000");
+    expect(label).not.toContain("20,000,000");
   });
 });
 

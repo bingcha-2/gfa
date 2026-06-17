@@ -219,3 +219,49 @@ func TestClaudeLeaseTokenParsesEgressInfo(t *testing.T) {
 		t.Fatalf("anthropic lease must carry EgressRequired=true (fail-closed)")
 	}
 }
+
+func TestClaudeLeaseSyncsAccessKeyStatusToMainLeaser(t *testing.T) {
+	prev := globalLeaser
+	globalLeaser = &Leaser{}
+	t.Cleanup(func() { globalLeaser = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":          true,
+			"accessToken": "sk-ant-leased",
+			"accountId":   13,
+			"leaseId":     "lease-claude",
+			"accessKeyStatus": map[string]interface{}{
+				"quotaMode":     "static",
+				"products":      []interface{}{"anthropic"},
+				"shareSeats":    2,
+				"shareCapacity": 8,
+				"buckets": []interface{}{
+					map[string]interface{}{"bucket": "anthropic-claude", "used": 5, "limit": 20},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	withClaudeAPIBase(t, srv.URL)
+
+	l := &ClaudeLeaser{}
+	if _, err := l.LeaseToken("card-1", "dev", true, map[string]interface{}{"modelKey": "claude-opus-4-20250514"}, ""); err != nil {
+		t.Fatalf("LeaseToken: %v", err)
+	}
+
+	status := GetLeaser().GetStatus()
+	aks, ok := status["accessKeyStatus"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("main leaser accessKeyStatus not synced: %#v", status["accessKeyStatus"])
+	}
+	if aks["quotaMode"] != "static" {
+		t.Fatalf("quotaMode = %v, want static", aks["quotaMode"])
+	}
+	if got := aks["products"].([]interface{})[0]; got != "anthropic" {
+		t.Fatalf("products[0] = %v, want anthropic", got)
+	}
+	if got := aks["shareSeats"]; got != float64(2) {
+		t.Fatalf("shareSeats = %v, want 2", got)
+	}
+}

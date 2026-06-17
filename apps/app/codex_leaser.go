@@ -25,17 +25,17 @@ type CodexTokenLease struct {
 }
 
 type codexLeaseTokenResp struct {
-	Success     *bool           `json:"success"`
-	Ok          *bool           `json:"ok"`
-	Code        string          `json:"code"`
-	Message     string          `json:"message"`
-	Error       string          `json:"error"`
-	AccessToken string          `json:"accessToken"`
-	AccountId   json.RawMessage `json:"accountId"`
-	LeaseId     string          `json:"leaseId"`
-	EmailHint   string          `json:"emailHint"`
-	PlanType    string          `json:"planType"`
-	ExpiresAt   string          `json:"expiresAt"`
+	Success      *bool           `json:"success"`
+	Ok           *bool           `json:"ok"`
+	Code         string          `json:"code"`
+	Message      string          `json:"message"`
+	Error        string          `json:"error"`
+	AccessToken  string          `json:"accessToken"`
+	AccountId    json.RawMessage `json:"accountId"`
+	LeaseId      string          `json:"leaseId"`
+	EmailHint    string          `json:"emailHint"`
+	PlanType     string          `json:"planType"`
+	ExpiresAt    string          `json:"expiresAt"`
 	BoundAccount *struct {
 		Id       int     `json:"id"`
 		Fraction float64 `json:"fraction"`
@@ -181,8 +181,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		}
 		recordBoundFractionForModel("codex", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
-	recordAccountBuckets(body)
-	recordFairShareQuota(body)
+	syncQuotaStateFromBody(GetLeaser(), body)
 	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
 	l.applyCodexWindows(leaseResp.CodexWindows)
 	l.mu.Lock()

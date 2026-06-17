@@ -65,9 +65,9 @@ type ClaudeLeaser struct {
 	lastError string
 
 	mu             sync.Mutex
-	lastQuota      *ClaudeQuotaWindow       // 持久副本(供前端显示 claude 血条)
-	lastLease      *ClaudeTokenLease        // 最近一次成功租到的号(供前端"绑定账号信息"显示)
-	pendingReports []pendingReport          // 失败上报队列(防丢用量)
+	lastQuota      *ClaudeQuotaWindow // 持久副本(供前端显示 claude 血条)
+	lastLease      *ClaudeTokenLease  // 最近一次成功租到的号(供前端"绑定账号信息"显示)
+	pendingReports []pendingReport    // 失败上报队列(防丢用量)
 
 	// nowFn 可注入时钟(测试用);为 nil 时回落到 time.Now。
 	nowFn func() time.Time
@@ -198,9 +198,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		}
 		recordBoundFractionForModel("anthropic", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
-	recordAccountBuckets(body)
-	// 多卡拼车:服务端按份额下发 fairShareQuota，覆盖账号级 bucket，让每张卡看到自己份额的血条。
-	recordFairShareQuota(body)
+	syncQuotaStateFromBody(GetLeaser(), body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)
 	l.mu.Lock()
 	l.lastLease = lease

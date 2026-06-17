@@ -878,7 +878,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let exhausted = 0;
     for (const account of this.readAccounts()) {
       const a = account as any;
-      if (a.enabled === false || a.poolEnabled === false) continue;
+      if (a.enabled === false) continue;
       if (!this.provider.isAccountEligible(account)) continue;
       if (!(account.refreshToken || a.accessToken)) continue;
       const state = this.accountRuntime.get(account.id);
@@ -1512,7 +1512,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     payload: any,
     modelKey?: string,
     boundAccountId = 0,
-    options: { includePoolDisabled?: boolean } = {},
   ) {
     const excluded = new Set(
       (Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [])
@@ -1523,10 +1522,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.modelGates.cleanupExpiredGates(now);
     return this.readAccounts().filter((account) =>
       (boundAccountId ? account.id === boundAccountId : true) &&
-      // 出池号(poolEnabled===false)只服务"绑定它的卡":绑定卡(boundAccountId>0)钉号
-      // 不受限;池子卡(boundAccountId===0)的动态池则跳过出池号。与 UI「已出池(仅绑定卡
-      // 可用)」一致。建卡自动分配另有 isAccountBindable 把关,这里补的是运行时这一层。
-      (boundAccountId || options.includePoolDisabled ? true : (account as any).poolEnabled !== false) &&
       (account as any).enabled !== false &&
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&
@@ -1556,7 +1551,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     leaseIndex: ActiveLeaseIndex,
     clientId: string,
   ): TAccount[] {
-    const candidates = this.availableAccounts(payload, modelKey, 0, { includePoolDisabled: true });
+    const candidates = this.availableAccounts(payload, modelKey, 0);
     if (!candidates.length) return [];
 
     const displayAccount = displayBoundAccountId > 0

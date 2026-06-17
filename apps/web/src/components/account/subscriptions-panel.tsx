@@ -8,10 +8,10 @@ import { AccountStatusBadge } from "./account-status-badge";
 import { getPortalOverview, setSubscriptionPriority } from "@/lib/account/user-api";
 import {
   isSubscriptionActive,
+  quotaMeterPercent,
   subscriptionPlanLabel,
 } from "@/lib/account/subscription-status";
 import type { OverviewSubscription } from "@/lib/account/user-types";
-import { formatTokens } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useDict } from "@/lib/i18n/client";
 
@@ -31,12 +31,15 @@ function productKey(p: string): "codex" | "claude" | "antigravity" | undefined {
 
 /** Remaining-fuel level for the 液位 meter — high remaining reads healthy. */
 function remainMeter(sub: OverviewSubscription): { pct: number | null; level: MeterLevel } {
-  const bucket = sub.quota?.buckets?.[0];
-  if (!bucket || bucket.limit <= 0) return { pct: null, level: "ok" };
-  const pct = Math.max(
-    0,
-    Math.min(100, Math.round(((bucket.limit - bucket.used) / bucket.limit) * 100))
-  );
+  const percents = [
+    ...(sub.quota?.buckets ?? []),
+    ...(sub.quota?.weeklyBuckets ?? []),
+  ].flatMap((bucket) => {
+    const pct = quotaMeterPercent(bucket);
+    return pct == null ? [] : [pct];
+  });
+  if (percents.length === 0) return { pct: null, level: "ok" };
+  const pct = Math.min(...percents);
   if (pct < 15) return { pct, level: "critical" };
   if (pct < 40) return { pct, level: "warn" };
   return { pct, level: "ok" };
@@ -176,10 +179,6 @@ export function SubscriptionsPanel() {
                 </div>
 
                 <div className="account-relay-extra">
-                  <span>
-                    {t.windowUsedLabel}{" "}
-                    <b>{sub.quota ? formatTokens(sub.quota.recentWindowTokens) : "—"}</b>
-                  </span>
                   <span>
                     {t.expiresLabel}{" "}
                     <b>

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyColumnsToConfig, planColumnsToInitialConfig, rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
+import {
+  legacyColumnsToConfig,
+  legacySeatFromBucketLimits,
+  planColumnsToInitialConfig,
+  rowToConfig,
+  subscriptionToLimitRecord,
+} from "./subscription-config";
 import { occupiedSharesByAccount } from "./seat";
 
 describe("planColumnsToInitialConfig — 下单时按 plan 意图建初始 config(座位未分配前定 line)", () => {
@@ -63,6 +69,14 @@ describe("planColumnsToInitialConfig — 下单时按 plan 意图建初始 confi
 });
 
 describe("legacyColumnsToConfig — 老订阅列收敛成 config", () => {
+  it("legacySeatFromBucketLimits maps old fixed caps to display seats", () => {
+    expect(legacySeatFromBucketLimits({ "anthropic-claude": 8_000_000 })).toBe(1);
+    expect(legacySeatFromBucketLimits({ "anthropic-claude": 16_000_000 })).toBe(2);
+    expect(legacySeatFromBucketLimits({ "anthropic-claude": 32_000_000 })).toBe(4);
+    expect(legacySeatFromBucketLimits({ "anthropic-claude": 33_000_000 })).toBe(8);
+    expect(legacySeatFromBucketLimits({ "anthropic-claude": 1 })).toBe(1);
+  });
+
   it("号池(bindings 空)→ line=pool,含用量上限,不含 levels/bindings", () => {
     const config = legacyColumnsToConfig({
       productEntitlements: '["anthropic"]',

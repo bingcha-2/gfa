@@ -12,6 +12,17 @@ export interface LegacyColumns {
   windowMs: number;
 }
 
+export function legacySeatFromBucketLimits(bucketLimits: Record<string, unknown> | null | undefined): number {
+  const values = Object.values(bucketLimits || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 1);
+  const max = values.length ? Math.max(...values) : 0;
+  if (max <= 8_000_000) return 1;
+  if (max <= 16_000_000) return 2;
+  if (max <= 32_000_000) return 4;
+  return 8;
+}
+
 export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknown> {
   const products = parseArray(sub.productEntitlements);
   const bindings = parseObject(sub.bindings);
@@ -131,6 +142,7 @@ export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, 
       weight: config.weight ?? config.shareSeats ?? 1,
       bucketLimits: config.bucketLimits || {},
       weeklyBucketLimits: config.weeklyBucketLimits || {},
+      ...(config.weeklyTokenLimit == null ? {} : { weeklyTokenLimit: config.weeklyTokenLimit }),
       requiresBinding: true,
     };
   }

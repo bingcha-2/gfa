@@ -1,12 +1,33 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
+import { rowToConfig } from "../../subscription/subscription-config";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
 
+type PortalQuotaBucket = {
+  bucket: string;
+  used?: number;
+  limit: number;
+  resetMs?: number;
+};
+
+type PortalQuota = {
+  quotaMode: "static" | "dynamic" | "unlimited";
+  buckets: PortalQuotaBucket[];
+  weeklyBuckets: PortalQuotaBucket[];
+  recentWindowTokens: number;
+  tokenWindowResetMs: number | null;
+  weeklyTokenLimit: number | null;
+  weeklyWindowResetMs: number | null;
+  weeklyWindowTokens: number;
+  totalTokensUsed: number;
+};
+
 /** Fallback quota for a subscription whose shadow record doesn't exist in the store. */
-const UNLIMITED_QUOTA = {
-  quotaMode: "unlimited" as const,
+const UNLIMITED_QUOTA: PortalQuota = {
+  quotaMode: "unlimited",
   buckets: [],
+  weeklyBuckets: [],
   recentWindowTokens: 0,
   tokenWindowResetMs: null as number | null,
   weeklyTokenLimit: null as number | null,
@@ -66,29 +87,88 @@ function officialCostFor(
   );
 }
 
-function mapQuota(status: any): typeof UNLIMITED_QUOTA {
-  if (!status) return UNLIMITED_QUOTA;
+function numericRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [bucket, raw] of Object.entries(value as Record<string, unknown>)) {
+    const limit = Number(raw);
+    if (Number.isFinite(limit) && limit > 0) out[bucket] = limit;
+  }
+  return out;
+}
+
+function mergeBucketLimits(
+  configuredLimits: Record<string, number>,
+  statusBuckets: unknown,
+): PortalQuotaBucket[] {
+  const byBucket = new Map<string, any>();
+  if (Array.isArray(statusBuckets)) {
+    for (const b of statusBuckets) {
+      if (b && typeof b === "object" && typeof (b as any).bucket === "string") {
+        byBucket.set((b as any).bucket, b);
+      }
+    }
+  }
+
+  const names = new Set([...Object.keys(configuredLimits), ...byBucket.keys()]);
+  return [...names].sort().flatMap((bucket) => {
+    const statusBucket = byBucket.get(bucket);
+    const configuredLimit = configuredLimits[bucket];
+    const statusLimit = Number(statusBucket?.limit);
+    const limit =
+      Number.isFinite(configuredLimit) && configuredLimit > 0
+        ? configuredLimit
+        : Number.isFinite(statusLimit) && statusLimit > 0
+          ? statusLimit
+          : null;
+    if (limit == null) return [];
+
+    const merged: PortalQuotaBucket = { bucket, limit };
+    const used = Number(statusBucket?.used);
+    if (Number.isFinite(used)) merged.used = used;
+    const resetMs = Number(statusBucket?.resetMs);
+    if (Number.isFinite(resetMs) && resetMs > 0) merged.resetMs = resetMs;
+    return [merged];
+  });
+}
+
+function mapQuota(
+  status: any,
+  configuredBucketLimits: Record<string, number> = {},
+  configuredWeeklyBucketLimits: Record<string, number> = {},
+): PortalQuota {
+  const tokenWindowResetMs = status?.tokenWindowResetMs != null ? Number(status.tokenWindowResetMs) : null;
+  const weeklyWindowResetMs = status?.weeklyWindowResetMs != null && Number(status.weeklyWindowResetMs) > 0
+    ? Number(status.weeklyWindowResetMs)
+    : null;
+  const buckets = mergeBucketLimits(configuredBucketLimits, status?.buckets);
+  const weeklyBuckets = mergeBucketLimits(configuredWeeklyBucketLimits, status?.weeklyBuckets);
 
   // Sum weekly bucket used values to get current weekly window consumption.
   // publicStatus exposes weeklyBuckets:[{bucket,used,limit}] when weeklyTokenLimit>0.
-  const weeklyBuckets: Array<{ bucket: string; used: number; limit: number }> =
-    Array.isArray(status.weeklyBuckets) ? status.weeklyBuckets : [];
   const weeklyWindowTokens = weeklyBuckets.reduce((sum, b) => sum + (Number(b.used) || 0), 0);
+  const configuredWeeklyLimit = weeklyBuckets.reduce((sum, b) => sum + (Number(b.limit) || 0), 0);
 
   return {
-    quotaMode: status.quotaMode ?? "unlimited",
-    buckets: Array.isArray(status.buckets) ? status.buckets : [],
-    recentWindowTokens: Number(status.recentWindowTokens ?? 0),
-    tokenWindowResetMs: status.tokenWindowResetMs != null ? Number(status.tokenWindowResetMs) : null,
-    weeklyTokenLimit: status.weeklyTokenLimit != null && Number(status.weeklyTokenLimit) > 0
+    quotaMode: status?.quotaMode ?? (buckets.length > 0 || weeklyBuckets.length > 0 ? "static" : "unlimited"),
+    buckets,
+    weeklyBuckets,
+    recentWindowTokens: Number(status?.recentWindowTokens ?? 0),
+    tokenWindowResetMs,
+    weeklyTokenLimit: status?.weeklyTokenLimit != null && Number(status.weeklyTokenLimit) > 0
       ? Number(status.weeklyTokenLimit)
+      : configuredWeeklyLimit > 0
+        ? configuredWeeklyLimit
       : null,
-    weeklyWindowResetMs: status.weeklyWindowResetMs != null && Number(status.weeklyWindowResetMs) > 0
-      ? Number(status.weeklyWindowResetMs)
-      : null,
+    weeklyWindowResetMs,
     weeklyWindowTokens,
-    totalTokensUsed: Number(status.totalTokensUsed ?? 0),
+    totalTokensUsed: Number(status?.totalTokensUsed ?? 0),
   };
+}
+
+function positiveNumber(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 @Injectable()
@@ -129,15 +209,28 @@ export class PortalService {
 
     // Build subscription views with quota
     const subscriptions = rawSubs.map((sub) => {
+      const config = rowToConfig(sub as any);
       const record = this.store.findById(sub.id);
       const status = record ? this.store.publicStatus(record) : null;
-      const quota = mapQuota(status);
+      const shareCapacity = positiveNumber(config.shareCapacity, 8);
+      const shareSeats = positiveNumber(
+        config.shareSeats ?? config.weight ?? sub.weight,
+        1,
+      );
+      const quota = mapQuota(
+        status,
+        numericRecord(config.bucketLimits),
+        numericRecord(config.weeklyBucketLimits),
+      );
 
       let productEntitlements: string[] = [];
       try {
         productEntitlements = JSON.parse(sub.productEntitlements) as string[];
       } catch {
         productEntitlements = [];
+      }
+      if (productEntitlements.length === 0 && Array.isArray(config.products)) {
+        productEntitlements = config.products.map(String);
       }
 
       return {
@@ -151,6 +244,9 @@ export class PortalService {
         weight: sub.weight,
         priority: sub.priority,
         migratedFromCard: sub.migratedFromKey != null,
+        shareSeats,
+        shareCapacity,
+        seatsLabel: `${shareSeats}/${shareCapacity} 席`,
         quota,
       };
     });

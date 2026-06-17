@@ -58,7 +58,11 @@ import { RemoteCodexService } from "../../remote-codex/service/remote-codex.serv
 import { RemoteAnthropicService } from "../../remote-anthropic/service/remote-anthropic.service";
 import { keyExpiresAt } from "../../token-server/token-billing";
 import { newBackingKeyValue } from "../../subscription/subscription.service";
-import { rowToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
+import {
+  legacySeatFromBucketLimits,
+  rowToConfig,
+  subscriptionToLimitRecord,
+} from "../../subscription/subscription-config";
 
 const ALL_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -152,6 +156,7 @@ export class CardMigrationService {
     const weight = Math.max(1, Math.floor(Number(record.weight) || 1));
     const weeklyTokenLimit = Number(record.weeklyTokenLimit || 0) || null;
     const windowMs = Number(record.windowMs || 0) > 0 ? Number(record.windowMs) : undefined;
+    const migratedConfig = migratedCardConfig(record, products, deviceLimit, weight, weeklyTokenLimit, windowMs);
 
     const migratedAtIso = new Date().toISOString();
     const migrationFields = {
@@ -177,6 +182,7 @@ export class CardMigrationService {
             productEntitlements: JSON.stringify(products),
             bucketLimits: record!.bucketLimits ? JSON.stringify(record!.bucketLimits) : null,
             bindings: record!.bindings ? JSON.stringify(record!.bindings) : null,
+            config: JSON.stringify(migratedConfig),
             weight,
             deviceLimit,
             weeklyTokenLimit,
@@ -270,6 +276,14 @@ export class CardMigrationService {
           productEntitlements: JSON.stringify(deriveProducts(record, this.accessKeyStore)),
           bucketLimits: record.bucketLimits ? JSON.stringify(record.bucketLimits) : null,
           bindings: record.bindings ? JSON.stringify(record.bindings) : null,
+          config: JSON.stringify(migratedCardConfig(
+            record,
+            deriveProducts(record, this.accessKeyStore),
+            migratedCardDeviceLimit(),
+            Math.max(1, Math.floor(Number(record.weight) || 1)),
+            Number(record.weeklyTokenLimit || 0) || null,
+            Number(record.windowMs || 0) > 0 ? Number(record.windowMs) : undefined,
+          )),
           weight: Math.max(1, Math.floor(Number(record.weight) || 1)),
           deviceLimit: migratedCardDeviceLimit(),
           weeklyTokenLimit: Number(record.weeklyTokenLimit || 0) || null,
@@ -336,6 +350,66 @@ function summarize(sub: Subscription) {
     deviceLimit: sub.deviceLimit,
     planName: null as null,
   };
+}
+
+function migratedCardConfig(
+  record: AccessKeyRecord,
+  products: string[],
+  deviceLimit: number,
+  weight: number,
+  weeklyTokenLimit: number | null,
+  windowMs?: number,
+): Record<string, unknown> {
+  const bucketLimits = objectCopy(record.bucketLimits);
+  const displayBindings = displayBindingsForMigratedCard(record);
+  const shareSeats = legacySeatFromBucketLimits(bucketLimits);
+  const common = {
+    products,
+    bucketLimits,
+    ...(weeklyTokenLimit ? { weeklyTokenLimit } : {}),
+    deviceLimit,
+    ...(windowMs ? { windowMs } : {}),
+    shareSeats,
+    shareCapacity: 8,
+    legacyDisplay: true,
+  };
+
+  if (Object.keys(displayBindings).length > 0) {
+    return {
+      line: "bind",
+      ...common,
+      levels: objectCopy((record as any).levels),
+      bindings: displayBindings,
+      displayBindings,
+      assignmentPolicy: "preferred-dynamic",
+      weight,
+    };
+  }
+
+  return {
+    line: "pool",
+    ...common,
+    weight,
+  };
+}
+
+function displayBindingsForMigratedCard(record: AccessKeyRecord): Record<string, number> {
+  const out: Record<string, number> = {};
+  const bindings = record.bindings && typeof record.bindings === "object" ? record.bindings : {};
+  for (const [product, accountId] of Object.entries(bindings)) {
+    const id = Number(accountId);
+    if (Number.isFinite(id) && id > 0) out[product] = id;
+  }
+  const legacyId = Number(record.boundAccountId || 0);
+  const provider = String(record.provider || "");
+  if (legacyId > 0 && provider && !(provider in out)) out[provider] = legacyId;
+  return out;
+}
+
+function objectCopy(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, any>) }
+    : {};
 }
 
 /**
