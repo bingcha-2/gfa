@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ArrowDownUpIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { formatTokens } from "@/lib/format";
+import { isOversold } from "@/lib/console/pool-occupancy";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -275,16 +276,22 @@ const PAGE_SIZE = 20;
 
 export function BoundCardAccordion({ accounts, shareCapacity = 8 }: { accounts: Account[]; shareCapacity?: number }) {
   const [warnOnly, setWarnOnly] = useState(false);
+  const [oversoldOnly, setOversoldOnly] = useState(false);
   const [page, setPage] = useState(1);
   // "useful"(默认):可用号优先 + 最近使用在前(把能用、活跃的号顶上来)。
   // "triage":老口径,告警/份额最紧优先(排障时找最危险的号)。
   const [sortMode, setSortMode] = useState<"useful" | "triage">("useful");
+  const oversoldCount = useMemo(
+    () => accounts.filter((a) => isOversold(a.boundCards.reduce((s, c) => s + c.weight, 0), shareCapacity)).length,
+    [accounts, shareCapacity],
+  );
   const shown = useMemo(() => {
     const filtered = accounts.filter(
-      (a) =>
-        !warnOnly ||
-        (a.quotaStatus || "ok") !== "ok" || // 需验证/冷却/异常的号也算告警
-        a.boundCards.some((c) => { const f = minFraction(c.fairShare); return f !== null && f < 0.2; }),
+      (a) => {
+        if (warnOnly && (a.quotaStatus || "ok") === "ok" && !a.boundCards.some((c) => { const f = minFraction(c.fairShare); return f !== null && f < 0.2; })) return false;
+        if (oversoldOnly && !isOversold(a.boundCards.reduce((s, c) => s + c.weight, 0), shareCapacity)) return false;
+        return true;
+      },
     );
     if (sortMode === "triage") {
       // 告警优先:非正常状态在前,再按份额最紧。
@@ -303,7 +310,7 @@ export function BoundCardAccordion({ accounts, shareCapacity = 8 }: { accounts: 
       if (px !== py) return py - px;
       return lastActivityAt(y) - lastActivityAt(x);
     });
-  }, [accounts, warnOnly, sortMode]);
+  }, [accounts, warnOnly, oversoldOnly, sortMode, shareCapacity]);
 
   const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   // Clamp when the filtered set shrinks (e.g. toggling 只看告警 or data refresh).
@@ -327,6 +334,10 @@ export function BoundCardAccordion({ accounts, shareCapacity = 8 }: { accounts: 
           </Button>
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             只看告警账号 <Switch checked={warnOnly} onCheckedChange={(v) => { setWarnOnly(v); setPage(1); }} />
+          </label>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input type="checkbox" checked={oversoldOnly} onChange={(e) => { setOversoldOnly(e.target.checked); setPage(1); }} />
+            只看超卖{oversoldCount > 0 ? `(${oversoldCount})` : ""}
           </label>
         </div>
       </CardHeader>
