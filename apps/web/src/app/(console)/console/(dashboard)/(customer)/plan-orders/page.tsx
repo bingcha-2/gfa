@@ -7,6 +7,7 @@ import type { ConsolePlanOrderList, ConsolePlanOrder } from "@/lib/console/types
 import {
   fmtYuan, fmtDateTime, ORDER_STATUS_LABEL, PAY_CHANNEL_LABEL,
 } from "@/lib/console/format";
+import { orderAction } from "@/lib/console/order-action";
 
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
@@ -26,7 +27,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { RefreshCw, Search, Undo2 } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
@@ -109,16 +110,6 @@ export default function PlanOrdersPage() {
     }
   }
 
-  async function refund(o: ConsolePlanOrder) {
-    try {
-      await apiRequest(`plan-orders/${o.id}/refund`, { method: "POST" });
-      toast.success(`订单 ${o.outTradeNo} 已退款`);
-      await load();
-    } catch (err) {
-      toast.error(getErrorMessage(err));
-    }
-  }
-
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -166,6 +157,7 @@ export default function PlanOrdersPage() {
                   <TableHead className="text-right">金额</TableHead>
                   <TableHead>渠道</TableHead>
                   <TableHead>状态</TableHead>
+                  <TableHead>已激活订阅</TableHead>
                   <TableHead>支付时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -179,6 +171,11 @@ export default function PlanOrdersPage() {
                     <TableCell className="text-right">{fmtYuan(o.amountCents)}</TableCell>
                     <TableCell>{PAY_CHANNEL_LABEL[o.payChannel] ?? o.payChannel}</TableCell>
                     <TableCell>{orderStatusBadge(o.status)}</TableCell>
+                    <TableCell>
+                      {o.subscriptionId
+                        ? <a className="text-blue-600 hover:underline" href={`/console/subscriptions?sub=${o.subscriptionId}`}>查看 ↗</a>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{fmtDateTime(o.paidAt)}</TableCell>
                     <TableCell className="text-right flex items-center justify-end gap-1">
                       {(o.status === "PENDING" || o.status === "EXPIRED") && (
@@ -186,25 +183,42 @@ export default function PlanOrdersPage() {
                           <RefreshCw className="h-3.5 w-3.5 mr-1" />查询支付
                         </Button>
                       )}
-                      {o.status === "PAID" && (
-                        <AlertDialog>
-                          <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>
-                            <Undo2 className="h-3.5 w-3.5 mr-1" />退款
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>退款？</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                确认对订单 {o.outTradeNo}（{fmtYuan(o.amountCents)}）退款？仅未使用的订单可退款。系统会自动通过支付网关原路退款给客户，成功后取消对应订阅并通知客户；网关退款失败则订单状态不变。
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>取消</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => void refund(o)}>确认退款</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      )}
+                      {(() => {
+                        const act = orderAction({ payChannel: o.payChannel, status: o.status });
+                        if (act.kind === "none") return null;
+                        const onConfirm = async () => {
+                          try {
+                            if (act.kind === "revoke" && o.subscriptionId) {
+                              await apiRequest(`subscriptions/${o.subscriptionId}/revoke`, { method: "POST" });
+                            } else {
+                              await apiRequest(`plan-orders/${o.id}/refund`, { method: "POST" });
+                            }
+                            toast.success(`已${act.label}`);
+                            await load();
+                          } catch (err) { toast.error(getErrorMessage(err)); }
+                        };
+                        return (
+                          <AlertDialog>
+                            <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>
+                              {act.label}
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>{act.label}？</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  {act.kind === "revoke"
+                                    ? `订单 ${o.outTradeNo} 为管理员发放(¥0),将撤销授权并取消对应订阅、释放席位,不涉及退款。`
+                                    : `确认对订单 ${o.outTradeNo}(${fmtYuan(o.amountCents)})退款？仅未使用的订单可退,原路退回并取消订阅。`}
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>取消</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => void onConfirm()}>确认{act.label}</AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}

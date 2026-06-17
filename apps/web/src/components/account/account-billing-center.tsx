@@ -418,7 +418,7 @@ export function AccountBillingCenter({
                     )}
                   </div>
                 )}
-                {order.status === "PAID" && onRefundOrder && (
+                {order.status === "PAID" && order.payChannel !== "GRANT" && order.amountCents > 0 && onRefundOrder && (
                   <div className="account-order-row__actions">
                     <RefundOrderButton
                       outTradeNo={order.outTradeNo}

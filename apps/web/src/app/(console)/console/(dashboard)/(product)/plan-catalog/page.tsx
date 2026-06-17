@@ -48,7 +48,7 @@ import { usePlanCatalog } from "./use-plan-catalog";
 import { useAccountLevels } from "./use-account-levels";
 import { DEFAULT_CONFIG } from "./catalog-defaults";
 import { ProductsSection } from "./products-section";
-import { PricingSection } from "./pricing-section";
+import { PricingSection, type PricingLine } from "./pricing-section";
 import { UsageSection } from "./usage-section";
 import { PricePreview } from "./price-preview";
 import { NumberInput } from "./form-bits";
@@ -66,6 +66,8 @@ export default function PlanCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
+  // 「定价」当前选中的线。绑定线不读用量档 → 选中时把用量档卡片置灰。
+  const [pricingLine, setPricingLine] = useState<PricingLine>("pool");
 
   // 后端加载完成后,用发布版(或占位)初始化表单一次。
   useEffect(() => {
@@ -268,16 +270,28 @@ export default function PlanCatalogPage() {
                 onBindChange={(bindNext) =>
                   patchForm({ pricing: { ...form.pricing, bind: bindNext } })
                 }
+                line={pricingLine}
+                onLineChange={setPricingLine}
                 disabled={busy}
               />
             </CardContent>
           </Card>
 
-          <Card>
+          {/* 用量档只对号池线生效;选中绑定线时置灰禁用,避免误以为绑定线也读它。 */}
+          <Card
+            aria-disabled={pricingLine === "bind"}
+            className={
+              pricingLine === "bind"
+                ? "pointer-events-none opacity-50 transition-opacity"
+                : "transition-opacity"
+            }
+          >
             <CardHeader>
               <CardTitle>用量档(号池线)</CardTitle>
               <CardDescription>
-                每档逐模型 token 上限 + 周限额。桶随启用产品自动列出。
+                {pricingLine === "bind"
+                  ? "仅号池线生效。绑定线按等级矩阵计价、用量随绑定账号的上游配额(公平分摊),不读用量档。"
+                  : "每档逐模型 token 上限 + 周限额。桶随启用产品自动列出。"}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -285,7 +299,7 @@ export default function PlanCatalogPage() {
                 value={form.usageTiers}
                 onChange={(usageTiers) => patchForm({ usageTiers })}
                 enabledProducts={enabledProducts}
-                disabled={busy}
+                disabled={busy || pricingLine === "bind"}
               />
             </CardContent>
           </Card>

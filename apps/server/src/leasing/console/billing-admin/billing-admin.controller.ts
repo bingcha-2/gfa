@@ -61,6 +61,11 @@ export class BillingAdminController {
     return this.billingAdmin.billingStats();
   }
 
+  @Get("subscriptions/:id")
+  getSubscription(@Param("id") id: string) {
+    return this.billingAdmin.getSubscription(id);
+  }
+
   @Post("plan-orders/:id/sync")
   async syncOrderPayment(@Param("id") id: string) {
     return this.billingAdmin.syncOrderPayment(id);

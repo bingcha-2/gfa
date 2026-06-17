@@ -29,6 +29,8 @@ function shareLabel(n: number): string {
   return n === 1 ? "1 人独号" : `${n} 人拼车`;
 }
 
+export type PricingLine = "pool" | "bind";
+
 export interface PricingSectionProps {
   products: ProductRow[];
   usageTiers: UsageTierRow[];
@@ -36,6 +38,9 @@ export interface PricingSectionProps {
   bind: BindPricingForm;
   onPoolChange: (next: PoolPricingForm) => void;
   onBindChange: (next: BindPricingForm) => void;
+  /** 当前选中的线;受控,供上层联动(如绑定线时置灰用量档)。 */
+  line: PricingLine;
+  onLineChange: (next: PricingLine) => void;
   disabled?: boolean;
 }
 
@@ -46,12 +51,18 @@ export function PricingSection({
   bind,
   onPoolChange,
   onBindChange,
+  line,
+  onLineChange,
   disabled,
 }: PricingSectionProps) {
   const enabled = products.filter((p) => p.enabled);
 
   return (
-    <Tabs defaultValue="pool" className="gap-4">
+    <Tabs
+      value={line}
+      onValueChange={(v) => onLineChange(v as PricingLine)}
+      className="gap-4"
+    >
       <TabsList>
         <TabsTrigger value="pool">号池线</TabsTrigger>
         <TabsTrigger value="bind">绑定线</TabsTrigger>

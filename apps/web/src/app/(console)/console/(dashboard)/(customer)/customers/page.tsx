@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import { toast } from "sonner";
 import type { ConsoleCustomerList, ConsoleCustomerListItem } from "@/lib/console/types";
@@ -40,8 +41,11 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("all");
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  // Deep-link: `?search=<email>` lands the list pre-filtered (e.g. jumps from a
+  // subscription/order detail). Initialize both the input box and the active query.
+  const initialSearch = useSearchParams().get("search")?.trim() ?? "";
+  const [searchInput, setSearchInput] = useState(initialSearch);
+  const [search, setSearch] = useState(initialSearch);
 
   const load = useCallback(async () => {
     try {

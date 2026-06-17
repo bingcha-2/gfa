@@ -41,7 +41,7 @@ export type PlanCatalogResponse = {
   config: import("./catalog-pricing").CatalogConfig | null;
 };
 
-export type PayChannel = "ALIPAY" | "WXPAY";
+export type PayChannel = "ALIPAY" | "WXPAY" | "GRANT";
 
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED" | "CANCELLED";
 

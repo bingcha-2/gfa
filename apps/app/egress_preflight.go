@@ -177,15 +177,32 @@ func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
 //
 // product=="" 只在「接管目标映射不到任何已知产品」时发生(防御性兜底,正常流程走不到)。
 func enforceEgressGate(product string, cfg Config) error {
+	return enforceEgressGateWith(product, cfg, egressInfoForTakeover, egressReachable)
+}
+
+// enforceEgressGateWith 是 enforceEgressGate 的可注入实现(fetch 出口配置 + probe 出口可达性),
+// 便于在不触网的前提下单测各分支判定。生产路径由 enforceEgressGate 注入真实的 leaser/探测。
+func enforceEgressGateWith(
+	product string,
+	cfg Config,
+	fetch func(product string, cfg Config) (EgressInfo, error),
+	probe func(target, proxyURL string) error,
+) error {
 	if product == "" {
 		return nil
 	}
 	Log("[egress-gate] 开始执行出口闸检查: product=%s, token=%s...", product, cfg.UserToken[:min(8, len(cfg.UserToken))])
 	label := productLabel(product)
-	eg, err := egressInfoForTakeover(product, cfg)
+	eg, err := fetch(product, cfg)
 	if err != nil {
-		return fmt.Errorf("%s接管前置检查:无法获取「%s」账号的出口配置(%v)。为避免暴露真实 IP 被封号,已拒绝接管,请稍后重试。",
-			egressGateMarker, label, err)
+		// 取出口配置失败 = 这一跳走的是控制面(api.bcai.lol)的租号请求,fetch 报错是【租不到号】
+		// 一类的控制面/库存错误(如号池无可用账号),【不是出口/网络问题】—— 代理地址都还没拿到,
+		// 根本没有静态 IP 可保护、也没有任何东西可探。绝不能 fail-closed 成「为避免暴露真实 IP」的
+		// 出口强提示(更不能带 egressGateMarker 触发前端开-TUN 引导,那对空号池毫无帮助)。
+		// 放行,交由下游真正的接管租号路径用服务器原话如实报错;required(anthropic)的 IP 安全
+		// 由数据面 resolveEgress→errEgressRequired 兜底(required 无代理一律拒绝本机直连),不丢。
+		Log("[egress-gate] %s 取出口配置失败(控制面/租号错误,非出口问题),放行交由下游如实报错:%v", product, err)
+		return nil
 	}
 	proxyURL := strings.TrimSpace(eg.ProxyURL)
 	if proxyURL == "" {
@@ -206,7 +223,7 @@ func enforceEgressGate(product string, cfg Config) error {
 		return nil
 	}
 	Log("[egress-gate] %s 出口可达性探测开始 target=%s, proxy=%s", product, target, maskProxyURL(proxyURL))
-	if rerr := egressReachable(target, proxyURL); rerr != nil {
+	if rerr := probe(target, proxyURL); rerr != nil {
 		if errors.Is(rerr, errEgressBanned) {
 			Log("[egress-gate] %s 出口被拒(banned),拦截接管。proxy=%s", product, maskProxyURL(proxyURL))
 			return fmt.Errorf("%s接管已拦截:你的网络出口是大陆 IP、被账号代理拒绝(banned)。\n\n请先在 Clash / Mihomo 里开启【TUN 模式(建议全局)】,让流量从境外节点出去,再重新接管。\n否则你的真实 IP 会暴露给官方,有封号风险。",
