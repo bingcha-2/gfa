@@ -135,8 +135,39 @@ describe("formToConfig — 组装 + ×100", () => {
     } as any);
     const back = formToConfig(form as any);
 
-    expect(form.supplyPolicies).toEqual(supplyPolicies);
+    expect(form.supplyPolicies).toEqual({
+      anthropic: {
+        ...supplyPolicies.anthropic,
+        salesSeatsPerAccount: { "max-20x": "10" },
+      },
+    });
     expect(back.supplyPolicies).toEqual(supplyPolicies);
+  });
+
+  it("converts editable supply policy sales seat strings back to config numbers", () => {
+    const form = configToForm({
+      ...CATALOG,
+      supplyPolicies: {
+        anthropic: {
+          defaultLevel: "max-20x",
+          salesSeatsPerAccount: { "max-20x": 10 },
+          buckets: {
+            "anthropic-claude": {
+              source: "learned",
+              provider: "anthropic",
+              planType: "max-20x",
+              family: "claude",
+            },
+          },
+        },
+      },
+    } as any);
+
+    form.supplyPolicies!.anthropic.salesSeatsPerAccount["max-20x"] = "12" as any;
+
+    expect(
+      formToConfig(form as any).supplyPolicies!.anthropic.salesSeatsPerAccount["max-20x"],
+    ).toBe(12);
   });
 
   it("组装产物可直接喂 computePurchase,价格与原 catalog 一致", () => {
@@ -264,5 +295,11 @@ describe("validateForm — 发布前轻校验", () => {
     const errors = validateForm(form);
     expect(errors.some((e) => e.includes("有效期"))).toBe(true);
     expect(errors.some((e) => e.includes("窗口"))).toBe(true);
+  });
+
+  it("旧版用量档为空不阻塞统一绑定线发布", () => {
+    const form = configToForm(CATALOG);
+    form.usageTiers = [];
+    expect(validateForm(form)).toEqual([]);
   });
 });
