@@ -15,6 +15,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Request,
@@ -120,6 +121,29 @@ export class BillingAdminController {
       detail: {
         alreadyCancelled: result.alreadyCancelled,
         customerId: result.subscription.customerId,
+      },
+    });
+
+    return result;
+  }
+
+  @Patch("subscriptions/:id")
+  async updateSubscription(
+    @Param("id") id: string,
+    @Body() body: { expiresAt?: string },
+    @Request() req: any,
+  ) {
+    const result = await this.billingAdmin.updateSubscription(id, body);
+
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "UPDATE_SUBSCRIPTION",
+      targetType: "Subscription",
+      targetId: id,
+      detail: {
+        customerId: result.subscription.customerId,
+        previousExpiresAt: result.previousExpiresAt?.toISOString() ?? null,
+        expiresAt: result.subscription.expiresAt?.toISOString() ?? null,
       },
     });
 

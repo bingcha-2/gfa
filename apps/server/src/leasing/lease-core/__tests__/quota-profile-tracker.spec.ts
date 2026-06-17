@@ -173,19 +173,19 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
     expect(tracker.getLearnedBudget5h("codex", "pro", "gpt")).toBe(300000);
   });
 
-  // ── 周/5h 换算比 R(决策②:周样本养够前一律默认 5)─────────────────────────────
+  // ── 周/5h 换算比 R(决策②:周样本养够前一律默认 3.752)────────────────────────
   describe("getWeeklyToShortRatio (weekly trust gate)", () => {
     // Feed enough weekly samples (≥ MIN_WEEKLY_SAMPLES=8, effective ≥ 5) to trust learned R.
     function feedWeekly(t: QuotaProfileTracker, used: number, frac: number, n = 8) {
       for (let i = 0; i < n; i++) t.recordSample("anthropic", "max", "claude", used, frac, true);
     }
 
-    it("过渡期:周样本不足(<8)→ 全局默认 5", () => {
+    it("过渡期:周样本不足(<8)→ 全局默认 3.752", () => {
       const tracker = new QuotaProfileTracker(undefined, { now: () => NOW });
       active = tracker;
       tracker.recordSample("anthropic", "max", "claude", 80000, 0.2, false); // 5h = 100000
       tracker.recordSample("anthropic", "max", "claude", 400000, 0.2, true); // 1 weekly sample
-      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(5);
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(3.752);
     });
 
     it("周样本养够后返回 weekly/5h", () => {
@@ -196,13 +196,13 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
       expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBeCloseTo(5, 5);
     });
 
-    it("无学习数据 → 全局默认 5", () => {
+    it("无学习数据 → 全局默认 3.752", () => {
       const tracker = new QuotaProfileTracker(undefined, { now: () => NOW });
       active = tracker;
-      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(5);
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(3.752);
     });
 
-    it("比值越界被夹到 [4.235,30]", () => {
+    it("比值越界被夹到 [3.752,30]", () => {
       const tracker = new QuotaProfileTracker(undefined, { now: () => NOW });
       active = tracker;
       tracker.recordSample("anthropic", "max", "claude", 80000, 0.2, false); // 5h = 100000
@@ -210,12 +210,12 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
       expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(30);
     });
 
-    it("learned ratios below 4.235 are floored", () => {
+    it("learned ratios below 3.752 are floored", () => {
       const tracker = new QuotaProfileTracker(undefined, { now: () => NOW });
       active = tracker;
       tracker.recordSample("anthropic", "max", "claude", 80000, 0.2, false); // 5h = 100000
-      feedWeekly(tracker, 160000, 0.2); // weekly = 200000 → R = 2 → 夹到 4.235
-      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(4.235);
+      feedWeekly(tracker, 160000, 0.2); // weekly = 200000 → R = 2 → 夹到 3.752
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(3.752);
     });
   });
 });

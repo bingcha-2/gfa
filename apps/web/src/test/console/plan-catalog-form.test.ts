@@ -42,7 +42,7 @@ const CATALOG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
-      share: { "1": 0, "2": -4000, "4": -7000, "8": -9000 },
+      share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },
@@ -92,7 +92,7 @@ describe("configToForm — 拆解 + ÷100", () => {
 
   it("绑定等级价矩阵 + 共享折扣:分 → 元", () => {
     expect(form.pricing.bind.levelPrice.anthropic["max-20x"]).toBe("299");
-    expect(form.pricing.bind.share["2"]).toBe("-40");
+    expect(form.pricing.bind.share["2"]).toBe("-20");
   });
 
   it("用量档:token 数原样为字符串,周限额拆出", () => {
@@ -188,7 +188,7 @@ describe("formToConfig — 组装 + ×100", () => {
       deviceLimit: 1,
     });
     // 29900 + (-4000 share) = 25900
-    expect(bind.priceCents).toBe(29900 - 4000);
+    expect(bind.priceCents).toBe(Math.floor((29900 * 4) / 8) - 4000);
     expect(bind.config.weight).toBe(4); // capacity 8 / 2 人
   });
 
@@ -244,7 +244,7 @@ describe("formToConfig — 组装 + ×100", () => {
         pool: { product: { anthropic: "69" }, usage: { small: "0" }, devicePerExtra: "9" },
         bind: {
           levelPrice: { anthropic: { pro: "99" } },
-          share: { "1": "0", "2": "-40", "4": "-70", "8": "-90" },
+          share: { "1": "0", "2": "-20", "4": "-40", "8": "0" },
           devicePerExtra: "9",
         },
       },

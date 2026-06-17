@@ -80,7 +80,7 @@ beforeEach(async () => {
   );
   // 网关退款默认成功(code=0 → ok);各用例可改 mock 模拟失败/已退款。
   billing = { refundEpayOrder: vi.fn().mockResolvedValue({ ok: true }) };
-  service = new BillingAdminService(prisma as any, subscriptionService, billing as any);
+  service = new BillingAdminService(prisma as any, subscriptionService, billing as any, entitlementSync as any);
 });
 
 afterAll(async () => {
@@ -264,5 +264,37 @@ describe("BillingAdminService.revokeSubscription", () => {
     expect(second.subscription.status).toBe("CANCELLED");
     expect(entitlementSync.expireShadowRecord).toHaveBeenCalledTimes(1);
     expect(await prisma.notification.count({ where: { customerId: customer.id } })).toBe(1);
+  });
+});
+
+describe("BillingAdminService.updateSubscription", () => {
+  it("updates expiresAt and resyncs the subscription shadow record", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    const nextExpiry = new Date(Date.now() + 45 * DAY_MS);
+
+    const result = await service.updateSubscription(sub.id, { expiresAt: nextExpiry.toISOString() });
+
+    expect(result.subscription.id).toBe(sub.id);
+    expect(result.subscription.expiresAt!.toISOString()).toBe(nextExpiry.toISOString());
+    expect((await prisma.subscription.findUnique({ where: { id: sub.id } }))!.expiresAt!.toISOString()).toBe(
+      nextExpiry.toISOString(),
+    );
+    expect(entitlementSync.syncSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ id: sub.id, expiresAt: nextExpiry }),
+    );
+  });
+
+  it("rejects an invalid expiresAt value", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+
+    await expect(service.updateSubscription(sub.id, { expiresAt: "not-a-date" })).rejects.toThrow(ConflictException);
+  });
+
+  it("throws 404 for an unknown subscription", async () => {
+    await expect(service.updateSubscription("no-such-sub", { expiresAt: new Date().toISOString() })).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

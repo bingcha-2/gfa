@@ -12,6 +12,7 @@ import {
 import { fmtYuan } from "@/lib/console/format";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
@@ -78,6 +79,7 @@ export function GrantSubscriptionDialog({
   const [bindLevels, setBindLevels] = useState<Record<string, string>>({});
   const [shareSeats, setShareSeats] = useState(1);
   const [deviceLimit, setDeviceLimit] = useState(1);
+  const [durationDays, setDurationDays] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -85,6 +87,7 @@ export function GrantSubscriptionDialog({
     setBindLevels({});
     setShareSeats(1);
     setDeviceLimit(1);
+    setDurationDays("");
 
     let alive = true;
     (async () => {
@@ -102,6 +105,7 @@ export function GrantSubscriptionDialog({
         if (!alive) return;
         if (data.config) {
           setState({ kind: "ready", catalog: data.config });
+          setDurationDays(String(data.config.durationDays || 30));
         } else {
           setState({ kind: "unavailable" });
         }
@@ -162,11 +166,16 @@ export function GrantSubscriptionDialog({
       toast.error("请为选中的产品各选一个等级");
       return;
     }
+    const days = Number(durationDays);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      toast.error("有效期必须是 1-3650 天");
+      return;
+    }
     try {
       setGranting(true);
       await apiRequest(`customers/${customerId}/subscriptions`, {
         method: "POST",
-        body: { selection },
+        body: { selection, durationDays: days },
       });
       toast.success("已发放订阅");
       onOpenChange(false);
@@ -277,9 +286,26 @@ export function GrantSubscriptionDialog({
 
             <DeviceStepper value={deviceLimit} onChange={setDeviceLimit} />
 
+            <div>
+              <Label htmlFor="grant-duration-days">有效期</Label>
+              <div className="mt-2 flex items-center gap-2">
+                <Input
+                  id="grant-duration-days"
+                  type="number"
+                  min={1}
+                  max={3650}
+                  step={1}
+                  value={durationDays}
+                  onChange={(e) => setDurationDays(e.target.value)}
+                  className="w-32"
+                />
+                <span className="text-sm text-muted-foreground">天</span>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
               <span className="text-muted-foreground">
-                参考价（免费发放） · 有效期 {catalog.durationDays} 天
+                参考价（免费发放） · 目录默认 {catalog.durationDays} 天
               </span>
               <Badge variant="secondary">{priced ? fmtYuan(priced.priceCents) : "—"}</Badge>
             </div>

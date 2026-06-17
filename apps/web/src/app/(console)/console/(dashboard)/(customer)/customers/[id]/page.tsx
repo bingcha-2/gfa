@@ -54,6 +54,29 @@ function selectionName(json: string | null | undefined): string {
   } catch { return "—"; }
 }
 
+function toDatetimeLocal(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDatetimeLocal(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function remainingDays(value: string | null): string {
+  if (!value) return "长期";
+  const ms = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return "—";
+  if (ms <= 0) return "已到期";
+  return `${Math.ceil(ms / (24 * 60 * 60 * 1000))} 天`;
+}
+
 function orderStatusBadge(status: string) {
   if (status === "PAID") return <Badge className="bg-emerald-500 text-white">{ORDER_STATUS_LABEL[status]}</Badge>;
   if (status === "REFUNDED") return <Badge variant="destructive">{ORDER_STATUS_LABEL[status]}</Badge>;
@@ -70,6 +93,10 @@ export default function CustomerDetailPage() {
   const [editForm, setEditForm] = useState({ displayName: "", creditYuan: "" });
 
   const [grantOpen, setGrantOpen] = useState(false);
+  const [subEditOpen, setSubEditOpen] = useState(false);
+  const [editingSub, setEditingSub] = useState<ConsoleSubscriptionLite | null>(null);
+  const [subEditForm, setSubEditForm] = useState({ expiresAt: "" });
+  const [savingSub, setSavingSub] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -143,6 +170,35 @@ export default function CustomerDetailPage() {
       await load();
     } catch (err) {
       toast.error(getErrorMessage(err));
+    }
+  }
+
+  function openSubEdit(sub: ConsoleSubscriptionLite) {
+    setEditingSub(sub);
+    setSubEditForm({ expiresAt: toDatetimeLocal(sub.expiresAt) });
+    setSubEditOpen(true);
+  }
+
+  async function saveSubEdit() {
+    if (!editingSub) return;
+    const expiresAt = fromDatetimeLocal(subEditForm.expiresAt);
+    if (!expiresAt) {
+      toast.error("请选择有效的到期时间");
+      return;
+    }
+    try {
+      setSavingSub(true);
+      await apiRequest(`subscriptions/${editingSub.id}`, {
+        method: "PATCH",
+        body: { expiresAt },
+      });
+      toast.success("订阅到期时间已更新");
+      setSubEditOpen(false);
+      await load();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setSavingSub(false);
     }
   }
 
@@ -237,6 +293,9 @@ export default function CustomerDetailPage() {
                         <TableCell className="text-center">{s.weight}</TableCell>
                         <TableCell className="text-center">{s.deviceLimit}</TableCell>
                         <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" onClick={() => openSubEdit(s)}>
+                            <Pencil className="h-3.5 w-3.5 mr-1" />编辑
+                          </Button>
                           {s.status === "ACTIVE" && (
                             <AlertDialog>
                               <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>取消</AlertDialogTrigger>
@@ -348,6 +407,37 @@ export default function CustomerDetailPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button>
             <Button onClick={() => void saveEdit()}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 编辑订阅到期时间 */}
+      <Dialog open={subEditOpen} onOpenChange={setSubEditOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>编辑订阅</DialogTitle>
+            <DialogDescription>{editingSub ? selectionName(editingSub.config) : ""}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label htmlFor="subscription-expires-at">到期时间</Label>
+              <Input
+                id="subscription-expires-at"
+                type="datetime-local"
+                value={subEditForm.expiresAt}
+                onChange={(e) => setSubEditForm({ expiresAt: e.target.value })}
+                className="mt-1"
+              />
+            </div>
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+              剩余 {remainingDays(fromDatetimeLocal(subEditForm.expiresAt))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubEditOpen(false)} disabled={savingSub}>取消</Button>
+            <Button onClick={() => void saveSubEdit()} disabled={savingSub}>
+              {savingSub ? "保存中..." : "保存"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

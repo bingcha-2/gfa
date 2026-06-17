@@ -83,7 +83,7 @@ export const DEFAULT_CONFIG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
-      share: { "1": 0, "2": -4000, "4": -7000, "8": -9000 },
+      share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },

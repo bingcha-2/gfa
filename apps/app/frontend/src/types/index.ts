@@ -41,6 +41,7 @@ export interface AccountSubscription {
   deviceLimit: number
   priority: number
   products: string[] // antigravity | codex | anthropic
+  levels?: Record<string, string> // purchased bind level per product, e.g. { codex: "pro" }
   remainFraction: number | null // 最紧复合桶剩余额度比例(0-1);null=无限额/无数据
 }
 

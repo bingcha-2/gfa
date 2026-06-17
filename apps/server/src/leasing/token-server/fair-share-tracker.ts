@@ -60,7 +60,7 @@ const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours(短窗口/5h)
 const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days(长窗口/周)
 /** 周默认预算 = 5h 默认预算 × 该系数(冷启动初值,之后被学到的 weekly 预算 / weeklyPercent
- *  反推 / 周 429 实测覆盖)。系数 = 全局默认 R(env BCAI_WEEKLY_RATIO_DEFAULT,默认 5)。 */
+ *  反推 / 周 429 实测覆盖)。系数 = 全局默认 R(env BCAI_WEEKLY_RATIO_DEFAULT,默认 3.752)。 */
 const WEEKLY_BUDGET_MULTIPLIER = DEFAULT_WEEKLY_RATIO;
 /** 周窗口在内存/持久化里用「桶名 + 该后缀」作为独立 key,复用同一套 tracker 逻辑与 DB 列
  *  (无需加库表字段)。后缀编码 scope,load 时据此还原窗口长度。 */

@@ -28,7 +28,7 @@ const CONFIG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
-      share: { "1": 0, "2": -4000, "4": -7000, "8": -9000 },
+      share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },
@@ -57,17 +57,17 @@ describe("PricePreview unified bind line", () => {
     render(<PricePreview form={FORM} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Anthropic (Claude)" }));
-    expect(total()).toBe("¥9");
+    expect(total()).toBe("¥12.37");
 
     const group = screen.getByRole("radiogroup", { name: /Anthropic/ });
     fireEvent.click(within(group).getByRole("radio", { name: "max-20x" }));
-    expect(total()).toBe("¥209");
+    expect(total()).toBe("¥37.37");
 
     fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));
-    expect(total()).toBe("¥229");
+    expect(total()).toBe("¥54.75");
 
     fireEvent.click(screen.getByRole("button", { name: "增加" }));
-    expect(total()).toBe("¥238");
+    expect(total()).toBe("¥63.75");
   });
 
 });

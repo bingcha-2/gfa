@@ -70,11 +70,11 @@ const MIN_WEEKLY_EFFECTIVE = 5;
 
 // ── 周/5h 换算比 R(全局)──────────────────────────────────────────────────────
 // 「一个周限额相当于多少个 5h 限额」。优先级(在调用方解析):卡级设置框 > 后台学习
-// (weekly/5h) > 全局默认。全局默认 = env BCAI_WEEKLY_RATIO_DEFAULT,缺省 5。
-/** 全局默认 R(env 可配,缺省 5)。 */
-export const DEFAULT_WEEKLY_RATIO = Math.max(1, Number(process.env.BCAI_WEEKLY_RATIO_DEFAULT || 5));
-/** R 的合理夹取区间:周窗口至少 4.235 个 5h、至多 30 个 5h(一周 ≈ 33.6 个 5h)。 */
-export const MIN_WEEKLY_RATIO = 4.235;
+// (weekly/5h) > 全局默认。全局默认 = env BCAI_WEEKLY_RATIO_DEFAULT,缺省 3.752。
+/** 全局默认 R(env 可配,缺省 3.752)。 */
+export const DEFAULT_WEEKLY_RATIO = Math.max(1, Number(process.env.BCAI_WEEKLY_RATIO_DEFAULT || 3.752));
+/** R 的合理夹取区间:周窗口至少 3.752 个 5h、至多 30 个 5h(一周 ≈ 33.6 个 5h)。 */
+export const MIN_WEEKLY_RATIO = 3.752;
 export const MAX_WEEKLY_RATIO = 30;
 /** 夹取 R;非法/非正 → 全局默认。 */
 export function clampWeeklyRatio(ratio: number): number {
@@ -206,7 +206,7 @@ export class QuotaProfileTracker {
   /**
    * 周/5h 换算比 R 的「学习/默认」部分(卡级设置框的覆盖在调用方处理)。
    * 周样本足够可信(MIN_WEEKLY_SAMPLES + 有效样本数)且 5h/周都学到 → weekly/5h(夹取);
-   * 否则全局默认 5(过渡期周不信学习 R)。
+   * 否则全局默认 3.752(过渡期周不信学习 R)。
    */
   getWeeklyToShortRatio(product: string, planType: string, family: string): number {
     const b5 = this.getLearnedBudget5h(product, planType, family);

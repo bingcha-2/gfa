@@ -54,12 +54,13 @@ type Config struct {
 // 产品由 Products[] 决定;ExpiresAt 为空串表示长期有效。字段对齐服务端
 // /app/login、/app/heartbeat 的 subscriptions[] 元素。
 type SubscriptionSnapshot struct {
-	Id          string   `json:"id"`
-	Status      string   `json:"status"`
-	ExpiresAt   string   `json:"expiresAt"`
-	DeviceLimit int      `json:"deviceLimit"`
-	Priority    int      `json:"priority"`
-	Products    []string `json:"products"`
+	Id          string            `json:"id"`
+	Status      string            `json:"status"`
+	ExpiresAt   string            `json:"expiresAt"`
+	DeviceLimit int               `json:"deviceLimit"`
+	Priority    int               `json:"priority"`
+	Products    []string          `json:"products"`
+	Levels      map[string]string `json:"levels"`
 	// RemainFraction 是该订阅「最紧复合桶」的剩余额度比例(0-1);nil=无限额/无数据。
 	// 用于客户端多订阅余量条 —— 区分同产品同到期的订阅(谁在消耗、谁备用满额)。
 	RemainFraction *float64 `json:"remainFraction"`

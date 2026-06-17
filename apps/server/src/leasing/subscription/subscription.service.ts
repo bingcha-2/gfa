@@ -41,6 +41,10 @@ export interface OrderForActivation {
   catalogVersion: number | null;
 }
 
+export interface ActivationOptions {
+  durationDaysOverride?: number;
+}
+
 @Injectable()
 export class SubscriptionService {
   private readonly logger = new Logger(SubscriptionService.name);
@@ -56,8 +60,8 @@ export class SubscriptionService {
    * route straight to createFromCatalog. Single entry point so epay-callback and
    * billing-reconcile activate uniformly. See spec §8.
    */
-  async activateForOrder(order: OrderForActivation): Promise<Subscription> {
-    return this.createFromCatalog(order);
+  async activateForOrder(order: OrderForActivation, options: ActivationOptions = {}): Promise<Subscription> {
+    return this.createFromCatalog(order, options);
   }
 
   /**
@@ -69,7 +73,7 @@ export class SubscriptionService {
    *
    * 不同配置再买默认并存(新建订阅);"同配置续费"(config 指纹去重延长)留后,见 spec §8。
    */
-  async createFromCatalog(order: OrderForActivation): Promise<Subscription> {
+  async createFromCatalog(order: OrderForActivation, options: ActivationOptions = {}): Promise<Subscription> {
     if (!order.config) {
       throw new NotFoundException(`Catalog order "${order.id}" has no config snapshot`);
     }
@@ -80,7 +84,8 @@ export class SubscriptionService {
     if (!customer) throw new NotFoundException(`Customer "${order.customerId}" not found`);
 
     const config = JSON.parse(order.config) as Record<string, any>;
-    const durationDays = await this.resolveDurationDays(order.catalogVersion);
+    const durationDays = this.resolveDurationDaysOverride(options.durationDaysOverride)
+      ?? await this.resolveDurationDays(order.catalogVersion);
 
     const now = new Date();
     const durationMs = durationDays * DAY_MS;
@@ -155,6 +160,12 @@ export class SubscriptionService {
       throw new NotFoundException(`PlanCatalog version ${catalogVersion} has no valid durationDays`);
     }
     return Number(days);
+  }
+
+  private resolveDurationDaysOverride(days: number | undefined): number | null {
+    if (days === undefined) return null;
+    if (!Number.isInteger(days) || days <= 0) return null;
+    return days;
   }
 
   /**

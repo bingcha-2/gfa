@@ -106,6 +106,9 @@ func TestUserLogin_Success(t *testing.T) {
 	if _, ok := capturedBody["deviceId"]; !ok {
 		t.Errorf("deviceId missing from request")
 	}
+	if got, _ := capturedBody["deviceId"].(string); strings.TrimSpace(got) == "" {
+		t.Errorf("deviceId = %q, want non-empty", got)
+	}
 	if _, ok := capturedBody["deviceName"]; !ok {
 		t.Errorf("deviceName missing from request")
 	}
@@ -119,6 +122,9 @@ func TestUserLogin_Success(t *testing.T) {
 	cfg := LoadConfig()
 	if cfg.UserToken != "tok-abc123" {
 		t.Errorf("UserToken not persisted, got %q", cfg.UserToken)
+	}
+	if strings.TrimSpace(cfg.DeviceId) == "" {
+		t.Errorf("DeviceId not persisted, got %q", cfg.DeviceId)
 	}
 	if cfg.UserEmail != "user@example.com" {
 		t.Errorf("UserEmail not persisted, got %q", cfg.UserEmail)
@@ -371,6 +377,51 @@ func TestHeartbeat_SessionInvalid_ClearsSession(t *testing.T) {
 	}
 }
 
+// TestHeartbeat_EnsuresDeviceIdBeforeRequest covers legacy/broken configs that
+// have a user token but no device id: heartbeat must repair and persist the
+// device id before asking the server, otherwise the token/device check logs out.
+func TestHeartbeat_EnsuresDeviceIdBeforeRequest(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	cfg := DefaultConfig()
+	cfg.UserToken = "tok-alive"
+	cfg.UserEmail = "hb@example.com"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	var capturedDeviceId string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/heartbeat" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		capturedDeviceId, _ = body["deviceId"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":            true,
+			"subscriptions": []interface{}{},
+		})
+	}))
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.HeartbeatCheck(); err != nil {
+		t.Fatalf("HeartbeatCheck: %v", err)
+	}
+	if strings.TrimSpace(capturedDeviceId) == "" {
+		t.Fatalf("heartbeat deviceId = %q, want non-empty", capturedDeviceId)
+	}
+	if got := LoadConfig().DeviceId; got != capturedDeviceId {
+		t.Fatalf("persisted DeviceId = %q, want heartbeat deviceId %q", got, capturedDeviceId)
+	}
+}
+
 // TestHeartbeat_TransientError_KeepsSession: a network-level failure must NOT
 // log the user out — the token stays, only an error is returned.
 func TestHeartbeat_TransientError_KeepsSession(t *testing.T) {
@@ -531,6 +582,18 @@ func TestHeartbeat_Success_PersistsSubscription(t *testing.T) {
 			"expiresAt":   "2027-01-02T03:04:05Z",
 			"deviceLimit": 5,
 		},
+		"subscriptions": []interface{}{map[string]interface{}{
+			"id":          "sub-codex-pro",
+			"status":      "ACTIVE",
+			"expiresAt":   "2027-01-02T03:04:05Z",
+			"deviceLimit": 5,
+			"priority":    1,
+			"products":    []interface{}{"codex", "anthropic"},
+			"levels": map[string]interface{}{
+				"codex":     "pro",
+				"anthropic": "max-20x",
+			},
+		}},
 	}
 	srv := newHeartbeatServer(t, resp, http.StatusOK)
 	defer srv.Close()
@@ -559,6 +622,15 @@ func TestHeartbeat_Success_PersistsSubscription(t *testing.T) {
 	}
 	if cfg.PlanDeviceMax != 5 {
 		t.Errorf("PlanDeviceMax = %d, want 5", cfg.PlanDeviceMax)
+	}
+	if len(cfg.Subscriptions) != 1 {
+		t.Fatalf("Subscriptions length = %d, want 1", len(cfg.Subscriptions))
+	}
+	if got := cfg.Subscriptions[0].Levels["codex"]; got != "pro" {
+		t.Errorf("Subscriptions[0].Levels[codex] = %q, want pro", got)
+	}
+	if got := cfg.Subscriptions[0].Levels["anthropic"]; got != "max-20x" {
+		t.Errorf("Subscriptions[0].Levels[anthropic] = %q, want max-20x", got)
 	}
 }
 

@@ -37,9 +37,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// Load or initialize config
 	cfg := LoadConfig()
-	if cfg.DeviceId == "" {
-		cfg.DeviceId = generateUUID()
-		_ = SaveConfig(cfg)
+	if changed, err := ensureConfigDeviceId(&cfg); err != nil {
+		Log("[app] Failed to initialize deviceId: %v", err)
+	} else if changed {
 		Log("[app] Generated new deviceId: %s", cfg.DeviceId)
 	} else {
 		Log("[app] Loaded existing deviceId: %s", cfg.DeviceId)

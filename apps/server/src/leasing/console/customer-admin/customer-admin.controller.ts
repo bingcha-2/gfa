@@ -79,13 +79,15 @@ export class CustomerAdminController {
     @Body() dto: GrantCatalogSubscriptionDto,
     @Request() req: any,
   ) {
-    const sub = await this.customerAdmin.grantCatalogSubscription(id, dto.selection);
+    const sub = await this.customerAdmin.grantCatalogSubscription(id, dto.selection, {
+      durationDays: dto.durationDays,
+    });
     await this.auditLog.log({
       operatorId: req.user?.id,
       action: "GRANT_SUBSCRIPTION",
       targetType: "Customer",
       targetId: id,
-      detail: { selection: dto.selection, subscriptionId: sub.id },
+      detail: { selection: dto.selection, durationDays: dto.durationDays, subscriptionId: sub.id },
     });
     return sub;
   }

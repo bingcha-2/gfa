@@ -9,14 +9,18 @@ import { BillingAdminController } from "../billing-admin.controller";
 import { ConsoleJwtGuard } from "../../../../shared/auth/console-jwt.guard";
 import { ROLES_KEY } from "../../../../shared/auth/roles.decorator";
 
-let billingAdmin: { refundOrder: ReturnType<typeof vi.fn>; revokeSubscription: ReturnType<typeof vi.fn> };
+let billingAdmin: {
+  refundOrder: ReturnType<typeof vi.fn>;
+  revokeSubscription: ReturnType<typeof vi.fn>;
+  updateSubscription: ReturnType<typeof vi.fn>;
+};
 let auditLog: { log: ReturnType<typeof vi.fn> };
 let controller: BillingAdminController;
 
 const req = { user: { id: "admin-1" } } as any;
 
 beforeEach(() => {
-  billingAdmin = { refundOrder: vi.fn(), revokeSubscription: vi.fn() };
+  billingAdmin = { refundOrder: vi.fn(), revokeSubscription: vi.fn(), updateSubscription: vi.fn() };
   auditLog = { log: vi.fn() };
   controller = new BillingAdminController(billingAdmin as any, auditLog as any);
 });
@@ -80,6 +84,37 @@ describe("POST console/subscriptions/:id/revoke", () => {
       targetType: "Subscription",
       targetId: "sub-1",
       detail: { alreadyCancelled: false, customerId: "cust-1" },
+    });
+  });
+});
+
+describe("PATCH console/subscriptions/:id", () => {
+  it("delegates to the service and audit-logs the expiry update", async () => {
+    billingAdmin.updateSubscription.mockResolvedValue({
+      subscription: { id: "sub-1", customerId: "cust-1", expiresAt: new Date("2026-07-01T00:00:00.000Z") },
+      previousExpiresAt: new Date("2026-06-01T00:00:00.000Z"),
+    });
+
+    const result = await controller.updateSubscription(
+      "sub-1",
+      { expiresAt: "2026-07-01T00:00:00.000Z" },
+      req,
+    );
+
+    expect(billingAdmin.updateSubscription).toHaveBeenCalledWith("sub-1", {
+      expiresAt: "2026-07-01T00:00:00.000Z",
+    });
+    expect(result.subscription.customerId).toBe("cust-1");
+    expect(auditLog.log).toHaveBeenCalledWith({
+      operatorId: "admin-1",
+      action: "UPDATE_SUBSCRIPTION",
+      targetType: "Subscription",
+      targetId: "sub-1",
+      detail: {
+        customerId: "cust-1",
+        previousExpiresAt: "2026-06-01T00:00:00.000Z",
+        expiresAt: "2026-07-01T00:00:00.000Z",
+      },
     });
   });
 });

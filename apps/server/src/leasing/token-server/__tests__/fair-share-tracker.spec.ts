@@ -303,8 +303,8 @@ describe("周窗口公平份额(trackWeekly)", () => {
     t.recordUsage(1, "c1", "anthropic-claude", 20_000, 0, 0, "claude-opus-4-8"); // creates 5h + weekly trackers
     const shortBudget = t.getBucketStateForTesting(1, "anthropic-claude")!.resolvedBudget;
     const weekly = t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))!;
-    // No learned weekly → weekly budget = max(default5h, learned5h) × clamp(R) ≥ short × 4.235.
-    expect(weekly.resolvedBudget).toBeGreaterThanOrEqual(shortBudget * 4.235);
+    // No learned weekly → weekly budget = max(default5h, learned5h) × clamp(R) ≥ short × 3.752.
+    expect(weekly.resolvedBudget).toBeGreaterThanOrEqual(shortBudget * 3.752);
     expect(t.checkFairShare(1, "c1", "anthropic-claude").allowed).toBe(true);
   });
 });

@@ -42,6 +42,11 @@ export interface RevokeResult {
   alreadyCancelled: boolean;
 }
 
+export interface UpdateSubscriptionResult {
+  subscription: Subscription;
+  previousExpiresAt: Date | null;
+}
+
 @Injectable()
 export class BillingAdminService {
   private readonly logger = new Logger(BillingAdminService.name);
@@ -309,6 +314,24 @@ export class BillingAdminService {
     return { subscription: cancelled, alreadyCancelled: false };
   }
 
+  async updateSubscription(
+    subscriptionId: string,
+    dto: { expiresAt?: string },
+  ): Promise<UpdateSubscriptionResult> {
+    const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
+    if (!sub) throw new NotFoundException(`Subscription "${subscriptionId}" not found`);
+
+    const expiresAt = parseExpiresAt(dto.expiresAt);
+    const updated = await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { expiresAt },
+    });
+    await this.entitlementSync.syncSubscription(updated);
+
+    this.logger.log(`[billing-admin] subscription ${subscriptionId} expiresAt updated`);
+    return { subscription: updated, previousExpiresAt: sub.expiresAt };
+  }
+
   /**
    * Cancel the subscription a refunded order activated. Resolved via the
    * order's subscriptionId link (or the reverse activatedFromOrderId link as a
@@ -360,4 +383,15 @@ export class BillingAdminService {
       message: synced ? "支付已确认，订阅已激活" : "支付平台未确认付款",
     };
   }
+}
+
+function parseExpiresAt(value: string | undefined): Date {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ConflictException("expiresAt is required");
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new ConflictException("expiresAt must be a valid date");
+  }
+  return date;
 }

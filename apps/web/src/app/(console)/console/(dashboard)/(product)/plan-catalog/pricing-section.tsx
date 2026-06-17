@@ -75,7 +75,7 @@ export function PricingSection({
       </PriceGroup>
 
       <Separator />
-      <PriceGroup title="席位折扣(通常为负)">
+      <PriceGroup title="席位折扣(按购买席位数,通常为负)">
         {SEAT_OPTIONS.map((n) => (
           <PriceRow key={n} label={seatLabel(n)}>
             <YuanInput
