@@ -153,6 +153,21 @@ export class BillingAdminService {
   }
 
   /**
+   * Single subscription fetch for the console detail drawer. The list is
+   * paginated, so a `?sub=<id>` deep-link may target a row not on the loaded
+   * page — this fetch backs that jump. Mirrors listSubscriptions' customer
+   * include and line derivation.
+   */
+  async getSubscription(id: string) {
+    const sub = await this.prisma.subscription.findUnique({
+      where: { id },
+      include: { customer: { select: { email: true } } },
+    });
+    if (!sub) throw new NotFoundException(`Subscription "${id}" not found`);
+    return { ...sub, line: String(rowToConfig(sub as any).line || "pool") === "bind" ? "bind" : "pool" };
+  }
+
+  /**
    * Customer-business dashboard KPIs: today's new customers, active
    * subscriptions, today's paid revenue + count, 30-day refund rate, and the
    * paid-order distribution. Catalog-only: every paid order is a 目录套餐 (no

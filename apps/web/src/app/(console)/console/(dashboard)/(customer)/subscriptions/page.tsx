@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import { toast } from "sonner";
 import type { ConsoleSubscriptionList, ConsoleSubscription } from "@/lib/console/types";
@@ -60,6 +61,17 @@ export default function SubscriptionsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<ConsoleSubscription | null>(null);
+  const searchParams = useSearchParams();
+
+  // Deep-link: `?sub=<id>` opens the detail drawer. The list is paginated, so
+  // the target may not be on the loaded page — fetch it directly.
+  useEffect(() => {
+    const subId = searchParams.get("sub");
+    if (!subId) return;
+    void apiRequest<ConsoleSubscription>(`subscriptions/${subId}`)
+      .then((s) => setDetail(s))
+      .catch((err) => toast.error(getErrorMessage(err)));
+  }, [searchParams]);
 
   const load = useCallback(async () => {
     try {
