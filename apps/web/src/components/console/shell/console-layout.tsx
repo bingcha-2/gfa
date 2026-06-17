@@ -28,10 +28,10 @@ export function ConsoleLayout({
           } as React.CSSProperties
         }
       >
-        <ConsoleSidebar variant="inset" />
+        <ConsoleSidebar />
         <SidebarInset>
           <ConsoleHeader />
-          <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
+          <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-muted/60">
             <div className="flex flex-1 flex-col gap-4 p-4 lg:p-6 min-w-0">
               {children}
             </div>
