@@ -288,6 +288,9 @@ export type ConsoleSubscription = {
   createdAt: string;
   /** 线路:绑定模式(绑定到具体上游号)或号池模式(卖用量,不占座位)。后端 rowToConfig 推断。 */
   line?: "bind" | "pool";
+  config: string | null;
+  bindings: string | null;
+  levels: string | null;
   plan: { name: string } | null;
   customer: { email: string } | null;
 };
