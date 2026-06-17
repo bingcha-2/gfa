@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 
 import { computePurchase } from "./pricing";
 
-// 一份代表性的 PlanCatalog.config(对齐 spec §4.1)
 const CATALOG = {
   products: ["anthropic", "codex", "antigravity"],
   levels: {
@@ -34,8 +33,8 @@ const CATALOG = {
   windowMs: 18000000,
 };
 
-describe("computePurchase — 号池线", () => {
-  it("单产品 Claude + 小用量 + 1 设备 → ¥69,config 快照用量档", () => {
+describe("computePurchase pool line", () => {
+  it("prices a single Claude pool purchase and snapshots usage config", () => {
     const result = computePurchase(CATALOG, {
       line: "pool",
       products: ["anthropic"],
@@ -55,29 +54,87 @@ describe("computePurchase — 号池线", () => {
   });
 });
 
-describe("computePurchase — 绑定线", () => {
-  it("单产品 Claude max-20x + 独号(1人) + 1 设备 → ¥299,config 带等级与 weight、无用量上限", () => {
+describe("computePurchase bind line", () => {
+  it("uses shareSeats=8 as full-account seats without a shared-user discount", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
-      shareUsers: 1,
+      shareSeats: 8,
       deviceLimit: 1,
-    });
+    } as any);
 
     expect(result.priceCents).toBe(29900);
     expect(result.config).toEqual({
       line: "bind",
       products: ["anthropic"],
       levels: { anthropic: "max-20x" },
+      shareSeats: 8,
+      shareCapacity: 8,
       weight: 8,
+      assignmentPolicy: "preferred-dynamic",
       deviceLimit: 1,
       windowMs: 18000000,
     });
   });
+
+  it("uses shareSeats=2 as the bind seat count and equivalent 4-user price key", () => {
+    const result = computePurchase(CATALOG, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    } as any);
+
+    expect(result.priceCents).toBe(22900);
+    expect(result.config).toEqual({
+      line: "bind",
+      products: ["anthropic"],
+      levels: { anthropic: "max-20x" },
+      shareSeats: 2,
+      shareCapacity: 8,
+      weight: 2,
+      assignmentPolicy: "preferred-dynamic",
+      deviceLimit: 1,
+      windowMs: 18000000,
+    });
+  });
+
+  it("converts legacy shareUsers=4 to shareSeats=2 and weight=2", () => {
+    const result = computePurchase(CATALOG, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareUsers: 4,
+      deviceLimit: 1,
+    });
+
+    expect(result.config).toMatchObject({
+      shareSeats: 2,
+      shareCapacity: 8,
+      weight: 2,
+      assignmentPolicy: "preferred-dynamic",
+    });
+  });
+
+  it("keeps legacy shareUsers=8 compatible when shareCapacity=4", () => {
+    const result = computePurchase({ ...CATALOG, shareCapacity: 4 }, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareUsers: 8,
+      deviceLimit: 1,
+    });
+
+    expect(result.priceCents).toBe(20900);
+    expect(result.config).toMatchObject({
+      shareSeats: 1,
+      shareCapacity: 4,
+      weight: 1,
+      assignmentPolicy: "preferred-dynamic",
+    });
+  });
 });
 
-describe("computePurchase — 校验", () => {
-  it("绑定线选了 catalog 里不存在的等级 → 抛错(不能默默算 0 价)", () => {
+describe("computePurchase validation", () => {
+  it("throws for an unknown bind product level", () => {
     expect(() =>
       computePurchase(CATALOG, {
         line: "bind",
@@ -85,10 +142,10 @@ describe("computePurchase — 校验", () => {
         shareUsers: 1,
         deviceLimit: 1,
       }),
-    ).toThrow(/level|等级|nonexistent/i);
+    ).toThrow(/level|nonexistent/i);
   });
 
-  it("号池线选了不存在的用量档 → 抛错", () => {
+  it("throws for an unknown pool usage tier", () => {
     expect(() =>
       computePurchase(CATALOG, {
         line: "pool",
@@ -96,34 +153,51 @@ describe("computePurchase — 校验", () => {
         usageTier: "huge",
         deviceLimit: 1,
       }),
-    ).toThrow(/usage|用量|huge/i);
-  });
-});
-
-describe("computePurchase — 绑定线 weight 跟随注入的 shareCapacity(去容量双源)", () => {
-  // 服务端读目录时把运行时 ACCOUNT_SHARE_CAPACITY 注入 config.shareCapacity;绑定线
-  // weight = shareCapacity / 共享人数,与运行时座位口径同源(不再硬编码 8)。
-  const withCap = (shareCapacity: number) => ({ ...CATALOG, shareCapacity });
-  const sel = (shareUsers: number) => ({
-    line: "bind" as const,
-    items: [{ product: "anthropic", level: "max-20x" }],
-    shareUsers,
-    deviceLimit: 1,
+    ).toThrow(/usage|huge/i);
   });
 
-  it("shareCapacity=4(test 运行时):独号→4(占满)、2 人→2、4 人→1", () => {
-    expect(computePurchase(withCap(4), sel(1)).config.weight).toBe(4);
-    expect(computePurchase(withCap(4), sel(2)).config.weight).toBe(2);
-    expect(computePurchase(withCap(4), sel(4)).config.weight).toBe(1);
+  it("throws for invalid shareSeats=3", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "max-20x" }],
+        shareSeats: 3,
+        deviceLimit: 1,
+      } as any),
+    ).toThrow(/shareSeats|seat/i);
   });
 
-  it("shareCapacity=8(prod 默认):独号→8、2 人→4、8 人→1", () => {
-    expect(computePurchase(withCap(8), sel(1)).config.weight).toBe(8);
-    expect(computePurchase(withCap(8), sel(2)).config.weight).toBe(4);
-    expect(computePurchase(withCap(8), sel(8)).config.weight).toBe(1);
+  it("throws for fractional shareSeats", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "max-20x" }],
+        shareSeats: 2.9,
+        deviceLimit: 1,
+      } as any),
+    ).toThrow(/shareSeats|seat/i);
   });
 
-  it("config 未注入 shareCapacity → 回退 prod 默认 8(非权威路径如 console 预览)", () => {
-    expect(computePurchase(CATALOG, sel(2)).config.weight).toBe(4); // 8 / 2
+  it("does not let legacy shareUsers mask an invalid explicit shareSeats", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "max-20x" }],
+        shareSeats: 3,
+        shareUsers: 4,
+        deviceLimit: 1,
+      } as any),
+    ).toThrow(/shareSeats|seat/i);
+  });
+
+  it("throws when explicit shareSeats exceed shareCapacity", () => {
+    expect(() =>
+      computePurchase({ ...CATALOG, shareCapacity: 4 }, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "max-20x" }],
+        shareSeats: 8,
+        deviceLimit: 1,
+      } as any),
+    ).toThrow(/shareSeats|seat/i);
   });
 });

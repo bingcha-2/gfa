@@ -1,5 +1,4 @@
-// 套餐定价 + Subscription.config 生成(纯函数,无 IO)。对齐 spec §4 / §5。
-// 价格 = 基础 + Σ(各旋钮加价),分;config = 购买时快照展开的限额配置。
+// Pure catalog pricing and purchase config generation. No IO.
 
 export interface UsageTier {
   bucketLimits: Record<string, number>;
@@ -15,10 +14,9 @@ export interface CatalogConfig {
   windowMs: number;
   durationDays: number;
   /**
-   * 一个号被切成 shareCapacity 份(= 运行时 ACCOUNT_SHARE_CAPACITY,服务端读目录时注入,
-   * 见 PlanCatalogService.getPublished/getByVersion)。绑定线每份 weight = shareCapacity /
-   * 共享人数,与运行时座位口径同源(去「定价硬编码 8 / 运行时 env」双源)。非权威路径(console
-   * 价格预览)拿不到注入值时,computeBind 回退 prod 默认 8。
+   * Number of purchasable seats in one upstream account. Bind configs store
+   * shareSeats directly, and weight equals shareSeats. Non-authoritative
+   * callers such as console previews fall back to 8 when it is not injected.
    */
   shareCapacity?: number;
 }
@@ -38,7 +36,9 @@ export interface BindItem {
 export interface BindSelection {
   line: "bind";
   items: BindItem[];
-  shareUsers: number;
+  shareSeats?: number;
+  /** Legacy pending orders used shareUsers; convert to seats when present. */
+  shareUsers?: number;
   deviceLimit: number;
 }
 
@@ -81,6 +81,8 @@ function computePool(catalog: CatalogConfig, selection: PoolSelection): Purchase
 
 function computeBind(catalog: CatalogConfig, selection: BindSelection): PurchaseResult {
   const bind = catalog.pricing.bind;
+  const shareCapacity = catalog.shareCapacity ?? 8;
+  const share = resolveShareSelection(selection, shareCapacity);
   let priceCents = 0;
   const products: string[] = [];
   const levels: Record<string, string> = {};
@@ -93,7 +95,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
     products.push(product);
     levels[product] = level;
   }
-  priceCents += bind.share[String(selection.shareUsers)] ?? 0;
+  priceCents += bind.share[String(share.priceShareUsers)] ?? 0;
   priceCents += extraDeviceCost(selection.deviceLimit, bind.devicePerExtra);
 
   return {
@@ -102,11 +104,48 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       line: "bind",
       products,
       levels,
-      weight: (catalog.shareCapacity ?? 8) / selection.shareUsers,
+      shareSeats: share.shareSeats,
+      shareCapacity,
+      weight: share.shareSeats,
+      assignmentPolicy: "preferred-dynamic",
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
     },
   };
+}
+
+const SEAT_OPTIONS = [1, 2, 4, 8] as const;
+
+function resolveShareSelection(
+  selection: BindSelection,
+  shareCapacity: number,
+): { shareSeats: number; priceShareUsers: number } {
+  if (selection.shareSeats !== undefined) {
+    const explicit = Number(selection.shareSeats);
+    if (isSeatOption(explicit) && explicit <= shareCapacity) {
+      return {
+        shareSeats: explicit,
+        priceShareUsers: Math.max(1, Math.floor(shareCapacity / explicit)),
+      };
+    }
+    throw new Error("shareSeats must be one of 1, 2, 4, 8");
+  }
+
+  if (selection.shareUsers !== undefined) {
+    const legacyUsers = Number(selection.shareUsers);
+    if (isSeatOption(legacyUsers)) {
+      const converted = Math.max(1, Math.floor(shareCapacity / legacyUsers));
+      if (isSeatOption(converted)) {
+        return { shareSeats: converted, priceShareUsers: legacyUsers };
+      }
+    }
+  }
+
+  throw new Error("shareSeats must be one of 1, 2, 4, 8");
+}
+
+function isSeatOption(value: number): value is (typeof SEAT_OPTIONS)[number] {
+  return Number.isInteger(value) && SEAT_OPTIONS.includes(value as (typeof SEAT_OPTIONS)[number]);
 }
 
 function extraDeviceCost(deviceLimit: number, perExtra: number): number {

@@ -16,8 +16,7 @@ import { useDict } from "@/lib/i18n/client";
 
 type Line = "pool" | "bind";
 
-/** Share-user options → weight is derived server-side (capacity 8 / N). */
-const SHARE_OPTIONS = [1, 2, 4, 8] as const;
+const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 const MAX_DEVICES = 20;
 
 /**
@@ -45,7 +44,13 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
   // ── 绑定线 state ────────────────────────────────────────────────────────────
   // product → chosen level (absent = product not selected on the bind line).
   const [bindLevels, setBindLevels] = useState<Record<string, string>>({});
-  const [shareUsers, setShareUsers] = useState<number>(1);
+  const shareCapacity = catalog.shareCapacity ?? 8;
+  const seatOptions = useMemo(
+    () => SEAT_OPTIONS.filter((n) => n <= shareCapacity),
+    [shareCapacity],
+  );
+  const defaultShareSeats = seatOptions[seatOptions.length - 1] ?? 1;
+  const [shareSeats, setShareSeats] = useState<number>(defaultShareSeats);
   const [bindDevices, setBindDevices] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -66,7 +71,7 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
             product,
             level,
           })),
-          shareUsers,
+          shareSeats,
           deviceLimit: bindDevices,
         };
 
@@ -204,18 +209,18 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
               </div>
             </Knob>
 
-            <Knob label={c.shareLabel}>
-              <div className="account-chipset" role="radiogroup" aria-label={c.shareLabel}>
-                {SHARE_OPTIONS.map((n) => (
+            <Knob label={c.seatLabel}>
+              <div className="account-chipset" role="radiogroup" aria-label={c.seatLabel}>
+                {seatOptions.map((n) => (
                   <button
                     key={n}
                     type="button"
                     role="radio"
-                    aria-checked={shareUsers === n}
+                    aria-checked={shareSeats === n}
                     className="account-chip"
-                    onClick={() => setShareUsers(n)}
+                    onClick={() => setShareSeats(n)}
                   >
-                    {n === 1 ? fmt(c.shareSolo, { n }) : fmt(c.sharePeople, { n })}
+                    {fmt(c.seatFraction, { n, capacity: shareCapacity })}
                   </button>
                 ))}
               </div>

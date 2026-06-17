@@ -16,7 +16,7 @@ import type { Selection } from "@/lib/account/catalog-pricing";
 const SELECTION: Selection = {
   line: "bind",
   items: [{ product: "anthropic", level: "max-20x" }],
-  shareUsers: 1,
+  shareSeats: 8,
   deviceLimit: 1,
 };
 
@@ -87,6 +87,7 @@ describe("CatalogOrderFlow", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       selection: SELECTION,
     });
+    expect(JSON.parse(init.body as string).selection).not.toHaveProperty("shareUsers");
   });
 
   it("renders the paid success state on PAID", async () => {
@@ -160,5 +161,8 @@ describe("CatalogOrderFlow", () => {
     expect(JSON.parse((posts[0][1] as RequestInit).body as string)).toEqual({
       selection: SELECTION,
     });
+    expect(JSON.parse((posts[0][1] as RequestInit).body as string).selection).not.toHaveProperty(
+      "shareUsers",
+    );
   });
 });

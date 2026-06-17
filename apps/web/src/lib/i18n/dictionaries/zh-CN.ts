@@ -824,6 +824,8 @@ export const zhCN = {
         shareLabel: "共享人数",
         shareSolo: "{n} 人独号",
         sharePeople: "{n} 人拼车",
+        seatLabel: "购买席位",
+        seatFraction: "{n}/{capacity} 席",
         deviceLabel: "设备数",
         deviceUnit: "{n} 台",
         durationLabel: "有效期",

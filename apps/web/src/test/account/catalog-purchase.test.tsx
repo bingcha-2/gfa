@@ -7,8 +7,8 @@
  * selection exists; switching lines swaps the panel.
  */
 
-import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 
 import { CatalogPurchase } from "@/components/account/catalog-purchase";
 import type { CatalogConfig } from "@/lib/account/catalog-pricing";
@@ -47,6 +47,35 @@ const CATALOG: CatalogConfig = {
 function total() {
   return screen.getByTestId("catalog-total").textContent;
 }
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function createdOrder() {
+  return {
+    outTradeNo: "C1",
+    amountCents: 29900,
+    baseCents: 29900,
+    feeCents: 0,
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    payUrl: "https://pay.example/catalog",
+    qrDataUri: "data:image/png;base64,CATALOGQR",
+  };
+}
+
+function postCalls(mockFetch: ReturnType<typeof vi.fn>) {
+  return mockFetch.mock.calls.filter(
+    ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function checkoutBtn() {
   return screen.getByRole("button", { name: "去支付" });
@@ -122,9 +151,58 @@ describe("CatalogPurchase — 绑定线实时算价", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Max 20x" }));
     expect(total()).toBe("¥299");
 
-    // 共享 4 人 → 折扣 -¥70 → ¥229
-    fireEvent.click(screen.getByRole("radio", { name: "4 人拼车" }));
+    // 2/8 seats use the old 4-user price key: -¥70 → ¥229
+    fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));
     expect(total()).toBe("¥229");
+  });
+
+  it("posts shareSeats instead of legacy shareUsers when checking out", async () => {
+    const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(jsonResponse(createdOrder()));
+      }
+      return Promise.resolve(jsonResponse({ outTradeNo: "C1", status: "PENDING" }));
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<CatalogPurchase catalog={CATALOG} />);
+    fireEvent.click(screen.getByRole("button", { name: "Claude" }));
+    fireEvent.click(checkoutBtn());
+
+    await waitFor(() => expect(postCalls(mockFetch)).toHaveLength(1));
+    const body = JSON.parse((postCalls(mockFetch)[0][1] as RequestInit).body as string);
+    expect(body.selection).toMatchObject({
+      line: "bind",
+      shareSeats: 8,
+      deviceLimit: 1,
+    });
+    expect(body.selection).not.toHaveProperty("shareUsers");
+  });
+
+  it("caps seat choices and default checkout seats by catalog shareCapacity", async () => {
+    const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(jsonResponse(createdOrder()));
+      }
+      return Promise.resolve(jsonResponse({ outTradeNo: "C1", status: "PENDING" }));
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<CatalogPurchase catalog={{ ...CATALOG, shareCapacity: 4 }} />);
+    expect(screen.getByRole("radio", { name: "4/4 席" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("radio", { name: "8/4 席" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Claude" }));
+    fireEvent.click(checkoutBtn());
+
+    await waitFor(() => expect(postCalls(mockFetch)).toHaveLength(1));
+    const body = JSON.parse((postCalls(mockFetch)[0][1] as RequestInit).body as string);
+    expect(body.selection).toMatchObject({
+      line: "bind",
+      shareSeats: 4,
+      deviceLimit: 1,
+    });
+    expect(body.selection).not.toHaveProperty("shareUsers");
   });
 });
 
