@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,11 +36,19 @@ func (a *App) startup(ctx context.Context) {
 
 	// Load or initialize config
 	cfg := LoadConfig()
-	if changed, err := ensureConfigDeviceId(&cfg); err != nil {
-		Log("[app] Failed to initialize deviceId: %v", err)
-	} else if changed {
-		Log("[app] Generated new deviceId: %s", cfg.DeviceId)
-	} else {
+	updatedCfg, changed, source := applyPreferredDeviceID(cfg, cfg.UserToken == "")
+	cfg = updatedCfg
+	if changed {
+		_ = SaveConfig(cfg)
+	}
+	switch source {
+	case "machine":
+		Log("[app] Using stable machine deviceId: %s", cfg.DeviceId)
+	case "existing-session":
+		Log("[app] Loaded existing session deviceId: %s (stable machine id will apply on next login)", cfg.DeviceId)
+	case "random":
+		Log("[app] Generated fallback random deviceId: %s", cfg.DeviceId)
+	default:
 		Log("[app] Loaded existing deviceId: %s", cfg.DeviceId)
 	}
 
@@ -494,16 +501,6 @@ func (a *App) ClearStats() bool {
 	p.mu.Unlock()
 	Log("[app] Stats cleared")
 	return true
-}
-
-// helper to generate random pseudo-UUID
-func generateUUID() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		return "device-fallback-uuid"
-	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // ======================== 自动更新方法 ========================

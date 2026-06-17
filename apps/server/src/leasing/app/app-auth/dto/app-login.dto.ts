@@ -18,6 +18,11 @@ export class AppLoginDto {
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  previousDeviceId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
   deviceName?: string;
 
   @IsOptional()

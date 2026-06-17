@@ -120,6 +120,7 @@ export class AppAuthService {
     email: string;
     password: string;
     deviceId: string;
+    previousDeviceId?: string;
     deviceName?: string;
     clientVersion?: string;
     platform?: string;
@@ -139,6 +140,20 @@ export class AppAuthService {
     // being reactivated both add an active slot, so they're rejected at the
     // limit. Reject-don't-auto-kick: the client links users to the web portal
     // to free a slot.
+    if (dto.previousDeviceId && dto.previousDeviceId !== dto.deviceId) {
+      await this.prisma.device.updateMany({
+        where: {
+          customerId: customer.id,
+          deviceId: dto.previousDeviceId,
+          status: "ACTIVE"
+        },
+        data: {
+          status: "REVOKED",
+          sessionJti: null
+        }
+      });
+    }
+
     const existingDevice = await this.prisma.device.findUnique({
       where: {
         customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId }

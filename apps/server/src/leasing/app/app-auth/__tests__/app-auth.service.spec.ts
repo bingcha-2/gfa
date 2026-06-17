@@ -132,6 +132,19 @@ async function makeAppAuthService(options: {
         devices[idx] = { ...devices[idx], ...data };
         return devices[idx];
       }),
+      // Mirrors Prisma updateMany semantics for previousDeviceId migration.
+      updateMany: vi.fn(async ({ where, data }: any) => {
+        let count = 0;
+        for (let i = 0; i < devices.length; i++) {
+          const d = devices[i];
+          if (where?.customerId && d.customerId !== where.customerId) continue;
+          if (where?.deviceId && d.deviceId !== where.deviceId) continue;
+          if (where?.status && d.status !== where.status) continue;
+          devices[i] = { ...d, ...data };
+          count++;
+        }
+        return { count };
+      }),
       // Atomic upsert on @@unique(customerId, deviceId) — mirrors Prisma semantics
       upsert: vi.fn(async ({ where, create, update }: any) => {
         const idx = devices.findIndex(
@@ -281,6 +294,45 @@ describe("AppAuthService.login", () => {
     expect(r2.token).toBeDefined();
     expect(prisma.device.upsert).toHaveBeenCalledTimes(2);
     expect(devices.filter(d => d.deviceId === "device-abc")).toHaveLength(1);
+  });
+
+  it("previousDeviceId migration revokes the old active device before limit checks", async () => {
+    const oldDevice = makeDevice({
+      customerId: "cust-1",
+      deviceId: "old-random-device",
+      status: "ACTIVE",
+      sessionJti: "old-jti"
+    });
+    const { appAuthService, prisma, devices } = await makeAppAuthService({
+      devices: [oldDevice]
+    });
+
+    const result = await appAuthService.login({
+      email: "user@example.com",
+      password: "password123",
+      deviceId: "stable-machine-device",
+      previousDeviceId: "old-random-device"
+    });
+
+    expect(result.token).toBeDefined();
+    expect(prisma.device.updateMany).toHaveBeenCalledWith({
+      where: {
+        customerId: "cust-1",
+        deviceId: "old-random-device",
+        status: "ACTIVE"
+      },
+      data: {
+        status: "REVOKED",
+        sessionJti: null
+      }
+    });
+    expect(devices.find(d => d.deviceId === "old-random-device")).toMatchObject({
+      status: "REVOKED",
+      sessionJti: null
+    });
+    expect(devices.find(d => d.deviceId === "stable-machine-device")).toMatchObject({
+      status: "ACTIVE"
+    });
   });
 
   it("REVOKED device re-login reactivates to ACTIVE", async () => {

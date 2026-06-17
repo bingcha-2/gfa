@@ -139,6 +139,62 @@ func TestUserLogin_Success(t *testing.T) {
 
 // ── TestUserLogin_DeviceLimitExceeded ────────────────────────────────────────
 
+func TestUserLogin_SendsPreviousDeviceIDWhenMachineIDMigrates(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	t.Cleanup(func() {
+		readMachineID = readStableMachineID
+		GetLeaser().StopAutoLease()
+		GetLeaser().ResetEntitlements()
+		GetHTTPProxy().Stop()
+		GetMitmManager().StopProxy()
+		GetMitmManager().UpdateConfig("", "", "")
+	})
+
+	readMachineID = func() (machineIDSource, error) {
+		return machineIDSource{OS: "windows", Name: "MachineGuid", Value: "machine-login"}, nil
+	}
+	oldDeviceID := "old-random-device"
+	if err := SaveConfig(Config{DeviceId: oldDeviceID, ProxyPort: DefaultProxyPort}); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	expiresAt := time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	loginResp := map[string]interface{}{
+		"token":          "tok-abc123",
+		"tokenExpiresAt": expiresAt,
+		"account": map[string]interface{}{
+			"email":       "user@example.com",
+			"displayName": "Test User",
+		},
+		"subscriptions": []interface{}{},
+	}
+
+	var capturedBody map[string]interface{}
+	srv := newLoginServer(t, loginResp, http.StatusOK, func(b map[string]interface{}) {
+		capturedBody = b
+	})
+	defer srv.Close()
+
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.UserLogin("user@example.com", "secret-pass"); err != nil {
+		t.Fatalf("UserLogin returned error: %v", err)
+	}
+
+	wantDeviceID := deviceIDFromMachineSource("windows", "MachineGuid", "machine-login")
+	if capturedBody["deviceId"] != wantDeviceID {
+		t.Fatalf("deviceId = %v, want %s", capturedBody["deviceId"], wantDeviceID)
+	}
+	if capturedBody["previousDeviceId"] != oldDeviceID {
+		t.Fatalf("previousDeviceId = %v, want %s", capturedBody["previousDeviceId"], oldDeviceID)
+	}
+}
+
 func TestUserLogin_DeviceLimitExceeded(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir

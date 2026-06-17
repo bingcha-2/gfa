@@ -22,12 +22,13 @@ var authBaseURL = getEnvOrDefault("BCAI_AUTH_BASE", buildAPIBase+"/api")
 
 // loginRequest is the payload for POST /app/login.
 type loginRequest struct {
-	Email         string `json:"email"`
-	Password      string `json:"password"`
-	DeviceId      string `json:"deviceId"`
-	DeviceName    string `json:"deviceName"`
-	ClientVersion string `json:"clientVersion"`
-	Platform      string `json:"platform"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	DeviceId         string `json:"deviceId"`
+	PreviousDeviceId string `json:"previousDeviceId,omitempty"`
+	DeviceName       string `json:"deviceName"`
+	ClientVersion    string `json:"clientVersion"`
+	Platform         string `json:"platform"`
 }
 
 // loginResponse mirrors the success shape of POST /app/login.
@@ -235,10 +236,12 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 	defer a.lock.Unlock()
 
 	cfg := LoadConfig()
-	if changed, err := ensureConfigDeviceId(&cfg); err != nil {
-		return nil, fmt.Errorf("ensure device id: %w", err)
-	} else if changed {
-		Log("[auth] Generated deviceId before login: %s", cfg.DeviceId)
+	previousDeviceID := cfg.DeviceId
+	var deviceIDSource string
+	var deviceIDChanged bool
+	cfg, deviceIDChanged, deviceIDSource = applyPreferredDeviceID(cfg, true)
+	if deviceIDChanged {
+		Log("[auth] Migrated deviceId before login via %s: %s", deviceIDSource, cfg.DeviceId)
 	}
 
 	deviceName := cfg.DeviceName
@@ -253,6 +256,9 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 		DeviceName:    deviceName,
 		ClientVersion: AppVersion,
 		Platform:      goruntime.GOOS,
+	}
+	if deviceIDChanged && deviceIDSource == "machine" && previousDeviceID != "" && previousDeviceID != cfg.DeviceId {
+		req.PreviousDeviceId = previousDeviceID
 	}
 
 	Log("[auth] Logging in: email=%s deviceId=%s", email, cfg.DeviceId)

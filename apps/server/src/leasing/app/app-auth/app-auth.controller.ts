@@ -46,6 +46,7 @@ export class AppAuthController {
       email: dto.email,
       password: dto.password,
       deviceId: dto.deviceId,
+      previousDeviceId: dto.previousDeviceId,
       deviceName: dto.deviceName,
       clientVersion: dto.clientVersion,
       platform: dto.platform,
