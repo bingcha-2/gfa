@@ -1,0 +1,75 @@
+{
+  "exportedAt": "2026-06-18T11:13:56.452Z",
+  "databasePath": "D:/GFA-per/prisma/dev.db",
+  "tables": {
+    "Order": {
+      "count": 1453,
+      "files": {
+        "json": "D:\\GFA-per\\exports\\orders-2026-06-18.json",
+        "csv": "D:\\GFA-per\\exports\\orders-2026-06-18.csv"
+      },
+      "columns": [
+        "id",
+        "orderNo",
+        "orderType",
+        "redeemCodeId",
+        "userEmail",
+        "familyGroupId",
+        "status",
+        "resultMessage",
+        "assignedAt",
+        "expiresAt",
+        "expiredAt",
+        "swapCount",
+        "lastSwapAt",
+        "createdAt",
+        "updatedAt"
+      ],
+      "byStatus": {
+        "INVITE_SENT": 231,
+        "TASK_QUEUED": 24,
+        "COMPLETED": 323,
+        "MANUAL_REVIEW": 20,
+        "EXPIRED": 734,
+        "FAILED": 121
+      },
+      "byOrderType": {
+        "JOIN": 780,
+        "SWAP": 436,
+        "SUBSCRIPTION": 237
+      }
+    },
+    "PlanOrder": {
+      "count": 28,
+      "files": {
+        "json": "D:\\GFA-per\\exports\\plan-orders-2026-06-18.json",
+        "csv": "D:\\GFA-per\\exports\\plan-orders-2026-06-18.csv"
+      },
+      "columns": [
+        "id",
+        "customerId",
+        "subscriptionId",
+        "amountCents",
+        "payChannel",
+        "outTradeNo",
+        "epayTradeNo",
+        "status",
+        "notifyRaw",
+        "paidAt",
+        "referrerId",
+        "catalogVersion",
+        "selection",
+        "config",
+        "expiresAt",
+        "createdAt",
+        "updatedAt"
+      ],
+      "byStatus": {
+        "PAID": 28
+      },
+      "byPayChannel": {
+        "GRANT": 28
+      }
+    }
+  }
+}
