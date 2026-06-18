@@ -7,6 +7,7 @@ export namespace main {
 	    deviceLimit: number;
 	    priority: number;
 	    products: string[];
+	    levels: Record<string, string>;
 	    remainFraction?: number;
 	
 	    static createFrom(source: any = {}) {
@@ -21,6 +22,7 @@ export namespace main {
 	        this.deviceLimit = source["deviceLimit"];
 	        this.priority = source["priority"];
 	        this.products = source["products"];
+	        this.levels = source["levels"];
 	        this.remainFraction = source["remainFraction"];
 	    }
 	}
