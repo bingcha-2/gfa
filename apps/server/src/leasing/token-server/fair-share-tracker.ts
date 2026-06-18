@@ -78,6 +78,14 @@ interface BucketTracker {
   attributed: Map<string, number>;
   /** 低水位:窗口内单调不增的上游剩余 fraction(reset 时设为 fresh,默认 1)。 */
   lastFraction: number;
+  /**
+   * 基线是否已确立。冷建 tracker(getOrCreate)时 lastFraction=1.0 只是占位,window 中途
+   * 冷启动(如迁移清空 FairShareWindow 后重启)首个上游快照若直接按 max(0,1−fraction) 归并,
+   * 会把「冷启动前别人已烧掉的账号额」整段砸给当前活跃卡(周窗口尤甚:账号常已烧到个位数 →
+   * 首个活跃卡被砸 ~94% → 血条秒归零)。故首个有效快照应「采纳」其 fraction 为低水位、不归因
+   * (QUOTA-REDESIGN §9/§344:冷启动短暂从宽,reset 自愈)。reset/load 恢复出的基线是真值 → true。
+   */
+  primed: boolean;
   /** 锁定份额态;reset 时算定,null 表示尚未算(懒算兜底)。 */
   locked: LockedShare | null;
 }
@@ -364,6 +372,14 @@ export class FairShareTracker {
     if (!(fraction >= 0)) return;
     // 首个快照:确保 locked 已算(用当前在册绑定 = 本窗口 participants)。
     this.ensureLocked(accountId, tracker);
+    // 3a) 冷启动采纳基线:tracker 是冷建的、还没见过任何真实快照(primed=false)→ 把当前 fraction
+    //     直接当作低水位,不把「冷启动前」的账号消耗(1−fraction)归因给当前活跃卡(见 BucketTracker.primed)。
+    if (!tracker.primed) {
+      tracker.primed = true;
+      tracker.lastFraction = clamp01(fraction);
+      this.dirty = true;
+      return;
+    }
     // 4) 同窗口归并:Δ账号 = max(0, 低水位 − fraction);回升 → 0(不重复计数)。
     const delta = Math.max(0, tracker.lastFraction - fraction);
     if (delta > 0) {
@@ -389,6 +405,7 @@ export class FairShareTracker {
     tracker.perCard.clear();
     tracker.attributed.clear();
     tracker.lastFraction = clamp01(freshFraction);
+    tracker.primed = true; // reset 出来的基线是真值(账号刚刷新 ≈1 或自计时归 1),非占位。
     tracker.locked = this.computeLocked(accountId);
     this.dirty = true;
   }
@@ -448,7 +465,8 @@ export class FairShareTracker {
         windowStart: this.nowFn(),
         perCard: new Map(),
         attributed: new Map(),
-        lastFraction: 1.0,
+        lastFraction: 1.0, // 占位:基线由首个有效快照采纳(primed=false,见 applySnapshot 3a)。
+        primed: false,
         locked: null,
       };
       bucketMap.set(bucket, tracker);
@@ -536,6 +554,8 @@ export class FairShareTracker {
         perCard,
         attributed,
         lastFraction: expired ? 1.0 : lf,
+        // 恢复出的基线是真值:未过期 → 持久化的低水位;过期 → 真·reset 归 1。均非冷建占位。
+        primed: true,
         locked,
       });
     }

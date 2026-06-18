@@ -251,6 +251,45 @@ describe("A. 基础分账(分段累加)", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// 冷启动:首个快照(无 1.0 基线)直接采纳为低水位,不把窗口前消耗砸给当前用户
+// (回归:迁移清空 FairShareWindow 后,周窗口账号已烧到 6% → 首个活跃卡被砸 94% → 血条归零)
+// ────────────────────────────────────────────────────────────────────────────
+describe("冷启动首快照采纳基线(§9/§344)", () => {
+  it("CS1 冷建 tracker 首个快照 fraction=0.06 → 采纳为低水位,不归因任何卡", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 8 } }));
+    // 没有先喂 1.0:模拟迁移清表后,服务端首次见到的是账号已烧到 6% 的现状
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.06);
+    // 窗口前(冷启动前)被别人烧掉的 94% 不该砸给 O1
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1 ?? 0).toBeCloseTo(0, 6);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.06, 6);
+    // O1 份额完好(e=1/8),血条不为 0
+    expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(1, 6);
+  });
+
+  it("CS2 采纳基线后,后续真实下降照常按段归因", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }], }, seats: { 1: 1 } }));
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.5); // 冷启动:采纳 0.5 为基线,T=0
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1 ?? 0).toBeCloseTo(0, 6);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.3); // Δ=0.2 → 照常归因 0.2
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.2, 6);
+  });
+
+  it("CS3 首快照 fraction 未知(-1)不采纳,等首个有效快照才定基线", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, -1); // 未知:不采纳
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.4); // 首个有效快照:采纳 0.4,不归因
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1 ?? 0).toBeCloseTo(0, 6);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.4, 6);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // §15.1 低水位:fraction 回升/乱序不重复计数
 // ────────────────────────────────────────────────────────────────────────────
 describe("§15.1 低水位(fraction 非单调)", () => {
