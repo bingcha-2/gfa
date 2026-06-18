@@ -290,8 +290,10 @@ export function DashboardPage() {
                                     <NestedShareBar
                                       label={myBar.label}
                                       myFraction={myBar.fraction}
-                                      share={myShares[section.bucket] ?? 1}
                                       accountFraction={acctBar?.fraction ?? -1}
+                                      shareSeats={cardShareSeats}
+                                      shareCapacity={cardShareCapacity}
+                                      exclusive={cardExclusive}
                                       resetMs={myBar.resetMs}
                                     />
                                   </div>

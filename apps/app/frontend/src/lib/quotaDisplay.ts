@@ -66,6 +66,87 @@ export type BuildQuotaSectionsInput = CardScopeQuotaInput & {
  * 是否独享卡。后端现在下发显式 exclusive(权威);提供时以它为准,
  * 否则回退老的 weight>=capacity 推断(兼容旧服务端/旧缓存)。
  */
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  if (n < 0) return 0
+  if (n > 1) return 1
+  return n
+}
+
+export type NestedBarDisplay = {
+  /** 我的总剩余(占整号 0~1):min((X/Y)×myFraction, 账号);-1=未知。恒 ≤ accountRemain。 */
+  myTotalRemain: number
+  /** 账号总剩余(0~1,真实不缩放);-1=未知。 */
+  accountRemain: number
+  /** 我那份剩比例(0~1,健康色用)= 服务端 myFraction;-1=未知。 */
+  seatFill: number
+  /** 名义席位占整号(X/Y;独享=1)—— 遮超卖,真实份额 w/D 不外显。 */
+  nominalShare: number
+  exclusive: boolean
+}
+
+/**
+ * 客户端遮超卖渲染(纯展示,服务端值保持真实):
+ * 把「我那一席」按【没超卖】的名义份额 X/Y(而非真实 w/D)放大显示,再按账号余量封顶 ——
+ *   我的总剩余 = min( (X/Y) × myFraction , 账号 )
+ * - 名义份额遮掉超卖(看着像干净的 1/Y 席,而非被切薄的 1/D)。
+ * - myFraction 已含服务端等比例缩放,用了/账号低都会让它降 → 血条等比例降。
+ * - 封顶保证「我的总剩余 ≤ 账号」永不穿帮(名义 X/Y 比真实大,独占账号剩余时会顶破,故封顶)。
+ * - 账号本身真实显示,不缩放(它是真池子;放大会 >100%)。
+ */
+export function nestedBarDisplay(input: {
+  myFraction: number
+  accountFraction: number
+  shareSeats: number
+  shareCapacity: number
+  exclusive?: boolean
+}): NestedBarDisplay {
+  const exclusive = input.exclusive === true
+  const nominalShare = exclusive
+    ? 1
+    : input.shareCapacity > 0
+      ? clamp01(input.shareSeats / input.shareCapacity)
+      : 1 // 容量缺失守卫:退化成「我=账号封顶」,不除零
+  const myKnown = input.myFraction >= 0
+  const acctKnown = input.accountFraction >= 0
+  const raw = myKnown ? clamp01(nominalShare * input.myFraction) : -1
+  const myTotalRemain = myKnown && acctKnown ? Math.min(raw, input.accountFraction) : raw
+  return {
+    myTotalRemain,
+    accountRemain: input.accountFraction,
+    seatFill: input.myFraction,
+    nominalShare,
+    exclusive,
+  }
+}
+
+/**
+ * 把份数(0~1)格式化成百分比文本,保留 1 位小数、整数去掉「.0」。
+ * 避免 Math.round 把 12.5% 抹成 13%(份额常是 1/8=12.5%、1/4=25% 这种)。
+ */
+export function formatPercent(fraction: number): string {
+  const rounded = Math.round(fraction * 1000) / 10 // 1 位小数
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
+
+/**
+ * 把恢复剩余毫秒格式化成时长串(不含 i18n 包装)。≥24h 显示「天」(周窗口 167h → 6天23h),
+ * 否则「时分」(4h 56m / 5h / 30m)。≤0 返回空串(调用方按「已恢复」处理)。
+ */
+export function formatResetDuration(ms: number): string {
+  const totalMin = Math.ceil(ms / 60000)
+  if (totalMin <= 0) return ''
+  const totalHours = Math.floor(totalMin / 60)
+  if (totalHours >= 24) {
+    const d = Math.floor(totalHours / 24)
+    const h = totalHours % 24
+    return h > 0 ? `${d}天${h}h` : `${d}天`
+  }
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`
+}
+
 export function isExclusiveCard(cardWeight: number, cardShareCapacity: number, explicit?: boolean): boolean {
   if (explicit !== undefined) return explicit === true
   return cardShareCapacity > 0 && cardWeight >= cardShareCapacity
