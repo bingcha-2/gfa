@@ -263,9 +263,10 @@ describe("冷启动首快照采纳基线(§9/§344)", () => {
     // 窗口前(冷启动前)被别人烧掉的 94% 不该砸给 O1
     expect(t.getBucketStateForTesting(1, BK)?.attributed.O1 ?? 0).toBeCloseTo(0, 6);
     expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.06, 6);
-    // O1 份额完好(e=1/8),血条不为 0
+    // O1 没被归因(T=0)→ 不拦;但血条按账号低水位封顶:
+    // e=1/8=0.125 > 账号 0.06 → 我那份剩 = min(0.125,0.06)/0.125 = 0.48(不是 1,见账号封顶测试)
     expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
-    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(1, 6);
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(0.48, 6);
   });
 
   it("CS2 采纳基线后,后续真实下降照常按段归因", () => {
@@ -278,6 +279,18 @@ describe("冷启动首快照采纳基线(§9/§344)", () => {
     expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.2, 6);
   });
 
+  it("CS4 冷启动对齐上游窗口:首个周快照带 resetAt → windowStart 采纳真实起点(可后移),倒计时对齐上游而非 now+7d", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 8 }, trackWeekly: true }));
+    const upstreamWeeklyReset = T + 46 * 60 * 60 * 1000; // 上游周窗口还剩 46h(后台 1天22时)
+    t.applyWeeklyAccountQuotaSnapshot(1, BK, 0.06, upstreamWeeklyReset);
+    const wk = t.getBucketStateForTesting(1, weeklyBucketKey(BK));
+    // windowStart 应采纳 = resetAt − 7d(在过去 5 天),而非冷启动猜测的 now
+    expect(wk?.windowStart).toBeCloseTo(upstreamWeeklyReset - WEEKLY_MS, -3);
+    // 血条回传的 resetAt 对齐上游(46h 后),不是 now+7d
+    const q = t.getCardWeeklyQuotaFractions(1, "O1")[BK];
+    expect(q.resetAt).toBeCloseTo(upstreamWeeklyReset, -3);
+  });
+
   it("CS3 首快照 fraction 未知(-1)不采纳,等首个有效快照才定基线", () => {
     const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
     use(t, 1, "O1", 100);
@@ -286,6 +299,139 @@ describe("冷启动首快照采纳基线(§9/§344)", () => {
     t.applyAccountQuotaSnapshot(1, BK, 0.4); // 首个有效快照:采纳 0.4,不归因
     expect(t.getBucketStateForTesting(1, BK)?.attributed.O1 ?? 0).toBeCloseTo(0, 6);
     expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.4, 6);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 账号余量封顶:血条「我的总剩余」绝不超过账号实际余量(回归:绿条戳出灰条)
+// 未认领消耗(冷启动前消耗 / 轮换卡 / 未认领段)把账号烧低 → (e_i−T_i) > 账号余量 →
+// 旧 bloodBar 报「我那份剩 100% / 我的总剩余 10%」而账号只剩 6%,物理不可能。
+// ────────────────────────────────────────────────────────────────────────────
+describe("账号余量封顶(我的总剩余 ≤ 账号余量)", () => {
+  it("AC1 账号烧到 6%、份额 10%、T=0 → 我那份剩封顶 60%,我的总剩余=6% 不戳穿账号", () => {
+    // N=10 → e=w/D=1/10=10%(对齐截图「占整号 10%」);账号被非分账用量烧到 6%
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 10 } }));
+    use(t, 1, "O1", 1); // 建 tracker
+    t.applyAccountQuotaSnapshot(1, BK, 0.06); // 冷启动采纳基线 → lastFraction=0.06, T_O1=0
+    const q = t.getCardQuotaFractions(1, "O1")[BK];
+    expect(q.share).toBeCloseTo(0.1, 6); // 占整号 10%
+    // 核心不变量:我的总剩余(share × fraction)≤ 账号余量(lastFraction)
+    expect(q.share * q.fraction).toBeLessThanOrEqual(0.06 + 1e-9);
+    // 具体:我那份剩 = min(0.1, 0.06)/0.1 = 60%
+    expect(q.fraction).toBeCloseTo(0.6, 6);
+  });
+
+  it("AC2 账号健康(余量 > 份额)→ 不封顶,血条照旧", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 10 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // 账号满
+    const q = t.getCardQuotaFractions(1, "O1")[BK];
+    expect(q.fraction).toBeCloseTo(1, 6); // min(0.1,1.0)/0.1 = 1.0,不受影响
+  });
+
+  it("AC3 账号见底(0%)→ 我那份剩归 0", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 10 } }));
+    use(t, 1, "O1", 1);
+    t.applyAccountQuotaSnapshot(1, BK, 0); // 账号干涸
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(0, 6);
+  });
+
+  it("AC4 超卖多人(10份卖10人/账号6%):等比例缩放,各人我的总剩余=0.6%,加总=账号6%", () => {
+    // 10 份卖给 10 人(各 w=1),N=8 → D=max(8,10)=10,e=1/10=10%;账号被未认领消耗烧到 6%
+    const bound = Array.from({ length: 10 }, (_, i) => ({ cardId: `O${i}`, weight: 1 }));
+    const t = track(makeTracker({ now: () => T, bound: { 1: bound }, seats: { 1: 8 } }));
+    bound.forEach((b) => use(t, 1, b.cardId, 1)); // 建 tracker、各有用量
+    t.applyAccountQuotaSnapshot(1, BK, 0.06); // 冷启动采纳基线 → T_i 全 0
+    let sumMine = 0;
+    for (const b of bound) {
+      const q = t.getCardQuotaFractions(1, b.cardId)[BK];
+      const mine = q.share * q.fraction; // 我的总剩余(对整号)
+      sumMine += mine;
+      expect(mine).toBeCloseTo(0.006, 6); // 各人 0.6%,不是 6%
+    }
+    expect(sumMine).toBeCloseTo(0.06, 6); // 加总恰好 = 账号 6%(不再超分)
+  });
+
+  it("AC5 单人时等比例退化成 min 封顶(e=50%、账号30% → 我的总剩余=30%)", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] }, seats: { 1: 2 } }));
+    use(t, 1, "O1", 1);
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // 先满,锁 e=0.5
+    // O2 烧光自己(T_O2=0.5),O1 没用 → 仅 O1 一人还有剩;账号被烧到 0.3
+    use(t, 1, "O2", 1000);
+    t.applyAccountQuotaSnapshot(1, BK, 0.3);
+    const q = t.getCardQuotaFractions(1, "O1")[BK];
+    // 仅 O1 有剩:ΣRem = 0.5;scale = 0.3/0.5 = 0.6 → 我的总剩余 = 0.5×0.6 = 0.3 = 账号
+    expect(q.share * q.fraction).toBeCloseTo(0.3, 6);
+  });
+
+  it("AC6 干净运行=隔离:同号他人在份额内用,我的血条纹丝不动(系数恒=1)", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] }, seats: { 1: 2 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // 采纳基线、锁 e=0.5
+    use(t, 1, "O2", 1000);
+    t.applyAccountQuotaSnapshot(1, BK, 0.7); // O2 在份额内烧 0.3,全归 O2;账号 A=0.7
+    // 归账干净 → A = ΣRem = 0.7 → 系数=1 → O1 不受 O2 影响(隔离)
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(1, 6);
+    expect(t.getCardQuotaFractions(1, "O2")[BK].fraction).toBeCloseTo(0.4, 6);
+    const o1 = t.getCardQuotaFractions(1, "O1")[BK];
+    const o2 = t.getCardQuotaFractions(1, "O2")[BK];
+    expect(o1.share * o1.fraction + o2.share * o2.fraction).toBeCloseTo(0.7, 6); // 加总=账号
+  });
+
+  it("AC7 他人冲破份额烧穿账号:超额者归0、守规者按剩余等比例吸收,加总=账号", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] }, seats: { 1: 2 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O2", 1000);
+    t.applyAccountQuotaSnapshot(1, BK, 0.3); // O2 一笔冲过头:T_O2=0.7 > e=0.5;账号 A=0.3
+    // ΣRem = 0.5(O1) + 0(O2 耗尽,不稀释) = 0.5;系数 = 0.3/0.5 = 0.6
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(0.6, 6); // O1 100%→60%
+    expect(t.getCardQuotaFractions(1, "O2")[BK].fraction).toBeCloseTo(0, 6); // O2 归 0
+    const o1 = t.getCardQuotaFractions(1, "O1")[BK];
+    expect(o1.share * o1.fraction).toBeCloseTo(0.3, 6); // O1 我的总剩余 = 0.3 = 账号(独占剩余)
+  });
+
+  it("AC8 加权份额按剩余等比例缩放(O1 w=2 / O2 w=1, 账号30%)", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 2 }, { cardId: "O2", weight: 1 }] }, seats: { 1: 3 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 0.3); // 冷启动采纳:T=0,e_O1=2/3,e_O2=1/3,A=0.3,ΣRem=1
+    const o1 = t.getCardQuotaFractions(1, "O1")[BK];
+    const o2 = t.getCardQuotaFractions(1, "O2")[BK];
+    expect(o1.share * o1.fraction).toBeCloseTo(0.2, 6); // 2/3 × 0.3
+    expect(o2.share * o2.fraction).toBeCloseTo(0.1, 6); // 1/3 × 0.3
+    expect(o1.share * o1.fraction + o2.share * o2.fraction).toBeCloseTo(0.3, 6); // 加总=账号
+  });
+
+  it("AC9 欠卖(有预留)账号满:不缩放,各人满份额,加总=Σ份额 < 账号", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] }, seats: { 1: 8 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // D=8,e=1/8 各,reserve=0.75,ΣRem=0.25 < A=1 → 系数=1
+    const o1 = t.getCardQuotaFractions(1, "O1")[BK];
+    expect(o1.fraction).toBeCloseTo(1, 6); // 满份额
+    expect(o1.share).toBeCloseTo(0.125, 6);
+    expect(o1.share * o1.fraction).toBeCloseTo(0.125, 6); // 我的总剩余=份额,无缩放
+  });
+
+  it("AC10 不变量:任意时刻 各人我的总剩余 ≤ 账号 且 Σ ≤ 账号(加权混合用量序列)", () => {
+    const bound = Array.from({ length: 4 }, (_, i) => ({ cardId: `O${i}`, weight: i + 1 })); // w=1,2,3,4
+    const t = track(makeTracker({ now: () => T, bound: { 1: bound }, seats: { 1: 4 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // D=max(4,10)=10,Σe=1
+    const checkInvariant = (A: number) => {
+      let sum = 0;
+      for (const b of bound) {
+        const q = t.getCardQuotaFractions(1, b.cardId)[BK];
+        const mine = q.share * q.fraction;
+        expect(mine).toBeLessThanOrEqual(A + 1e-9); // 各人 ≤ 账号
+        expect(q.fraction).toBeGreaterThanOrEqual(0);
+        expect(q.fraction).toBeLessThanOrEqual(1 + 1e-9);
+        sum += mine;
+      }
+      expect(sum).toBeLessThanOrEqual(A + 1e-9); // 加总 ≤ 账号
+    };
+    use(t, 1, "O0", 500);
+    use(t, 1, "O3", 1500);
+    t.applyAccountQuotaSnapshot(1, BK, 0.5);
+    checkInvariant(0.5);
+    use(t, 1, "O1", 99999); // O1 猛烧、冲破份额
+    t.applyAccountQuotaSnapshot(1, BK, 0.1);
+    checkInvariant(0.1);
+    t.applyAccountQuotaSnapshot(1, BK, 0.02); // 账号继续烧低(未认领)
+    checkInvariant(0.02);
   });
 });
 

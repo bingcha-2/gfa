@@ -285,12 +285,40 @@ export class FairShareTracker {
     return out;
   }
 
-  /** 自份额剩余血条 clamp((e_i − T_i)/e_i, 0, 1);e_i≤0 → 0(空且拦)。只读,绝不领预留。 */
+  /**
+   * 本窗口所有「持份卡」(participants ∪ 已领预留新卡)的剩余之和 Σ(e_j − T_j)。
+   * 供 bloodBar 等比例缩放——只读,绝不领预留。
+   */
+  private sumRemaining(accountId: number, tracker: BucketTracker): number {
+    const locked = this.ensureLocked(accountId, tracker);
+    const sharers = new Set<string>([...locked.participants, ...locked.grantedReserve.keys()]);
+    let sum = 0;
+    for (const card of sharers) {
+      const e = this.shareFor(accountId, tracker, card);
+      const t = tracker.attributed.get(card) || 0;
+      if (e > t) sum += e - t;
+    }
+    return sum;
+  }
+
+  /**
+   * 自份额剩余血条:(e_i − T_i)/e_i,再按账号余量【等比例】缩放,使各人「我的总剩余」之和不超账号。
+   * 未认领消耗(冷启动前消耗 / 轮换·preferred-dynamic 等不进分账的用量 / 未认领段)会把账号烧低而不抬 T_i,
+   * 此时 Σ(e_j−T_j) > 账号实际余量。各人若都按裸 (e−T) 报,就会出现「我的 > 账号」或「各人加总 > 账号」
+   * 的不可能态(超卖号尤甚:10 份卖 10 人、账号剩 6% 时,裸值各人 10%、加总 100% ≫ 6%)。
+   * 缩放系数 scale = min(1, 账号余量 / Σ所有人剩余):
+   *   我的总剩余 = e_i × bloodBar = (e_i−T_i)×scale ≤ 账号,且 Σ = min(Σ, 账号) ≤ 账号 —— 谁都不超分。
+   * 账号够分(Σ ≤ 账号)→ scale=1,血条照旧;只有 1 人有剩时退化成 min(e_i−T_i, 账号)。
+   * e_i≤0 → 0(空且拦)。
+   */
   private bloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
     const e = this.shareFor(accountId, tracker, cardId);
     if (e <= 0) return 0;
     const t = tracker.attributed.get(cardId) || 0;
-    return clamp01((e - t) / e);
+    const mine = Math.max(0, e - t);
+    const sumRem = this.sumRemaining(accountId, tracker);
+    const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
+    return clamp01((mine * scale) / e);
   }
 
   /** 单窗口(5h 或周)份额判定。 */
@@ -377,6 +405,13 @@ export class FairShareTracker {
     if (!tracker.primed) {
       tracker.primed = true;
       tracker.lastFraction = clamp01(fraction);
+      // 冷启动对齐上游窗口:首个快照带上游 resetAt 时,采纳真实窗口起点(即便在过去)。
+      // 冷窗口的 windowStart 只是 getOrCreate/自计时的猜测(now);下方 forward-only reset 规则
+      // 只认前移,会拒绝把它后移到真实起点 → 周窗口要等下个上游 reset(最多 7 天)才对齐,
+      // 倒计时错显成 now+7d 而非真实剩余(5h 因每 5h 自对齐看不出,周窗口暴露)。
+      if (Number.isFinite(resetAtMs) && resetAtMs > 0) {
+        tracker.windowStart = resetAtMs - tracker.windowMs;
+      }
       this.dirty = true;
       return;
     }

@@ -180,9 +180,9 @@ describe("RemoteAnthropicService", () => {
     // 新模型只信上游剩余 fraction:5h/周快照各把「低水位」喂进对应窗口。
     expect(short?.lastFraction).toBeCloseTo(0.9, 5);
     expect(weekly?.lastFraction).toBeCloseTo(0.5, 5);
-    // windowStart 只随上游 resetAt【前移】对齐(本例 reset 在当前窗口之内,不前移)→ 留在创建时刻。
-    expect(short?.windowStart).toBe(currentTime);
-    expect(weekly?.windowStart).toBe(currentTime);
+    // 冷启动首快照即对齐上游窗口:windowStart = 上游 resetAt − 窗口长度(可后移,见 CS4)→ 倒计时对齐上游真实剩余。
+    expect(short?.windowStart).toBe(currentTime + 4 * 60 * 60 * 1000 - 5 * 60 * 60 * 1000); // reset 在 +4h → 起点 −1h
+    expect(weekly?.windowStart).toBe(currentTime + 4 * 24 * 60 * 60 * 1000 - 7 * 24 * 60 * 60 * 1000); // reset 在 +4d → 起点 −3d
   });
 
   it("attributes a weekly account-consumption segment into the bound card's T_i", () => {
@@ -202,6 +202,8 @@ describe("RemoteAnthropicService", () => {
     const service = makeService();
     const bucket = "anthropic-claude";
 
+    // 首个快照先确立基线(冷启动采纳为低水位,不归账);随后真实下降才按段归账。
+    service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 1.0, 0);
     service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
     service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 0.5, 0);
 
@@ -228,8 +230,10 @@ describe("RemoteAnthropicService", () => {
     const service = makeService();
     const bucket = "anthropic-claude";
 
-    // 记一段大用量后,5h/周快照各跌到 0.5 → Δ账号 0.5 全归这张唯一参与卡的 T_i,
-    // 远超其保证份额 e_i = w/D(1/max(N,Σw)) → 下次租号即被公平限额拦(429)。
+    // 首个快照先确立基线(冷启动采纳,不归账);随后记一段大用量、5h/周各跌到 0.5 →
+    // Δ账号 0.5 全归这张唯一参与卡的 T_i,远超其保证份额 e_i = w/D(1/max(N,Σw)) → 租号即被拦(429)。
+    service.fairShareTracker?.applyAccountQuotaSnapshot(21, bucket, 1.0, 0);
+    service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 1.0, 0);
     service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
     service.fairShareTracker?.applyAccountQuotaSnapshot(21, bucket, 0.5, 0);
     service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 0.5, 0);
