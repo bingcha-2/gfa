@@ -421,12 +421,19 @@ func (u *Updater) DownloadAndApply() error {
 	})
 
 	// 下载到临时目录
+	// Windows/Linux 把暂存文件放在目标 exe 所在目录，确保后续 rename 与目标同卷。
+	// 否则当 exe 装在 D: 而系统临时目录在 C: 时，跨盘 rename 会失败
+	// （"The system cannot move the file to a different disk drive"）。
+	// macOS 走 DMG 挂载流程，不依赖跨盘 rename，仍用系统临时目录。
 	tmpDir := os.TempDir()
 	ext := ".tmp"
 	if runtime.GOOS == "darwin" {
 		ext = ".dmg"
 	} else if runtime.GOOS == "windows" {
 		ext = ".exe"
+	}
+	if runtime.GOOS != "darwin" && u.exePath != "" {
+		tmpDir = filepath.Dir(u.exePath)
 	}
 	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("bcai-update-%s%s", info.Version, ext))
 	defer func() {
@@ -657,11 +664,20 @@ func (u *Updater) applyWindowsLinuxUpdate(tmpFile string, info *UpdateInfo) erro
 	}
 
 	// 2. 把下载的临时文件移到 exe 位置
+	// 正常情况下暂存文件与 exe 同卷，rename 直接成功；万一跨盘
+	// （rename 报 "different disk drive"），降级为复制+删除。
 	if err := os.Rename(tmpFile, u.exePath); err != nil {
-		// 回滚
-		_ = os.Rename(oldExe, u.exePath)
-		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("替换失败(move): %v", err)})
-		return fmt.Errorf("move new exe: %w", err)
+		if copyErr := copyFile(tmpFile, u.exePath); copyErr != nil {
+			// 回滚
+			_ = os.Rename(oldExe, u.exePath)
+			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("替换失败(move): %v", err)})
+			return fmt.Errorf("move new exe: %w (copy fallback: %v)", err, copyErr)
+		}
+		// copyFile 用 0644 写出，Linux 下需补回可执行权限
+		if runtime.GOOS == "linux" {
+			_ = os.Chmod(u.exePath, 0755)
+		}
+		_ = os.Remove(tmpFile)
 	}
 
 	Log("[updater] Update applied: v%s → v%s", AppVersion, info.Version)
