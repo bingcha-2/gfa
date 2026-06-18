@@ -109,13 +109,12 @@ function legacyHydratePushOnly(rec: any, rows: any[]) {
 async function resolve(
   store: AccessKeyStore,
   id: string,
-  opts: { modelKey?: string; product?: string; weeklyRatio?: number } = {},
+  opts: { modelKey?: string; product?: string } = {},
 ) {
   return store.resolveFromRequest(sessionReqFor(id), {}, {
     enforceLimit: true,
     modelKey: opts.modelKey ?? "claude-opus-4",
     product: opts.product ?? "anthropic",
-    ...(opts.weeklyRatio !== undefined ? { weeklyRatio: opts.weeklyRatio } : {}),
   });
 }
 
@@ -170,29 +169,6 @@ describe("漏洞复现(PRE-D2 / HEAD):重启后纯订阅卡首次请求把满额
     expect(rec.weeklyWindowStartedAt).toBe(nowVal);
   });
 
-  it("周窗 · 派生 5h×R(池子卡无显式 weeklyTokenLimit):derived 周上限也随起点丢失被清零 → 放行", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-der", key: "BK-DER", customerId: "c1", status: "active",
-      products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP }, windowMs: FIVE_H,
-      // 无 weeklyTokenLimit → 周上限派生 = 5h(CAP) × R(下方传 2)= 2000
-    } as any]);
-    const rec = store.findById("pool-der") as any;
-    // 跨两个 5h 窗:7h 前 1500 CU + 1h 前 600 CU;周共 2100 CU(> 2000)。
-    legacyHydratePushOnly(rec, [
-      { at: nowVal - 7 * HOUR, status: 200, modelKey: "claude-opus-4", bucket: "anthropic-claude", inputTokens: 0, outputTokens: 300, cachedInputTokens: 0, rawTotalTokens: 1500, totalTokens: 1500 },
-      { at: nowVal - HOUR, status: 200, modelKey: "claude-opus-4", bucket: "anthropic-claude", inputTokens: 0, outputTokens: 120, cachedInputTokens: 0, rawTotalTokens: 600, totalTokens: 600 },
-    ]);
-    expect(rec.weeklyTokenUsageEvents).toHaveLength(2);
-    expect(Number(rec.weeklyWindowStartedAt || 0)).toBe(0);
-
-    const res = await resolve(store, "pool-der", { weeklyRatio: 2 });
-
-    expect(res.limitExceeded).toBeFalsy();
-    expect(res.record?.id).toBe("pool-der");
-    expect(rec.weeklyTokenUsageEvents).toHaveLength(0);
-    expect(rec.weeklyWindowStartedAt).toBe(nowVal);
-  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -299,25 +275,4 @@ describe("修复后(POST-FIX / working tree):重启从 windowState 精准恢复�
     expect(res.error).toContain("/5h");
   });
 
-  it("周窗 · 派生 5h×R(池子卡无显式 weeklyTokenLimit):快照恢复周起点 → 周超 429(5h 未超)", async () => {
-    // 5h 当前窗只留 1h 前 600 CU(7h 前那条已出窗);周窗保留两条(7 天内),共 4300。
-    const inWindow = storedEvent({ at: nowVal - HOUR, modelKey: "claude-opus-4", bucket: "anthropic-claude", outputTokens: 120, rawTotalTokens: 600, totalTokens: 600 });
-    const older = storedEvent({ at: nowVal - 7 * HOUR, modelKey: "claude-opus-4", bucket: "anthropic-claude", outputTokens: 740, rawTotalTokens: 3700, totalTokens: 3700 });
-    const store = bootRestore(
-      { id: "pool-der", key: "BK-DER", customerId: "c1", status: "active", products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP }, windowMs: FIVE_H },
-      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - 7 * HOUR, tokenUsageEvents: [inWindow], weeklyTokenUsageEvents: [older, inWindow] },
-    );
-    const rec = store.findById("pool-der") as any;
-    expect(rec.windowStartedAt).toBe(nowVal - HOUR);
-    expect(rec.tokenUsageEvents).toHaveLength(1);
-    expect(rec.weeklyWindowStartedAt).toBe(nowVal - 7 * HOUR);
-    expect(rec.weeklyTokenUsageEvents).toHaveLength(2);
-
-    const res = await resolve(store, "pool-der", { weeklyRatio: 2 });
-    // 5h 当前窗 600 < 1000(不触 5h 闸)→ 进周闸;周 4300 ≥ 3752(=1000×3.752)→ 拦。
-    expect(res.limitExceeded).toBe(true);
-    expect(res.record).toBeNull();
-    expect(res.error).toMatch(/weekly token limit exceeded/);
-    expect(Number(res.resetMs || 0)).toBeGreaterThan(0);
-  });
 });

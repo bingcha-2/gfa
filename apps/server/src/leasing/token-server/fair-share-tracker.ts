@@ -1,102 +1,91 @@
 /**
- * fair-share-tracker.ts — Dynamic fair-share quota for bound cards.
+ * fair-share-tracker.ts — Fraction-share quota for bound cards (重构版,见 QUOTA-REDESIGN.md)。
  *
- * Cards bound to the same upstream account split its estimated budget by share
- * weight: each card gets weight/capacity of the account's total (in weighted
- * token units), where capacity is the FIXED account share capacity (4 or 8) —
- * NOT the live bound-card count.
+ * 核心模型(不再反推/学习上游 token 预算,只信上游剩余百分比 fraction):
+ *   - 每个绑定主人 i 的保证份额 e_i = w_i / D,D = max(N, Σw),窗口开始锁定。
+ *     N = 该号保底席位数(salesSeatCapacity,默认 8);Σw = 真实卖出份额。
+ *     卖 ≤ N → D=N → 保底 1/N + 预留;卖 > N(超卖)→ D=Σw → 每席切薄到 1/Σw。
+ *     因 D≥Σw → Σe = Σw/D ≤ 1 恒成立 → 账号永远够分、永不撞墙、永烧不爆。
+ *   - 归因 T_i(累计已烧账号比例,只增不减):每次 fraction 快照刷新时,把这一段账号
+ *     消耗 Δ账号 = max(0, 低水位 − fraction) 按本段各人加权用量比例分摊进各人 T_i。
+ *     lastFraction 是窗口内单调不增的「低水位」,只随真实下降前进 → fraction 噪声/乱序
+ *     回升不重复计数(QUOTA-REDESIGN §15.1)。
+ *   - 拦人:T_i ≥ e_i;血条:clamp((e_i − T_i)/e_i, 0, 1),e_i≤0 → 0(空且拦)。
+ *   - reset 只认上游 resetAt 前移(对齐上游窗口),清零 T_i/u_i 并重算锁定 D。
  *
- * Weighted tokens account for the different cost ratios of input/output/cache:
- *   weightedCost = input × W_input + output × W_output + cache × W_cache
- *
- * Budget source: the per-card budget is read at decision time from the learned
- * QuotaProfile (time-decayed weighted median), not estimated/ratcheted here.
- * This tracker only owns: window timing (aligned to upstream reset), per-card
- * usage (myUsage), and the latest upstream fraction (for ≥0.90 leniency + blood
- * bar). DEFAULT_BUDGETS is the fallback when nothing is learned yet.
+ * Weighted tokens(只当「同号主人间的分账比例」与账单,绝不进「账号还剩多少」判断):
+ *   weightedCost = netInput × W_input + output × W_output + cache × W_cache
+ *   权重派生自单一定价源 packages/shared/src/pricing.json。
  */
 
 import { QUOTA_WEIGHTS } from "@gfa/shared";
 
 import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/product-bucket";
-import { DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from "../lease-core/quota-profile-tracker";
 
-// quotaWeightFor 已迁至 product-bucket(供 token-billing 的静态封顶复用,避免
-// token-billing ↔ fair-share 循环依赖)。此处 re-export 兼容既有引用点。
+// quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
 export { quotaWeightFor };
-
-// ── Weight constants (derived from the shared pricing source) ───────────────
-
-// 键 = 模型家族(与 product-bucket.ts 的 Family / modelFamily 对齐:gemini/claude/gpt)。
-// 注意:真实桶名是「产品-家族」复合(如 anthropic-claude),查表前要先 bucketFamily() 取家族。
-// 权重派生自 @gfa/shared 的单一定价源(pricing.json),改价只改那里。
+// 权重派生自 @gfa/shared 单一定价源(pricing.json),改价只改那里。
 export { QUOTA_WEIGHTS };
+// 保留 bucketFamily re-export 供既有引用点(历史兼容)。
+export { bucketFamily };
 
-// ── Default budgets by planType (conservative, in weighted units) ────────────
-
-// 外层键 = planType(没有统一命名,三条线各抄各上游,这里按线分组覆盖全部真实取值);
-// 内层键 = 模型家族 gemini/claude/gpt(与桶的家族部分对齐,查表前先 bucketFamily() 取家族)。
-// 命中失败回落 free,所以漏一个高配档会把企业号当免费号限流。各值只是「首个 5h 窗口」的初始
-// 估计(加权 token),之后被上游 fraction 反推 + 429 实测覆盖,不必纠结精确。
-//   antigravity(Google paidTier)    : ultra / premium / standard / free
-//   codex(ChatGPT plan_type)        : pro / plus / team / enterprise / business / free
-//   anthropic(Claude org_type 映射) : max / pro / team / enterprise / ""(未知→free)
-const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
-  // —— 顶配档 ——
-  ultra:      { gemini: 5_000_000, claude: 2_000_000, gpt: 2_000_000 }, // antigravity
-  max:        { gemini: 2_000_000, claude: 2_000_000, gpt: 2_000_000 }, // claude
-  enterprise: { gemini: 2_000_000, claude: 2_000_000, gpt: 2_000_000 }, // codex / claude
-  team:       { gemini:   500_000, claude:   300_000, gpt:   300_000 }, // codex / claude
-  business:   { gemini:   500_000, claude:   300_000, gpt:   300_000 }, // codex
-  // —— 中档 ——
-  premium:    { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // antigravity
-  pro:        { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // codex / claude
-  plus:       { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // codex
-  standard:   { gemini:   100_000, claude:    50_000, gpt:    50_000 }, // antigravity
-  // —— 兜底(含 claude 空串/未知) ——
-  free:       { gemini:    50_000, claude:    20_000, gpt:    20_000 },
-};
-
-const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours(短窗口/5h)
-const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days(长窗口/周)
-/** 周默认预算 = 5h 默认预算 × 该系数(冷启动初值,之后被学到的 weekly 预算 / weeklyPercent
- *  反推 / 周 429 实测覆盖)。系数 = 全局默认 R(env BCAI_WEEKLY_RATIO_DEFAULT,默认 3.752)。 */
-const WEEKLY_BUDGET_MULTIPLIER = DEFAULT_WEEKLY_RATIO;
-/** 周窗口在内存/持久化里用「桶名 + 该后缀」作为独立 key,复用同一套 tracker 逻辑与 DB 列
- *  (无需加库表字段)。后缀编码 scope,load 时据此还原窗口长度。 */
+const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 小时
+const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 const WEEKLY_SUFFIX = "::weekly";
+
+/** 默认保底席位数 N(无 salesSeatCapacity 时回退)。 */
+const DEFAULT_SEAT_CAPACITY = 8;
+
+/** reset 对齐容差:windowStart 前移超过此值才认作上游窗口 reset。 */
+const RESET_DRIFT_MS = 60_000;
+
+/** 定时批量持久化间隔。 */
+const FLUSH_INTERVAL_MS = 30_000;
 
 /** 某桶对应的周窗口 key。 */
 export function weeklyBucketKey(bucket: string): string {
   return `${bucket}${WEEKLY_SUFFIX}`;
 }
-/** 该 key 是否是周窗口(用于求和/血条时排除,避免与 5h 双算)。 */
+/** 该 key 是否是周窗口(求和/血条时排除,避免与 5h 双算)。 */
 export function isWeeklyBucketKey(bucket: string): boolean {
   return bucket.endsWith(WEEKLY_SUFFIX);
 }
-/** 去掉周后缀,取回基础桶名(用于 family/learned-budget 查表)。 */
+/** 去掉周后缀,取回基础桶名。 */
 function baseBucketOf(bucket: string): string {
   return isWeeklyBucketKey(bucket) ? bucket.slice(0, -WEEKLY_SUFFIX.length) : bucket;
 }
 
-/** Periodic batch-write interval for FairShareWindow persistence (ms). */
-const FLUSH_INTERVAL_MS = 30_000;
-
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/** 窗口开始锁定的份额态(per account × bucket × window)。 */
+interface LockedShare {
+  /** 分母 D = max(N, Σw@reset),窗口内不变。 */
+  D: number;
+  /** reset 时刻在册的硬绑定卡集合(参与卡)。 */
+  participants: Set<string>;
+  /** 可领预留(R0 = max(0, 1 − Σw/D);窗口内新绑卡按序领取后递减)。 */
+  reserveAvail: number;
+  /** 窗口内新绑卡(不在 participants)已领到的预留份额。 */
+  grantedReserve: Map<string, number>;
+}
+
 interface BucketTracker {
-  /** 本 tracker 的窗口长度(5h 或 7d)。由 key 是否带周后缀决定。 */
   windowMs: number;
   windowStart: number;
-  perCard: Map<string, number>; // cardId → weighted tokens used
-  /** 最近一次上游剩余 fraction。仅用于 ≥0.90 leniency 与血条展示;预算来自学习档案。 */
+  /** u_i:自上次归并以来各卡新增加权用量(归并后清零)。 */
+  perCard: Map<string, number>;
+  /** T_i:本窗口累计已烧账号比例 [0,1],只增不减。 */
+  attributed: Map<string, number>;
+  /** 低水位:窗口内单调不增的上游剩余 fraction(reset 时设为 fresh,默认 1)。 */
   lastFraction: number;
+  /** 锁定份额态;reset 时算定,null 表示尚未算(懒算兜底)。 */
+  locked: LockedShare | null;
 }
 
 export interface FairShareCheck {
   allowed: boolean;
   reason?: string;
-  /** Per-card remaining fraction (0~1) for blood bar display. */
+  /** Per-card 自份额剩余 (0~1),供血条。 */
   remainingFraction?: number;
   window?: "5h" | "7d";
   bucket?: string;
@@ -106,26 +95,21 @@ export interface FairShareCheck {
 }
 
 export interface FairShareTrackerOptions {
-  /** Resolve planType for an account id. */
-  getAccountPlanType: (accountId: number) => string;
-  /** Resolve a card's share weight (1..capacity). */
+  /** 单卡份额权重 w_i(按会员等级;独占号给 w=N)。不再 clamp。 */
   getCardWeight: (cardId: string) => number;
-  /** Total share capacity per upstream account (4 or 8). */
-  accountShareCapacity: number;
-  /** Optional: retrieve a learned budget from QuotaProfileTracker.
-   *  Returns the learned 5h budget in weighted units, or 0 if unknown. */
-  getLearnedBudget?: (planType: string, bucket: string) => number;
-  /** Optional: learned **weekly** budget(加权单元),0 = 未知。仅有周窗口的线启用。 */
-  getLearnedWeeklyBudget?: (planType: string, bucket: string) => number;
-  getWeeklyRatio?: (planType: string, family: string) => number;
-  /** 是否启用「周公平份额」第二层窗口。codex/anthropic 上游有 5h+周双限额 → true;
-   *  antigravity 仅 5h(每模型)→ false(默认)。关闭时行为与历史完全一致。 */
+  /** 某号所有硬绑定主人 + 各自权重(算 Σw / participants / D)。 */
+  getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
+  /** 某号保底席位数 N(salesSeatCapacity,默认 8)。 */
+  getSeatCapacity?: (accountId: number) => number;
+  /** 该号是否被独享订阅独占。独享号:D=Σw(忽略 N 保底)→ 独享主人 e=w/Σw=1.0,吃满整号。 */
+  isExclusiveAccount?: (accountId: number) => boolean;
+  /** 是否启用「周公平份额」第二层窗口。codex/anthropic=true;antigravity 仅 5h=false。 */
   trackWeekly?: boolean;
-  /** PrismaService for FairShareWindow persistence. Omit to disable persistence. */
+  /** PrismaService for FairShareWindow persistence. 省略则禁用持久化。 */
   prisma?: any;
-  /** Provider id (antigravity | codex | anthropic) — partitions persisted rows. */
+  /** Provider id(antigravity | codex | anthropic)— 分区持久化行。 */
   provider?: string;
-  /** Injectable clock (defaults to Date.now). Keeps windows test-deterministic. */
+  /** 可注入时钟(默认 Date.now),保持窗口测试确定性。 */
   now?: () => number;
 }
 
@@ -157,9 +141,7 @@ export class FairShareTracker {
 
   // ── Public API ──────────────────────────────────────────────────────────
 
-  /** Calculate weighted token cost for a single request. `modelOrBucket` 优先传真实
-   *  modelKey(按 Claude 档位精确计价);兼容传 bucket(旧调用,gemini/gpt 不变、
-   *  Claude 桶名落 Opus)。详见 quotaWeightFor。 */
+  /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。 */
   static weightedCost(
     modelOrBucket: string,
     inputTokens: number,
@@ -167,13 +149,12 @@ export class FairShareTracker {
     cachedInputTokens: number,
   ): number {
     const w = quotaWeightFor(modelOrBucket);
-    // inputTokens 为 gross(含 cached,经 normalizeUsageToGross 归一)。取 netInput 去掉
-    // 缓存部分,避免缓存被 input 权重 + cache 权重双算(Gemini 之前 1.25x)。
+    // input 为 gross(含 cached),取 netInput 去重,避免缓存被 input+cache 双算。
     const netInput = Math.max(0, inputTokens - cachedInputTokens);
     return netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
   }
 
-  /** Record usage from a completed request. Called from reportResult. */
+  /** 记录一次完成请求的加权用量(累加进段内增量 u_i)。仅硬绑定主人(门控在 lease-service)。 */
   recordUsage(
     accountId: number,
     cardId: string,
@@ -183,77 +164,36 @@ export class FairShareTracker {
     cachedInputTokens: number,
     modelKey?: string,
   ): void {
-    // 自动补全(tab_* / flash_lite)不消耗额度:直接不计入任何窗口。
+    // 自动补全(tab_*/flash_lite)不消耗额度:不计入任何窗口。
     if (modelKey && claudeModelTier(modelKey) === "autocomplete") return;
-    // 桶名仍是 tracker 的 key(同账号 Claude 共享一个预算/窗口);权重则按真实 modelKey
-    // 取档位单价。未传 modelKey 时退回 bucket(向后兼容,与历史行为一致)。
     const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens);
     if (cost <= 0) return;
     const now = this.nowFn();
-    // 记入 5h 窗口;若启用周窗口,同一笔成本也累计到周窗口(独立 key、独立预算/reset)。
     const keys = this.trackWeekly ? [bucket, weeklyBucketKey(bucket)] : [bucket];
     for (const key of keys) {
       const tracker = this.getOrCreate(accountId, key);
-      this.ensureWindow(tracker, now);
+      this.ensureWindow(accountId, tracker, now);
       tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
     }
     this.dirty = true;
   }
 
   /**
-   * Synchronize the internal window to the upstream resetTime.
-   * Instead of self-timing a 5h window, we align to Google/Codex/Anthropic's
-   * actual window boundary so totalUsed accurately reflects the real window.
-   *
-   * @param resetTimeMs  Epoch ms of the upstream window reset.
+   * 上游 5h 快照刷新:归并这一段账号消耗进各人 T_i,并对齐窗口 reset(QUOTA-REDESIGN §4.2a)。
+   * @param fraction  上游剩余 fraction(-1 = 未知,不归并只累积 u_i)。
+   * @param resetAtMs 上游窗口 reset 时间(epoch ms,0/缺省 = 不喂入)。
    */
-  syncWindow(accountId: number, bucket: string, resetTimeMs: number): void {
-    const tracker = this.getOrCreate(accountId, bucket);
-    const windowStart = resetTimeMs - tracker.windowMs;
-    // Only reset if the window start actually changed (> 60s drift tolerance)
-    if (Math.abs(windowStart - tracker.windowStart) > 60_000) {
-      tracker.windowStart = windowStart;
-      tracker.perCard.clear();
-      // NOTE: do NOT reset lastFraction here — syncFairShareQuotaSnapshot calls
-      // updateBudgetEstimate(freshFraction) right before this, and resetting would
-      // clobber it. The fraction feed keeps lastFraction current.
-      this.dirty = true;
-    }
+  applyAccountQuotaSnapshot(accountId: number, bucket: string, fraction: number, resetAtMs = 0): void {
+    this.applySnapshot(accountId, bucket, fraction, resetAtMs);
   }
 
-  /**
-   * Expose internal tracker state for quota profile sampling.
-   * Called by LeaseService (continuous sampler + 429 backstop) to feed
-   * QuotaProfileTracker. `windowStart` lets the sampler detect window resets
-   * from the SAME source that clears perCard (avoids phantom negative consumption).
-   */
-  getTrackerState(accountId: number, bucket: string): {
-    totalUsed: number;
-    lastFraction: number;
-    windowStart: number;
-  } | null {
-    const tracker = this.trackers.get(accountId)?.get(bucket);
-    if (!tracker) return null;
-    this.ensureWindow(tracker, this.nowFn());
-    return {
-      totalUsed: this.totalWeighted(tracker),
-      lastFraction: tracker.lastFraction,
-      windowStart: tracker.windowStart,
-    };
+  /** 上游周快照刷新(no-op unless trackWeekly)。 */
+  applyWeeklyAccountQuotaSnapshot(accountId: number, bucket: string, fraction: number, resetAtMs = 0): void {
+    if (!this.trackWeekly) return;
+    this.applySnapshot(accountId, weeklyBucketKey(bucket), fraction, resetAtMs);
   }
 
-  /** Record the latest upstream remaining fraction (drives ≥0.90 leniency + blood bar).
-   *  Budget is no longer estimated here — it is read at decision time from the
-   *  learned QuotaProfile (see resolvedBudgetForKey). */
-  updateBudgetEstimate(accountId: number, bucket: string, fraction: number): void {
-    const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, this.nowFn());
-    tracker.lastFraction = fraction;
-    this.dirty = true;
-  }
-
-  /** Check if a card is within its fair share. Called before granting a lease.
-   *  同时校验 5h 与周(若启用)两个窗口,任一超额即拦;remainingFraction 取两者较小。 */
+  /** 校验某卡是否在公平份额内(5h + 周,任一超额即拦)。 */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
     const short = this.checkWindow(accountId, cardId, bucket);
     if (!this.trackWeekly) return short;
@@ -282,7 +222,70 @@ export class FairShareTracker {
     };
   }
 
-  /** 单个窗口(5h 或周)的公平份额判定。 */
+  /** 5h 每卡自份额剩余(供血条),键为基础桶名。share=e_i(我的份额占整号比例,供双层血条)。 */
+  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+    return this.collectFractions(accountId, cardId, false);
+  }
+
+  /** 周每卡自份额剩余(供周血条);仅 trackWeekly 有数据。 */
+  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+    if (!this.trackWeekly) return {};
+    return this.collectFractions(accountId, cardId, true);
+  }
+
+  /** 是否启用周窗口(codex/anthropic=true)。 */
+  isWeeklyTracked(): boolean {
+    return this.trackWeekly;
+  }
+
+  /** 一张卡本 5h 窗口的段内加权用量(跨该号所有 5h bucket 求和)。 */
+  getCardWindowUsed(accountId: number, cardId: string): number {
+    const bucketMap = this.trackers.get(accountId);
+    if (!bucketMap) return 0;
+    const now = this.nowFn();
+    let total = 0;
+    for (const [key, tracker] of bucketMap) {
+      if (isWeeklyBucketKey(key)) continue;
+      this.ensureWindow(accountId, tracker, now);
+      total += tracker.perCard.get(cardId) || 0;
+    }
+    return total;
+  }
+
+  // ── Internal ────────────────────────────────────────────────────────────
+
+  private collectFractions(
+    accountId: number,
+    cardId: string,
+    weekly: boolean,
+  ): Record<string, { fraction: number; resetAt: number; share: number }> {
+    const bucketTrackers = this.trackers.get(accountId);
+    if (!bucketTrackers) return {};
+    const now = this.nowFn();
+    const out: Record<string, { fraction: number; resetAt: number; share: number }> = {};
+    for (const [key, tracker] of bucketTrackers) {
+      if (isWeeklyBucketKey(key) !== weekly) continue;
+      this.ensureWindow(accountId, tracker, now);
+      const resetAt = tracker.windowStart + tracker.windowMs;
+      // fraction = 我份额的剩余(血条);share = e_i 我份额占整号比例(双层血条外层几何)。
+      out[baseBucketOf(key)] = {
+        fraction: this.bloodBar(accountId, tracker, cardId),
+        resetAt,
+        share: this.shareFor(accountId, tracker, cardId),
+      };
+    }
+    return out;
+  }
+
+  /** 自份额剩余血条 clamp((e_i − T_i)/e_i, 0, 1);e_i≤0 → 0(空且拦)。只读,绝不领预留。 */
+  private bloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
+    const e = this.shareFor(accountId, tracker, cardId);
+    if (e <= 0) return 0;
+    const t = tracker.attributed.get(cardId) || 0;
+    return clamp01((e - t) / e);
+  }
+
+  /** 单窗口(5h 或周)份额判定。 */
   private checkWindow(accountId: number, cardId: string, key: string): FairShareCheck {
     const tracker = this.trackers.get(accountId)?.get(key);
     const window = isWeeklyBucketKey(key) ? "7d" : "5h";
@@ -290,39 +293,20 @@ export class FairShareTracker {
     if (!tracker) {
       return { allowed: true, remainingFraction: 1.0, window, bucket };
     }
-    this.ensureWindow(tracker, this.nowFn());
     const now = this.nowFn();
+    this.ensureWindow(accountId, tracker, now);
     const resetAt = tracker.windowStart + tracker.windowMs;
     const resetMs = Math.max(0, resetAt - now);
 
-    // When upstream reports ≥90% remaining, we have no reliable budget estimate.
-    // Allow the lease unconditionally — real protection comes from the upstream
-    // 429 response. Blocking based on a guess would prematurely cut off cards
-    // while Google's coarse 20% granularity hasn't even budged.
-    if (tracker.lastFraction >= 0.90) {
-      return {
-        allowed: true,
-        remainingFraction: tracker.lastFraction,
-        window,
-        bucket,
-        resetAt,
-        resetMs,
-        retryAfterMs: resetMs,
-      };
-    }
-
-    const weight = this.opts.getCardWeight(cardId);
-    const capacity = this.opts.accountShareCapacity;
-    const perCardBudget = this.resolvedBudgetForKey(accountId, key) * (weight / capacity);
-    const myUsage = tracker.perCard.get(cardId) || 0;
-    const remaining = Math.max(0, perCardBudget - myUsage);
-    const remainingFraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
-
-    if (myUsage >= perCardBudget) {
+    // 取号闸:这是真正发卡的判定点,窗口内新卡在此「先到先得」领预留(唯一提交点)。
+    const e = this.claimShare(accountId, tracker, cardId);
+    const t = tracker.attributed.get(cardId) || 0;
+    // e≤0(无份额/满号新卡)或 T_i 已达份额 → 拦。
+    if (e <= 0 || t >= e) {
       const label = isWeeklyBucketKey(key) ? "本周公平限额" : "公平限额";
       return {
         allowed: false,
-        reason: `${label}已用完 (已用 ${formatTokens(myUsage)}/${formatTokens(perCardBudget)} 加权单元)`,
+        reason: `${label}已用完(账号份额 ${(t * 100).toFixed(1)}% ≥ 我的 ${(e * 100).toFixed(1)}%)`,
         remainingFraction: 0,
         window,
         bucket,
@@ -331,129 +315,124 @@ export class FairShareTracker {
         retryAfterMs: resetMs,
       };
     }
-    return { allowed: true, remainingFraction, window, bucket, resetAt, resetMs, retryAfterMs: resetMs };
-  }
-
-  // ── 周窗口的喂数据 / 确认(仅 trackWeekly 时生效;内部复用同名 5h 方法 + 周 key)──
-  /** 用上游 weeklyPercent(剩余 fraction)反推周预算。 */
-  updateWeeklyBudgetEstimate(accountId: number, bucket: string, fraction: number): void {
-    if (!this.trackWeekly) return;
-    this.updateBudgetEstimate(accountId, weeklyBucketKey(bucket), fraction);
-  }
-  /** 对齐上游周 reset 边界。 */
-  syncWeeklyWindow(accountId: number, bucket: string, resetTimeMs: number): void {
-    if (!this.trackWeekly) return;
-    this.syncWindow(accountId, weeklyBucketKey(bucket), resetTimeMs);
+    return { allowed: true, remainingFraction: clamp01((e - t) / e), window, bucket, resetAt, resetMs, retryAfterMs: resetMs };
   }
 
   /**
-   * Get per-card remaining fractions for all buckets on a given account+card.
-   * Used to populate the lease response so the client can show accurate blood bars.
-   * Returns: { gemini: 0.75, opus: 0.3, codex: 1.0 } or {} if no tracking.
+   * 该卡在本窗口的保证份额 e_i —— 只读,不改预留态(供血条/展示)。
+   * participant → w/D;已领预留的新卡 → 已领值;未领新卡 → min(w/D, 当前可领预留)的「预估值」。
    */
-  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number }> {
-    const bucketTrackers = this.trackers.get(accountId);
-    if (!bucketTrackers) return {};
-
-    const now = this.nowFn();
-    const weight = this.opts.getCardWeight(cardId);
-    const capacity = this.opts.accountShareCapacity;
-    const out: Record<string, { fraction: number; resetAt: number }> = {};
-
-    for (const [bucket, tracker] of bucketTrackers) {
-      if (isWeeklyBucketKey(bucket)) continue; // 血条只展示 5h 窗口(周窗口内部计,不混入)
-      this.ensureWindow(tracker, now);
-      const resetAt = tracker.windowStart + tracker.windowMs;
-
-      // When upstream reports ≥90% remaining, we don't know the real budget.
-      // Show the upstream fraction directly so the blood bar stays full
-      // instead of draining based on a guess.
-      if (tracker.lastFraction >= 0.90) {
-        out[bucket] = { fraction: tracker.lastFraction, resetAt };
-        continue;
-      }
-
-      // Real signal available — calculate per-card fair share fraction.
-      // Budget is read from the learned profile (same source as enforce), so the
-      // blood bar and the limit never diverge.
-      const perCardBudget = this.resolvedBudgetForKey(accountId, bucket) * (weight / capacity);
-      const myUsage = tracker.perCard.get(cardId) || 0;
-      const remaining = Math.max(0, perCardBudget - myUsage);
-      const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
-      out[bucket] = { fraction, resetAt };
-    }
-
-    return out;
+  private shareFor(accountId: number, tracker: BucketTracker, cardId: string): number {
+    const locked = this.ensureLocked(accountId, tracker);
+    const w = Math.max(0, this.opts.getCardWeight(cardId));
+    if (locked.participants.has(cardId)) return clamp01(w / locked.D);
+    if (locked.grantedReserve.has(cardId)) return locked.grantedReserve.get(cardId)!;
+    return Math.min(clamp01(w / locked.D), Math.max(0, locked.reserveAvail));
   }
 
   /**
-   * 周窗口的每卡剩余 fraction(供「周血条」)。键用去掉 `::weekly` 后缀的基础桶名,与 5h 对齐,
-   * 客户端按同一 bucket 同时拿到 5h 与周两条。仅 trackWeekly(codex/anthropic)时有数据。
+   * 同 shareFor,但对窗口内新绑卡会「提交」一次预留领取(递减 reserveAvail、固定 grantedReserve)。
+   * 仅在取号闸(checkWindow)调用 —— 先到先得按真实发卡时机,而非血条展示时机(避免只读路径抢预留)。
    */
-  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number }> {
-    if (!this.trackWeekly) return {};
-    const bucketTrackers = this.trackers.get(accountId);
-    if (!bucketTrackers) return {};
+  private claimShare(accountId: number, tracker: BucketTracker, cardId: string): number {
+    const locked = this.ensureLocked(accountId, tracker);
+    const w = Math.max(0, this.opts.getCardWeight(cardId));
+    if (locked.participants.has(cardId)) return clamp01(w / locked.D);
+    if (locked.grantedReserve.has(cardId)) return locked.grantedReserve.get(cardId)!;
+    const g = Math.min(clamp01(w / locked.D), Math.max(0, locked.reserveAvail));
+    locked.reserveAvail = Math.max(0, locked.reserveAvail - g);
+    locked.grantedReserve.set(cardId, g);
+    this.dirty = true;
+    return g;
+  }
 
+  /** 核心:归并 + reset 对齐(applyAccountQuotaSnapshot 实体)。 */
+  private applySnapshot(accountId: number, key: string, fraction: number, resetAtMs: number): void {
+    const tracker = this.getOrCreate(accountId, key);
     const now = this.nowFn();
-    const weight = this.opts.getCardWeight(cardId);
-    const capacity = this.opts.accountShareCapacity;
-    const out: Record<string, { fraction: number; resetAt: number }> = {};
-
-    for (const [key, tracker] of bucketTrackers) {
-      if (!isWeeklyBucketKey(key)) continue; // 只取周窗口
-      this.ensureWindow(tracker, now);
-      const baseBucket = baseBucketOf(key);
-      const resetAt = tracker.windowStart + tracker.windowMs;
-      if (tracker.lastFraction >= 0.90) {
-        out[baseBucket] = { fraction: tracker.lastFraction, resetAt };
-        continue;
+    // 1) 自计时过期 reset(离线跨过窗口边界时)。
+    this.ensureWindow(accountId, tracker, now);
+    // 2) 上游 resetAt 驱动 reset:只认 windowStart 前移(>容差),忽略 stale/乱序(后移)。
+    if (Number.isFinite(resetAtMs) && resetAtMs > 0) {
+      const newStart = resetAtMs - tracker.windowMs;
+      if (newStart > tracker.windowStart + RESET_DRIFT_MS) {
+        this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0);
+        return;
       }
-      const perCardBudget = this.resolvedBudgetForKey(accountId, key) * (weight / capacity);
-      const myUsage = tracker.perCard.get(cardId) || 0;
-      const remaining = Math.max(0, perCardBudget - myUsage);
-      const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
-      out[baseBucket] = { fraction, resetAt };
     }
-
-    return out;
-  }
-
-  /** 是否启用周窗口(codex/anthropic=true)。供 lease 响应决定是否下发「周血条」。 */
-  isWeeklyTracked(): boolean {
-    return this.trackWeekly;
-  }
-
-  // ── Internal ────────────────────────────────────────────────────────────
-
-  /** 该 key 的预算(加权单元),读时从学习档案取。预算不再 per-account 缓存(决策C)。
-   *  5h:学习档案 > DEFAULT_BUDGETS 兜底。
-   *  周:可信的学习周预算(getLearnedWeeklyBudget 已做样本门控,不可信时返 0)> 5h×R 地板。
-   *      可信后直接用学习周中位 → 允许官方周下调时向下收敛(不再被地板顶死)。 */
-  private resolvedBudgetForKey(accountId: number, bucket: string): number {
-    const baseBucket = baseBucketOf(bucket);
-    const planType = (this.opts.getAccountPlanType(accountId) || "free").toLowerCase();
-    if (!isWeeklyBucketKey(bucket)) {
-      const learned = this.opts.getLearnedBudget?.(planType, baseBucket) || 0;
-      return learned > 0 ? learned : this.default5hFor(planType, baseBucket);
+    // 3) fraction 未知(-1)→ 不归并,继续累积 u_i(等有效 fraction 回来一次性归并)。
+    if (!(fraction >= 0)) return;
+    // 首个快照:确保 locked 已算(用当前在册绑定 = 本窗口 participants)。
+    this.ensureLocked(accountId, tracker);
+    // 4) 同窗口归并:Δ账号 = max(0, 低水位 − fraction);回升 → 0(不重复计数)。
+    const delta = Math.max(0, tracker.lastFraction - fraction);
+    if (delta > 0) {
+      let sumU = 0;
+      for (const v of tracker.perCard.values()) sumU += v;
+      if (sumU > 0) {
+        for (const [card, u] of tracker.perCard) {
+          if (u <= 0) continue;
+          tracker.attributed.set(card, (tracker.attributed.get(card) || 0) + delta * (u / sumU));
+        }
+      }
+      // 已归并(或无人认领)→ 清段内增量;无人认领的 Δ账号 留作未认领消耗,不进任何 T_i。
+      tracker.perCard.clear();
     }
-    const learnedWeekly = this.opts.getLearnedWeeklyBudget?.(planType, baseBucket) || 0;
-    return learnedWeekly > 0 ? learnedWeekly : this.estimatedWeeklyFloor(baseBucket, planType);
+    // 低水位单调不增:仅真实下降才降。
+    if (fraction < tracker.lastFraction) tracker.lastFraction = fraction;
+    this.dirty = true;
   }
 
-  private default5hFor(planType: string, baseBucket: string): number {
-    const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
-    const family = bucketFamily(baseBucket);
-    return defaults[family] || defaults.gemini || 50_000;
+  /** 窗口 reset:清零 T_i/u_i,重算锁定 D + participants + 预留,设低水位为 fresh。 */
+  private resetWindow(accountId: number, tracker: BucketTracker, windowStart: number, freshFraction: number): void {
+    tracker.windowStart = windowStart;
+    tracker.perCard.clear();
+    tracker.attributed.clear();
+    tracker.lastFraction = clamp01(freshFraction);
+    tracker.locked = this.computeLocked(accountId);
+    this.dirty = true;
   }
 
-  private estimatedWeeklyFloor(baseBucket: string, planType: string): number {
-    const family = bucketFamily(baseBucket);
-    const default5h = this.default5hFor(planType, baseBucket);
-    const learned5h = this.opts.getLearnedBudget?.(planType, baseBucket) || 0;
-    const ratio = clampWeeklyRatio(this.opts.getWeeklyRatio?.(planType, family) ?? WEEKLY_BUDGET_MULTIPLIER);
-    const floor5h = Math.max(default5h, learned5h);
-    return floor5h * ratio;
+  /** 自计时过期检测:跨过窗口长度 → reset(离线/无快照路径,fresh=1)。 */
+  private ensureWindow(accountId: number, tracker: BucketTracker, now: number): void {
+    if (now - tracker.windowStart >= tracker.windowMs) {
+      this.resetWindow(accountId, tracker, now, 1.0);
+    }
+  }
+
+  /** 锁定份额态;reset 时算定,缺失时懒算(重启/首快照兜底,用当前在册绑定近似)。 */
+  private ensureLocked(accountId: number, tracker: BucketTracker): LockedShare {
+    if (!tracker.locked) tracker.locked = this.computeLocked(accountId);
+    return tracker.locked;
+  }
+
+  /** 由 Σw + participants 算定锁定态(D=max(N,Σw) 或 forcedD,预留 R0=max(0,1−Σw/D))。 */
+  private lockedFrom(accountId: number, sumW: number, participants: Set<string>, forcedD?: number): LockedShare {
+    // 独享号:D=Σw(不取 N 保底)→ 独享主人 e=w/Σw,单主时 =1.0、预留=0,独占整号额度。
+    const exclusive = this.opts.isExclusiveAccount?.(accountId) === true;
+    const N = exclusive ? Math.max(1, sumW) : Math.max(1, Math.floor(this.opts.getSeatCapacity?.(accountId) ?? DEFAULT_SEAT_CAPACITY));
+    const D = forcedD && forcedD > 0 ? forcedD : Math.max(N, sumW);
+    const reserve0 = Math.max(0, 1 - (D > 0 ? sumW / D : 0));
+    return { D, participants, reserveAvail: reserve0, grantedReserve: new Map() };
+  }
+
+  /** 用当前在册硬绑定计算 D = max(N, Σw)、participants、预留 R0。 */
+  private computeLocked(accountId: number, forcedD?: number): LockedShare {
+    const bound = this.opts.getBoundCardWeights(accountId) || [];
+    let sumW = 0;
+    const participants = new Set<string>();
+    for (const b of bound) {
+      sumW += Math.max(0, Number(b.weight) || 0);
+      participants.add(b.cardId);
+    }
+    return this.lockedFrom(accountId, sumW, participants, forcedD);
+  }
+
+  /** 由持久化的 participant 集合重建锁定态(重启恢复:不把窗口内新绑卡误升为 participant)。 */
+  private lockedFromParticipants(accountId: number, ids: Set<string>, forcedD?: number): LockedShare {
+    let sumW = 0;
+    for (const id of ids) sumW += Math.max(0, this.opts.getCardWeight(id));
+    return this.lockedFrom(accountId, sumW, new Set(ids), forcedD);
   }
 
   private getOrCreate(accountId: number, bucket: string): BucketTracker {
@@ -464,42 +443,22 @@ export class FairShareTracker {
     }
     let tracker = bucketMap.get(bucket);
     if (!tracker) {
-      // 预算不再 per-account seed/缓存:tracker 只持有窗口计时 + per-card 用量 + 最近 fraction。
       tracker = {
         windowMs: isWeeklyBucketKey(bucket) ? WEEKLY_WINDOW_MS : WINDOW_MS,
         windowStart: this.nowFn(),
         perCard: new Map(),
+        attributed: new Map(),
         lastFraction: 1.0,
+        locked: null,
       };
       bucketMap.set(bucket, tracker);
     }
     return tracker;
   }
 
-  private ensureWindow(tracker: BucketTracker, now: number): void {
-    if (now - tracker.windowStart >= tracker.windowMs) {
-      tracker.windowStart = now;
-      tracker.perCard.clear();
-      // lastFraction is left as-is (kept current by the upstream fraction feed);
-      // load() already resets it to 1.0 for windows that expired while offline.
-      this.dirty = true;
-    }
-  }
-
-  private totalWeighted(tracker: BucketTracker): number {
-    let total = 0;
-    for (const v of tracker.perCard.values()) total += v;
-    return total;
-  }
-
   // ── Persistence (FairShareWindow) ─────────────────────────────────────────
 
-  /**
-   * Restore persisted per-card usage into memory. Call once at startup.
-   * Windows whose 5h boundary has already passed keep their learned budget
-   * (downgraded confirmed→estimated) but drop stale per-card usage — the
-   * upstream window has reset, so "remaining" starts fresh.
-   */
+  /** 启动时把持久化的每卡状态读回内存。 */
   async load(): Promise<void> {
     if (!this.prisma || !this.providerId) return;
     let rows: any[];
@@ -512,7 +471,7 @@ export class FairShareTracker {
     const now = this.nowFn();
     const groups = new Map<string, any[]>();
     for (const r of rows) {
-      const key = `${r.accountId}${r.bucket}`;
+      const key = `${r.accountId}\u0000${r.bucket}`;
       let g = groups.get(key);
       if (!g) groups.set(key, (g = []));
       g.push(r);
@@ -521,32 +480,68 @@ export class FairShareTracker {
       const first = groupRows[0];
       const accountId = Number(first.accountId);
       const bucket = String(first.bucket);
-      // 窗口长度由 key 的周后缀决定(持久化不存 windowMs,用后缀编码 scope)。
       const windowMs = isWeeklyBucketKey(bucket) ? WEEKLY_WINDOW_MS : WINDOW_MS;
       const windowStart = Number(first.windowStart);
       const expired = now - windowStart >= windowMs;
-      const perCard = new Map<string, number>();
-      if (!expired) {
-        for (const r of groupRows) perCard.set(String(r.cardId), Number(r.weightedUsed) || 0);
-      }
       const storedFraction = Number(first.lastFraction);
+      const lf = Number.isFinite(storedFraction) ? clamp01(storedFraction) : 1.0;
+      const perCard = new Map<string, number>();
+      const attributed = new Map<string, number>();
+      const flagged = new Set<string>();
+      let storedD = 0;
+      if (!expired) {
+        // 是否「新格式」行:看 lockedDenominator(>0 即锁定过 D)。不用 attributedShare>0 ——
+        // 合法新行也可能 T_i 全 0(那一段无人认领),误判成老行会触发 backfill 把未认领消耗
+        // 错栽给某主人。而 lastFraction<1 ⟹ 必已 ensureLocked ⟹ D>0 落库,故此判据对有害场景可靠。
+        const hasNewSchema = groupRows.some((r) => Number(r.lockedDenominator) > 0);
+        if (hasNewSchema) {
+          for (const r of groupRows) {
+            const card = String(r.cardId);
+            const u = Number(r.weightedUsed) || 0;
+            if (u > 0) perCard.set(card, u);
+            const t = Number(r.attributedShare) || 0;
+            if (t > 0) attributed.set(card, t);
+            const d = Number(r.lockedDenominator) || 0;
+            if (d > storedD) storedD = d;
+            if (r.isParticipant) flagged.add(card);
+          }
+        } else {
+          // QUOTA-REDESIGN §10.2 历史 backfill:用存档 fraction 把旧「本窗口累计用量」按比例
+          // 落进累计账 T_i ← (1−lastFraction)×weightedUsed/Σold,再把段内增量从零开始。
+          // 偏保守(回填的是「已用」,不会少算),且下个 reset 即清零自愈。
+          let sumOld = 0;
+          for (const r of groupRows) sumOld += Number(r.weightedUsed) || 0;
+          if (sumOld > 0) {
+            for (const r of groupRows) {
+              const u = Number(r.weightedUsed) || 0;
+              if (u <= 0) continue;
+              attributed.set(String(r.cardId), clamp01((1 - lf) * (u / sumOld)));
+            }
+          }
+          // perCard 留空(段内增量归零);lockedDenominator 老行没有 → storedD=0 → 下方重算 D。
+        }
+      }
       let bucketMap = this.trackers.get(accountId);
       if (!bucketMap) this.trackers.set(accountId, (bucketMap = new Map()));
+      // 重启恢复:优先用持久化的 participant 集合重建锁定态(防窗口内新绑卡被误升为 participant
+      // → 满号超卖撞墙);无 participant 标记的老行回退到「当前在册绑定」近似(下个 reset 自愈)。
+      const locked = expired
+        ? null
+        : flagged.size > 0
+          ? this.lockedFromParticipants(accountId, flagged, storedD)
+          : this.computeLocked(accountId, storedD);
       bucketMap.set(bucket, {
         windowMs,
         windowStart: expired ? now : windowStart,
         perCard,
-        // 预算不再持久化(读时取学习档案);estimatedBudget/confidence 列已退役(写默认值)。
-        lastFraction: expired ? 1.0 : (Number.isFinite(storedFraction) ? storedFraction : 1.0),
+        attributed,
+        lastFraction: expired ? 1.0 : lf,
+        locked,
       });
     }
   }
 
-  /**
-   * Persist current in-memory state. Replaces all of this provider's rows in
-   * one transaction (no stale rows survive a window rollover). Dirty-gated so
-   * idle accounts don't churn the DB. Runs on a timer and on shutdown.
-   */
+  /** 持久化当前内存态(整池替换,dirty 门控)。 */
   async flush(): Promise<void> {
     if (!this.prisma || !this.providerId || !this.dirty) return;
     this.dirty = false;
@@ -558,50 +553,16 @@ export class FairShareTracker {
       ]);
     } catch (err) {
       console.error("[fair-share-tracker] flush failed:", err);
-      this.dirty = true; // retry on the next tick
+      this.dirty = true; // retry on next tick
     }
   }
 
-  /** Stop the periodic flush timer. */
+  /** 停止定时 flush。 */
   destroy(): void {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
-  }
-
-  /** 一张卡本 5h 窗口的加权已用(跨该账号所有 bucket 求和,实测)。 */
-  getCardWindowUsed(accountId: number, cardId: string): number {
-    const bucketMap = this.trackers.get(accountId);
-    if (!bucketMap) return 0;
-    const now = this.nowFn();
-    let total = 0;
-    for (const [key, tracker] of bucketMap) {
-      if (isWeeklyBucketKey(key)) continue; // 仅 5h 窗口求和,避免与周窗口双算
-      this.ensureWindow(tracker, now);
-      total += tracker.perCard.get(cardId) || 0;
-    }
-    return total;
-  }
-
-  /** Snapshot one bucket's tracker state. Test-only.
-   *  `resolvedBudget` is the read-time learned budget used for enforce/blood-bar. */
-  getBucketStateForTesting(accountId: number, bucket: string): {
-    windowStart: number;
-    resolvedBudget: number;
-    lastFraction: number;
-    totalUsed: number;
-    perCard: Record<string, number>;
-  } | null {
-    const tracker = this.trackers.get(accountId)?.get(bucket);
-    if (!tracker) return null;
-    return {
-      windowStart: tracker.windowStart,
-      resolvedBudget: this.resolvedBudgetForKey(accountId, bucket),
-      lastFraction: tracker.lastFraction,
-      totalUsed: this.totalWeighted(tracker),
-      perCard: Object.fromEntries(tracker.perCard),
-    };
   }
 
   private serializeRows(): Array<{
@@ -611,12 +572,24 @@ export class FairShareTracker {
     cardId: string;
     windowStart: bigint;
     weightedUsed: number;
+    attributedShare: number;
+    lockedDenominator: number;
     lastFraction: number;
+    isParticipant: boolean;
   }> {
     const rows: ReturnType<FairShareTracker["serializeRows"]> = [];
     for (const [accountId, bucketMap] of this.trackers) {
       for (const [bucket, tracker] of bucketMap) {
-        for (const [cardId, weightedUsed] of tracker.perCard) {
+        const D = tracker.locked?.D ?? 0;
+        const participants = tracker.locked?.participants ?? new Set<string>();
+        // 取 u_i ∪ T_i ∪ participants 的并集卡;participant 即便 idle 也要落库,
+        // 否则重启后该卡不在 flagged 集合 → 被当窗口内新卡(满号 e=0 → 误拦)。
+        const cards = new Set<string>([...tracker.perCard.keys(), ...tracker.attributed.keys(), ...participants]);
+        for (const cardId of cards) {
+          const weightedUsed = tracker.perCard.get(cardId) || 0;
+          const attributedShare = tracker.attributed.get(cardId) || 0;
+          const isParticipant = participants.has(cardId);
+          if (weightedUsed <= 0 && attributedShare <= 0 && !isParticipant) continue;
           rows.push({
             provider: this.providerId,
             accountId,
@@ -624,18 +597,55 @@ export class FairShareTracker {
             cardId,
             windowStart: BigInt(Math.trunc(tracker.windowStart)),
             weightedUsed,
-            // estimatedBudget/confidence 列已退役 → 由 Prisma @default 写入(代码不再读)。
+            attributedShare,
+            lockedDenominator: D,
             lastFraction: tracker.lastFraction,
+            isParticipant,
           });
         }
       }
     }
     return rows;
   }
+
+  // ── Test-only introspection ───────────────────────────────────────────────
+
+  /** Snapshot one bucket's tracker state. Test-only. */
+  getBucketStateForTesting(accountId: number, bucket: string): {
+    windowStart: number;
+    lastFraction: number;
+    D: number;
+    participants: string[];
+    reserveAvail: number;
+    perCard: Record<string, number>;
+    attributed: Record<string, number>;
+    totalUsed: number;
+    totalAttributed: number;
+  } | null {
+    const tracker = this.trackers.get(accountId)?.get(bucket);
+    if (!tracker) return null;
+    const locked = tracker.locked;
+    let totalUsed = 0;
+    for (const v of tracker.perCard.values()) totalUsed += v;
+    let totalAttributed = 0;
+    for (const v of tracker.attributed.values()) totalAttributed += v;
+    return {
+      windowStart: tracker.windowStart,
+      lastFraction: tracker.lastFraction,
+      D: locked?.D ?? 0,
+      participants: locked ? [...locked.participants] : [],
+      reserveAvail: locked?.reserveAvail ?? 0,
+      perCard: Object.fromEntries(tracker.perCard),
+      attributed: Object.fromEntries(tracker.attributed),
+      totalUsed,
+      totalAttributed,
+    };
+  }
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return String(Math.round(n));
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
 }

@@ -2,20 +2,21 @@ import { useAppStore } from '@/stores/useAppStore'
 import { StatusPill } from '@/components/StatusPill'
 import { NotificationBanner } from '@/components/NotificationBanner'
 import { UsageBar } from '@/components/UsageBar'
+import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts } from '@/lib/usageBars'
-import { buildQuotaSections, type QuotaDisplayBar } from '@/lib/quotaDisplay'
+import { buildQuotaSections, shouldUseExclusiveDisplay, type QuotaDisplayBar } from '@/lib/quotaDisplay'
 import { buildModelUsageRows, buildUsageOverview, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as api from '@/services/wails'
 import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
-import { BarChart3 } from 'lucide-react'
+import { BarChart3, Crown } from 'lucide-react'
 
 function formatUSD(value: number): string {
   const n = Math.max(0, Number(value) || 0)
@@ -109,8 +110,8 @@ export function DashboardPage() {
   const t = useT()
   const {
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
-    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs,
-    cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity,
+    accountFractions, accountResetMs, myFractions, myResetMs, myShares, myWeeklyFractions, myWeeklyResetMs,
+    cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
@@ -124,20 +125,22 @@ export function DashboardPage() {
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
   const isQuotaLikeError = /quota|limit|公平|额度|恢复|retry-after|token limit/i.test(leaserError)
   const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude') && !isQuotaLikeError
+  // 独享卡:整号 100% 归你。展示「尊贵 · 独享」标识。优先用后端权威 cardExclusive;
+  // 缺省(旧服务端)回退到 weight>=capacity 启发式。
+  const exclusiveCard = shouldUseExclusiveDisplay({ cardWeight: cardShareSeats, cardShareCapacity, exclusive: cardExclusive, accountProblem })
 
   // 独享订阅(weight≥号总份数,即就你一个人用整个号):此时「号余量」就是「你的卡额度」,
   // 把号余量条映射成卡额度真实数值/窗口,而不是只给一个 fair-share 百分比。
+  // 去席位:标题只用「产品 · 模型」,不再显示「X/Y 席」。份额几何由 myShares(e_i)承载。
   const quotaSections = buildQuotaSections({
-    bars: visibleBars.map((bar) => ({
-      ...bar,
-      seatLabel: `${bar.label} · ${cardShareSeats}/${cardShareCapacity || 8} 席`,
-    })),
+    bars: visibleBars.map((bar) => ({ ...bar })),
     cardBuckets,
     cardWeeklyBuckets,
     myFractions,
     myResetMs,
     myWeeklyFractions,
     myWeeklyResetMs,
+    myShares,
     accountFractions,
     accountResetMs,
     codexQuota,
@@ -237,7 +240,14 @@ export function DashboardPage() {
       {/* ── 模型用量:每个服务商一栏(带品牌标识),顶部对齐 —— Antigravity / Codex / Anthropic。
           颜色随健康度变(充足绿/一般黄/紧张橙/已用尽红);只有部分服务商有数据时自动减少栏数。 ── */}
       <Card>
-        <CardHeader><CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle></CardHeader>
+        <CardHeader className="flex-row items-center gap-2 space-y-0">
+          <CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle>
+          {exclusiveCard && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-500">
+              <Crown size={11} /> 尊贵 · 独享整号
+            </span>
+          )}
+        </CardHeader>
         <CardContent>
           {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
           {accountProblem && (
@@ -270,24 +280,35 @@ export function DashboardPage() {
                       {p.sections.map((section) => (
                         <div key={section.bucket} className="flex flex-col gap-2.5">
                           <div className="text-[12px] font-semibold text-[var(--text-primary)]">{section.title}</div>
-                          {section.mine.length > 0 && (
+                          {section.mine.length > 0 ? (
+                            // 双层血条:整号容量打底,叠「账号总剩余 + 我的总剩余」,按 5h/周 各一条。
+                            <div className="flex flex-col divide-y divide-[var(--border-light)]">
+                              {section.mine.map((myBar) => {
+                                const acctBar = section.serviceAccount.find((b) => b.window === myBar.window)
+                                return (
+                                  <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5">
+                                    <NestedShareBar
+                                      label={myBar.label}
+                                      myFraction={myBar.fraction}
+                                      share={myShares[section.bucket] ?? 1}
+                                      accountFraction={acctBar?.fraction ?? -1}
+                                      resetMs={myBar.resetMs}
+                                    />
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            // 号池卡(无 fair-share 份额):只显示整号余量。
                             <div className="flex flex-col gap-1.5">
-                              <div className="text-[11px] font-medium text-[var(--text-muted)]">我的席位</div>
+                              <div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div>
                               <div className="flex flex-col divide-y divide-[var(--border-light)]">
-                                {section.mine.map((bar) => (
+                                {section.serviceAccount.map((bar) => (
                                   <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>
                                 ))}
                               </div>
                             </div>
                           )}
-                          <div className="flex flex-col gap-1.5">
-                            <div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div>
-                            <div className="flex flex-col divide-y divide-[var(--border-light)]">
-                              {section.serviceAccount.map((bar) => (
-                                <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>
-                              ))}
-                            </div>
-                          </div>
                         </div>
                       ))}
                     </div>

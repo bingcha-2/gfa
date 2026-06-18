@@ -115,6 +115,7 @@ export interface StatsResponse {
     accountResetMs?: Record<string, number>
     myFractions?: Record<string, number>
     myResetMs?: Record<string, number>
+    myShares?: Record<string, number>
     // 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)
     myWeeklyFractions?: Record<string, number>
     myWeeklyResetMs?: Record<string, number>
@@ -134,6 +135,7 @@ export interface StatsResponse {
       tokenWindowResetAt?: string
       weight?: number          // 本卡 fair-share 份额权重(份额 X/Y 的 X)
       shareCapacity?: number   // 号总份数(份额 X/Y 的 Y)
+      exclusive?: boolean      // 后端权威独享标志(尊贵 badge 据此)
       buckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h)
       weeklyBuckets?: {
         bucket: string

@@ -54,6 +54,31 @@ describe("computePurchase pool line", () => {
   });
 });
 
+describe("computePurchase 独享(exclusive)", () => {
+  it("exclusive:true → config.exclusive=true、独占整号(weight=shareSeats=shareCapacity)、全价", () => {
+    const result = computePurchase(CATALOG as any, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      exclusive: true,
+      deviceLimit: 1,
+    } as any);
+    expect(result.config.exclusive).toBe(true);
+    expect(result.config.weight).toBe(8); // shareCapacity 默认 8 → 占满整号
+    expect(result.config.shareSeats).toBe(8);
+    expect(result.priceCents).toBe(29900); // 全价,无拼车折扣
+  });
+
+  it("非 exclusive 的 bind → config.exclusive=false", () => {
+    const result = computePurchase(CATALOG as any, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareSeats: 4,
+      deviceLimit: 1,
+    } as any);
+    expect(result.config.exclusive).toBe(false);
+  });
+});
+
 describe("computePurchase bind line", () => {
   it("uses shareSeats=8 as full-account seats without a seat discount", () => {
     const result = computePurchase(CATALOG, {
@@ -71,7 +96,8 @@ describe("computePurchase bind line", () => {
       shareSeats: 8,
       shareCapacity: 8,
       weight: 8,
-      assignmentPolicy: "preferred-dynamic",
+      exclusive: false,
+      assignmentPolicy: "pinned",
       deviceLimit: 1,
       windowMs: 18000000,
     });
@@ -93,7 +119,8 @@ describe("computePurchase bind line", () => {
       shareSeats: 2,
       shareCapacity: 8,
       weight: 2,
-      assignmentPolicy: "preferred-dynamic",
+      exclusive: false,
+      assignmentPolicy: "pinned",
       deviceLimit: 1,
       windowMs: 18000000,
     });
@@ -111,7 +138,7 @@ describe("computePurchase bind line", () => {
       shareSeats: 2,
       shareCapacity: 8,
       weight: 2,
-      assignmentPolicy: "preferred-dynamic",
+      assignmentPolicy: "pinned",
     });
     expect(result.priceCents).toBe(Math.floor((29900 * 2) / 8) - 2000);
   });
@@ -129,7 +156,7 @@ describe("computePurchase bind line", () => {
       shareSeats: 1,
       shareCapacity: 4,
       weight: 1,
-      assignmentPolicy: "preferred-dynamic",
+      assignmentPolicy: "pinned",
     });
   });
 });

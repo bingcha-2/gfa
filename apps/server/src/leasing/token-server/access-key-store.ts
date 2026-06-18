@@ -29,9 +29,7 @@ import {
 import {
   bucketFamily,
   bucketsForProducts,
-  productOfBucket,
 } from '../lease-core/product-bucket';
-import { DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from '../lease-core/quota-profile-tracker';
 import {
   looksLikeUserSessionToken,
   missingShadowRecord,
@@ -191,7 +189,10 @@ export class AccessKeyStore {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
   }
 
-  private weeklyBucketCap(record: AccessKeyRecord, bucket: string, ratioValue: () => number): number {
+  // 周上限【只认显式配置】(QUOTA-REDESIGN 决策5):weeklyBucketLimits[bucket] > weeklyTokenLimit。
+  // 「cap5h × R 自动派生」整套删除 —— 单一全局倍率 R 无法把 5h 正确换算成周(真实比 3~30
+  // 因人而异),那是「周额度纯靠猜」的病根。没配显式周上限的卡,周维度不再有派生封顶。
+  private weeklyBucketCap(record: AccessKeyRecord, bucket: string): number {
     const weeklyBucketLimits = record.weeklyBucketLimits && typeof record.weeklyBucketLimits === 'object'
       ? record.weeklyBucketLimits as Record<string, number>
       : {};
@@ -201,13 +202,6 @@ export class AccessKeyStore {
     const explicitWeekly = weeklyTokenLimit(record);
     if (explicitWeekly > 0) return this.billing.bucketLimit(explicitWeekly, bucket);
 
-    const cap5h = this.billing.bucketLimit(0, bucket, record);
-    const product = productOfBucket(bucket);
-    if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) {
-      const rawR = ratioValue();
-      const ratio = clampWeeklyRatio(Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO);
-      return cap5h * ratio;
-    }
     return 0;
   }
 
@@ -538,6 +532,97 @@ export class AccessKeyStore {
     return out;
   }
 
+  /**
+   * 反向索引:返回绑定到某上游号(provider 作用域)的「全量 record 对象」。
+   * 同时扫描文件卡(byId)与订阅 record(subscriptionById),按 id 去重(一条
+   * record 可能同时落在两个 Map 里)。订阅 record 沿用 subscriptionsBoundToAccount
+   * 的 active-status 闸:status 已设且非 'active' 的跳过。fairShare 接力方需读
+   * (rec as any).weight / rec.weights,故返回整条 record 而非 id。O(n) 线扫即可,
+   * 不额外维护新 Map。
+   */
+  getRecordsBoundTo(accountId: number, providerId: string): AccessKeyRecord[] {
+    if (accountId <= 0) return [];
+    const out: AccessKeyRecord[] = [];
+    const seen = new Set<string>();
+    for (const rec of this.byId.values()) {
+      if (seen.has(rec.id)) continue;
+      if (rec.status && rec.status !== 'active') continue;   // 与 subscriptionById / hardBoundAccountIds 口径一致:禁用/过期卡不进 Σw,免稀释 e_i
+      if (this.boundAccountIdFor(rec, providerId) === accountId) {
+        seen.add(rec.id);
+        out.push(rec);
+      }
+    }
+    for (const rec of this.subscriptionById.values()) {
+      if (seen.has(rec.id)) continue;
+      if (rec.status && rec.status !== 'active') continue;
+      if (this.boundAccountIdFor(rec, providerId) === accountId) {
+        seen.add(rec.id);
+        out.push(rec);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 严格分池(QUOTA-REDESIGN §3/§7 决策C):所有「硬绑定号」的集合 —— 即被任意 active 硬绑卡
+   * (assignmentPolicy ≠ preferred-dynamic)钉住的上游号。轮换 / preferred-dynamic 的候选池
+   * 应排除这些号(绑定号只服务自己的主人)。preferred-dynamic 卡自身有 displayBinding 但属软偏好,
+   * 不计入硬绑集合。
+   */
+  hardBoundAccountIds(providerId: string): Set<number> {
+    const out = new Set<number>();
+    const consider = (rec: AccessKeyRecord) => {
+      if (!rec) return;
+      if (rec.status && rec.status !== 'active') return;
+      if (String((rec as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') return;
+      const id = this.boundAccountIdFor(rec, providerId);
+      if (id > 0) out.add(id);
+    };
+    for (const rec of this.byId.values()) consider(rec);
+    for (const rec of this.subscriptionById.values()) consider(rec);
+    return out;
+  }
+
+  /**
+   * fair-share Σw 的输入:某号上【硬绑主人】(assignmentPolicy ≠ preferred-dynamic)的份额权重。
+   * 排除 preferred-dynamic(它们不进 fair-share 分账,不应稀释 pinned 主人的 e_i=w/D)。
+   */
+  getHardBoundCardWeights(accountId: number, providerId: string): Array<{ cardId: string; weight: number }> {
+    const out: Array<{ cardId: string; weight: number }> = [];
+    for (const r of this.getRecordsBoundTo(accountId, providerId)) {
+      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      const w = Math.floor(Number((r as any).weights?.[providerId] || 0) || Number((r as any).weight ?? 1));
+      out.push({ cardId: r.id, weight: Number.isFinite(w) && w >= 1 ? w : 1 });
+    }
+    return out;
+  }
+
+  /**
+   * 该号是否被独享订阅独占(有任一硬绑主人 record.exclusive === true)。
+   * fair-share 据此把 D 取作 Σw(忽略 N 保底)→ 独享主人 e=1.0,独占整号额度。
+   */
+  isExclusiveAccount(accountId: number, providerId: string): boolean {
+    for (const r of this.getRecordsBoundTo(accountId, providerId)) {
+      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      if ((r as any).exclusive === true) return true;
+    }
+    return false;
+  }
+
+  /**
+   * fair-share 保底席位数 N:取该号硬绑主人 config 里的 salesSeatCapacity[product](拼车销售容量,
+   * 目录默认 10);无则回退 ACCOUNT_SHARE_CAPACITY。N 只影响欠卖时的保底/预留(D=max(N,Σw))。
+   */
+  getSeatCapacityFor(accountId: number, providerId: string): number {
+    let cap = 0;
+    for (const r of this.getRecordsBoundTo(accountId, providerId)) {
+      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      const c = Math.floor(Number((r as any).salesSeatCapacity?.[providerId] || 0));
+      if (Number.isFinite(c) && c > cap) cap = c;
+    }
+    return cap > 0 ? cap : ACCOUNT_SHARE_CAPACITY;
+  }
+
   // ── Request resolution ─────────────────────────────────────────────────
 
   /** Injected session-JWT → subscription resolver (see SessionResolverLike). */
@@ -568,7 +653,7 @@ export class AccessKeyStore {
   async resolveFromRequest(
     req: any,
     _payload: any,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number) } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
   ): Promise<ResolveResult> {
     const authHeader = String(req?.headers?.authorization || '');
     const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
@@ -612,7 +697,7 @@ export class AccessKeyStore {
     keyValue: string,
     record: AccessKeyRecord,
     data: AccessKeysData,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number); dryRun?: boolean } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); dryRun?: boolean } = {},
   ): ResolveResult {
     if (record.status && record.status !== 'active') {
       return { key: keyValue, record: null, error: 'Access key disabled' };
@@ -670,34 +755,15 @@ export class AccessKeyStore {
     }
 
     // ── Weekly window check (second tier) ──────────────────────────────────
-    // 周上限两种来源:① 显式 weeklyTokenLimit(手填,优先,兼容老逻辑);
-    // ② 否则对 anthropic/codex 桶按「5h 上限 × R」自动派生(池子卡也由此获得周限额)。
-    // R = 卡设置框 > 后台学习 > 全局默认,由调用方经 options.weeklyRatio(回调)解析。
+    // 周上限【只认显式配置】(QUOTA-REDESIGN 决策5):weeklyTokenLimit / weeklyBucketLimits。
+    // 「cap5h × R 自动派生」已删除(R 无法正确换算 5h→周)。没配显式周上限 → 周维度不拦。
     resetWeeklyWindowIfExpired(record, now);
     if (options.enforceLimit) {
       const modelKeyStr = String(options.modelKey || '').trim();
       // 无 modelKey(预热/探活)不消费具体桶 → 不拦截(理由同 5h 窗口)。
       if (modelKeyStr) {
         const bucket = requestBucket(options.product, modelKeyStr);
-        const explicitWeekly = this.weeklyBucketCap(record, bucket, () => (
-          typeof options.weeklyRatio === 'function'
-            ? Number(options.weeklyRatio(record))
-            : Number(options.weeklyRatio)
-        ));
-        let weeklyCap = 0;
-        if (explicitWeekly > 0) {
-          weeklyCap = explicitWeekly;
-        } else {
-          const cap5h = this.billing.bucketLimit(0, bucket, record); // = bucketLimits[bucket] 或 0
-          const product = productOfBucket(bucket);
-          if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) {
-            const rawR = typeof options.weeklyRatio === 'function'
-              ? Number(options.weeklyRatio(record))
-              : Number(options.weeklyRatio);
-            const ratio = clampWeeklyRatio(Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO);
-            weeklyCap = cap5h * ratio;
-          }
-        }
+        const weeklyCap = this.weeklyBucketCap(record, bucket);
         if (weeklyCap > 0) {
           const used = recentWeeklyBucketUsage(record, now).get(bucket) || 0;
           if (used >= weeklyCap) {
@@ -721,7 +787,7 @@ export class AccessKeyStore {
    */
   precheckRecord(
     record: AccessKeyRecord,
-    options: { modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number); enforceLimit?: boolean },
+    options: { modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); enforceLimit?: boolean },
   ): { allowed: boolean; resetMs?: number; reason?: string } {
     const res = this.validateRecord(String(record.key || record.id), record, this.readAll(), {
       ...options,
@@ -818,9 +884,9 @@ export class AccessKeyStore {
   // record's session* fields remain as historical data; publicStatus still
   // surfaces hasActiveSession from them for old records.
 
-  /** Get public-safe status for an access key. `weeklyRatio` 用于派生周上限(5h×R)的展示;
-   *  传回调(按桶解析 R)或数字;省略 → 仅在显式 weeklyTokenLimit 时有周数据。 */
-  publicStatus(record: AccessKeyRecord, alignedResetAt = 0, weeklyRatio?: number | ((bucket: string) => number)): any {
+  /** Get public-safe status for an access key. 周数据仅来自显式 weeklyTokenLimit/weeklyBucketLimits
+   *  (决策5:cap5h×R 派生已删)。 */
+  publicStatus(record: AccessKeyRecord, alignedResetAt = 0): any {
     if (!record) return null;
     const now = Date.now();
     const aligned = Number(alignedResetAt || 0) > 0;
@@ -832,16 +898,11 @@ export class AccessKeyStore {
     const resetMs = alignedResetAt > 0 ? Math.max(0, alignedResetAt - now) : tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
-    // Weekly window:显式 weeklyTokenLimit,或对 anthropic/codex 桶按「5h上限 × R」派生
-    // (与 resolveFromRequest 的 enforce 口径一致),让池子卡也能显示「周血条」。
+    // Weekly window【只认显式 weeklyTokenLimit / weeklyBucketLimits】(决策5);cap5h×R 派生已删。
     resetWeeklyWindowIfExpired(record, now);
     const wkLimit = weeklyTokenLimit(record);
-    const ratioForBucket = (bucket: string): number => {
-      const r = typeof weeklyRatio === 'function' ? Number(weeklyRatio(bucket)) : Number(weeklyRatio);
-      return clampWeeklyRatio(Number.isFinite(r) && r > 0 ? r : DEFAULT_WEEKLY_RATIO);
-    };
     const weeklyCapFor = (bucket: string): number => {
-      return this.weeklyBucketCap(record, bucket, () => ratioForBucket(bucket));
+      return this.weeklyBucketCap(record, bucket);
     };
 
     // 是否设了每模型上限(bucketLimits 中有任何 >0 的桶)。
@@ -944,6 +1005,8 @@ export class AccessKeyStore {
       // 客户端「我的卡 · 份额」条展开显示「份额 weight/shareCapacity」。
       weight: Math.max(1, Math.floor(Number((record as any).weight) || 1)),
       shareCapacity: ACCOUNT_SHARE_CAPACITY,
+      // 独享:权威标志,客户端「尊贵·独享」badge 据此(不再靠 weight>=capacity 推断)。
+      exclusive: (record as any).exclusive === true,
     };
   }
 }

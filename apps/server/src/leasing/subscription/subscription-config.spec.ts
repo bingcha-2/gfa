@@ -185,6 +185,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
         bindings: { anthropic: 1234 },
         displayBindings: { anthropic: "team-seat-a" },
         assignmentPolicy: "balanced",
+        salesSeatCapacity: { anthropic: 10 },
         shareSeats: 6,
         shareCapacity: 12,
         weight: 8,
@@ -204,16 +205,36 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
       bindings: { anthropic: 1234 },
       displayBindings: { anthropic: "team-seat-a" },
       assignmentPolicy: "balanced",
+      salesSeatCapacity: { anthropic: 10 },
       levels: { anthropic: "max-20x" },
       shareSeats: 6,
       shareCapacity: 12,
       weight: 8,
+      exclusive: false,
       bucketLimits: { "anthropic-claude": 50000 },
       weeklyBucketLimits: { "anthropic-claude": 250000 },
       requiresBinding: true,
       windowMs: 18000000,
       keyExpiresAt: "2026-07-01T00:00:00.000Z",
     });
+  });
+
+  it("独享 config(exclusive:true)→ record.exclusive=true 下沉", () => {
+    const record = subscriptionToLimitRecord({
+      id: "sub-excl",
+      status: "ACTIVE",
+      expiresAt,
+      config: {
+        line: "bind",
+        products: ["anthropic"],
+        levels: { anthropic: "max-20x" },
+        bindings: { anthropic: 7 },
+        weight: 8,
+        exclusive: true,
+        windowMs: 18000000,
+      },
+    });
+    expect(record.exclusive).toBe(true);
   });
 
   it("bind record falls back to legacy bindings and weight defaults when new fields are absent", () => {

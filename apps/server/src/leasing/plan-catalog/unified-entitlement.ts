@@ -1,91 +1,50 @@
-export type QuotaSource =
-  | { source: "fixed"; window5h: number; weekly: number }
-  | { source: "learned"; provider: string; planType: string; family: string };
+// 供给策略:目前只承载「每号销售席位容量」(salesSeatsPerAccount)。
+// 历史的 per-bucket 额度(QuotaSource: fixed/learned → bucketLimits/weeklyBucketLimits)已删除
+// —— 绑定卡额度统一由 fair-share 治理(见 QUOTA-REDESIGN.md),不再下发静态 entitlements。
 
 export interface SupplyPolicy {
   defaultLevel: string;
   salesSeatsPerAccount: Record<string, number>;
-  buckets: Record<string, QuotaSource>;
-}
-
-export interface EntitlementInput {
-  products: string[];
-  levels?: Record<string, string>;
-  shareSeats: number;
-  shareCapacity: number;
-}
-
-export interface BucketEntitlements {
-  bucketLimits: Record<string, number>;
-  weeklyBucketLimits: Record<string, number>;
 }
 
 export interface SupplyPolicyCatalog {
   supplyPolicies?: Record<string, Partial<SupplyPolicy>>;
+  /** 全局统一容量 C:一个号拼几个人(份)。后台可配;缺省回退 ACCOUNT_SHARE_CAPACITY。
+   *  同时是 seat 层占座上限与 fair-share 分母保底 N —— 两套口径合一(见 QUOTA-REDESIGN)。 */
+  accountCapacity?: number;
+  /** 拼车超卖系数:封顶 = ceil(C × factor)。后台可配;缺省 1.5。独享永不超卖,不走这条。 */
+  oversellFactor?: number;
+}
+
+/** 超卖系数默认值:拼车最多卖到 1.5×C。 */
+export const DEFAULT_OVERSELL_FACTOR = 1.5;
+
+/** 统一容量 C:catalog.accountCapacity(后台覆盖)→ fallback(调用方传 ACCOUNT_SHARE_CAPACITY)。 */
+export function accountCapacity(catalog: SupplyPolicyCatalog, fallback: number): number {
+  const override = positiveInteger(catalog.accountCapacity);
+  if (override) return override;
+  const fb = Math.floor(Number(fallback));
+  return Number.isFinite(fb) && fb > 0 ? fb : 8;
+}
+
+/** 后台可配超卖系数:catalog.oversellFactor → 默认 1.5。clamp ≥ 1(系数 <1 = 比基准还少卖,无意义)。 */
+export function oversellFactor(catalog: SupplyPolicyCatalog): number {
+  const raw = Number(catalog.oversellFactor);
+  if (!Number.isFinite(raw)) return DEFAULT_OVERSELL_FACTOR;
+  return raw < 1 ? 1 : raw;
+}
+
+/** 拼车超卖封顶 = ceil(C × factor)。 */
+export function oversellCeiling(catalog: SupplyPolicyCatalog, fallback: number): number {
+  return Math.ceil(accountCapacity(catalog, fallback) * oversellFactor(catalog));
 }
 
 export function defaultSupplyPolicies(): Record<string, SupplyPolicy> {
   return {
-    anthropic: {
-      defaultLevel: "max-20x",
-      salesSeatsPerAccount: { "max-20x": 10 },
-      buckets: {
-        "anthropic-claude": {
-          source: "learned",
-          provider: "anthropic",
-          planType: "max-20x",
-          family: "claude",
-        },
-      },
-    },
-    codex: {
-      defaultLevel: "pro",
-      salesSeatsPerAccount: { pro: 10 },
-      buckets: {
-        "codex-gpt": {
-          source: "learned",
-          provider: "codex",
-          planType: "pro",
-          family: "gpt",
-        },
-      },
-    },
-    antigravity: {
-      defaultLevel: "ultra",
-      salesSeatsPerAccount: { ultra: 10 },
-      buckets: {
-        "antigravity-gemini": {
-          source: "fixed",
-          window5h: 100_000_000,
-          weekly: 400_000_000,
-        },
-        "antigravity-claude": {
-          source: "fixed",
-          window5h: 12_000_000,
-          weekly: 40_000_000,
-        },
-      },
-    },
+    anthropic: { defaultLevel: "max-20x", salesSeatsPerAccount: { "max-20x": 10 } },
+    codex: { defaultLevel: "pro", salesSeatsPerAccount: { pro: 10 } },
+    antigravity: { defaultLevel: "ultra", salesSeatsPerAccount: { ultra: 10 } },
   };
-}
-
-export function buildFixedEntitlements(catalog: SupplyPolicyCatalog, input: EntitlementInput): BucketEntitlements {
-  const ratio = entitlementRatio(input);
-  const policies = mergeSupplyPolicies(catalog);
-  const entitlements: BucketEntitlements = { bucketLimits: {}, weeklyBucketLimits: {} };
-
-  for (const product of input.products) {
-    const policy = policies[product];
-    if (!policy) continue;
-
-    for (const [bucket, source] of Object.entries(policy.buckets)) {
-      if (source.source !== "fixed") continue;
-      writePositive(entitlements.bucketLimits, bucket, Math.floor(source.window5h * ratio));
-      writePositive(entitlements.weeklyBucketLimits, bucket, Math.floor(source.weekly * ratio));
-    }
-  }
-
-  return entitlements;
 }
 
 export function mergeSupplyPolicies(catalog: SupplyPolicyCatalog): Record<string, SupplyPolicy> {
@@ -102,10 +61,6 @@ export function mergeSupplyPolicies(catalog: SupplyPolicyCatalog): Record<string
       salesSeatsPerAccount: {
         ...(base?.salesSeatsPerAccount ?? {}),
         ...(override.salesSeatsPerAccount ?? {}),
-      },
-      buckets: {
-        ...(base?.buckets ?? {}),
-        ...(override.buckets ?? {}),
       },
     };
   }
@@ -127,19 +82,6 @@ export function salesSeatCapacityFor(
   if (defaultCapacity) return defaultCapacity;
   const fallbackCapacity = Math.floor(Number(fallback));
   return Number.isFinite(fallbackCapacity) && fallbackCapacity > 0 ? fallbackCapacity : 8;
-}
-
-export function entitlementRatio(input: Pick<EntitlementInput, "shareSeats" | "shareCapacity">): number {
-  const shareSeats = Number(input.shareSeats);
-  const shareCapacity = Number(input.shareCapacity);
-  if (!Number.isFinite(shareSeats) || !Number.isFinite(shareCapacity) || shareCapacity <= 0) return 0;
-  return shareSeats / shareCapacity;
-}
-
-export function writePositive(target: Record<string, number>, bucket: string, limit: number): void {
-  if (Number.isFinite(limit) && limit > 0) {
-    target[bucket] = limit;
-  }
 }
 
 function positiveInteger(value: unknown): number | null {

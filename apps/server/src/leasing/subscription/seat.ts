@@ -7,8 +7,15 @@ export interface SubConfig {
   bindings?: Record<string, number>;
   salesSeatCapacity?: Record<string, number>;
   shareSeats?: number;
-  /** 该订阅占的份数(独享=8 … 拼车=1)。缺省按 1 计。 */
+  /** 该订阅占的份数(独享=C … 拼车=1)。缺省按 1 计。 */
   weight?: number;
+  /** 独享标记:true = 独占整个号(份额 100%、别人不得绑入、永不超卖)。显式字段,不靠 weight 推断。 */
+  exclusive?: boolean;
+}
+
+/** 是否独享订阅。独享 = 显式 exclusive:true(不再用 weight==capacity 隐式推断)。 */
+export function isExclusive(config: Pick<SubConfig, "exclusive">): boolean {
+  return config.exclusive === true;
 }
 
 /** 某上游号(accountId)在某产品上已被多少张「绑定订阅」占用。 */
@@ -45,6 +52,26 @@ export function occupiedSharesByAccount(
 
 export function seatWeight(config: Pick<SubConfig, "shareSeats" | "weight">): number {
   return Math.max(1, Math.floor(Number(config.shareSeats ?? config.weight) || 1));
+}
+
+/**
+ * 某产品下被「独享」订阅独占的上游号 id 集合(line=bind 且 exclusive 且绑了该号)。
+ * 分配器据此对所有新绑定隐藏这些号 —— 独享号别人不得绑入(占座口径与 occupiedSharesByAccount 一致)。
+ */
+export function exclusiveLockedByAccount(
+  configs: Array<SubConfig & { id?: string }>,
+  product: string,
+  excludeId = "",
+): Set<number> {
+  const locked = new Set<number>();
+  for (const c of configs) {
+    if (c.line !== "bind") continue;
+    if (!isExclusive(c)) continue;
+    if (excludeId && c.id === excludeId) continue;
+    const accountId = Number(c.bindings?.[product]);
+    if (accountId > 0) locked.add(accountId);
+  }
+  return locked;
 }
 
 export function salesSeatCapacityForProduct(

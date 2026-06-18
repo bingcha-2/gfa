@@ -4,9 +4,8 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
-import { FairShareTracker, weeklyBucketKey } from "../token-server/fair-share-tracker";
+import { FairShareTracker } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
-import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO, clampWeeklyRatio, SAMPLE_DROP_STEP } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
@@ -29,7 +28,7 @@ import {
   normalizeModelKey,
   validateClientVersion,
 } from "../token-server/token-billing";
-import { bucketKey, familyOfBucket } from "./product-bucket";
+import { bucketKey } from "./product-bucket";
 import type { Provider } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
 
@@ -88,8 +87,6 @@ export type LeaseServiceOptions = {
   noAccountMessage?: string;
   /** 503 message when a card's statically-bound account is unavailable. */
   busyMessage?: string;
-  /** Quota profile tracker for learning real upstream budgets from 429 events. */
-  quotaProfileTracker?: QuotaProfileTracker;
 };
 
 type LeaseRecord = {
@@ -182,18 +179,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly accountQuotaSnapshotTracker: AccountQuotaSnapshotRecorder | null;
   readonly fairShareTracker: FairShareTracker | null;
-  readonly quotaProfileTracker: QuotaProfileTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
   private readonly mode: string;
   private readonly noAccountMessage: string;
   private readonly busyMessage: string;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
-  /** Continuous quota-profile sampling cursors, per (accountId, scope-key).
-   *  Holds the per-account fraction stream state for the "sample every ~10% drop"
-   *  trigger + cross-window-reset detection. Per-account (NOT in the cross-account
-   *  QuotaProfile, which would cross-contaminate). Rebuilt after restart. */
-  private readonly profileSampleCursors = new Map<string, { lastFraction: number; windowStart: number; lastTotalUsed: number }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
   private totalLeases = 0;
   private totalReports = 0;
@@ -240,7 +231,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.mode = options.mode || "remote-token-server";
     this.noAccountMessage = options.noAccountMessage || "No account with projectId is available.";
     this.busyMessage = options.busyMessage || "当前账号繁忙，额度恢复中，请稍后重试";
-    this.quotaProfileTracker = options.quotaProfileTracker || null;
   }
 
   private ensureScheduler(): SubscriptionScheduler {
@@ -356,7 +346,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       },
       enterpriseProbe: this.enterpriseProbe.getStatus(),
       models: this.provider.models ? this.provider.models.list() : [],
-      quotaProfiles: this.quotaProfileTracker?.getAllProfiles() || {},
     };
   }
 
@@ -441,8 +430,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       product: this.provider.id,
       // 绑定卡:限额窗口对齐绑定账号的上游刷新窗口(每桶);号池卡返回 0 → 走固定周期。
       alignedResetAt: (record: any) => this.boundAccountResetAt(record, modelKey),
-      // 派生周上限(anthropic/codex)用的 5h/周 换算比 R。回调解 record→R 的鸡生蛋。
-      weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
     });
     // Session-JWT auth failure → machine code in `error` (SESSION_INVALID /
     // DEVICE_REVOKED / SUBSCRIPTION_EXPIRED). The desktop client treats these as
@@ -474,7 +461,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           modelKey,
           product: this.provider.id,
           alignedResetAt: (rec: any) => this.boundAccountResetAt(rec, modelKey),
-          weeklyRatio: (rec: any) => this.weeklyRatioForFamily(rec, familyOfBucket(bucket)),
         },
       });
       if (relay.picked) {
@@ -495,7 +481,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         modelKey,
         product: this.provider.id,
         alignedResetAt: (record: any) => this.boundAccountResetAt(record, modelKey),
-        weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
         enforceLimit: true,
       });
       if (!limitCheck.allowed) {
@@ -764,14 +749,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return this.accessKeyStore.publicStatus(
       record,
       this.boundAccountResetAt(record, modelKey),
-      (bucket: string) => this.weeklyRatioForFamily(record, familyOfBucket(bucket)),
     );
   }
 
   private buildLeaseQuotaPayload(record: any, boundAccountId: number, modelKey: string, account?: TAccount | null): {
     accountBucketsData: Record<string, { fraction: number; resetAt: number }>;
-    fairShareQuota?: Record<string, { fraction: number; resetAt: number }>;
-    weeklyFairShareQuota?: Record<string, { fraction: number; resetAt: number }>;
+    fairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
+    weeklyFairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
     accessKeyStatus: any;
   } {
     const resolvedAccount = account || (boundAccountId > 0
@@ -784,7 +768,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       : undefined;
     const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && boundAccountId > 0)
       ? Object.fromEntries(
-          Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 5 * 60 * 60 * 1000 }]),
+          // 无 fair-share 数据(单主/冷启动)→ 整号都归我:share=1、fraction=1。
+          Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 5 * 60 * 60 * 1000, share: 1 }]),
         )
       : rawFairShare;
     const weeklyTracked = boundAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
@@ -795,7 +780,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       ? undefined
       : (rawWeeklyFairShare && Object.keys(rawWeeklyFairShare).length === 0)
         ? Object.fromEntries(
-            Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 7 * 24 * 60 * 60 * 1000 }]),
+            Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 7 * 24 * 60 * 60 * 1000, share: 1 }]),
           )
         : rawWeeklyFairShare;
 
@@ -805,28 +790,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       weeklyFairShareQuota,
       accessKeyStatus,
     };
-  }
-
-  /**
-   * 派生周上限用的 5h/周 换算比 R:卡设置框(weeklyRatio>0) > 后台学习(weekly/5h) > 全局默认。
-   * 池子卡无固定账号 → 按最高档假定(claude=max / gpt=pro);绑卡用绑定账号的真实 plan。
-   */
-  private resolveWeeklyRatio(record: any, modelKey: string): number {
-    return this.weeklyRatioForFamily(record, familyOfBucket(bucketKey(this.provider.id, modelKey)));
-}
-
-  /** 按家族解析 R(供 enforce 与 publicStatus 共用)。family = claude|gpt|gemini。 */
-  private weeklyRatioForFamily(record: any, family: string): number {
-    const cardR = Number(record?.weeklyRatio || 0);
-    if (cardR > 0) return clampWeeklyRatio(cardR);
-    const topPlan = family === "gpt" ? "pro" : "max";
-    let plan = topPlan;
-    const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
-    if (boundId > 0) {
-      const acct = this.readAccounts().find((a) => a.id === boundId) as any;
-      plan = String(acct?.planType || "").trim() || topPlan;
-    }
-    return clampWeeklyRatio(this.quotaProfileTracker?.getWeeklyToShortRatio(this.provider.id, plan, family) ?? DEFAULT_WEEKLY_RATIO);
   }
 
   private boundUnavailableMessage(boundAccountId: number): string {
@@ -959,48 +922,32 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (inputs.length > 0) {
       for (const inp of inputs) {
         const bucket = bucketKey(this.provider.id, inp.modelKey);
+        // fraction=-1 表示未知(不归并,只继续累积 u_i);resetAt=0 表示上游未给(不喂窗口)。
         const hourlyFraction = this.quotaPercentToFraction(inp.hourlyPercent);
-        if (hourlyFraction !== null) {
-          this.fairShareTracker.updateBudgetEstimate(accountId, bucket, hourlyFraction);
-        }
-
         const hourlyReset = inp.hourlyResetAt ? inp.hourlyResetAt.getTime() : 0;
-        if (Number.isFinite(hourlyReset) && hourlyReset > 0) {
-          this.fairShareTracker.syncWindow(accountId, bucket, hourlyReset);
-        }
+        this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, hourlyFraction ?? -1, hourlyReset);
 
         const weeklyFraction = this.quotaPercentToFraction(inp.weeklyPercent);
-        if (weeklyFraction !== null) {
-          this.fairShareTracker.updateWeeklyBudgetEstimate(accountId, bucket, weeklyFraction);
-        }
-
         const weeklyReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
-        if (Number.isFinite(weeklyReset) && weeklyReset > 0) {
-          this.fairShareTracker.syncWeeklyWindow(accountId, bucket, weeklyReset);
-        }
+        this.fairShareTracker.applyWeeklyAccountQuotaSnapshot(accountId, bucket, weeklyFraction ?? -1, weeklyReset);
       }
       return;
     }
 
+    // antigravity 回退路径:无结构化 inputs → 用 modelQuotaFractions(每模型 fraction)
+    // + modelQuotaResetTimes(每模型上游 reset)逐模型归并(无周窗口)。
     const fractions = (account as any)?.modelQuotaFractions;
+    const resetTimes = (account as any)?.modelQuotaResetTimes;
     if (fractions && typeof fractions === "object") {
       for (const [model, frac] of Object.entries(fractions)) {
         const f = Number(frac);
-        if (Number.isFinite(f) && f >= 0 && f <= 1) {
-          const bucket = bucketKey(this.provider.id, model);
-          this.fairShareTracker.updateBudgetEstimate(accountId, bucket, f);
-        }
-      }
-    }
-
-    const resetTimes = (account as any)?.modelQuotaResetTimes;
-    if (resetTimes && typeof resetTimes === "object") {
-      for (const [model, resetStr] of Object.entries(resetTimes)) {
-        const resetMs = Date.parse(String(resetStr));
-        if (Number.isFinite(resetMs) && resetMs > 0) {
-          const bucket = bucketKey(this.provider.id, model);
-          this.fairShareTracker.syncWindow(accountId, bucket, resetMs);
-        }
+        if (!(Number.isFinite(f) && f >= 0 && f <= 1)) continue;
+        const bucket = bucketKey(this.provider.id, model);
+        const resetMs = resetTimes && typeof resetTimes === "object"
+          ? Date.parse(String((resetTimes as any)[model]))
+          : 0;
+        const reset = Number.isFinite(resetMs) && resetMs > 0 ? resetMs : 0;
+        this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, f, reset);
       }
     }
   }
@@ -1010,87 +957,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) return null;
     return n > 1 ? Math.min(1, n / 100) : Math.min(1, n);
-  }
-
-  /**
-   * Continuous quota-profile sampling. Called AFTER recordUsage so the sampled
-   * totalUsed already includes this request and is aligned with the (post-report)
-   * upstream fraction. Samples once per ~10% drop in the remaining fraction.
-   * Cross-window reset is detected from the SAME windowStart that clears perCard.
-   */
-  private maybeSampleQuotaProfile(accountId: number, account: TAccount, record: any): void {
-    if (!this.fairShareTracker || !this.quotaProfileTracker) return;
-    const inputs = this.provider.quotaSnapshotInputs?.(account) || [];
-    if (inputs.length === 0) return; // structured snapshot only (codex/anthropic); others learn via 429
-    const planType = String((account as any)?.planType || "free").toLowerCase();
-    // 决策④:绑卡(1 号≈GFA 独占)跳过门6;池卡/万能卡启用一致性门6。
-    const isBound = this.accessKeyStore.boundAccountIdFor(record, this.provider.id) > 0;
-    for (const inp of inputs) {
-      const bucket = bucketKey(this.provider.id, inp.modelKey);
-      const family = familyOfBucket(bucket);
-      this.sampleQuotaScope(accountId, planType, family, bucket, false, this.quotaPercentToFraction(inp.hourlyPercent), isBound);
-      if (this.fairShareTracker.isWeeklyTracked()) {
-        this.sampleQuotaScope(accountId, planType, family, bucket, true, this.quotaPercentToFraction(inp.weeklyPercent), isBound);
-      }
-    }
-  }
-
-  /** One scope (5h or weekly) of the continuous sampler. */
-  private sampleQuotaScope(
-    accountId: number,
-    planType: string,
-    family: string,
-    bucket: string,
-    isWeekly: boolean,
-    fraction: number | null,
-    isBound: boolean,
-  ): void {
-    if (fraction === null) return; // gate A.1: no real reading → never sample
-    const scopeKey = isWeekly ? weeklyBucketKey(bucket) : bucket;
-    const state = this.fairShareTracker!.getTrackerState(accountId, scopeKey);
-    if (!state) return;
-    const totalUsed = state.totalUsed;
-    const cursorKey = `${accountId}${scopeKey}`;
-    const cursor = this.profileSampleCursors.get(cursorKey);
-
-    // Gate A.2: window reset (windowStart changed = perCard was cleared) → reset
-    // baseline, never sample across the boundary (avoids phantom negative consumption).
-    if (!cursor || cursor.windowStart !== state.windowStart) {
-      this.profileSampleCursors.set(cursorKey, { lastFraction: fraction, windowStart: state.windowStart, lastTotalUsed: totalUsed });
-      return;
-    }
-    // Fraction rose within the same window (coarse-granularity jitter) → re-baseline, don't sample.
-    if (fraction > cursor.lastFraction) {
-      cursor.lastFraction = fraction;
-      cursor.lastTotalUsed = totalUsed;
-      return;
-    }
-    // Trigger: only sample once per ~10% drop in remaining fraction.
-    if (cursor.lastFraction - fraction < SAMPLE_DROP_STEP) return;
-
-    // Gate A.6 (pool/universal cards only): this step's usage increment must
-    // plausibly explain this step's fraction drop, else an external consumer of
-    // the shared account is polluting the estimate → skip.
-    if (!isBound) {
-      const usedDelta = totalUsed - cursor.lastTotalUsed;
-      const fracDrop = cursor.lastFraction - fraction;
-      if (!(usedDelta > 0) || fracDrop <= 0) {
-        cursor.lastFraction = fraction;
-        cursor.lastTotalUsed = totalUsed;
-        return;
-      }
-      const stepEst = usedDelta / fracDrop;
-      const totalEst = fraction < 1 ? totalUsed / (1 - fraction) : stepEst;
-      if (stepEst > totalEst * 3 || stepEst < totalEst / 3) {
-        cursor.lastFraction = fraction;
-        cursor.lastTotalUsed = totalUsed;
-        return; // inconsistent → likely external consumption, drop
-      }
-    }
-
-    this.quotaProfileTracker!.recordSample(this.provider.id, planType, family, totalUsed, fraction, isWeekly);
-    cursor.lastFraction = fraction;
-    cursor.lastTotalUsed = totalUsed;
   }
 
   async reportResult(req: any, payload: any) {
@@ -1133,18 +999,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // (Shared by both the antigravity TokenServerService and the Codex RemoteCodexService.)
     const accountId = lease?.accountId ?? 0;
     const retryAfterMs = Number(payload?.retryAfterMs || 0);
-
-    // Session leases have no per-card session machinery (see leaseToken);
-    // usage attribution below works because record.id == lease.accessKeyId
-    // == Subscription.id.
-    if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
-      this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
-      // Fair-share: push updated quota fractions into the tracker.
-      if (this.fairShareTracker) {
-        const account = this.readAccounts().find((a) => a.id === accountId);
-        if (account) this.syncFairShareQuotaSnapshot(accountId, account);
-      }
-    }
+    // 硬绑定主人:非 preferred-dynamic、且本卡确实硬绑到这个被服务的号。只有硬绑定卡
+    // 才计入公平份额(recordUsage)并下发血条 —— 池卡/万能卡/preferred-dynamic 不进份额。
+    // (候选池侧的严格分池排除见 availableAccounts → hardBoundAccountIds。)
+    const hardBound = !this.isPreferredDynamic(auth.record)
+      && this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id) === accountId
+      && accountId > 0;
 
     if (!reportId && success && lease?.successfulReportSeen) {
       return {
@@ -1161,8 +1021,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
 
-    // Fair-share: record weighted usage for bound cards.
-    if (accountId && this.fairShareTracker && success) {
+    // Fair-share: record weighted usage FIRST (accumulate u_i), gated to hard-bound
+    // cards only — pool/universal cards record elsewhere (accessKeyStore + tokenUsage)
+    // but never into the per-account fraction-share window.
+    if (hardBound && this.fairShareTracker && success) {
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         const bucket = bucketKey(this.provider.id, modelKey);
@@ -1172,12 +1034,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
         );
       }
-      // Continuous quota-profile sampling — MUST run after recordUsage above so
-      // the sampled totalUsed includes this request (aligned with the upstream
-      // fraction from applyAccountQuotaSnapshot earlier in this report).
-      if (this.quotaProfileTracker) {
+    }
+
+    // Account quota snapshot — applied AFTER recordUsage so the just-recorded u_i
+    // is attributed into T_i when syncFairShareQuotaSnapshot merges this segment.
+    // (applyAccountQuotaSnapshot also mutates the account + feeds the snapshot tracker.)
+    if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
+      this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
+      if (this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
-        if (account) this.maybeSampleQuotaProfile(accountId, account, auth.record);
+        if (account) this.syncFairShareQuotaSnapshot(accountId, account);
       }
     }
 
@@ -1270,27 +1136,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           } else {
             const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
             this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
-            // Fair-share: 429 backstop quota-profile sample (density safety net for
-            // sparse windows). NOT a special per-account SET — just one more sample
-            // into the same decayed-median pool.
-            if (this.fairShareTracker && status === 429 && this.quotaProfileTracker) {
-              const bucket = bucketKey(this.provider.id, modelKey);
-              const account = this.readAccounts().find((a) => a.id === accountId);
-              const resetAt = account ? getModelQuotaResetAt(account as any, modelKey) : 0;
-              const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-              const isWeekly = this.fairShareTracker.isWeeklyTracked()
-                && (retryAfterMs > FIVE_HOURS_MS || resetAt > this.now() + FIVE_HOURS_MS);
-
-              const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
-              if (state && state.totalUsed > 0) {
-                const planType = String((account as any)?.planType || "free");
-                const family = familyOfBucket(bucket);
-                this.quotaProfileTracker.recordSample(
-                  this.provider.id, planType, family,
-                  state.totalUsed, state.lastFraction, isWeekly,
-                );
-              }
-            }
           }
         } else if (status === 403) {
           const reason = String(payload?.reason || "http_403");
@@ -1321,9 +1166,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
+    // Blood bars: only hard-bound cards carry fair-share fractions, so the client
+    // can repaint its quota bars from the just-merged segment without a fresh lease.
+    const q = hardBound ? this.buildLeaseQuotaPayload(auth.record, accountId, modelKey) : null;
     return {
       ok: true,
       accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
+      ...(q?.fairShareQuota ? { fairShareQuota: q.fairShareQuota } : {}),
+      ...(q?.weeklyFairShareQuota ? { weeklyFairShareQuota: q.weeklyFairShareQuota } : {}),
     };
   }
 
@@ -1468,7 +1318,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * and cross-restart "remaining" instead of defaults. */
   async onModuleInit(): Promise<void> {
     this.rehydrateAccountStatus();
-    try { await this.quotaProfileTracker?.load(); } catch (err) { console.error("[lease-service] quotaProfileTracker load failed:", err); }
     try { await this.fairShareTracker?.load(); } catch (err) { console.error("[lease-service] fairShareTracker load failed:", err); }
   }
 
@@ -1496,9 +1345,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
     try { this.flushAccounts(); } catch (err) { console.error("[lease-service] flushAccounts on shutdown failed:", err); }
     try { this.flushAccessKeys(); } catch (err) { console.error("[lease-service] accessKeyStore flush on shutdown failed:", err); }
-    // Persist learned budgets + fair-share windows, then stop their flush timers.
-    try { await this.quotaProfileTracker?.flush(); } catch (err) { console.error("[lease-service] quotaProfileTracker flush on shutdown failed:", err); }
-    this.quotaProfileTracker?.destroy();
+    // Persist fair-share windows, then stop the flush timer.
     try { await this.fairShareTracker?.flush(); } catch (err) { console.error("[lease-service] fairShareTracker flush on shutdown failed:", err); }
     this.fairShareTracker?.destroy();
   }
@@ -1520,12 +1367,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     const now = this.now();
     this.modelGates.cleanupExpiredGates(now);
+    // 严格分池(QUOTA-REDESIGN §3/§7 决策C):轮换 / preferred-dynamic(boundAccountId==0)的
+    // 候选池排除所有硬绑定号 —— 绑定号只服务自己的主人,杜绝轮换卡漫游过去烧份额。
+    // 服务某张硬绑卡时(boundAccountId>0)不排除(那个号本就是它的)。
+    const hardBound = boundAccountId > 0 ? null : this.accessKeyStore.hardBoundAccountIds(this.provider.id);
     return this.readAccounts().filter((account) =>
       (boundAccountId ? account.id === boundAccountId : true) &&
       (account as any).enabled !== false &&
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&
       !excluded.has(account.id) &&
+      (!hardBound || !hardBound.has(account.id)) &&
       // 绑定卡(boundAccountId>0):忽略可恢复冷却,无号可换时冷却只会害卡不可用。
       !this.isAccountBlocked(account.id, modelKey || "", now, boundAccountId > 0),
     );

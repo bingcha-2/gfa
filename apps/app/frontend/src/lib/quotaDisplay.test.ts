@@ -18,6 +18,12 @@ describe('isExclusiveCard', () => {
     expect(isExclusiveCard(1, 8)).toBe(false)
     expect(isExclusiveCard(8, 0)).toBe(false)
   })
+
+  it('honors the explicit exclusive flag as authoritative over the weight heuristic', () => {
+    // 后端现在下发显式 exclusive(权威),不再靠 weight>=capacity 推断。
+    expect(isExclusiveCard(1, 8, true)).toBe(true) // 显式独享:即便 weight<capacity
+    expect(isExclusiveCard(8, 8, false)).toBe(false) // 显式非独享:即便占满容量
+  })
 })
 
 describe('shouldUseExclusiveDisplay', () => {
@@ -25,6 +31,11 @@ describe('shouldUseExclusiveDisplay', () => {
     expect(shouldUseExclusiveDisplay({ cardWeight: 8, cardShareCapacity: 8, accountProblem: false })).toBe(true)
     expect(shouldUseExclusiveDisplay({ cardWeight: 8, cardShareCapacity: 8, accountProblem: true })).toBe(false)
     expect(shouldUseExclusiveDisplay({ cardWeight: 1, cardShareCapacity: 8, accountProblem: false })).toBe(false)
+  })
+
+  it('uses the explicit exclusive flag when provided', () => {
+    expect(shouldUseExclusiveDisplay({ cardWeight: 1, cardShareCapacity: 8, exclusive: true, accountProblem: false })).toBe(true)
+    expect(shouldUseExclusiveDisplay({ cardWeight: 8, cardShareCapacity: 8, exclusive: false, accountProblem: false })).toBe(false)
   })
 })
 

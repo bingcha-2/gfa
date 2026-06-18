@@ -266,8 +266,10 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 // doClaudeReportWithRetry 带退避重试上报;最终失败入队列,下次成功时补发。
 func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, card, upstreamProxy string) {
 	var err error
+	var body []byte
 	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
-		if _, _, e := postClaudeBcai("/report-result", payload, card, upstreamProxy); e == nil {
+		if b, _, e := postClaudeBcai("/report-result", payload, card, upstreamProxy); e == nil {
+			body = b
 			err = nil
 			break
 		} else {
@@ -282,6 +284,10 @@ func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, c
 		l.queueClaudeReport(payload, card, upstreamProxy)
 		return
 	}
+	// 服务端 report-result 响应同样带回 fairShareQuota/weeklyFairShareQuota(与 lease 同形),
+	// 立即刷新血条 —— 每次上报后即时更新,不必等下一次租号。
+	recordAccountBuckets(body)
+	recordFairShareQuota(body)
 	billable := claudeDisplayBillable(payloadInt64(payload["rawTotalTokens"]), payloadInt64(payload["cachedInputTokens"]))
 	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v 计费=%d 原始=%v)→ 服务端额度应已更新", payload["leaseId"], billable, payload["totalTokens"])
 	l.flushClaudePending(card, upstreamProxy)

@@ -9,7 +9,8 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate:bind-pinned": "tsx scripts/migrate-bind-cards-to-pinned.ts"
   },
   "dependencies": {
     "@gfa/shared": "workspace:*",

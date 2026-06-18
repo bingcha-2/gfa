@@ -502,37 +502,20 @@ model AccountQuotaSnapshot {
   @@index([timestamp])
 }
 
-/// 学习出的 5h/周预算。一行一个 provider+planType+family。
-/// 由 QuotaProfileTracker 内存聚合 + 定时批量 upsert。权威预算 = history 的时间衰减加权中位
-/// (读时重算);window5h/weekly 仅为读时快照(status 展示 + 旧代码降级安全网)。
-model QuotaProfile {
-  provider      String
-  planType      String
-  family        String                     // gemini | claude | gpt
-  window5h      Float    @default(0)        // 读时重算快照(权威=history5h 衰减加权中位)
-  weekly        Float    @default(0)        // 读时重算快照(权威=historyWeekly)
-  samples5h     Int      @default(0)
-  samplesWeekly Int      @default(0)
-  history5h     String   @default("[]")     // JSON: {v:number,t:number}[](向后兼容旧 number[])
-  historyWeekly String   @default("[]")     // JSON: {v:number,t:number}[](向后兼容旧 number[])
-  lastUpdatedAt BigInt   @default(0)        // epoch ms
-
-  @@id([provider, planType, family])
-}
-
-/// 拼车每卡 5h 已用量(决定"剩余"),跨重启持久化。FairShareTracker 内存聚合 + 定时批量 upsert。
-/// 恢复后按 windowStart 判过期(跨 5h 边界丢弃)。
+/// 拼车每卡 5h/周 份额态(决定"剩余"),跨重启持久化。FairShareTracker 内存聚合 + 定时批量 upsert。
+/// 恢复后按 windowStart 判过期(跨窗口边界丢弃)。
 model FairShareWindow {
-  provider        String
-  accountId       Int
-  bucket          String                   // 复合桶 product-family
-  cardId          String
-  windowStart     BigInt                   // epoch ms,5h 窗口起点
-  weightedUsed    Float    @default(0)      // 本窗口该卡已用加权 token
-  estimatedBudget Float    @default(0)      // 已退役(预算改读学习档案);保留列写默认值,下个发布周期再 DROP
-  confidence      String   @default("default") // 已退役(同上)
-  lastFraction    Float    @default(1)
-  updatedAt       DateTime @default(now())
+  provider          String
+  accountId         Int
+  bucket            String                   // 复合桶 product-family
+  cardId            String
+  windowStart       BigInt                   // epoch ms,窗口起点
+  weightedUsed      Float    @default(0)      // 本段该卡已用加权 token(归并后清零的 u_i)
+  attributedShare   Float    @default(0)      // T_i:本窗口累计已烧账号比例 [0,1],只增不减
+  lockedDenominator Float    @default(0)      // 窗口开始锁定的分母 D = max(N, Σw)
+  lastFraction      Float    @default(1)      // 低水位:窗口内单调不增的上游剩余 fraction
+  isParticipant     Boolean  @default(false)  // reset 时是否在册(锁定参与卡);重启不把窗口内新绑卡误升为 participant
+  updatedAt         DateTime @default(now())
 
   @@id([provider, accountId, bucket, cardId])
   @@index([provider, accountId, bucket])

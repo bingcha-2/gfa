@@ -20,7 +20,6 @@ import {
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
-import { QuotaBaselineService } from "../../plan-catalog/quota-baseline.service";
 import { salesSeatCapacityFor } from "../../plan-catalog/unified-entitlement";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight, type SubConfig } from "../../subscription/seat";
@@ -123,7 +122,6 @@ export class BillingService {
     private readonly rosetta: RosettaService,
     private readonly epayCallback: EpayCallbackService,
     private readonly subscriptions: SubscriptionService,
-    private readonly quotaBaselines: QuotaBaselineService,
   ) {}
 
   /**
@@ -165,7 +163,7 @@ export class BillingService {
     } catch (err: any) {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
-    config = await this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
+    config = this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
 
     // 座位预检(spec §10):绑定线下单前确认每个 product+level 有可用座位,无 → 拒绝下单
     // (避免用户付钱拿不到号)。号池线不预检(运行时动态调度,无座位概念)。
@@ -217,7 +215,7 @@ export class BillingService {
     } catch (err: any) {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
-    config = await this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
+    config = this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
 
     // 与付费下单同口径:绑定线座位预检(避免授予了拿不到号);号池线不预检。
     await this.assertBindSeatsAvailable(config);
@@ -242,21 +240,15 @@ export class BillingService {
     });
   }
 
-  private async enrichUnifiedBindConfig(
+  private enrichUnifiedBindConfig(
     catalog: CatalogConfig,
     config: Record<string, any>,
-  ): Promise<Record<string, any>> {
+  ): Record<string, any> {
     if (config.line !== "bind") return config;
 
     const products = Array.isArray(config.products) ? config.products : [];
     const levels = config.levels || {};
     const shareCapacity = Number(config.shareCapacity || 8);
-    const entitlements = await this.quotaBaselines.buildEntitlements(catalog, {
-      products,
-      levels,
-      shareSeats: Number(config.shareSeats || config.weight || 1),
-      shareCapacity,
-    });
     const salesSeatCapacity = Object.fromEntries(
       products.map((product: string) => [
         product,
@@ -264,11 +256,11 @@ export class BillingService {
       ]),
     );
 
+    // 绑定卡额度由 fair-share 治理(硬绑 pinned),不再下发静态 bucketLimits/weeklyBucketLimits。
     return {
       ...config,
       salesSeatCapacity,
-      ...entitlements,
-      assignmentPolicy: "preferred-dynamic",
+      assignmentPolicy: "pinned",
     };
   }
 

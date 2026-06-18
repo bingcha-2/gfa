@@ -24,7 +24,10 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { boundSeatsByAccount, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
+import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
+import { oversellFactor } from "../plan-catalog/unified-entitlement";
+import type { CatalogConfig } from "../plan-catalog/pricing";
+import { boundSeatsByAccount, exclusiveLockedByAccount, isExclusive, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
@@ -40,7 +43,18 @@ export class EntitlementSyncService {
     private readonly remoteCodex: RemoteCodexService,
     private readonly remoteAnthropic: RemoteAnthropicService,
     private readonly prisma: PrismaService,
+    private readonly planCatalog: PlanCatalogService,
   ) {}
+
+  /** 拼车超卖封顶系数(后台 catalog 可配,缺省 1.5)。读 published catalog,缺则 1.5。 */
+  private async oversellFactor(): Promise<number> {
+    try {
+      const published = await this.planCatalog.getPublished();
+      return oversellFactor((published?.config as CatalogConfig) ?? {});
+    } catch {
+      return oversellFactor({});
+    }
+  }
 
   /**
    * 解析某产品下绑定号的展示信息(id + 邮箱),供后台订阅详情内联展示绑定的是哪个号。
@@ -90,6 +104,9 @@ export class EntitlementSyncService {
     const unbound = products.filter((p) => !(Number(existingBindings[p]) > 0));
 
     if (unbound.length > 0) {
+      // 超卖封顶系数(后台可配)在锁外取一次,避免临界区内 await 额外 DB。
+      const factor = await this.oversellFactor();
+      const exclusive = isExclusive(config);
       // Read DB shares → assign → persist, serialized so two concurrent purchases
       // can't both read "free" and double-book past capacity.
       await withAccessKeysWriteLock(async () => {
@@ -102,15 +119,19 @@ export class EntitlementSyncService {
             );
             continue;
           }
-          const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
+          const { shares, counts, exclusiveLocked } = await this.seatOccupancyFromDb(product, sub.id);
           const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
-          // QUOTA-REDESIGN §7 / 决策7:超卖已放开 —— assignSeatForProductFromShares 只在「无任何
-          // 可绑号」(等级不匹配 / 停用 / 配额永久耗尽)时返回 null;满号会回退到最闲号(超卖)而非
-          // 留空。故 null 已不再代表「容量满」,只代表该等级根本没号可绑。
-          const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, shares, counts, salesCapacity);
+          // 独享请求只落干净号、永不超卖;拼车排除被独享锁定的号,且超卖封顶 = ceil(C × factor)。
+          const accountId = this.rosetta.assignSeatForProductFromShares(
+            product, weight, level, shares, counts, salesCapacity,
+            { exclusive, exclusiveLocked, oversellCeiling: Math.ceil(salesCapacity * factor) },
+          );
           if (!accountId) {
+            const why = exclusive
+              ? "独享需要一个干净号(无人占用),当前该等级无干净号"
+              : "等级不匹配 / 停用 / 配额耗尽 / 仅剩独享锁定号";
             this.logger.error(
-              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} — no eligible account (等级不匹配 / 停用 / 配额耗尽);leaving it UNBOUND(容量满不再是失败原因:超卖已按 §7/决策7 放开)`,
+              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} exclusive=${exclusive} — no eligible account (${why});leaving it UNBOUND`,
             );
             continue;
           }
@@ -219,7 +240,7 @@ export class EntitlementSyncService {
   private async seatOccupancyFromDb(
     product: string,
     excludeId: string,
-  ): Promise<{ shares: Map<number, number>; counts: Map<number, number> }> {
+  ): Promise<{ shares: Map<number, number>; counts: Map<number, number>; exclusiveLocked: Set<number> }> {
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
       // config 空(卡迁移订阅)时要从 legacy 列回退,否则漏数其占用 → 选号超分。
@@ -233,6 +254,7 @@ export class EntitlementSyncService {
     return {
       shares: occupiedSharesByAccount(configs, product, excludeId),
       counts: boundSeatsByAccount(configs, product, excludeId),
+      exclusiveLocked: exclusiveLockedByAccount(configs, product, excludeId),
     };
   }
 

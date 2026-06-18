@@ -124,8 +124,6 @@ export class AccessKeyService {
           recentWindowTokens: recentTokenUsage(authRecord),
           windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
           weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
-          // 周/5h 换算比设置框(0 = 留空 → 走「后台学习 > 全局默认」)。
-          weeklyRatio: Number(key.weeklyRatio || 0),
           durationMs: Number(key.durationMs || 0),
           provider: String(key.provider || ""),
           boundAccountId: Number(key.boundAccountId || 0),
@@ -259,8 +257,6 @@ export class AccessKeyService {
         windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
         // Weekly (long) window limit — second tier of rate limiting (0 = unlimited).
         weeklyTokenLimit: Math.max(0, Number(payload?.weeklyTokenLimit || 0)),
-        // 周/5h 换算比覆盖(0 = 留空,走后台学习/全局默认 R)。派生周上限 = 5h上限 × R。
-        weeklyRatio: Math.max(0, Number(payload?.weeklyRatio || 0)),
         weight,
         // 按产品份额覆盖(仅含显式设过的产品);为空则不写,纯走卡级 weight。
         ...(Object.keys(weightsRecord).length ? { weights: { ...weightsRecord } } : {}),
@@ -287,9 +283,9 @@ export class AccessKeyService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
-    for (const field of ["name", "status", "durationMs", "windowMs", "weeklyTokenLimit", "weeklyRatio"]) {
+    for (const field of ["name", "status", "durationMs", "windowMs", "weeklyTokenLimit"]) {
       if (payload[field] !== undefined) record[field] =
-        (field.endsWith("Ms") || field.endsWith("Limit") || field === "weeklyRatio")
+        (field.endsWith("Ms") || field.endsWith("Limit"))
           ? Number(payload[field])
           : String(payload[field]);
     }
@@ -431,8 +427,15 @@ export class AccessKeyService {
    *   ③ 其中人数最多(把拼车塞满、空号留给独享)
    *   ④ 回血最快(soonestReset 最早)
    *   ⑤ id 兜底(确定性)
-   * 返回选中的 accountId,或 null(该等级无号还剩 weight 份)。boundCounts 缺省为空 —— 预检
-   * (hasAvailableSeatFromShares)只问「有没有」,与排序无关(任一号够份即非 null)。
+   * 返回选中的 accountId,或 null(该等级**无任何可绑号** —— 等级不匹配 / 停用 / 配额永久耗尽,
+   * 即候选集为空)。boundCounts 缺省为空 —— 预检(hasAvailableSeatFromShares)只问「有没有」,
+   * 与排序无关。
+   *
+   * QUOTA-REDESIGN §7 / 决策7:**不再硬禁超卖(Σw>N)。** `N`(salesCapacity)退化为「保底席位数」,
+   * 不是硬上限 —— 使用层按 `D=max(N,Σw)` 自动切薄,超卖只让每席变薄、永不撞墙。故选号策略:
+   *   优先「没占满(free≥need)」的号按原优先级填满(②③④⑤);
+   *   若全部占满 → 回退到「最闲」的号(occupied 最小 = free 最大,可为负数),让绑定仍成功(超卖),
+   *   同样闲时再走原优先级兜底。只有候选集为空(无任何可绑号)才返回 null。
    */
   assignSeatForProductFromShares(
     product: string,
@@ -441,42 +444,71 @@ export class AccessKeyService {
     occupiedShares: Map<number, number>,
     boundCounts: Map<number, number> = new Map(),
     salesCapacity = ACCOUNT_SHARE_CAPACITY,
+    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number } = {},
   ): number | null {
     if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
     const lvl = String(level || "").trim();
     if (!lvl) return null;
     const need = cardWeight({ weight });
     const capacity = normalizeSalesCapacity(salesCapacity);
+    const exclusive = opts.exclusive === true;
+    const exclusiveLocked = opts.exclusiveLocked ?? new Set<number>();
+    // 拼车超卖封顶 = ceil(C × factor),由调用方按 catalog 算好传入;缺省 Infinity = 不封顶(旧行为)。
+    const ceiling = Number.isFinite(opts.oversellCeiling as number) ? (opts.oversellCeiling as number) : Infinity;
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
-    const fit = (Array.isArray(pool.accounts) ? pool.accounts : [])
+    const candidates = (Array.isArray(pool.accounts) ? pool.accounts : [])
       .filter((a: any) => this.isAccountBindable(product, a, lvl))
+      // 被独享锁定的号已被某人独占,对所有新绑定(含其他独享)一律不可见。
+      .filter((a: any) => !exclusiveLocked.has(Number(a.id)))
       .map((a: any) => {
         const id = Number(a.id);
+        const occupied = occupiedShares.get(id) || 0;
         const q = this.bindQuotaInfo(product, a);
         return {
           id,
-          free: capacity - (occupiedShares.get(id) || 0),
+          occupied,
+          free: capacity - occupied,
           count: boundCounts.get(id) || 0,
           usableNow: q.usableNow,
           soonestReset: q.soonestReset,
         };
-      })
-      .filter((r: any) => r.free >= need) // ① 没占满
-      .sort(
-        (a: any, b: any) =>
-          Number(b.usableNow) - Number(a.usableNow) || // ② 立刻能用(压过「人多」)
-          b.count - a.count || // ③ 其中人数最多
-          (a.soonestReset || Infinity) - (b.soonestReset || Infinity) || // ④ 回血最快
-          a.id - b.id, // ⑤ 兜底
-      )[0];
-    return fit ? fit.id : null;
+      });
+    // 候选集为空 = 该等级真·无可绑号(等级/停用/配额过滤 + 独享锁定后无人)→ 才拒。
+    if (candidates.length === 0) return null;
+
+    // 原优先级:② 立刻能用 → ③ 人数最多 → ④ 回血最快 → ⑤ id 兜底。
+    const seatSort = (a: any, b: any) =>
+      Number(b.usableNow) - Number(a.usableNow) ||
+      b.count - a.count ||
+      (a.soonestReset || Infinity) - (b.soonestReset || Infinity) ||
+      a.id - b.id;
+
+    // 独享:只落到干净号(occupied==0),永不超卖、绝不抢占有人的号。无干净号 → null。
+    if (exclusive) {
+      const clean = candidates.filter((r: any) => r.occupied === 0);
+      if (clean.length === 0) return null;
+      return clean.sort(seatSort)[0].id;
+    }
+
+    // 拼车 ① 优先没占满(free≥need)—— 先填满再超卖。
+    const withRoom = candidates.filter((r: any) => r.free >= need);
+    if (withRoom.length > 0) return withRoom.sort(seatSort)[0].id;
+
+    // 拼车 ② 超卖(§7/决策7):仅限「占用+本单 ≤ 封顶线」的号,选最闲(free 最大),同闲走原优先级。
+    // 超过封顶线则无可绑号 → null(不再无上限超卖)。
+    const oversellable = candidates.filter((r: any) => r.occupied + need <= ceiling);
+    if (oversellable.length === 0) return null;
+    return oversellable.sort((a: any, b: any) => b.free - a.free || seatSort(a, b))[0].id;
   }
 
   /**
-   * 下单前座位预检(spec §10):该 product+level 是否还有任一上游号剩 ≥ weight 份。
-   * 与 assignSeatForProductFromShares 同样的选号口径(等级匹配、可绑、配额未耗尽),占用
-   * 份额由调用方按 DB ACTIVE 订阅 config 算好传入(NOT 从文件数 —— 停写文件后会超卖)。
-   * 只回答「有没有」:不实际分配、不写文件,纯读 —— 避免用户付钱后才发现拿不到号。
+   * 下单前座位预检(spec §10):该 product+level 是否有**任一可绑上游号**(等级匹配、可绑、配额未
+   * 耗尽)。占用份额由调用方按 DB ACTIVE 订阅 config 算好传入(NOT 从文件数 —— 停写文件后会漏数)。
+   * 只回答「有没有」:不实际分配、不写文件,纯读 —— 避免用户付钱后才发现没有可绑号。
+   *
+   * QUOTA-REDESIGN §7 / 决策7:既然超卖(Σw>N)已放开,「号满了」不再阻断下单 —— 只要该等级
+   * 存在任一可绑号即返回 true(满号也能超卖)。委托 assignSeatForProductFromShares:它仅在候选集
+   * 为空时返回 null,故本预检自然等价于「有没有可绑号」。
    */
   hasAvailableSeatFromShares(
     product: string,
@@ -484,8 +516,9 @@ export class AccessKeyService {
     level: string,
     occupiedShares: Map<number, number>,
     salesCapacity = ACCOUNT_SHARE_CAPACITY,
+    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number } = {},
   ): boolean {
-    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares, new Map(), salesCapacity) !== null;
+    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares, new Map(), salesCapacity, opts) !== null;
   }
 
   deleteAccessKey(payload: any) {

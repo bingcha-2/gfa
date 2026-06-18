@@ -50,8 +50,10 @@ describe("RosettaService.hasAvailableSeatFromShares", () => {
     expect(svc.hasAvailableSeatFromShares("anthropic", 1, "ultra", new Map())).toBe(false);
   });
 
-  it("该等级唯一的号余量不足(已占满,本单需 1)→ false", () => {
-    expect(svc.hasAvailableSeatFromShares("anthropic", 1, "pro", new Map([[1, CAP]]))).toBe(false);
+  // QUOTA-REDESIGN §7 / 决策7:超卖已放开 —— 满号不再阻断下单。该等级唯一的号即便占满,
+  // 仍可超卖绑定,故预检返回 true(旧实现这里断言 false,已按决策7改写)。
+  it("该等级唯一的号已占满(本单需 1)→ true(超卖:满号也能绑,§7/决策7)", () => {
+    expect(svc.hasAvailableSeatFromShares("anthropic", 1, "pro", new Map([[1, CAP]]))).toBe(true);
   });
 
   it("该等级唯一的号余量刚好够(已占 CAP-1,本单需 1)→ true", () => {
@@ -169,5 +171,113 @@ describe("选号优先级:立刻能用 → 人数最多 → 回血最快 → id"
     const occupied = new Map([[1, 1], [2, 1]]);
     const counts = new Map([[1, 1], [2, 1]]);
     expect(svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, counts)).toBe(2);
+  });
+});
+
+// 独享重构:独享请求只落到「干净号」(occupied==0)且永不超卖;被独享锁定的号对所有人不可见;
+// 拼车超卖封顶 = oversellCeiling(占用+本单 ≤ ceiling 才可超卖)。
+describe("独享给干净号 / 拼车封顶超卖", () => {
+  it("独享请求只落干净号(occupied==0),不抢已有占用的号", () => {
+    writePool("anthropic-accounts.json", [
+      { id: 1, refreshToken: "rt", enabled: true, planType: "pro" },
+      { id: 4, refreshToken: "rt", enabled: true, planType: "pro" },
+    ]);
+    svc = new RosettaService({ dataDir: tempDir });
+    // 号1 有人(还有余量)、号4 干净。旧逻辑按「人多」会选号1;独享必须选干净的号4。
+    const occupied = new Map([[1, 1], [4, 0]]);
+    const counts = new Map([[1, 1], [4, 0]]);
+    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, counts, CAP, { exclusive: true });
+    expect(got).toBe(4);
+  });
+
+  it("独享请求无干净号 → null(不超卖、不抢占有人的号)", () => {
+    // 唯一的 pro 号已有人 → 独享拿不到干净号 → null(旧逻辑会超卖塞进去)。
+    const occupied = new Map([[1, 1]]);
+    expect(
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, { exclusive: true }),
+    ).toBeNull();
+  });
+
+  it("被独享锁定的号对拼车不可见(locked 排除)", () => {
+    writePool("anthropic-accounts.json", [
+      { id: 1, refreshToken: "rt", enabled: true, planType: "pro" },
+      { id: 4, refreshToken: "rt", enabled: true, planType: "pro" },
+    ]);
+    svc = new RosettaService({ dataDir: tempDir });
+    // 号1 人多(旧逻辑首选)但被独享锁定 → 拼车必须落到号4。
+    const occupied = new Map([[1, 2], [4, 0]]);
+    const counts = new Map([[1, 2], [4, 0]]);
+    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, counts, CAP, {
+      exclusiveLocked: new Set([1]),
+    });
+    expect(got).toBe(4);
+  });
+
+  it("唯一的号被独享锁定 → 拼车 null(不超卖进独享号)", () => {
+    const occupied = new Map([[1, 1]]);
+    expect(
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, {
+        exclusiveLocked: new Set([1]),
+      }),
+    ).toBeNull();
+  });
+
+  it("拼车超卖封顶:到达 ceiling 后再超卖被拒(null)", () => {
+    // ceiling=CAP+1:占用 CAP(满)时还能超卖一份 → 落到号1;占用已达 CAP+1 → 超过封顶 → null。
+    expect(
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", new Map([[1, CAP]]), new Map(), CAP, {
+        oversellCeiling: CAP + 1,
+      }),
+    ).toBe(1);
+    expect(
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", new Map([[1, CAP + 1]]), new Map(), CAP, {
+        oversellCeiling: CAP + 1,
+      }),
+    ).toBeNull();
+  });
+});
+
+// QUOTA-REDESIGN §7 / §14 决策7:停止硬禁超卖(Σw>N)。`N` 退化为「保底席位数」而非硬上限;
+// 满号时绑定不再被拒,而是回退到「最闲」的号(超卖),使用层 D=max(N,Σw) 自动切薄、永不撞墙。
+describe("超卖放开(§7/决策7):满号回退最闲号,Σw 可超 N", () => {
+  it("唯一的号已占满(Σw=N)→ 仍能分到该号(超卖,不再返回 null)", () => {
+    // 号 1(pro)占满 CAP 份;本单需 1 份 → 无 free≥need 的号 → 回退最闲(唯一的号 1)。
+    const occupied = new Map([[1, CAP]]);
+    expect(svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied)).toBe(1);
+  });
+
+  it("全部号已占满 → 选「最闲」(occupied 最小 = free 最大,可为负)", () => {
+    // 号 1 占 CAP(free=0)、号 4 占 CAP+2(free=-2)→ 都满,选 free 最大的号 1。
+    writePool("anthropic-accounts.json", [
+      { id: 1, email: "pro-1@x.test", refreshToken: "rt", enabled: true, planType: "pro" },
+      { id: 4, email: "pro-4@x.test", refreshToken: "rt", enabled: true, planType: "pro" },
+    ]);
+    svc = new RosettaService({ dataDir: tempDir });
+    const occupied = new Map([[1, CAP], [4, CAP + 2]]);
+    expect(svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied)).toBe(1);
+  });
+
+  it("有空号则先填空号(不超卖),不会无谓回退到满号", () => {
+    // 号 1 满、号 4 空 → 应填空号 4,而非超卖号 1。
+    writePool("anthropic-accounts.json", [
+      { id: 1, email: "pro-1@x.test", refreshToken: "rt", enabled: true, planType: "pro" },
+      { id: 4, email: "pro-4@x.test", refreshToken: "rt", enabled: true, planType: "pro" },
+    ]);
+    svc = new RosettaService({ dataDir: tempDir });
+    const occupied = new Map([[1, CAP], [4, 0]]);
+    expect(svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied)).toBe(4);
+  });
+
+  it("满号超卖后 Σw 可超过 N:连续两单都落到同一满号", () => {
+    // 单一 pro 号、CAP 容量;模拟它已占满,两次绑定都回退到它 → Σw 超 N。
+    const occupied = new Map([[1, CAP]]);
+    const first = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied);
+    expect(first).toBe(1);
+    // 调用方累加占用后再分配(模拟第二单):占用涨到 CAP+1,仍回退到号 1。
+    occupied.set(1, CAP + 1);
+    const second = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied);
+    expect(second).toBe(1);
+    // 真·无可绑号(等级不存在)才返回 null —— 超卖不改变这一兜底。
+    expect(svc.assignSeatForProductFromShares("anthropic", 1, "ultra", occupied)).toBeNull();
   });
 });

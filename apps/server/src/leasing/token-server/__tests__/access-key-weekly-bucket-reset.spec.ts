@@ -37,10 +37,12 @@ describe("AccessKeyStore publicStatus weekly bucket reset", () => {
       windowStartedAt: nowVal,
       weeklyWindowStartedAt: nowVal,
       bucketLimits: { "anthropic-claude": 1000 },
+      // 决策5:周上限只认显式配置(cap5h×R 派生已删)→ 显式给周桶上限,才会产出周桶数据。
+      weeklyBucketLimits: { "anthropic-claude": 3000 },
     });
     nowVal += 2 * 60 * 60 * 1000;
 
-    const st = s.publicStatus(s.findById("k")!, 0, () => 3) as any;
+    const st = s.publicStatus(s.findById("k")!, 0) as any;
     const wb = (st.weeklyBuckets || []).find((b: any) => b.bucket === "anthropic-claude");
     const wantResetMs = 7 * 24 * 60 * 60 * 1000 - 2 * 60 * 60 * 1000;
 

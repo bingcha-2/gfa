@@ -178,6 +178,8 @@ func (a *App) GetStats() map[string]interface{} {
 	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
 	leaserStatus["myFractions"] = snapshotMyFractions()
 	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
+	// 我的份额占整号比例 e_i(双层血条外层几何:整号里我那一段有多宽)。
+	leaserStatus["myShares"] = snapshotMyShares()
 	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
 	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
 	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)

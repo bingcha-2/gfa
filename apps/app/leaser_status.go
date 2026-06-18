@@ -79,9 +79,12 @@ func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	// dynamic/unlimited 模式：由服务端 fair-share + 上游窗口控制，客户端不做本地拦截
+	// dynamic/unlimited 模式：服务端 fair-share 只在取号那一下拦,缓存 token 的几十分钟内
+	// 拦不到 → 这里用回灌的份额血条做本地 enforcement(见 quota_enforcement.go)。
+	// 本路径是 antigravity leaser(GetLeaser),product 恒为 antigravity;模型族(gemini/
+	// claude)由 bucketKey 按 modelKey 推断。无份额数据(号池卡/冷启动)→ fairShareVerdict 放行。
 	if l.quotaMode == "dynamic" || l.quotaMode == "unlimited" {
-		return true, 0, ""
+		return checkBoundFairShare(bucketKey("antigravity", modelKey))
 	}
 
 	q := l.localQuota
@@ -211,6 +214,7 @@ func recordFairShareQuota(body []byte) {
 		FairShareQuota map[string]struct {
 			Fraction float64 `json:"fraction"`
 			ResetAt  int64   `json:"resetAt"`
+			Share    float64 `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
 		} `json:"fairShareQuota"`
 		// 周血条:与 fairShareQuota 平行,同 bucket 键(仅 codex/anthropic 下发;旧服务端无此字段)。
 		WeeklyFairShareQuota map[string]struct {
@@ -222,7 +226,7 @@ func recordFairShareQuota(body []byte) {
 		return
 	}
 	for bucket, q := range resp.FairShareQuota {
-		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt)
+		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt, q.Share)
 	}
 	for bucket, q := range resp.WeeklyFairShareQuota {
 		recordMyWeeklyBucketFraction(bucket, q.Fraction, q.ResetAt)

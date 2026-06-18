@@ -296,12 +296,20 @@ export class RosettaService {
     occupiedShares: Map<number, number>,
     boundCounts?: Map<number, number>,
     salesCapacity?: number,
+    opts?: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number },
   ) {
-    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts, salesCapacity);
+    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts, salesCapacity, opts);
   }
   /** 下单前座位预检:该 product+level 有无剩 ≥ weight 份的号(占用份额按 DB 订阅 config 传入)。 */
-  hasAvailableSeatFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>, salesCapacity?: number) {
-    return this.accessKeySvc.hasAvailableSeatFromShares(product, weight, level, occupiedShares, salesCapacity);
+  hasAvailableSeatFromShares(
+    product: string,
+    weight: number,
+    level: string,
+    occupiedShares: Map<number, number>,
+    salesCapacity?: number,
+    opts?: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number },
+  ) {
+    return this.accessKeySvc.hasAvailableSeatFromShares(product, weight, level, occupiedShares, salesCapacity, opts);
   }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────

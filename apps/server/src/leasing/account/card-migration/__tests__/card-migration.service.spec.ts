@@ -123,17 +123,19 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(sub!.weeklyTokenLimit).toBe(5_000_000);
     expect(sub!.windowMs).toBe(18_000_000);
     expect(JSON.parse(sub!.bindings!)).toEqual({ antigravity: 7, codex: 3 });
-    expect(JSON.parse(sub!.config!)).toMatchObject({
+    const migratedCfg = JSON.parse(sub!.config!);
+    expect(migratedCfg).toMatchObject({
       line: "bind",
       products: ["antigravity", "codex"],
-      bucketLimits: { "antigravity-gemini": 1_000_000, "codex-gpt": 500_000 },
-      weeklyTokenLimit: 5_000_000,
+      weeklyTokenLimit: 5_000_000, // 显式周上限保留(决策5)
       displayBindings: { antigravity: 7, codex: 3 },
-      assignmentPolicy: "preferred-dynamic",
+      assignmentPolicy: "pinned",
       shareSeats: 1,
       shareCapacity: 8,
       legacyDisplay: true,
     });
+    // 绑定卡归 fair-share —— 不再带 5h 静态 bucketLimits。
+    expect(migratedCfg.bucketLimits).toBeUndefined();
 
     // 转化即删:文件影子被物理删除,access-keys.json 不再有这条卡。
     expect(readKeys()).toHaveLength(0);

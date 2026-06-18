@@ -38,6 +38,20 @@ func TestRecordAndSnapshotBoundFractions(t *testing.T) {
 	}
 }
 
+// 双层血条:服务端 fairShareQuota 现带 share=e_i(我的份额占整号比例)。客户端要存它,
+// 供血条画「整号里我那一段」的外层几何。
+func TestRecordMyBucketFraction_StoresShare(t *testing.T) {
+	clearBoundFractionsForTest()
+	recordMyBucketFraction("anthropic-claude", 0.4, 2000, 0.5) // 我的份额剩 40%,份额占整号 50%
+	if got := snapshotMyShares()["anthropic-claude"]; got != 0.5 {
+		t.Fatalf("MyShare 应为 0.5, got %v", got)
+	}
+	// fraction 维度不受影响。
+	if got := snapshotMyFractions()["anthropic-claude"]; got != 0.4 {
+		t.Fatalf("MyFraction 应仍为 0.4, got %v", got)
+	}
+}
+
 func TestResetBoundFractions(t *testing.T) {
 	clearBoundFractionsForTest()
 
@@ -86,7 +100,7 @@ func TestBucketQuotaTwoDimensionsIndependent(t *testing.T) {
 	const bucket = "antigravity-claude"
 
 	recordAccountBucketFraction(bucket, 0.87, 1000) // 整号充足
-	recordMyBucketFraction(bucket, 0.40, 2000)      // 我的份额紧张
+	recordMyBucketFraction(bucket, 0.40, 2000, 0.4)      // 我的份额紧张
 
 	if got, ok := snapshotAccountFractions()[bucket]; !ok || got != 0.87 {
 		t.Fatalf("account fraction = %v (ok=%v), want 0.87", got, ok)
@@ -97,7 +111,7 @@ func TestBucketQuotaTwoDimensionsIndependent(t *testing.T) {
 
 	// 反向写入顺序同样不该互相覆盖。
 	clearBoundFractionsForTest()
-	recordMyBucketFraction(bucket, 0.40, 2000)
+	recordMyBucketFraction(bucket, 0.40, 2000, 0.4)
 	recordAccountBucketFraction(bucket, 0.87, 1000)
 	if a, m := snapshotAccountFractions()[bucket], snapshotMyFractions()[bucket]; a != 0.87 || m != 0.40 {
 		t.Fatalf("reverse order overwrote a dimension: account=%v my=%v", a, m)
@@ -124,7 +138,7 @@ func TestResetsArePerDimension(t *testing.T) {
 	const bucket = "antigravity-gemini"
 	now := int64(10_000)
 	recordAccountBucketFraction(bucket, 0.5, now+60_000) // 整号 60s 后恢复
-	recordMyBucketFraction(bucket, 0.2, now+30_000)      // 份额 30s 后恢复
+	recordMyBucketFraction(bucket, 0.2, now+30_000, 0.2)      // 份额 30s 后恢复
 
 	if got := snapshotAccountResets(now)[bucket]; got != 60_000 {
 		t.Fatalf("account reset = %v, want 60000", got)

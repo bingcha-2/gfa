@@ -10,7 +10,6 @@ import {
 import {
   CANONICAL_MODELS, resolveCanonicalModel, quotaBarColor,
 } from "../rosetta-load/constants";
-import { QuotaProfilesCard } from "@/components/console/leasing/quota-profiles-card";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -816,7 +815,6 @@ export default function RosettaAccountsPage() {
           </CardHeader>
           <CardContent className="text-2xl font-semibold text-amber-600">{tokenCount}</CardContent>
         </Card>
-        <QuotaProfilesCard product="antigravity" statusUrl="/api/app/lease/antigravity/status" />
       </div>
 
       {/* Main Table Card */}

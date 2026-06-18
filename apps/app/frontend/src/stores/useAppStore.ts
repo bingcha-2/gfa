@@ -5,6 +5,7 @@
 
 import { create } from 'zustand'
 import type { ModelUsageStats } from '@/lib/usageSummary'
+import { isExclusiveCard } from '@/lib/quotaDisplay'
 import * as api from '@/services/wails'
 import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
 
@@ -43,11 +44,13 @@ interface AppState {
   accountResetMs: Record<string, number>
   myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条·5h)
   myResetMs: Record<string, number>
+  myShares: Record<string, number>          // e_i:我的份额占整号比例(双层血条外层几何)
   myWeeklyFractions: Record<string, number> // 我的 fair-share 份额·周(仅 codex/anthropic)
   myWeeklyResetMs: Record<string, number>
   cardWeight: number                        // Legacy fallback for seat count.
   cardShareSeats: number                    // 我的席位 X/Y 的 X
   cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
+  cardExclusive: boolean                    // 后端权威独享标志(尊贵 badge 据此)
   cardBuckets: Record<string, { used: number; limit: number; resetMs?: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h);resetMs=该卡 5h 窗口自身的 reset
   cardWeeklyBuckets: Record<string, { used: number; limit: number; resetMs?: number; resetAt?: string }>  // 每复合桶·周(显式或派生 5h×R)
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
@@ -131,11 +134,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   accountResetMs: {},
   myFractions: {},
   myResetMs: {},
+  myShares: {},
   myWeeklyFractions: {},
   myWeeklyResetMs: {},
   cardWeight: 1,
   cardShareSeats: 1,
   cardShareCapacity: 8,
+  cardExclusive: false,
   cardBuckets: {},
   cardWeeklyBuckets: {},
   codexQuota: null,
@@ -174,7 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await api.getStats()
       const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0, savedMoneyUSD: 0, byModel: {} }
       const lq = data.leaser?.localQuota
-      const accessKeyStatus = data.leaser?.accessKeyStatus as ({ weight?: number; shareCapacity?: number; shareSeats?: number } | undefined)
+      const accessKeyStatus = data.leaser?.accessKeyStatus as ({ weight?: number; shareCapacity?: number; shareSeats?: number; exclusive?: boolean } | undefined)
 
       set({
         proxyRunning: data.proxyRunning,
@@ -192,11 +197,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         accountResetMs: data.leaser?.accountResetMs || {},
         myFractions: data.leaser?.myFractions || {},
         myResetMs: data.leaser?.myResetMs || {},
+        myShares: data.leaser?.myShares || {},
         myWeeklyFractions: data.leaser?.myWeeklyFractions || {},
         myWeeklyResetMs: data.leaser?.myWeeklyResetMs || {},
         cardWeight: accessKeyStatus?.weight || 1,
         cardShareSeats: accessKeyStatus?.shareSeats || accessKeyStatus?.weight || 1,
         cardShareCapacity: accessKeyStatus?.shareCapacity || 8,
+        // 权威 exclusive 优先;旧服务端不带该字段时回退 weight>=capacity 启发式。
+        cardExclusive: isExclusiveCard(
+          accessKeyStatus?.shareSeats || accessKeyStatus?.weight || 1,
+          accessKeyStatus?.shareCapacity || 0,
+          accessKeyStatus?.exclusive,
+        ),
         cardBuckets: Object.fromEntries(
           // resetMs 取该卡 5h 窗口自身的 reset(服务端已对齐到 hourly,绝非周);各桶共享同一 5h 窗口。
           (data.leaser?.accessKeyStatus?.buckets || []).map((b) => [b.bucket, {

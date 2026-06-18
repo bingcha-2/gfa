@@ -221,6 +221,15 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}
 	audit.model = modelKey
 
+	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
+	// (见 quota_enforcement.go)。无份额数据(号池/静态卡)→ 自然放行。
+	if ok, retryMs, reason := checkBoundFairShare(bucketKey("anthropic", modelKey)); !ok {
+		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "本地公平限额拦截:" + reason
+		writeQuotaExhausted(w, &QuotaExhaustedError{RetryAfterMs: retryMs, Reason: reason})
+		return
+	}
+
 	lease, err := p.lease()(card, deviceId, true, map[string]interface{}{
 		"modelKey":  modelKey,
 		"bodyBytes": len(body),

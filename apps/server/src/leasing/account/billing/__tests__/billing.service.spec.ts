@@ -31,11 +31,7 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
 }
 
 function buildService(prisma: any) {
-  return new BillingService(prisma, {} as any, {} as any, {} as any, {} as any, makeQuotaBaselines());
-}
-
-function makeQuotaBaselines() {
-  return { buildEntitlements: vi.fn().mockResolvedValue({ bucketLimits: {}, weeklyBucketLimits: {} }) } as any;
+  return new BillingService(prisma, {} as any, {} as any, {} as any, {} as any);
 }
 
 describe("BillingService.getOrder", () => {
@@ -270,7 +266,7 @@ describe("BillingService.refundOwnOrder", () => {
       },
     } as any;
     const subscriptions = { cancelSubscription: vi.fn().mockResolvedValue({}) } as any;
-    const service = new BillingService(prisma, {} as any, {} as any, {} as any, subscriptions, makeQuotaBaselines());
+    const service = new BillingService(prisma, {} as any, {} as any, {} as any, subscriptions);
     vi.spyOn(service, "refundEpayOrder").mockResolvedValue({ ok: opts.refundOk ?? true });
     return { service, prisma, subscriptions };
   }

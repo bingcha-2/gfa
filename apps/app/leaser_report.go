@@ -208,6 +208,11 @@ func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, 
 		}
 	}
 
+	// 服务端在 report-result 响应里也带回 per-card fairShareQuota/weeklyFairShareQuota
+	// (与 lease 同形)。立即刷新血条 —— 让额度条在每次上报后即时更新,不必等下一次租号。
+	recordAccountBuckets(body)
+	recordFairShareQuota(body)
+
 	// 成功后补发积压的失败 report
 	l.flushPendingReports(card, upstreamProxy)
 

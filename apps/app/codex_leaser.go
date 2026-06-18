@@ -271,8 +271,10 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 // doCodexReportWithRetry 带退避重试上报;最终失败入队列,下次成功时补发(对齐 Gemini)。
 func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, card, upstreamProxy string) {
 	var err error
+	var body []byte
 	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
-		if _, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
+		if b, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
+			body = b
 			err = nil
 			break
 		} else {
@@ -287,6 +289,10 @@ func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, car
 		l.queueCodexReport(payload, card, upstreamProxy)
 		return
 	}
+	// 服务端 report-result 响应同样带回 fairShareQuota/weeklyFairShareQuota(与 lease 同形),
+	// 立即刷新血条 —— 每次上报后即时更新,不必等下一次租号。
+	recordAccountBuckets(body)
+	recordFairShareQuota(body)
 	// 成功不再单独打日志:代理层(codex_proxy.go)已打过含 in/out/total 的成功行,
 	// 这里再打一条「上报成功」属重复噪音。失败仍由上面的 ✗ 行记录。
 	l.flushCodexPending(card, upstreamProxy)

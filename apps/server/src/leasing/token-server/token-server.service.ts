@@ -1,8 +1,6 @@
 import { Injectable, Optional, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
 import { LeaseService, LeaseServiceHttpError, type TokenUsageTracker, type AccountQuotaSnapshotRecorder } from "../lease-core/lease-service";
-import { QuotaProfileTracker } from "../lease-core/quota-profile-tracker";
-import { bucketFamily } from "../lease-core/product-bucket";
 import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
@@ -23,7 +21,7 @@ type ServiceOptions = {
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
   /** Shared AccessKeyStore so all product pools share one usage cache. */
   accessKeyStore?: AccessKeyStore;
-  /** PrismaService — persists QuotaProfile/FairShareWindow (omit in unit tests). */
+  /** PrismaService — persists FairShareWindow (omit in unit tests). */
   prisma?: any;
 };
 
@@ -49,39 +47,23 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       accountsFilePath: options.accountsFilePath,
       tokenProvider: options.tokenProvider,
     });
-    // Quota profile tracker: learns real upstream budgets from 429 events.
-    const quotaProfileTracker = new QuotaProfileTracker(options.prisma, { now: options.now });
     // Auto-create fair-share tracker wired to this service's own accessKeyStore.
     // Uses a deferred pattern: the tracker's callbacks reference `service` which
     // is assigned after super() returns.
     let service: TokenServerService;
     const fairShareTracker = new FairShareTracker({
-      getAccountPlanType: (accountId: number) => {
-        try {
-          const status = service.getStatus();
-          const acct = status.quota?.accounts?.find((a: any) => a.id === accountId);
-          return acct?.planType || 'free';
-        } catch { return 'free'; }
-      },
       getCardWeight: (cardId: string) => {
-        try {
-          const r = service.accessKeyStore.findById(cardId) as any;
-          // 按产品份额:weights[provider.id] 优先,否则回退卡级 weight。
-          const w = Math.floor(Number(r?.weights?.[provider.id] || 0) || Number(r?.weight ?? 1));
-          return (Number.isFinite(w) && w >= 1) ? Math.min(w, ACCOUNT_SHARE_CAPACITY) : 1;
-        } catch { return 1; }
+        const r: any = service.accessKeyStore.findById(cardId);
+        // 按产品份额:weights[provider.id] 优先,否则回退卡级 weight。不再 clamp 到容量。
+        const w = Math.floor(Number(r?.weights?.[provider.id] || 0) || Number(r?.weight ?? 1));
+        return Number.isFinite(w) && w >= 1 ? w : 1;
       },
-      accountShareCapacity: ACCOUNT_SHARE_CAPACITY,
-      getLearnedBudget: (planType: string, bucket: string) => {
-        return quotaProfileTracker.getLearnedBudget5h(
-          provider.id, planType, bucketFamily(bucket),
-        );
-      },
-      getWeeklyRatio: (planType: string, bucket: string) => {
-        return quotaProfileTracker.getWeeklyToShortRatio(
-          provider.id, planType, bucketFamily(bucket),
-        );
-      },
+      getBoundCardWeights: (accountId: number) =>
+        service.accessKeyStore.getHardBoundCardWeights(accountId, provider.id),
+      getSeatCapacity: (accountId: number) =>
+        service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
+      isExclusiveAccount: (accountId: number) =>
+        service.accessKeyStore.isExclusiveAccount(accountId, provider.id),
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,
@@ -99,7 +81,6 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         tokenUsageTracker: options.tokenUsageTracker,
         accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
         fairShareTracker,
-        quotaProfileTracker,
         errorClass: TokenServerHttpError,
       },
     );

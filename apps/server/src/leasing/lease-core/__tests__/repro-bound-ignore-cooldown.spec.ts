@@ -42,7 +42,8 @@ function makeProvider(
   } as unknown as Provider<any>;
 }
 
-// 两张卡共用同一个号 acct 1:绑定卡(钉死 acct1) + 池子卡(动态池,池里也只有 acct1)。
+// 严格分池(决策C):绑定号只服务自己的主人,绝不进轮换池。所以绑定卡钉死 acct1,
+// 池子卡走独立池 acct2(acct1 因被硬绑而被排除在池外)。冷却语义在 acct2 上验证。
 const BOUND_REQ = sessionReqFor("bound-1");
 const POOL_REQ = sessionReqFor("pool-1");
 const OPUS = "claude-opus-4-6";
@@ -65,7 +66,10 @@ beforeEach(() => {
     ],
   });
   writeJson(accountsFilePath, {
-    accounts: [{ id: 1, email: "bound@x.com", refreshToken: "rt-1", enabled: true }],
+    accounts: [
+      { id: 1, email: "bound@x.com", refreshToken: "rt-1", enabled: true }, // acct1:bound-1 硬绑(不进池)
+      { id: 2, email: "pool@x.com", refreshToken: "rt-2", enabled: true }, // acct2:轮换池(pool-1 用)
+    ],
   });
 });
 afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));

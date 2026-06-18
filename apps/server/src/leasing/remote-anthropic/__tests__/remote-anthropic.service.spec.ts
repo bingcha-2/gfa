@@ -177,63 +177,39 @@ describe("RemoteAnthropicService", () => {
     const short = service.fairShareTracker?.getBucketStateForTesting(21, bucket);
     const weekly = service.fairShareTracker?.getBucketStateForTesting(21, weeklyBucketKey(bucket));
 
+    // 新模型只信上游剩余 fraction:5h/周快照各把「低水位」喂进对应窗口。
     expect(short?.lastFraction).toBeCloseTo(0.9, 5);
-    expect(short && short.windowStart + 5 * 60 * 60 * 1000).toBe(Date.parse(hourlyReset));
     expect(weekly?.lastFraction).toBeCloseTo(0.5, 5);
-    expect(weekly && weekly.windowStart + 7 * 24 * 60 * 60 * 1000).toBe(Date.parse(weeklyReset));
+    // windowStart 只随上游 resetAt【前移】对齐(本例 reset 在当前窗口之内,不前移)→ 留在创建时刻。
+    expect(short?.windowStart).toBe(currentTime);
+    expect(weekly?.windowStart).toBe(currentTime);
   });
 
-  it("learns weekly exhaustion samples from the weekly fair-share window", async () => {
-    tokenProvider.mockResolvedValue("claude-access-token-alpha");
-    const service = makeService();
-    const lease = await service.leaseToken(
-      sessionReqFor("claude-card-1"),
-      { clientId: "client-a", modelKey: MODEL },
-    );
-
-    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
-    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
-    await service.reportResult(
-      sessionReqFor("claude-card-1"),
-      {
-        leaseId: lease.leaseId,
-        reportId: "weekly-sample-usage",
-        status: 200,
-        modelKey: MODEL,
-        inputTokens: 20_000,
-        outputTokens: 0,
-        totalTokens: 20_000,
-        accountQuota: {
-          planType: "max",
-          claudeQuota: {
-            hourlyPercent: 90,
-            weeklyPercent: 50,
-            hourlyResetTime: hourlyReset,
-            weeklyResetTime: weeklyReset,
-          },
+  it("attributes a weekly account-consumption segment into the bound card's T_i", () => {
+    // 重构后不再反推上游预算:周快照下降时,把这一段账号消耗 Δ = max(0, 低水位 − fraction)
+    // 按本段各卡加权用量比例分摊进各人 T_i(只增不减)。绑卡是唯一参与者 → 整段归它。
+    writeJson(accessKeysFilePath, {
+      keys: [
+        {
+          id: "claude-card-1",
+          key: "claude-secret-card",
+          status: "active",
+          durationMs: 60 * 60 * 1000,
+          bindings: { anthropic: 21 },
         },
-      },
-    );
-
+      ],
+    });
+    const service = makeService();
     const bucket = "anthropic-claude";
-    const weeklyState = service.fairShareTracker?.getTrackerState(21, weeklyBucketKey(bucket));
-    expect(weeklyState?.lastFraction).toBeCloseTo(0.5, 5);
 
-    await service.reportResult(
-      sessionReqFor("claude-card-1"),
-      {
-        leaseId: lease.leaseId,
-        reportId: "weekly-sample-429",
-        status: 429,
-        modelKey: MODEL,
-        retryAfterMs: 4 * 24 * 60 * 60 * 1000,
-      },
-    );
+    service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
+    service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 0.5, 0);
 
-    const profile = service.quotaProfileTracker?.getProfile("anthropic", "max", "claude");
-    expect(profile?.samplesWeekly).toBe(1);
-    expect(profile?.samples5h).toBe(0);
-    expect(profile?.weekly).toBeCloseTo(weeklyState!.totalUsed / 0.5, 5);
+    const weekly = service.fairShareTracker?.getBucketStateForTesting(21, weeklyBucketKey(bucket));
+    expect(weekly?.lastFraction).toBeCloseTo(0.5, 5);
+    // 低水位从 1.0 跌到 0.5 → Δ账号 = 0.5,全部记到唯一有用量的卡。
+    expect(weekly?.attributed["claude-card-1"]).toBeCloseTo(0.5, 5);
+    expect(weekly?.totalAttributed).toBeCloseTo(0.5, 5);
   });
 
   it("returns fair-share quota windows on lease-time 429 rejection", async () => {
@@ -252,9 +228,11 @@ describe("RemoteAnthropicService", () => {
     const service = makeService();
     const bucket = "anthropic-claude";
 
+    // 记一段大用量后,5h/周快照各跌到 0.5 → Δ账号 0.5 全归这张唯一参与卡的 T_i,
+    // 远超其保证份额 e_i = w/D(1/max(N,Σw)) → 下次租号即被公平限额拦(429)。
     service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
-    service.fairShareTracker?.updateBudgetEstimate(21, bucket, 0.5);
-    service.fairShareTracker?.updateWeeklyBudgetEstimate(21, bucket, 0.5);
+    service.fairShareTracker?.applyAccountQuotaSnapshot(21, bucket, 0.5, 0);
+    service.fairShareTracker?.applyWeeklyAccountQuotaSnapshot(21, bucket, 0.5, 0);
 
     await expect(
       service.leaseToken(

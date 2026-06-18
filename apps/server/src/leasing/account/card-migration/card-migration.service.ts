@@ -365,8 +365,7 @@ function migratedCardConfig(
   const shareSeats = legacySeatFromBucketLimits(bucketLimits);
   const common = {
     products,
-    bucketLimits,
-    ...(weeklyTokenLimit ? { weeklyTokenLimit } : {}),
+    ...(weeklyTokenLimit ? { weeklyTokenLimit } : {}), // 显式周上限:决策5 保留(绑定/号池均认)。
     deviceLimit,
     ...(windowMs ? { windowMs } : {}),
     shareSeats,
@@ -375,20 +374,24 @@ function migratedCardConfig(
   };
 
   if (Object.keys(displayBindings).length > 0) {
+    // 绑定卡硬绑(pinned)+ 归 fair-share —— 不带 5h 静态 bucketLimits(否则与 fair-share 双轨
+    // 并行、迁移用户更早 429,见 QUOTA-REDESIGN 决策7/§3)。显式周上限仍随 common 保留。
     return {
       line: "bind",
       ...common,
       levels: objectCopy((record as any).levels),
       bindings: displayBindings,
       displayBindings,
-      assignmentPolicy: "preferred-dynamic",
+      assignmentPolicy: "pinned",
       weight,
     };
   }
 
+  // 号池卡仍由静态限额治理(轮换卡不进 fair-share),保留 5h bucketLimits。
   return {
     line: "pool",
     ...common,
+    bucketLimits,
     weight,
   };
 }

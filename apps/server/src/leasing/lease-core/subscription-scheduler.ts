@@ -16,7 +16,6 @@ type PrecheckOptions = {
   modelKey?: string;
   product?: string;
   alignedResetAt?: number | ((record: any) => number);
-  weeklyRatio?: number | ((record: any) => number);
 };
 
 export interface FailoverQuery {

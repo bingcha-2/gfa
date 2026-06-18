@@ -41,6 +41,8 @@ export interface BindSelection {
   shareSeats?: number;
   /** Legacy pending orders used shareUsers; convert to seats when present. */
   shareUsers?: number;
+  /** 独享:独占整个号(份额 100%、别人不得绑入、永不超卖)。占满 shareCapacity 全部席位。 */
+  exclusive?: boolean;
   deviceLimit: number;
 }
 
@@ -84,7 +86,9 @@ function computePool(catalog: CatalogConfig, selection: PoolSelection): Purchase
 function computeBind(catalog: CatalogConfig, selection: BindSelection): PurchaseResult {
   const bind = catalog.pricing.bind;
   const shareCapacity = catalog.shareCapacity ?? 8;
-  const share = resolveShareSelection(selection, shareCapacity);
+  const exclusive = selection.exclusive === true;
+  // 独享:占满整号(shareSeats=shareCapacity),绕过拼车的 SEAT_OPTIONS 校验。
+  const share = exclusive ? { shareSeats: shareCapacity } : resolveShareSelection(selection, shareCapacity);
   let fullPriceCents = 0;
   const products: string[] = [];
   const levels: Record<string, string> = {};
@@ -110,7 +114,10 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       shareSeats: share.shareSeats,
       shareCapacity,
       weight: share.shareSeats,
-      assignmentPolicy: "preferred-dynamic",
+      exclusive,
+      // 绑定线 = 硬绑(pinned):钉死所分配的共用号,由 fair-share 在拼车主人间公平切分该号。
+      // (preferred-dynamic 会在池里漂移、不进 fair-share —— 拼车就切不动了。)
+      assignmentPolicy: "pinned",
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
     },

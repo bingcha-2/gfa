@@ -21,7 +21,6 @@ import { EpayCallbackService } from "../epay-callback.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
-import { QuotaBaselineService } from "../../../plan-catalog/quota-baseline.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import * as crypto from "crypto";
 
@@ -165,7 +164,6 @@ beforeEach(async () => {
     rosetta,
     callbackService,
     subscriptionService,
-    new QuotaBaselineService(prisma as any),
   );
 
   await publishCatalog();

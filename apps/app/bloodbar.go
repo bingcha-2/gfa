@@ -66,6 +66,8 @@ type bucketQuota struct {
 	HasMy      bool
 	MyFraction float64
 	MyResetAt  int64
+	// MyShare = e_i:我的份额占整号的比例(0~1,独享=1)。供双层血条画「整号里我那一段」外层几何。
+	MyShare float64
 	// 我的份额维度(周窗口):同上,但对应 5h 之外的「周」公平份额(仅 codex/anthropic 下发)。
 	HasMyWeekly      bool
 	MyWeeklyFraction float64
@@ -102,9 +104,9 @@ func recordAccountBucketFraction(bucket string, fraction float64, resetAt int64)
 	boundFracMu.Unlock()
 }
 
-// recordMyBucketFraction 按复合桶 key 记录【我的份额】(fair-share)剩余分数,保留已有的整号值。
-// 用于 lease 响应里的 fairShareQuota(这张卡分到的份额视角)。
-func recordMyBucketFraction(bucket string, fraction float64, resetAt int64) {
+// recordMyBucketFraction 按复合桶 key 记录【我的份额】(fair-share)剩余分数 + share(e_i),
+// 保留已有的整号值。用于 lease 响应里的 fairShareQuota(这张卡分到的份额视角)。
+func recordMyBucketFraction(bucket string, fraction float64, resetAt int64, share float64) {
 	if bucket == "" {
 		return
 	}
@@ -113,6 +115,7 @@ func recordMyBucketFraction(bucket string, fraction float64, resetAt int64) {
 	q.HasMy = true
 	q.MyFraction = fraction
 	q.MyResetAt = resetAt
+	q.MyShare = share
 	boundFractions[bucket] = q
 	boundFracMu.Unlock()
 }
@@ -179,6 +182,19 @@ func snapshotAccountResets(nowMs int64) map[string]int64 {
 			} else {
 				out[k] = 0
 			}
+		}
+	}
+	return out
+}
+
+// snapshotMyShares 返回各 bucket【我的份额占整号比例 e_i】拷贝(仅含有 fair-share 的桶),供双层血条外层几何。
+func snapshotMyShares() map[string]float64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]float64)
+	for k, v := range boundFractions {
+		if v.HasMy {
+			out[k] = v.MyShare
 		}
 	}
 	return out

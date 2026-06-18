@@ -16,6 +16,8 @@ export type CardScopeQuotaInput = {
   myResetMs?: Record<string, number>
   myWeeklyFractions?: Record<string, number>
   myWeeklyResetMs?: Record<string, number>
+  /** e_i:我的份额占整号比例(0~1,独享=1)。双层血条画「整号里我那一段」的外层宽度。 */
+  myShares?: Record<string, number>
 }
 
 type SplitAccountQuota = {
@@ -60,20 +62,27 @@ export type BuildQuotaSectionsInput = CardScopeQuotaInput & {
   accountProblem?: boolean
 }
 
-export function isExclusiveCard(cardWeight: number, cardShareCapacity: number): boolean {
+/**
+ * 是否独享卡。后端现在下发显式 exclusive(权威);提供时以它为准,
+ * 否则回退老的 weight>=capacity 推断(兼容旧服务端/旧缓存)。
+ */
+export function isExclusiveCard(cardWeight: number, cardShareCapacity: number, explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit === true
   return cardShareCapacity > 0 && cardWeight >= cardShareCapacity
 }
 
 export function shouldUseExclusiveDisplay({
   cardWeight,
   cardShareCapacity,
+  exclusive,
   accountProblem,
 }: {
   cardWeight: number
   cardShareCapacity: number
+  exclusive?: boolean
   accountProblem: boolean
 }): boolean {
-  return isExclusiveCard(cardWeight, cardShareCapacity) && !accountProblem
+  return isExclusiveCard(cardWeight, cardShareCapacity, exclusive) && !accountProblem
 }
 
 function fractionFromBucket(bucket: BucketValue | undefined): DisplayQuotaValue | null {
