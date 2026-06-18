@@ -43,6 +43,15 @@ export class EntitlementSyncService {
   ) {}
 
   /**
+   * 解析某产品下绑定号的展示信息(id + 邮箱),供后台订阅详情内联展示绑定的是哪个号。
+   * 池中已删/不存在 → 返回 null(调用方降级为仅 id)。
+   */
+  lookupPoolAccount(product: string, accountId: number): { id: number; email: string | null } | null {
+    const acc = this.rosetta.poolAccountById(product, accountId);
+    return acc ? { id: acc.id, email: acc.email ?? null } : null;
+  }
+
+  /**
    * Register/refresh a subscription's runtime limit record from its config
    * (single source of truth). On first sync of a BIND-line sub, auto-assigns an
    * upstream seat per still-unbound product and persists the bindings back into
@@ -95,10 +104,13 @@ export class EntitlementSyncService {
           }
           const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
           const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
+          // QUOTA-REDESIGN §7 / 决策7:超卖已放开 —— assignSeatForProductFromShares 只在「无任何
+          // 可绑号」(等级不匹配 / 停用 / 配额永久耗尽)时返回 null;满号会回退到最闲号(超卖)而非
+          // 留空。故 null 已不再代表「容量满」,只代表该等级根本没号可绑。
           const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, shares, counts, salesCapacity);
           if (!accountId) {
             this.logger.error(
-              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} — no account with ${weight} free shares; leaving it UNBOUND`,
+              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} — no eligible account (等级不匹配 / 停用 / 配额耗尽);leaving it UNBOUND(容量满不再是失败原因:超卖已按 §7/决策7 放开)`,
             );
             continue;
           }
@@ -152,13 +164,17 @@ export class EntitlementSyncService {
       if (!acc) return { ok: false, error: `「${product}」池中不存在账号 #${acctId}` };
       if (!force && acc.enabled === false) return { ok: false, error: `账号 #${acctId} 已停用(可加 force 强制)` };
 
-      // 容量校验(排除本订阅自身);不足且非 force → 拒,避免超分。
-      if (!force) {
+      // 容量「闸门」已放开(QUOTA-REDESIGN §7 / 决策7):不再硬禁超卖(Σw>N)。`N`(salesCapacity)
+      // 退化为「保底席位数」而非硬上限 —— 使用层按 D=max(N,Σw) 自动切薄,超卖只让每席变薄、永不撞墙。
+      // 故绑定层只「记录」超卖(telemetry),不再拒绝;force 仍保留(用于停用号等其它校验)。
+      {
         const { shares } = await this.seatOccupancyFromDb(product, subscriptionId);
         const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
         const free = salesCapacity - (shares.get(acctId) || 0);
         if (free < weight) {
-          return { ok: false, error: `账号 #${acctId} 在「${product}」剩余份额 ${free} < 需要 ${weight}(可加 force 强制)` };
+          this.logger.warn(
+            `[rebind] sub ${subscriptionId} product ${product} → account #${acctId} 超卖(oversell):剩余份额 ${free} < 需要 ${weight}(允许,使用层 D=max(N,Σw) 自动切薄,见 §7/决策7)`,
+          );
         }
       }
 

@@ -214,6 +214,8 @@ export type ConsoleSubscriptionLite = {
   deviceLimit: number;
   createdAt: string;
   config: string | null;
+  bindings: string | null;
+  levels: string | null;
 };
 export type ConsoleOrderLite = {
   id: string;
@@ -292,6 +294,8 @@ export type ConsoleSubscription = {
   config: string | null;
   bindings: string | null;
   levels: string | null;
+  /** 绑定号详情(product → 账号),后端按 accountId 解析回填,供详情面板内联展示邮箱。 */
+  boundAccounts?: Record<string, { id: number; email: string | null }>;
   plan: { name: string } | null;
   customer: { email: string } | null;
 };

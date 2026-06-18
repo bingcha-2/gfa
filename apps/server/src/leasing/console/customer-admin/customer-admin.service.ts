@@ -152,6 +152,8 @@ export class CustomerAdminService {
             weight: true,
             deviceLimit: true,
             config: true,
+            bindings: true,
+            levels: true,
             createdAt: true,
           },
           orderBy: { createdAt: "desc" },

@@ -291,11 +291,11 @@ export default function CustomerDetailPage() {
                     {c.subscriptions.map((s) => (
                       <TableRow key={s.id}>
                         <TableCell className="font-medium">
-                          <button className="text-blue-600 hover:underline" onClick={() => setDetail({ ...s, customerId: c.id, customer: { email: c.email }, bindings: null, levels: null, line: undefined, plan: null } as ConsoleSubscription)}>
+                          <button className="text-blue-600 hover:underline" onClick={() => setDetail({ ...s, customerId: c.id, customer: { email: c.email }, line: undefined, plan: null } as ConsoleSubscription)}>
                             {selectionName(s.config)}
                           </button>
                           <div className="text-xs text-muted-foreground mt-0.5">
-                            {buildSubscriptionView({ config: s.config }).rows.map((r) =>
+                            {buildSubscriptionView(s).rows.map((r) =>
                               r.bound ? `${r.product}→#${r.accountId}` : r.level ? `${r.product}→未绑定` : r.product
                             ).join(" · ")}
                           </div>

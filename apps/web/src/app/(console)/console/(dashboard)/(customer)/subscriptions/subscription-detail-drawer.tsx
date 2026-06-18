@@ -25,7 +25,7 @@ export function SubscriptionDetailDrawer({
   onChanged: () => void | Promise<void>;
 }) {
   if (!sub) return null;
-  const view = buildSubscriptionView({ config: sub.config });
+  const view = buildSubscriptionView(sub);
 
   async function revoke() {
     try {

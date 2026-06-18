@@ -61,7 +61,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await cleanCustomerTables();
   // 查询用例不触发退款;billing 仅为构造参数,给个空 stub 即可。
-  service = new BillingAdminService(prisma as any, subStub, { refundEpayOrder: vi.fn() } as any);
+  service = new BillingAdminService(prisma as any, subStub, { refundEpayOrder: vi.fn() } as any, { lookupPoolAccount: vi.fn().mockReturnValue(null) } as any);
 });
 
 afterAll(async () => {
@@ -104,6 +104,47 @@ describe("BillingAdminService.listSubscriptions", () => {
 
     const byEmail = await service.listSubscriptions({ page: 1, pageSize: 20, search: "sub@subs" });
     expect(byEmail.total).toBe(2);
+  });
+
+  it("bind 订阅:附带 line=bind + boundAccounts(按 accountId 解析绑定号邮箱)", async () => {
+    const customer = await createTestCustomer({ email: "bind@subs.test" });
+    await prisma.subscription.create({
+      data: {
+        customerId: customer.id,
+        status: "ACTIVE",
+        startsAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        productEntitlements: JSON.stringify(["anthropic"]),
+        backingKeyValue: `sub_bind_${Date.now()}${++seq}`,
+        config: JSON.stringify({ line: "bind", products: ["anthropic"], bindings: { anthropic: 2 }, levels: { anthropic: "max-20x" } }),
+      },
+    });
+    const lookupPoolAccount = vi.fn().mockReturnValue({ id: 2, email: "seat@team.com" });
+    const svc = new BillingAdminService(prisma as any, subStub, { refundEpayOrder: vi.fn() } as any, { lookupPoolAccount } as any);
+
+    const res = await svc.listSubscriptions({ page: 1, pageSize: 20, search: "bind@subs" });
+    expect(res.subscriptions[0].line).toBe("bind");
+    expect((res.subscriptions[0] as any).boundAccounts).toEqual({ anthropic: { id: 2, email: "seat@team.com" } });
+    expect(lookupPoolAccount).toHaveBeenCalledWith("anthropic", 2);
+  });
+
+  it("bind 订阅但绑定号已从池中删除 → boundAccounts 降级为仅 id(email null)", async () => {
+    const customer = await createTestCustomer({ email: "gone@subs.test" });
+    await prisma.subscription.create({
+      data: {
+        customerId: customer.id,
+        status: "ACTIVE",
+        startsAt: new Date(),
+        expiresAt: new Date(Date.now() + 30 * DAY_MS),
+        productEntitlements: JSON.stringify(["anthropic"]),
+        backingKeyValue: `sub_gone_${Date.now()}${++seq}`,
+        config: JSON.stringify({ line: "bind", products: ["anthropic"], bindings: { anthropic: 9 } }),
+      },
+    });
+    const svc = new BillingAdminService(prisma as any, subStub, { refundEpayOrder: vi.fn() } as any, { lookupPoolAccount: vi.fn().mockReturnValue(null) } as any);
+
+    const res = await svc.listSubscriptions({ page: 1, pageSize: 20, search: "gone@subs" });
+    expect((res.subscriptions[0] as any).boundAccounts).toEqual({ anthropic: { id: 9, email: null } });
   });
 });
 

@@ -147,12 +147,9 @@ export class BillingAdminService {
       this.prisma.subscription.count({ where }),
     ]);
 
-    // 附带「线路」标识(号池 / 绑定),供后台区分订阅模式。config 空(卡迁移订阅)时
-    // rowToConfig 回退 legacy 列推断,所以卡订阅也能正确显示为绑定模式。
-    const withLine = subscriptions.map((s) => ({
-      ...s,
-      line: String(rowToConfig(s as any).line || "pool") === "bind" ? "bind" : "pool",
-    }));
+    // 附带「线路」标识(号池 / 绑定)+ 绑定号详情,供后台区分订阅模式并内联展示绑定号邮箱。
+    // config 空(卡迁移订阅)时 rowToConfig 回退 legacy 列推断,所以卡订阅也能正确显示为绑定模式。
+    const withLine = subscriptions.map((s) => ({ ...s, ...this.subscriptionViewFields(s as any) }));
 
     return { subscriptions: withLine, total, page, pageSize };
   }
@@ -169,7 +166,29 @@ export class BillingAdminService {
       include: { customer: { select: { email: true } } },
     });
     if (!sub) throw new NotFoundException(`Subscription "${id}" not found`);
-    return { ...sub, line: String(rowToConfig(sub as any).line || "pool") === "bind" ? "bind" : "pool" };
+    return { ...sub, ...this.subscriptionViewFields(sub as any) };
+  }
+
+  /**
+   * 把一行订阅解析成后台展示用的「线路 + 绑定号详情」。config 空(卡迁移)时 rowToConfig
+   * 回退 legacy 列;绑定线再按 bindings 的 accountId 解析每个产品的绑定号邮箱(池中已删/不存在
+   * → 仅保留 id、email 为 null),供详情面板内联展示,不用跳去账号池页才知道绑的是哪个号。
+   */
+  private subscriptionViewFields(s: { config?: string | null } & Record<string, any>): {
+    line: "bind" | "pool";
+    boundAccounts?: Record<string, { id: number; email: string | null }>;
+  } {
+    const config = rowToConfig(s as any);
+    const line = String(config.line || "pool") === "bind" ? "bind" : "pool";
+    if (line !== "bind") return { line };
+    const bindings = config.bindings && typeof config.bindings === "object" ? config.bindings : {};
+    const boundAccounts: Record<string, { id: number; email: string | null }> = {};
+    for (const [product, raw] of Object.entries(bindings)) {
+      const accountId = Number(raw);
+      if (!(accountId > 0)) continue;
+      boundAccounts[product] = this.entitlementSync.lookupPoolAccount(product, accountId) ?? { id: accountId, email: null };
+    }
+    return { line, boundAccounts: Object.keys(boundAccounts).length ? boundAccounts : undefined };
   }
 
   /**

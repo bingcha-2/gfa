@@ -9,6 +9,12 @@ import type { SubProductRow } from "@/lib/console/subscription-view";
 
 const PRODUCT_LABELS: Record<string, string> = { anthropic: "Anthropic", codex: "Codex", antigravity: "Antigravity" };
 const LEVEL_LABELS: Record<string, string> = { pro: "Pro", "max-5x": "Max 5x", "max-20x": "Max 20x", plus: "Plus", ultra: "Ultra" };
+// 各产品的账号池后台路由(绑定号 ↗ 跳转用)。错配会跳到别的产品的池子,看不到原账号。
+const ACCOUNT_ROUTES: Record<string, string> = {
+  anthropic: "/console/anthropic-accounts",
+  codex: "/console/codex-accounts",
+  antigravity: "/console/rosetta-accounts",
+};
 
 export function RebindRow({ subId, row, onDone }: { subId: string; row: SubProductRow; onDone: () => void | Promise<void> }) {
   const [accountId, setAccountId] = useState("");
@@ -37,7 +43,9 @@ export function RebindRow({ subId, row, onDone }: { subId: string; row: SubProdu
       <span className="text-xs text-muted-foreground w-16">{row.level ? (LEVEL_LABELS[row.level] ?? row.level) : "—"}</span>
       <span className="text-sm flex-1 min-w-32">
         {row.bound
-          ? <a className="text-blue-600 underline-offset-2 hover:underline" href={`/console/codex-accounts?focus=${row.accountId}`}>当前 #{row.accountId} ↗</a>
+          ? <a className="text-blue-600 underline-offset-2 hover:underline" href={`${ACCOUNT_ROUTES[row.product] ?? "/console/codex-accounts"}?focus=${row.accountId}`}>
+              当前 #{row.accountId}{row.accountEmail ? ` · ${row.accountEmail}` : ""} ↗
+            </a>
           : <span className="text-destructive">⚠ 未绑定</span>}
       </span>
       <Input type="number" placeholder="目标账号 ID" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-32 h-8" />
