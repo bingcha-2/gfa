@@ -248,6 +248,18 @@ func patchSubscriptionTree(v interface{}) bool {
 					t[k] = true
 					changed = true
 				}
+			case "disabled_reason":
+				// app_start 内嵌模型 catalog 里,Opus 等被标 {type:"upgrade_required",required_plan:"pro"}
+				// (免费号没 pro/max)→ 置 null 解禁,让接管的免费号也能选 Opus(推理走 max-20 号池)。
+				// 只清"需升级"类;真正不可用(如 Fable 的 type:"model_disabled")保留 —— 强解了发上游照样失败。
+				if dr, ok := val.(map[string]interface{}); ok {
+					if tp, _ := dr["type"].(string); tp == "upgrade_required" {
+						t[k] = nil
+						changed = true
+					} else if patchSubscriptionTree(val) {
+						changed = true
+					}
+				}
 			default:
 				if patchSubscriptionTree(val) {
 					changed = true
