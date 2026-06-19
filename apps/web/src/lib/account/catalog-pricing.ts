@@ -43,6 +43,8 @@ export interface CatalogConfig {
   durationDays: number;
   windowMs: number;
   supplyPolicies?: Record<string, CatalogSupplyPolicy>;
+  /** Global multiplier applied to salesSeatsPerAccount when auto-assigning seats. */
+  oversellFactor?: number;
   /**
    * Seats one upstream account is sliced into (= server runtime
    * ACCOUNT_SHARE_CAPACITY, injected when the catalog is read server-side and

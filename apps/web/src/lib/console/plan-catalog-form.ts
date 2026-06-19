@@ -83,6 +83,8 @@ export interface PlanCatalogForm {
   windowMs: string;
   /** 统一绑定线动态供给策略;数字字段在表单里以字符串编辑。 */
   supplyPolicies?: Record<string, SupplyPolicyForm>;
+  /** 自动分配时允许超过供给策略席位的倍率;空值表示使用服务端默认值。 */
+  oversellFactor?: string;
 }
 
 // ── 数值转换(元 ↔ 分 / 字符串 ↔ 数字)──────────────────────────────────────────
@@ -113,6 +115,17 @@ function toInt(value: string): number {
 function intToStr(value: number): string {
   const n = Number(value);
   return Number.isFinite(n) ? String(Math.floor(n)) : "0";
+}
+
+function factorToStr(value: number): string {
+  return Number.isFinite(value) ? String(value) : "";
+}
+
+function optionalOversellFactor(value: string | undefined): Pick<CatalogConfig, "oversellFactor"> {
+  if (value === undefined || value.trim() === "") return {};
+  const n = Number(value);
+  if (!Number.isFinite(n)) return {};
+  return { oversellFactor: Math.max(1, n) };
 }
 
 // ── config → form(拆解 + ÷100)────────────────────────────────────────────────
@@ -194,6 +207,9 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     pricing: { pool, bind },
     durationDays: intToStr(Number(config.durationDays ?? 0)),
     windowMs: intToStr(Number(config.windowMs ?? 0)),
+    ...(config.oversellFactor === undefined
+      ? {}
+      : { oversellFactor: factorToStr(Number(config.oversellFactor)) }),
     ...(config.supplyPolicies === undefined
       ? {}
       : { supplyPolicies: supplyPoliciesToForm(config.supplyPolicies) }),
@@ -275,6 +291,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
     },
     durationDays: toInt(form.durationDays),
     windowMs: toInt(form.windowMs),
+    ...optionalOversellFactor(form.oversellFactor),
     ...(form.supplyPolicies === undefined
       ? {}
       : { supplyPolicies: supplyPoliciesToConfig(form.supplyPolicies) }),

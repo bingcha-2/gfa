@@ -271,6 +271,26 @@ export default function PlanCatalogPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">超卖倍率</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    自动绑定上限 = 每账号可售席位 × 超卖倍率。留空使用服务端默认 1.5。
+                  </p>
+                </div>
+                <NumberInput
+                  className="w-40"
+                  value={form.oversellFactor ?? ""}
+                  onChange={(oversellFactor) => patchForm({ oversellFactor })}
+                  min={1}
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="1.5"
+                  suffix="倍"
+                  aria-label="超卖倍率"
+                  disabled={busy}
+                />
+              </div>
               <SupplyPoliciesSection
                 value={form.supplyPolicies}
                 products={form.products}

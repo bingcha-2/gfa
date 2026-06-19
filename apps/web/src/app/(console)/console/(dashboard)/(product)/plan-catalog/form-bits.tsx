@@ -52,6 +52,8 @@ export interface NumberInputProps {
   onChange: (value: string) => void;
   disabled?: boolean;
   min?: number;
+  step?: number | string;
+  inputMode?: "numeric" | "decimal";
   placeholder?: string;
   /** 右侧单位后缀,如 "天" / "tokens"。 */
   suffix?: string;
@@ -64,6 +66,8 @@ export function NumberInput({
   onChange,
   disabled,
   min = 0,
+  step,
+  inputMode = "numeric",
   placeholder,
   suffix,
   className,
@@ -73,8 +77,9 @@ export function NumberInput({
     <div className={cn("flex items-center gap-1.5", className)}>
       <Input
         type="number"
-        inputMode="numeric"
+        inputMode={inputMode}
         min={min}
+        step={step}
         className="h-8 text-sm"
         value={value}
         disabled={disabled}

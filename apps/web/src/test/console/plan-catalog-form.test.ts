@@ -144,6 +144,24 @@ describe("formToConfig — 组装 + ×100", () => {
     expect(back.supplyPolicies).toEqual(supplyPolicies);
   });
 
+  it("round-trip preserves oversellFactor as an editable top-level catalog field", () => {
+    const form = configToForm({
+      ...CATALOG,
+      oversellFactor: 1.25,
+    } as any);
+    const back = formToConfig(form as any) as any;
+
+    expect((form as any).oversellFactor).toBe("1.25");
+    expect(back.oversellFactor).toBe(1.25);
+  });
+
+  it("clamps oversellFactor below 1 to the server minimum", () => {
+    const form = configToForm(CATALOG) as any;
+    form.oversellFactor = "0.5";
+
+    expect((formToConfig(form) as any).oversellFactor).toBe(1);
+  });
+
   it("converts editable supply policy sales seat strings back to config numbers", () => {
     const form = configToForm({
       ...CATALOG,
