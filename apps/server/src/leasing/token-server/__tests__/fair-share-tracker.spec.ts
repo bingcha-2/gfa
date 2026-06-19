@@ -484,6 +484,23 @@ describe("B. 窗口对齐 / 账号刷新", () => {
     expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
   });
 
+  it("ignores an old-window snapshot that arrives after an upstream reset", () => {
+    const now = T;
+    const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0, T + WINDOW_MS);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.0, T + WINDOW_MS);
+    expect(t.checkFairShare(1, "O1", BK).allowed).toBe(false);
+
+    t.applyAccountQuotaSnapshot(1, BK, 1.0, T + 2 * WINDOW_MS);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(1, 6);
+    expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
+
+    t.applyAccountQuotaSnapshot(1, BK, 0.0, T + WINDOW_MS);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(1, 6);
+    expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
+  });
+
   it("★#12 自计时过期(ensureWindow)也清零 T_i", () => {
     let now = T;
     const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));

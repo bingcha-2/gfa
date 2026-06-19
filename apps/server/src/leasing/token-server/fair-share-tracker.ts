@@ -395,6 +395,9 @@ export class FairShareTracker {
         this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0);
         return;
       }
+      if (tracker.primed && newStart < tracker.windowStart - RESET_DRIFT_MS) {
+        return;
+      }
     }
     // 3) fraction 未知(-1)→ 不归并,继续累积 u_i(等有效 fraction 回来一次性归并)。
     if (!(fraction >= 0)) return;
