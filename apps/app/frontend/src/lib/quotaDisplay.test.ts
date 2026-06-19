@@ -7,9 +7,74 @@ import {
   formatPercent,
   formatResetDuration,
   isExclusiveCard,
+  monotonicQuotaValue,
   nestedBarDisplay,
   shouldUseExclusiveDisplay,
 } from './quotaDisplay'
+
+describe('monotonicQuotaValue', () => {
+  it('prevents a displayed quota from rebounding inside the same reset window', () => {
+    const state: Record<string, number> = {}
+    const key = 'anthropic-claude:5h:1800000'
+
+    expect(monotonicQuotaValue(state, key, 0.10)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, key, 0.12)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, key, 0.098)).toBeCloseTo(0.098, 6)
+  })
+
+  it('accepts the current value again when the reset window identity changes', () => {
+    const state: Record<string, number> = {}
+
+    expect(monotonicQuotaValue(state, 'anthropic-claude:5h:1000', 0.10)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, 'anthropic-claude:5h:1000', 0.12)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, 'anthropic-claude:5h:2000', 0.95)).toBeCloseTo(0.95, 6)
+  })
+
+  it('does not cache unknown values', () => {
+    const state: Record<string, number> = {}
+
+    expect(monotonicQuotaValue(state, 'anthropic-claude:5h:1000', -1)).toBe(-1)
+    expect(state).toEqual({})
+  })
+
+  it('keeps independent floors for buckets and windows under interleaved updates', () => {
+    const state: Record<string, number> = {}
+
+    expect(monotonicQuotaValue(state, 'acct-a:anthropic-claude:5h:1000:total', 0.10)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, 'acct-a:anthropic-claude:7d:7000:total', 0.70)).toBeCloseTo(0.70, 6)
+    expect(monotonicQuotaValue(state, 'acct-b:anthropic-claude:5h:1000:total', 0.30)).toBeCloseTo(0.30, 6)
+
+    expect(monotonicQuotaValue(state, 'acct-a:anthropic-claude:5h:1000:total', 0.12)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, 'acct-a:anthropic-claude:7d:7000:total', 0.80)).toBeCloseTo(0.70, 6)
+    expect(monotonicQuotaValue(state, 'acct-b:anthropic-claude:5h:1000:total', 0.35)).toBeCloseTo(0.30, 6)
+  })
+
+  it('handles out-of-order higher corrections while still accepting new lows', () => {
+    const state: Record<string, number> = {}
+    const key = 'anthropic-claude:5h:1000'
+    const rendered = [0.12, 0.11, 0.115, 0.09, 0.095].map((value) => monotonicQuotaValue(state, key, value))
+
+    expect(rendered).toEqual([0.12, 0.11, 0.11, 0.09, 0.09])
+  })
+
+  it('does not freeze expired or unidentified windows without a display key', () => {
+    const state: Record<string, number> = {}
+
+    expect(monotonicQuotaValue(state, undefined, 0.10)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(state, undefined, 0.95)).toBeCloseTo(0.95, 6)
+    expect(state).toEqual({})
+  })
+
+  it('starts from the server value after a client restart loses in-memory display state', () => {
+    const key = 'anthropic-claude:5h:1000'
+    const beforeCrash: Record<string, number> = {}
+    expect(monotonicQuotaValue(beforeCrash, key, 0.10)).toBeCloseTo(0.10, 6)
+    expect(monotonicQuotaValue(beforeCrash, key, 0.12)).toBeCloseTo(0.10, 6)
+
+    const afterRestart: Record<string, number> = {}
+    expect(monotonicQuotaValue(afterRestart, key, 0.12)).toBeCloseTo(0.12, 6)
+  })
+})
 
 describe('isExclusiveCard', () => {
   it('treats full-capacity cards as exclusive', () => {
@@ -156,6 +221,20 @@ describe('buildQuotaSections', () => {
       { window: '5h', fraction: 0.7, resetMs: 3000 },
       { window: '7d', fraction: 0.4, resetMs: 9000 },
     ])
+  })
+  it('carries fair-share resetAt identities into mine bars', () => {
+    const got = buildQuotaSections({
+      bucket: 'anthropic-claude',
+      myFractions: { 'anthropic-claude': 0.8 },
+      myResetMs: { 'anthropic-claude': 1000 },
+      myResetAt: { 'anthropic-claude': 11_000 },
+      myWeeklyFractions: { 'anthropic-claude': 0.6 },
+      myWeeklyResetMs: { 'anthropic-claude': 7000 },
+      myWeeklyResetAt: { 'anthropic-claude': 77_000 },
+    })
+
+    expect((got[0].mine[0] as any).resetAt).toBe(11_000)
+    expect((got[0].mine[1] as any).resetAt).toBe(77_000)
   })
 })
 

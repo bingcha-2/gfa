@@ -69,6 +69,57 @@ func TestFairShareVerdict_ExhaustedNoReset_RetryZero(t *testing.T) {
 	}
 }
 
+func TestFairShareVerdict_ExpiredFiveHourWindow_Allows(t *testing.T) {
+	now := int64(1_000_000)
+	q := bucketQuota{HasMy: true, MyFraction: 0, MyResetAt: now - 5*minute}
+	ok, retry, reason := fairShareVerdict(q, now)
+	if !ok || retry != 0 || reason != "" {
+		t.Fatalf("expired 5h fair-share window should not keep blocking, got ok=%v retry=%v reason=%q", ok, retry, reason)
+	}
+}
+
+func TestFairShareVerdict_ExpiredWeeklyWindow_Allows(t *testing.T) {
+	now := int64(1_000_000)
+	q := bucketQuota{
+		HasMy: true, MyFraction: 0.6, MyResetAt: now + 5*minute,
+		HasMyWeekly: true, MyWeeklyFraction: 0, MyWeeklyResetAt: now - 5*minute,
+	}
+	ok, retry, reason := fairShareVerdict(q, now)
+	if !ok || retry != 0 || reason != "" {
+		t.Fatalf("expired weekly fair-share window should not keep blocking, got ok=%v retry=%v reason=%q", ok, retry, reason)
+	}
+}
+
+func TestFairShareVerdict_ResetBoundaryAtNow_Allows(t *testing.T) {
+	now := int64(1_000_000)
+	q := bucketQuota{HasMy: true, MyFraction: 0, MyResetAt: now}
+	ok, retry, reason := fairShareVerdict(q, now)
+	if !ok || retry != 0 || reason != "" {
+		t.Fatalf("resetAt == now should be treated as an expired window, got ok=%v retry=%v reason=%q", ok, retry, reason)
+	}
+}
+
+func TestFairShareVerdict_UnknownFiveHourReset_Allows(t *testing.T) {
+	now := int64(1_000_000)
+	q := bucketQuota{HasMy: true, MyFraction: 0, MyResetAt: 0}
+	ok, retry, reason := fairShareVerdict(q, now)
+	if !ok || retry != 0 || reason != "" {
+		t.Fatalf("unknown 5h reset should not permanently block, got ok=%v retry=%v reason=%q", ok, retry, reason)
+	}
+}
+
+func TestFairShareVerdict_UnknownWeeklyReset_Allows(t *testing.T) {
+	now := int64(1_000_000)
+	q := bucketQuota{
+		HasMy: true, MyFraction: 0.6, MyResetAt: now + 5*minute,
+		HasMyWeekly: true, MyWeeklyFraction: 0, MyWeeklyResetAt: 0,
+	}
+	ok, retry, reason := fairShareVerdict(q, now)
+	if !ok || retry != 0 || reason != "" {
+		t.Fatalf("unknown weekly reset should not permanently block, got ok=%v retry=%v reason=%q", ok, retry, reason)
+	}
+}
+
 // ── CheckLocalQuota: dynamic 卡接上本地 enforcement ──
 
 // dynamic 卡份额耗尽 → 不再无脑放行,本地当场拦(antigravity 路径,product=antigravity)。

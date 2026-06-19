@@ -187,6 +187,19 @@ func snapshotAccountResets(nowMs int64) map[string]int64 {
 	return out
 }
 
+// snapshotAccountResetAts returns account reset epoch millis per bucket.
+func snapshotAccountResetAts() map[string]int64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]int64)
+	for k, v := range boundFractions {
+		if v.HasAccount && v.AccountResetAt > 0 {
+			out[k] = v.AccountResetAt
+		}
+	}
+	return out
+}
+
 // snapshotMyShares 返回各 bucket【我的份额占整号比例 e_i】拷贝(仅含有 fair-share 的桶),供双层血条外层几何。
 func snapshotMyShares() map[string]float64 {
 	boundFracMu.RLock()
@@ -217,6 +230,19 @@ func snapshotMyResets(nowMs int64) map[string]int64 {
 	return out
 }
 
+// snapshotMyResetAts returns 5h fair-share reset epoch millis per bucket.
+func snapshotMyResetAts() map[string]int64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]int64)
+	for k, v := range boundFractions {
+		if v.HasMy && v.MyResetAt > 0 {
+			out[k] = v.MyResetAt
+		}
+	}
+	return out
+}
+
 // snapshotMyWeeklyFractions 返回各 bucket【我的份额·周】剩余分数拷贝(仅含有周份额的桶)。
 func snapshotMyWeeklyFractions() map[string]float64 {
 	boundFracMu.RLock()
@@ -242,6 +268,18 @@ func snapshotMyWeeklyResets(nowMs int64) map[string]int64 {
 			} else {
 				out[k] = 0
 			}
+		}
+	}
+	return out
+}
+
+func snapshotMyWeeklyResetAts() map[string]int64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]int64)
+	for k, v := range boundFractions {
+		if v.HasMyWeekly && v.MyWeeklyResetAt > 0 {
+			out[k] = v.MyWeeklyResetAt
 		}
 	}
 	return out

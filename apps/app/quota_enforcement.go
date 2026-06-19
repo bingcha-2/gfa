@@ -30,11 +30,14 @@ func fairShareVerdict(q bucketQuota, nowMs int64) (ok bool, retryMs int64, reaso
 		}
 		return 0
 	}
-	if q.HasMy && q.MyFraction <= 0 {
+	isActiveWindow := func(resetAt int64) bool {
+		return resetAt > nowMs
+	}
+	if q.HasMy && q.MyFraction <= 0 && isActiveWindow(q.MyResetAt) {
 		r := retryFor(q.MyResetAt)
 		return false, r, fmt.Sprintf("公平限额已用完(5h),%d分钟后恢复", r/60000)
 	}
-	if q.HasMyWeekly && q.MyWeeklyFraction <= 0 {
+	if q.HasMyWeekly && q.MyWeeklyFraction <= 0 && isActiveWindow(q.MyWeeklyResetAt) {
 		r := retryFor(q.MyWeeklyResetAt)
 		return false, r, fmt.Sprintf("本周公平限额已用完,%d分钟后恢复", r/60000)
 	}

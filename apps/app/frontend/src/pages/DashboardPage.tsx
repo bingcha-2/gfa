@@ -110,7 +110,7 @@ export function DashboardPage() {
   const t = useT()
   const {
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
-    accountFractions, accountResetMs, myFractions, myResetMs, myShares, myWeeklyFractions, myWeeklyResetMs,
+    accountFractions, accountResetMs, accountResetAt, myFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
     cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
@@ -138,11 +138,14 @@ export function DashboardPage() {
     cardWeeklyBuckets,
     myFractions,
     myResetMs,
+    myResetAt,
     myWeeklyFractions,
     myWeeklyResetMs,
+    myWeeklyResetAt,
     myShares,
     accountFractions,
     accountResetMs,
+    accountResetAt,
     codexQuota,
     claudeQuota,
     accountProblem,
@@ -285,6 +288,7 @@ export function DashboardPage() {
                             <div className="flex flex-col divide-y divide-[var(--border-light)]">
                               {section.mine.map((myBar) => {
                                 const acctBar = section.serviceAccount.find((b) => b.window === myBar.window)
+                                const resetIdentity = typeof myBar.resetAt === 'number' && myBar.resetAt > Date.now() ? myBar.resetAt : undefined
                                 return (
                                   <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5">
                                     <NestedShareBar
@@ -295,6 +299,7 @@ export function DashboardPage() {
                                       shareCapacity={cardShareCapacity}
                                       exclusive={cardExclusive}
                                       resetMs={myBar.resetMs}
+                                      displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined}
                                     />
                                   </div>
                                 )

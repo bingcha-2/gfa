@@ -42,11 +42,14 @@ interface AppState {
   quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
   accountFractions: Record<string, number>  // 整号上游余量(号余量条)
   accountResetMs: Record<string, number>
+  accountResetAt: Record<string, number>
   myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条·5h)
   myResetMs: Record<string, number>
+  myResetAt: Record<string, number>
   myShares: Record<string, number>          // e_i:我的份额占整号比例(双层血条外层几何)
   myWeeklyFractions: Record<string, number> // 我的 fair-share 份额·周(仅 codex/anthropic)
   myWeeklyResetMs: Record<string, number>
+  myWeeklyResetAt: Record<string, number>
   cardWeight: number                        // Legacy fallback for seat count.
   cardShareSeats: number                    // 我的席位 X/Y 的 X
   cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
@@ -132,11 +135,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   quotaMode: '',
   accountFractions: {},
   accountResetMs: {},
+  accountResetAt: {},
   myFractions: {},
   myResetMs: {},
+  myResetAt: {},
   myShares: {},
   myWeeklyFractions: {},
   myWeeklyResetMs: {},
+  myWeeklyResetAt: {},
   cardWeight: 1,
   cardShareSeats: 1,
   cardShareCapacity: 8,
@@ -195,11 +201,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         quotaMode: (data.leaser as any)?.quotaMode || (data.leaser?.accessKeyStatus as any)?.quotaMode || '',
         accountFractions: data.leaser?.accountFractions || {},
         accountResetMs: data.leaser?.accountResetMs || {},
+        accountResetAt: data.leaser?.accountResetAt || {},
         myFractions: data.leaser?.myFractions || {},
         myResetMs: data.leaser?.myResetMs || {},
+        myResetAt: data.leaser?.myResetAt || {},
         myShares: data.leaser?.myShares || {},
         myWeeklyFractions: data.leaser?.myWeeklyFractions || {},
         myWeeklyResetMs: data.leaser?.myWeeklyResetMs || {},
+        myWeeklyResetAt: data.leaser?.myWeeklyResetAt || {},
         cardWeight: accessKeyStatus?.weight || 1,
         cardShareSeats: accessKeyStatus?.shareSeats || accessKeyStatus?.weight || 1,
         cardShareCapacity: accessKeyStatus?.shareCapacity || 8,

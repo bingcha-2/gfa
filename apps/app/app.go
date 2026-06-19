@@ -176,13 +176,16 @@ func (a *App) GetStats() map[string]interface{} {
 	nowMs := time.Now().UnixMilli()
 	leaserStatus["accountFractions"] = snapshotAccountFractions()
 	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
+	leaserStatus["accountResetAt"] = snapshotAccountResetAts()
 	leaserStatus["myFractions"] = snapshotMyFractions()
 	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
+	leaserStatus["myResetAt"] = snapshotMyResetAts()
 	// 我的份额占整号比例 e_i(双层血条外层几何:整号里我那一段有多宽)。
 	leaserStatus["myShares"] = snapshotMyShares()
 	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
 	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
 	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)
+	leaserStatus["myWeeklyResetAt"] = snapshotMyWeeklyResetAts()
 	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
 	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["codexQuota"] = cq

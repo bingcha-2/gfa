@@ -2,11 +2,13 @@ type BucketValue = {
   used: number
   limit: number
   resetMs?: number
+  resetAt?: number | string
 }
 
 export type DisplayQuotaValue = {
   fraction: number
   resetMs?: number
+  resetAt?: number
 }
 
 export type CardScopeQuotaInput = {
@@ -14,8 +16,10 @@ export type CardScopeQuotaInput = {
   cardWeeklyBuckets?: Record<string, BucketValue>
   myFractions?: Record<string, number>
   myResetMs?: Record<string, number>
+  myResetAt?: Record<string, number>
   myWeeklyFractions?: Record<string, number>
   myWeeklyResetMs?: Record<string, number>
+  myWeeklyResetAt?: Record<string, number>
   /** e_i:我的份额占整号比例(0~1,独享=1)。双层血条画「整号里我那一段」的外层宽度。 */
   myShares?: Record<string, number>
 }
@@ -32,6 +36,7 @@ export type QuotaDisplayBar = {
   label: string
   fraction: number
   resetMs?: number
+  resetAt?: number
   used?: number | null
   limit?: number | null
   hideValues?: boolean
@@ -57,6 +62,7 @@ export type BuildQuotaSectionsInput = CardScopeQuotaInput & {
   bars?: QuotaSectionBarSpec[]
   accountFractions?: Record<string, number>
   accountResetMs?: Record<string, number>
+  accountResetAt?: Record<string, number>
   codexQuota?: SplitAccountQuota | null
   claudeQuota?: SplitAccountQuota | null
   accountProblem?: boolean
@@ -71,6 +77,18 @@ function clamp01(n: number): number {
   if (n < 0) return 0
   if (n > 1) return 1
   return n
+}
+
+export function monotonicQuotaValue(
+  state: Record<string, number>,
+  key: string | undefined,
+  value: number,
+): number {
+  if (!key || !Number.isFinite(value) || value < 0) return value
+  const previous = state[key]
+  const next = previous == null ? value : Math.min(previous, value)
+  state[key] = next
+  return next
 }
 
 export type NestedBarDisplay = {
@@ -166,20 +184,32 @@ export function shouldUseExclusiveDisplay({
   return isExclusiveCard(cardWeight, cardShareCapacity, exclusive) && !accountProblem
 }
 
+function normalizeResetAt(resetAt: number | string | undefined): number | undefined {
+  if (typeof resetAt === 'number') return Number.isFinite(resetAt) && resetAt > 0 ? resetAt : undefined
+  if (typeof resetAt === 'string' && resetAt) {
+    const parsed = Date.parse(resetAt)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  }
+  return undefined
+}
+
 function fractionFromBucket(bucket: BucketValue | undefined): DisplayQuotaValue | null {
   if (!bucket || bucket.limit <= 0) return null
   const fraction = Math.max(0, Math.min(1, (bucket.limit - bucket.used) / bucket.limit))
-  return { fraction, resetMs: bucket.resetMs }
+  const resetAt = normalizeResetAt(bucket.resetAt)
+  return resetAt == null ? { fraction, resetMs: bucket.resetMs } : { fraction, resetMs: bucket.resetMs, resetAt }
 }
 
 function fractionFromMap(
   bucket: string,
   fractions: Record<string, number> | undefined,
   resets: Record<string, number> | undefined,
+  resetAts?: Record<string, number> | undefined,
 ): DisplayQuotaValue | null {
   const fraction = fractions?.[bucket]
   if (fraction == null) return null
-  return { fraction, resetMs: resets?.[bucket] }
+  const resetAt = normalizeResetAt(resetAts?.[bucket])
+  return resetAt == null ? { fraction, resetMs: resets?.[bucket] } : { fraction, resetMs: resets?.[bucket], resetAt }
 }
 
 function unknownQuota(): DisplayQuotaValue {
@@ -189,7 +219,7 @@ function unknownQuota(): DisplayQuotaValue {
 export function cardScopeFiveHour(bucket: string, input: CardScopeQuotaInput): DisplayQuotaValue {
   return (
     fractionFromBucket(input.cardBuckets?.[bucket]) ??
-    fractionFromMap(bucket, input.myFractions, input.myResetMs) ??
+    fractionFromMap(bucket, input.myFractions, input.myResetMs, input.myResetAt) ??
     unknownQuota()
   )
 }
@@ -197,7 +227,7 @@ export function cardScopeFiveHour(bucket: string, input: CardScopeQuotaInput): D
 export function cardScopeWeekly(bucket: string, input: CardScopeQuotaInput): DisplayQuotaValue {
   return (
     fractionFromBucket(input.cardWeeklyBuckets?.[bucket]) ??
-    fractionFromMap(bucket, input.myWeeklyFractions, input.myWeeklyResetMs) ??
+    fractionFromMap(bucket, input.myWeeklyFractions, input.myWeeklyResetMs, input.myWeeklyResetAt) ??
     unknownQuota()
   )
 }
@@ -205,7 +235,7 @@ export function cardScopeWeekly(bucket: string, input: CardScopeQuotaInput): Dis
 function barFromBucket(window: '5h' | '7d', label: string, bucket: BucketValue | undefined): QuotaDisplayBar | null {
   const value = fractionFromBucket(bucket)
   if (!value || !bucket) return null
-  return {
+  const bar: QuotaDisplayBar = {
     window,
     label,
     fraction: value.fraction,
@@ -214,6 +244,8 @@ function barFromBucket(window: '5h' | '7d', label: string, bucket: BucketValue |
     limit: bucket.limit,
     hideValues: true,
   }
+  if (value.resetAt != null) bar.resetAt = value.resetAt
+  return bar
 }
 
 function barFromFraction(
@@ -221,9 +253,13 @@ function barFromFraction(
   label: string,
   fraction: number | undefined,
   resetMs: number | undefined,
+  resetAt?: number | undefined,
 ): QuotaDisplayBar | null {
   if (fraction == null) return null
-  return { window, label, fraction, resetMs, used: null, limit: null, hideValues: true }
+  const bar: QuotaDisplayBar = { window, label, fraction, resetMs, used: null, limit: null, hideValues: true }
+  const normalizedResetAt = normalizeResetAt(resetAt)
+  if (normalizedResetAt != null) bar.resetAt = normalizedResetAt
+  return bar
 }
 
 function mineBars(bucket: string, input: BuildQuotaSectionsInput): QuotaDisplayBar[] {
@@ -234,9 +270,9 @@ function mineBars(bucket: string, input: BuildQuotaSectionsInput): QuotaDisplayB
   if (weekly) bars.push(weekly)
   if (bars.length > 0) return bars
 
-  const myFiveHour = barFromFraction('5h', '5h 份额', input.myFractions?.[bucket], input.myResetMs?.[bucket])
+  const myFiveHour = barFromFraction('5h', '5h 份额', input.myFractions?.[bucket], input.myResetMs?.[bucket], input.myResetAt?.[bucket])
   if (myFiveHour) bars.push(myFiveHour)
-  const myWeekly = barFromFraction('7d', '周份额', input.myWeeklyFractions?.[bucket], input.myWeeklyResetMs?.[bucket])
+  const myWeekly = barFromFraction('7d', '周份额', input.myWeeklyFractions?.[bucket], input.myWeeklyResetMs?.[bucket], input.myWeeklyResetAt?.[bucket])
   if (myWeekly) bars.push(myWeekly)
   return bars
 }
@@ -258,7 +294,7 @@ function serviceAccountBars(bucket: string, input: BuildQuotaSectionsInput): Quo
       { window: '7d', label: '周窗口', fraction: split.weeklyFraction, resetMs: split.weeklyResetMs, used: null, limit: null, hideValues: true },
     ]
   }
-  const account = barFromFraction('5h', '5h 窗口', input.accountFractions?.[bucket], input.accountResetMs?.[bucket])
+  const account = barFromFraction('5h', '5h 窗口', input.accountFractions?.[bucket], input.accountResetMs?.[bucket], input.accountResetAt?.[bucket])
   return account ? [account] : [{ window: '5h', label: '5h 窗口', fraction: -1, used: null, limit: null, hideValues: true }]
 }
 

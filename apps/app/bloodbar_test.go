@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -145,6 +146,107 @@ func TestResetsArePerDimension(t *testing.T) {
 	}
 	if got := snapshotMyResets(now)[bucket]; got != 30_000 {
 		t.Fatalf("my reset = %v, want 30000", got)
+	}
+}
+
+func TestResetAtsArePerDimension(t *testing.T) {
+	clearBoundFractionsForTest()
+	const bucket = "anthropic-claude"
+	now := int64(10_000)
+	recordAccountBucketFraction(bucket, 0.5, now+60_000)
+	recordMyBucketFraction(bucket, 0.2, now+30_000, 0.2)
+	recordMyWeeklyBucketFraction(bucket, 0.7, now+7*24*60*60_000)
+
+	if got := snapshotAccountResetAts()[bucket]; got != now+60_000 {
+		t.Fatalf("account resetAt = %v, want %v", got, now+60_000)
+	}
+	if got := snapshotMyResetAts()[bucket]; got != now+30_000 {
+		t.Fatalf("my resetAt = %v, want %v", got, now+30_000)
+	}
+	if got := snapshotMyWeeklyResetAts()[bucket]; got != now+7*24*60*60_000 {
+		t.Fatalf("weekly resetAt = %v, want %v", got, now+7*24*60*60_000)
+	}
+}
+
+func TestResetBoundFractionsClearsEveryDimension(t *testing.T) {
+	clearBoundFractionsForTest()
+	const bucket = "anthropic-claude"
+	now := int64(10_000)
+	recordAccountBucketFraction(bucket, 0.5, now+60_000)
+	recordMyBucketFraction(bucket, 0.2, now+30_000, 0.2)
+	recordMyWeeklyBucketFraction(bucket, 0.7, now+7*24*60*60_000)
+
+	resetBoundFractions()
+
+	if got := snapshotAccountFractions(); len(got) != 0 {
+		t.Fatalf("account fractions should be cleared, got %v", got)
+	}
+	if got := snapshotMyFractions(); len(got) != 0 {
+		t.Fatalf("my fractions should be cleared, got %v", got)
+	}
+	if got := snapshotMyWeeklyFractions(); len(got) != 0 {
+		t.Fatalf("weekly fractions should be cleared, got %v", got)
+	}
+	if got := snapshotAccountResetAts(); len(got) != 0 {
+		t.Fatalf("account resetAt should be cleared, got %v", got)
+	}
+	if got := snapshotMyResetAts(); len(got) != 0 {
+		t.Fatalf("my resetAt should be cleared, got %v", got)
+	}
+	if got := snapshotMyWeeklyResetAts(); len(got) != 0 {
+		t.Fatalf("weekly resetAt should be cleared, got %v", got)
+	}
+}
+
+func TestBoundFractionsConcurrentRecordAndSnapshot(t *testing.T) {
+	clearBoundFractionsForTest()
+	const bucket = "anthropic-claude"
+	const rounds = 200
+	var wg sync.WaitGroup
+
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			recordAccountBucketFraction(bucket, float64(i%100)/100, int64(1_000_000+i))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			recordMyBucketFraction(bucket, float64((i+10)%100)/100, int64(2_000_000+i), 0.25)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			recordMyWeeklyBucketFraction(bucket, float64((i+20)%100)/100, int64(3_000_000+i))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			_ = snapshotAccountFractions()
+			_ = snapshotMyFractions()
+			_ = snapshotMyWeeklyFractions()
+			_ = snapshotAccountResetAts()
+			_ = snapshotMyResetAts()
+			_ = snapshotMyWeeklyResetAts()
+		}
+	}()
+	wg.Wait()
+
+	recordAccountBucketFraction(bucket, 0.5, 10_000)
+	recordMyBucketFraction(bucket, 0.4, 20_000, 0.25)
+	recordMyWeeklyBucketFraction(bucket, 0.3, 30_000)
+	if got := snapshotAccountFractions()[bucket]; got != 0.5 {
+		t.Fatalf("account fraction corrupted after concurrent updates: %v", got)
+	}
+	if got := snapshotMyFractions()[bucket]; got != 0.4 {
+		t.Fatalf("my fraction corrupted after concurrent updates: %v", got)
+	}
+	if got := snapshotMyWeeklyFractions()[bucket]; got != 0.3 {
+		t.Fatalf("weekly fraction corrupted after concurrent updates: %v", got)
 	}
 }
 
