@@ -200,7 +200,17 @@ export class AntigravityAccountService {
       if (health.planType && health.planType !== acc.planType) acc.planType = health.planType;
 
       const modelsResult = await fetchAvailableModels(token, acc.projectId);
-      if (modelsResult) {
+      // token 能刷出来,但额度接口没返回(上游 401/403/超时,或账号已失效/受限) —— 旧逻辑这里
+      // 直接跳过更新却仍 return ok:true,导致「不管报不报错都提示刷新成功」。如实报失败。
+      if (!modelsResult) {
+        return {
+          ok: false,
+          email: acc.email,
+          tokenValid: true,
+          error: "额度接口未返回数据（token 有效,但账号可能已失效/受限,或上游异常),请稍后重试",
+        };
+      }
+      {
         const detectedTier = extractTierFromModelsJson(modelsResult.rawJson);
         if (detectedTier && detectedTier !== acc.planType) acc.planType = detectedTier;
         acc.modelQuotaFractions = {};
