@@ -243,6 +243,9 @@ export const zhTW: DeepPartialDict = {
     githubTitle: '問題回饋與協助',
     githubDesc: '前往使用者中心提交問題、建議或聯絡客服',
     githubCta: '前往使用者中心',
+    supportTitle: '線上客服',
+    supportDesc: '遇到額度、登入、訂閱或客戶端問題，直接和 AI 助手聊。',
+    supportCta: '立即諮詢',
   },
 
   settings: {

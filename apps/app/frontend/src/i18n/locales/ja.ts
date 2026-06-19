@@ -243,6 +243,9 @@ export const ja: DeepPartialDict = {
     githubTitle: 'フィードバックとヘルプ',
     githubDesc: 'ユーザーセンターで問題の報告・機能提案・サポートへの問い合わせができます',
     githubCta: 'ユーザーセンターへ',
+    supportTitle: 'オンラインサポート',
+    supportDesc: '容量、ログイン、サブスク、クライアントの問題を AI アシスタントに相談できます。',
+    supportCta: '今すぐ相談',
   },
 
   settings: {

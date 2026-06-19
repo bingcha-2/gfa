@@ -243,6 +243,9 @@ export const ko: DeepPartialDict = {
     githubTitle: '피드백 및 도움말',
     githubDesc: '사용자 센터에서 문제 제보, 기능 제안 또는 고객지원에 문의하세요',
     githubCta: '사용자 센터로 이동',
+    supportTitle: '온라인 고객지원',
+    supportDesc: '할당량, 로그인, 구독, 클라이언트 문제를 AI 도우미와 바로 상담하세요.',
+    supportCta: '지금 문의',
   },
 
   settings: {

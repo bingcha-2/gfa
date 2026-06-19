@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { loginUser } from "@/lib/account/user-api";
+import { safeAccountNext } from "@/lib/account/safe-account-next";
 import { useDict } from "@/lib/i18n/client";
 
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const dict = useDict();
   const t = dict.portalApp;
 
@@ -24,7 +26,7 @@ export function LoginForm() {
     setLoading(true);
     try {
       await loginUser(email, password);
-      router.push("/account");
+      router.push(safeAccountNext(searchParams.get("next")));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.loginFailed);

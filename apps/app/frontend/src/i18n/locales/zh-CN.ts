@@ -244,6 +244,9 @@ export const zhCN = {
     githubTitle: '问题反馈与帮助',
     githubDesc: '前往用户中心提交问题、建议或联系客服',
     githubCta: '前往用户中心',
+    supportTitle: '在线客服',
+    supportDesc: '遇到额度、登录、订阅或客户端问题，直接和 AI 助手聊。',
+    supportCta: '立即咨询',
   },
 
   settings: {

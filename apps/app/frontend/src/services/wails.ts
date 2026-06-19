@@ -51,6 +51,7 @@ export const PORTAL_URLS = {
   bind: `${PORTAL_BASE}/account/billing`,
   devices: `${PORTAL_BASE}/account/devices`,
   tickets: `${PORTAL_BASE}/account/tickets`, // 工单/客服:订阅失效等问题的人工支持入口
+  support: `${PORTAL_BASE}/account/support`,
 } as const
 
 export const SITE_URLS = {

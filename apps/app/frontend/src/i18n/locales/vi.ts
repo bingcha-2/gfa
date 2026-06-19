@@ -243,6 +243,9 @@ export const vi: DeepPartialDict = {
     githubTitle: 'Phản hồi & trợ giúp',
     githubDesc: 'Gửi vấn đề, đề xuất tính năng hoặc liên hệ hỗ trợ tại trung tâm người dùng',
     githubCta: 'Đến trung tâm người dùng',
+    supportTitle: 'Hỗ trợ trực tuyến',
+    supportDesc: 'Vấn đề về quota, đăng nhập, gói đăng ký hoặc client? Trò chuyện với trợ lý AI.',
+    supportCta: 'Chat ngay',
   },
 
   settings: {

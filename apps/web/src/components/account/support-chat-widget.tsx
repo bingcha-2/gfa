@@ -10,8 +10,8 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { useDict } from "@/lib/i18n/client";
 import { getSupportConversation } from "@/lib/account/user-api";
+import { useDict } from "@/lib/i18n/client";
 
 interface ChatMessage {
   id: string;
@@ -20,20 +20,38 @@ interface ChatMessage {
   ticketId?: string | null;
 }
 
+type SupportChatMode = "widget" | "page";
+
+interface SupportChatSurfaceProps {
+  mode?: SupportChatMode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
 let idCounter = 0;
 const nextId = () => `m${Date.now()}_${idCounter++}`;
 
-/**
- * SupportChatWidget — 客户端 AI 客服悬浮气泡。
- *
- * 启用判断走后端(SUPPORT_AGENT_ENABLED);未启用则整个组件不渲染。
- * 发消息打到 /api/account/support/chat(SSE 流式),逐字渲染 + 工具状态 + 升级卡片。
- */
 export function SupportChatWidget() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <SupportChatSurface
+      mode="widget"
+      open={open}
+      onOpenChange={setOpen}
+    />
+  );
+}
+
+export function SupportChatSurface({
+  mode = "page",
+  open = true,
+  onOpenChange,
+}: SupportChatSurfaceProps) {
   const t = useDict().portalApp.support;
+  const isPage = mode === "page";
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -42,7 +60,6 @@ export function SupportChatWidget() {
 
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // 探活 + 载历史(只做一次)。
   useEffect(() => {
     let alive = true;
     getSupportConversation()
@@ -68,9 +85,10 @@ export function SupportChatWidget() {
     };
   }, []);
 
-  // 自动滚到底。
   useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
   }, [messages, toolLabel, open]);
 
   function patch(id: string, fn: (m: ChatMessage) => ChatMessage) {
@@ -79,7 +97,7 @@ export function SupportChatWidget() {
 
   async function send() {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text || sending || enabled !== true) return;
     setInput("");
     setSending(true);
     setToolLabel(null);
@@ -117,7 +135,7 @@ export function SupportChatWidget() {
           buffer = buffer.slice(sep + 2);
           const dataLine = frame
             .split("\n")
-            .find((l) => l.startsWith("data:"));
+            .find((line) => line.startsWith("data:"));
           if (!dataLine) continue;
           const payload = dataLine.slice(5).trim();
           if (!payload) continue;
@@ -170,15 +188,15 @@ export function SupportChatWidget() {
     }
   }
 
-  if (!enabled) return null;
+  if (mode === "widget" && enabled !== true) return null;
 
-  if (!open) {
+  if (mode === "widget" && !open) {
     return (
       <button
         type="button"
         className="sc-bubble"
         aria-label={t.bubbleLabel}
-        onClick={() => setOpen(true)}
+        onClick={() => onOpenChange?.(true)}
       >
         <MessageCircleIcon className="size-6" />
       </button>
@@ -186,71 +204,90 @@ export function SupportChatWidget() {
   }
 
   return (
-    <div className="sc-panel" role="dialog" aria-label={t.title}>
+    <div
+      className={isPage ? "sc-panel sc-panel--page" : "sc-panel"}
+      role={isPage ? "region" : "dialog"}
+      aria-label={t.title}
+    >
       <div className="sc-header">
         <div>
           <div className="sc-header-title">{t.title}</div>
           <div className="sc-header-sub">{t.subtitle}</div>
         </div>
-        <button
-          type="button"
-          className="sc-header-close"
-          aria-label="close"
-          onClick={() => setOpen(false)}
-        >
-          <XIcon className="size-4" />
-        </button>
+        {!isPage && (
+          <button
+            type="button"
+            className="sc-header-close"
+            aria-label="close"
+            onClick={() => onOpenChange?.(false)}
+          >
+            <XIcon className="size-4" />
+          </button>
+        )}
       </div>
 
       <div className="sc-body" ref={bodyRef}>
-        {messages.length === 0 && (
-          <div className="sc-msg sc-msg--assistant">{t.greeting}</div>
-        )}
-        {messages.map((m) => (
-          <Bubble key={m.id} msg={m} t={t} />
-        ))}
-        {toolLabel && (
+        {enabled === null && (
           <div className="sc-tool">
             <Loader2Icon className="sc-spin" />
-            {toolLabel}
+            {t.toolRunning}
           </div>
         )}
-        {sending && !toolLabel && lastAssistantEmpty(messages) && (
-          <div className="sc-tool">
-            <Loader2Icon className="sc-spin" />
-            {t.thinking}
-          </div>
+        {enabled === false && isPage && <SupportUnavailable t={t} />}
+        {enabled === true && (
+          <>
+            {messages.length === 0 && (
+              <div className="sc-msg sc-msg--assistant">{t.greeting}</div>
+            )}
+            {messages.map((m) => (
+              <Bubble key={m.id} msg={m} t={t} />
+            ))}
+            {toolLabel && (
+              <div className="sc-tool">
+                <Loader2Icon className="sc-spin" />
+                {toolLabel}
+              </div>
+            )}
+            {sending && !toolLabel && lastAssistantEmpty(messages) && (
+              <div className="sc-tool">
+                <Loader2Icon className="sc-spin" />
+                {t.thinking}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      <div className="sc-footer">
-        <textarea
-          className="sc-input"
-          value={input}
-          placeholder={t.inputPlaceholder}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          rows={1}
-        />
-        <button
-          type="button"
-          className="sc-send"
-          aria-label={t.send}
-          disabled={sending || input.trim().length === 0}
-          onClick={() => void send()}
-        >
-          {sending ? (
-            <Loader2Icon className="sc-spin size-4" />
-          ) : (
-            <SendIcon className="size-4" />
-          )}
-        </button>
-      </div>
+      {enabled === true && (
+        <div className="sc-footer">
+          <textarea
+            className="sc-input"
+            value={input}
+            placeholder={t.inputPlaceholder}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            rows={1}
+          />
+          <button
+            type="button"
+            className="sc-send"
+            aria-label={t.send}
+            disabled={sending || input.trim().length === 0}
+            onClick={() => void send()}
+          >
+            {sending ? (
+              <Loader2Icon className="sc-spin size-4" />
+            ) : (
+              <SendIcon className="size-4" />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -277,6 +314,30 @@ function Bubble({
         </div>
       )}
     </>
+  );
+}
+
+function SupportUnavailable({
+  t,
+}: {
+  t: ReturnType<typeof useDict>["portalApp"]["support"];
+}) {
+  return (
+    <div className="sc-unavailable">
+      <div className="sc-unavailable-icon">
+        <MessageCircleIcon className="size-5" />
+      </div>
+      <div>
+        <div className="sc-unavailable-title">{t.errorGeneric}</div>
+        <p className="sc-unavailable-copy">
+          在线客服正在维护中，你可以先查看工单或 FAQ。
+        </p>
+      </div>
+      <div className="sc-unavailable-actions">
+        <a href="/account/tickets">{t.viewTicket}</a>
+        <a href="/faq">FAQ</a>
+      </div>
+    </div>
   );
 }
 

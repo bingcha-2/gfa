@@ -14,9 +14,11 @@ import type { Customer } from "@/lib/account/user-types";
 export function AccountShell({
   initialCustomer,
   children,
+  hideSupportWidget = false,
 }: {
   initialCustomer: Customer;
   children: ReactNode;
+  hideSupportWidget?: boolean;
 }) {
   return (
     <AccountProvider initialCustomer={initialCustomer}>
@@ -26,7 +28,7 @@ export function AccountShell({
         <main className="account-main">
           <div className="account-wrap">{children}</div>
         </main>
-        <SupportChatWidget />
+        {!hideSupportWidget && <SupportChatWidget />}
       </div>
       <Toaster richColors />
     </AccountProvider>

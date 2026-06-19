@@ -243,6 +243,9 @@ export const en: DeepPartialDict = {
     githubTitle: 'Feedback & help',
     githubDesc: 'Submit issues, suggest features, or contact support in your account',
     githubCta: 'Go to your account',
+    supportTitle: 'Online support',
+    supportDesc: 'Quota, login, subscription, or client issue? Chat with the AI assistant.',
+    supportCta: 'Chat now',
   },
 
   settings: {

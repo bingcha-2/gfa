@@ -118,6 +118,25 @@ export function FaqPage() {
     <div className="max-w-[680px] flex flex-col gap-4 pt-1">
       <p className="text-[12px] text-[var(--text-muted)]">{t('faq.subtitle')}</p>
 
+      <div className="flex flex-col gap-3 rounded-[10px] border border-[color-mix(in_srgb,var(--primary)_38%,var(--border))] bg-[color-mix(in_srgb,var(--primary)_12%,var(--bg-secondary))] px-3 py-3 shadow-[var(--shadow-sm)] sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] bg-[var(--primary)] text-[var(--primary-ink)]">
+            <MessageCircle size={18} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-[var(--text-primary)]">{t('faq.supportTitle')}</div>
+            <div className="text-[11px] leading-[1.45] text-[var(--text-secondary)]">{t('faq.supportDesc')}</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => api.openURL(api.PORTAL_URLS.support)}
+          className="flex h-8 w-full shrink-0 items-center justify-center gap-1.5 rounded-[8px] bg-[var(--primary)] px-3 text-[12px] font-semibold text-[var(--primary-ink)] transition-colors hover:bg-[var(--primary-strong)] sm:w-auto cursor-pointer"
+        >
+          {t('faq.supportCta')} <ExternalLink size={12} />
+        </button>
+      </div>
+
       {/* Search */}
       <div className="relative">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
