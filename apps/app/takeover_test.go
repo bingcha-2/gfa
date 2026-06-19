@@ -75,3 +75,47 @@ func TestCardCoversProduct(t *testing.T) {
 		t.Fatal("空 required 应放行")
 	}
 }
+
+func TestTakeoverGateUsesHeartbeatEntitlementsBeforeAccessKeyStatus(t *testing.T) {
+	l := &Leaser{
+		accessKeyStatus: map[string]interface{}{
+			"products": []interface{}{"antigravity"},
+		},
+	}
+	l.SetEntitlements([]string{"codex"}, true)
+
+	if !l.takeoverCoversProduct("codex") {
+		t.Fatal("heartbeat entitlement containing codex should allow Codex takeover")
+	}
+	if l.takeoverCoversProduct("antigravity") {
+		t.Fatal("stale accessKeyStatus must not allow antigravity when heartbeat entitlements only contain codex")
+	}
+}
+
+func TestTakeoverGateBlocksWhenHeartbeatSaysNoActiveSubscription(t *testing.T) {
+	l := &Leaser{
+		accessKeyStatus: map[string]interface{}{
+			"products": []interface{}{"codex"},
+		},
+	}
+	l.SetEntitlements(nil, false)
+
+	if l.takeoverCoversProduct("codex") {
+		t.Fatal("heartbeat-confirmed no-sub state must block takeover even if stale accessKeyStatus has codex")
+	}
+}
+
+func TestTakeoverGateFallsBackToAccessKeyStatusWhenEntitlementsUnknown(t *testing.T) {
+	l := &Leaser{
+		accessKeyStatus: map[string]interface{}{
+			"products": []interface{}{"codex"},
+		},
+	}
+
+	if !l.takeoverCoversProduct("codex") {
+		t.Fatal("when heartbeat entitlements are unknown, codex in accessKeyStatus should allow takeover")
+	}
+	if l.takeoverCoversProduct("anthropic") {
+		t.Fatal("when heartbeat entitlements are unknown, accessKeyStatus without anthropic should block anthropic")
+	}
+}

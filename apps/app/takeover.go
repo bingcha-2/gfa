@@ -118,6 +118,38 @@ func cardCoversProduct(cardProducts []string, required string) bool {
 	return false
 }
 
+func entitlementCoversProduct(products []string, required string) bool {
+	if required == "" {
+		return true
+	}
+	for _, p := range products {
+		if p == required {
+			return true
+		}
+		if required == "anthropic" && p == "claude" {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *Leaser) takeoverCoversProduct(required string) bool {
+	if required == "" {
+		return true
+	}
+	l.mu.RLock()
+	entitlementsKnown := l.entitlementsKnown
+	subActive := l.subActive
+	entitledProducts := append([]string(nil), l.entitledProducts...)
+	accessKeyProducts := productsFromAKS(l.accessKeyStatus)
+	l.mu.RUnlock()
+
+	if entitlementsKnown {
+		return subActive && entitlementCoversProduct(entitledProducts, required)
+	}
+	return cardCoversProduct(accessKeyProducts, required)
+}
+
 func productLabel(product string) string {
 	switch product {
 	case "codex":

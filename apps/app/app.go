@@ -386,11 +386,13 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 	if err := validateTakeoverPrereqs(cfg); err != nil {
 		return "", err
 	}
+	if _, err := a.HeartbeatCheck(); err != nil {
+		Log("[takeover] heartbeat refresh before takeover failed: %v", err)
+	}
+	cfg = LoadConfig()
 
-	// 绑定卡:只能接管它开通的产品。codex 卡开 antigravity 接管 → 直接拒绝。
-	// 池子卡(products 为空)不限制。
-	products := GetLeaser().CardProducts()
-
+	// 绑定卡:只能接管它开通的产品。优先使用 heartbeat 的订阅授权；
+	// 授权未知时才回退到旧 accessKeyStatus.products 兼容逻辑。
 	var results []string
 	for _, raw := range targets {
 		t := findTakeoverTarget(strings.ToLower(strings.TrimSpace(raw)))
@@ -398,7 +400,7 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 			continue
 		}
 		required := targetRequiredProduct(t.ProductID())
-		if !cardCoversProduct(products, required) {
+		if !GetLeaser().takeoverCoversProduct(required) {
 			return "", fmt.Errorf("你的订阅未开通 %s,无法接管 %s(请购买或续费已开通该产品的订阅)", productLabel(required), t.Name())
 		}
 		// 出口前置闸:配了静态出口代理的产品,接管前必须先探通出口(经代理能从代理 IP 出去),
