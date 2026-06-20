@@ -29,6 +29,7 @@ const CLAUDE_USAGE_URL =
 const CLAUDE_PROFILE_URL =
   process.env.BCAI_CLAUDE_PROFILE_URL || "https://api.anthropic.com/api/oauth/profile";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
+const CLAUDE_USAGE_MAX_ATTEMPTS = 3;
 // organization_type → 套餐, mirroring Claude Code's subscriptionType mapping.
 const ORG_TYPE_TO_PLAN: Record<string, string> = {
   claude_max: "max",
@@ -130,7 +131,7 @@ function resetToIso(raw: string | number | null | undefined): string {
 function remainingPercent(w: RawRateLimit | null | undefined): number {
   if (!w || w.utilization == null || !Number.isFinite(Number(w.utilization))) return -1;
   const util = Number(w.utilization);
-  const usedPct = util <= 1 ? util * 100 : util;
+  const usedPct = util > 0 && util < 1 ? util * 100 : util;
   return clampPercent(100 - usedPct);
 }
 
@@ -200,6 +201,30 @@ export async function fetchClaudeQuotaUpstream(
 
 /** GET /api/oauth/usage → 5h/weekly remaining windows. See fetchClaudeQuotaUpstream. */
 async function fetchUsageSnapshot(accessToken: string, proxyUrl?: string): Promise<ClaudeQuotaSnapshot> {
+  let last: ClaudeQuotaSnapshot | undefined;
+  for (let attempt = 1; attempt <= CLAUDE_USAGE_MAX_ATTEMPTS; attempt++) {
+    const snap = await fetchUsageSnapshotOnce(accessToken, proxyUrl);
+    last = snap;
+    if (!shouldRetryMissingSevenDay(snap)) return snap;
+  }
+  return last || { raw: null, httpStatus: 0, error: "usage probe did not run" };
+}
+
+function shouldRetryMissingSevenDay(snap: ClaudeQuotaSnapshot): boolean {
+  const raw = snap.raw;
+  const hasSevenDay =
+    !!raw && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, "seven_day");
+  return (
+    snap.httpStatus === 200 &&
+    !snap.error &&
+    !!snap.claudeQuota &&
+    snap.claudeQuota.hourlyPercent >= 0 &&
+    snap.claudeQuota.weeklyPercent < 0 &&
+    !hasSevenDay
+  );
+}
+
+async function fetchUsageSnapshotOnce(accessToken: string, proxyUrl?: string): Promise<ClaudeQuotaSnapshot> {
   let resp: Response;
   try {
     resp = await proxyRequiredFetch(proxyUrl, CLAUDE_USAGE_URL, {

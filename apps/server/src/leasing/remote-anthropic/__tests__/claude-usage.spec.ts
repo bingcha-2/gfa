@@ -45,6 +45,19 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     expect(snap.claudeQuota?.hourlyPercent).toBe(75);
   });
 
+  it("treats integer utilization=1 as 1% used, not fraction 1.0", async () => {
+    mockUsage(200, {
+      five_hour: { utilization: 1, resets_at: null },
+      seven_day: { utilization: 1, resets_at: "2026-06-20T16:00:00.000Z" },
+      limits: [
+        { kind: "session", percent: 1 },
+        { kind: "weekly_all", percent: 1 },
+      ],
+    });
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.claudeQuota).toMatchObject({ hourlyPercent: 99, weeklyPercent: 99 });
+  });
+
   it("treats a missing seven_day as UNKNOWN (-1) — model-specific sub-caps never define the weekly", async () => {
     // seven_day_opus is Max's tight Opus weekly sub-cap; a drained one (util 1.0)
     // used to be reported as the overall 周剩余=0, benching a healthy account. It
@@ -58,6 +71,34 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     const snap = await fetchClaudeQuotaUpstream("token");
     expect(snap.claudeQuota?.weeklyPercent).toBe(-1);
     expect(snap.claudeQuota?.hourlyPercent).toBe(90);
+  });
+
+  it("retries only the usage probe when seven_day is missing from a partial usage response", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (String(url).includes("/api/oauth/profile")) {
+        return new Response(JSON.stringify({ organization: { organization_type: "claude_max" } }), { status: 200 });
+      }
+      const usageCalls = fetchSpy.mock.calls.filter(([calledUrl]) =>
+        String(calledUrl).includes("/api/oauth/usage"),
+      ).length;
+      if (usageCalls === 1) {
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.2, resets_at: null } }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          five_hour: { utilization: 0.2, resets_at: null },
+          seven_day: { utilization: 0.45, resets_at: "2026-06-09T00:00:00.000Z" },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const snap = await fetchClaudeQuotaUpstream("token");
+
+    expect(snap.claudeQuota).toMatchObject({ hourlyPercent: 80, weeklyPercent: 55 });
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/api/oauth/usage"))).toHaveLength(2);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/api/oauth/profile"))).toHaveLength(1);
   });
 
   it("returns raw payload but no quota when no windows are present", async () => {
