@@ -18,6 +18,12 @@ import (
 var DefaultCloudEndpoint = "https://cloudcode-pa.googleapis.com"
 var DailyCloudEndpoint = "https://daily-cloudcode-pa.googleapis.com" // returns Claude/GPT third-party models (aligned with cockpit)
 var DefaultGeminiEndpoint = "https://generativelanguage.googleapis.com"
+
+// modelsProbeLeaseFn 是 fetchAvailableModels 探测路径的租号入口,var 以便测试注入间谍
+// (确认门控命中时不发租号);生产走真实 LeaseToken。
+var modelsProbeLeaseFn = func(l *Leaser, card, deviceId, upstream string) (*TokenLease, error) {
+	return l.LeaseToken(card, deviceId, false, nil, upstream)
+}
 const MaxCloudCodeGenerationAttempts = 10
 
 type ProxyStats struct {
@@ -194,7 +200,17 @@ func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.
 	// 注入我们的 token
 	if card != "" {
 		leaser := GetLeaser()
-		lease, err := leaser.LeaseToken(card, deviceId, false, nil, upstream)
+		// 与 StartAutoLease 同一道授权门控:已知本卡有生效订阅、但未开 antigravity 时,
+		// 不发探测租号 —— 否则 LeaseToken 失败会把 lastError 写成 SUBSCRIPTION_EXPIRED,
+		// 把 StartAutoLease(agSkip)刚清空的状态重新投毒,顶部状态栏闪「错误 ·
+		// SUBSCRIPTION_EXPIRED」。codex/anthropic 未授权即静默跳过,这里与之对齐:直接
+		// 走缓存/兜底模型列表。冷启动尚未知授权时 coversAntigravity()=true,仍照常探测。
+		if !leaser.coversAntigravity() {
+			audit.note += "; 未开通antigravity跳过租号"
+			p.serveModelsCache(w, reqId, "antigravity not entitled", audit)
+			return
+		}
+		lease, err := modelsProbeLeaseFn(leaser, card, deviceId, upstream)
 		if err != nil {
 			audit.note += fmt.Sprintf("; 租号失败回落缓存:%v", err)
 			p.serveModelsCache(w, reqId, "token lease error", audit)
