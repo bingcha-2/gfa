@@ -1,6 +1,7 @@
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 
+import { IS_PUBLIC_KEY } from "../../../shared/auth/public.decorator";
 import { RosettaController } from "../rosetta.controller";
 
 function makeController() {
@@ -105,6 +106,12 @@ describe("RosettaController — 账号列表 usedShares 改用 DB 订阅口径",
 });
 
 describe("RosettaController CLIProxy report", () => {
+  it("is public so the shared-secret check runs before admin JWT auth", () => {
+    const isPublic = Reflect.getMetadata(IS_PUBLIC_KEY, RosettaController.prototype.reportCliProxyFailure);
+
+    expect(isPublic).toBe(true);
+  });
+
   it("rejects reports with an invalid shared secret", () => {
     process.env.CLIPROXY_REPORT_SECRET = "report-secret";
     const { controller } = makeController();

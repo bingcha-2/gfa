@@ -1473,6 +1473,12 @@ describe("RosettaService", () => {
       };
       const agentAccounts = {
         ensureAgentAccount: vi.fn(async () => "agent-1"),
+        getStoredCredentialsByEmail: vi.fn(async () => ({
+          loginEmail: "a@x.com",
+          loginPassword: "pw",
+          totpSecret: "SEC",
+          recoveryEmail: "r@x.com",
+        })),
         uploadToRosetta: vi.fn(async () => ({ added: 1 })),
       };
       return { automation, agentAccounts };
@@ -1548,6 +1554,48 @@ describe("RosettaService", () => {
       expect(status).toMatchObject({ ok: true, done: true, status: "completed" });
     });
 
+    it("deduplicates concurrent pool uploads while import status is polled", async () => {
+      const { automation, agentAccounts } = makeMocks();
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+      const { batchId } = await svc.adspowerImport({ credentials: [{ email: "a@x.com", password: "pw" }] });
+      automation.getTaskStatus.mockResolvedValue({ status: "SUCCESS" } as any);
+
+      await Promise.all([
+        svc.adspowerImportStatus(batchId!),
+        svc.adspowerImportStatus(batchId!),
+      ]);
+
+      expect(agentAccounts.uploadToRosetta).toHaveBeenCalledTimes(1);
+      expect(readBatch().items[0]).toMatchObject({ status: "success", uploaded: true });
+    });
+
+    it("does not re-upload from a stale concurrent status poll after a success is persisted", async () => {
+      const { automation, agentAccounts } = makeMocks();
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+      const { batchId } = await svc.adspowerImport({ credentials: [{ email: "a@x.com", password: "pw" }] });
+      let taskStatusCalls = 0;
+      let resolveSecondStatus: (() => void) | undefined;
+
+      automation.getTaskStatus.mockImplementation(() => {
+        taskStatusCalls += 1;
+        if (taskStatusCalls === 1) return Promise.resolve({ status: "SUCCESS" } as any);
+        return new Promise((resolve) => {
+          resolveSecondStatus = () => resolve({ status: "SUCCESS" } as any);
+        });
+      });
+
+      const firstPoll = svc.adspowerImportStatus(batchId!);
+      const stalePoll = svc.adspowerImportStatus(batchId!);
+      await firstPoll;
+
+      expect(readBatch().items[0]).toMatchObject({ status: "success", uploaded: true });
+      resolveSecondStatus?.();
+      await stalePoll;
+
+      expect(agentAccounts.uploadToRosetta).toHaveBeenCalledTimes(1);
+      expect(readBatch().items[0]).toMatchObject({ status: "success", uploaded: true });
+    });
+
     it("maps a failed task to a failed item with the error message", async () => {
       const { automation, agentAccounts } = makeMocks();
       const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
@@ -1574,6 +1622,84 @@ describe("RosettaService", () => {
 
       expect(status.items[0]).toMatchObject({ status: "failed" });
       expect(status.items[0].error).toContain("入池失败");
+    });
+
+    it("starts an AdsPower reauthorization for an existing Antigravity account using stored AgentAccount credentials", async () => {
+      const { automation, agentAccounts } = makeMocks({ taskId: "repair-task-1" });
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+      svc.addAccount({ email: "a@x.com", refreshToken: "old-rt", projectId: "project-1", planType: "premium" });
+
+      const result = await (svc as any).adspowerReauthorize({ accountId: 1 });
+
+      expect(result).toMatchObject({ ok: true, batchId: expect.any(String) });
+      expect(agentAccounts.getStoredCredentialsByEmail).toHaveBeenCalledWith("a@x.com");
+      expect(automation.startAutomation).toHaveBeenCalledWith(
+        "oauth",
+        {
+          email: "a@x.com",
+          password: "pw",
+          recoveryEmail: "r@x.com",
+          totpSecret: "SEC",
+        },
+        undefined,
+        undefined,
+        expect.objectContaining({
+          source: "rosetta-account-repair",
+          keepBrowserOpenOnChallenge: true,
+        }),
+      );
+
+      const batch = JSON.parse(fs.readFileSync(path.join(tempDir, "adspower-reauth.json"), "utf8"));
+      expect(batch.items[0]).toMatchObject({
+        accountId: 1,
+        email: "a@x.com",
+        taskId: "repair-task-1",
+        status: "running",
+      });
+    });
+
+    it("writes a successful AdsPower reauthorization token back to the same Antigravity account id", async () => {
+      const { automation, agentAccounts } = makeMocks({ taskId: "repair-task-1" });
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+      svc.addAccount({
+        email: "a@x.com",
+        refreshToken: "old-rt",
+        projectId: "project-1",
+        planType: "premium",
+      });
+      const { batchId } = await (svc as any).adspowerReauthorize({ accountId: 1 });
+
+      automation.getTaskStatus.mockResolvedValueOnce({
+        status: "SUCCESS",
+        result: { refresh_token: "new-rt" },
+      } as any);
+      const status: any = await (svc as any).adspowerReauthorizeStatus(batchId);
+
+      expect(agentAccounts.uploadToRosetta).not.toHaveBeenCalled();
+      expect(status).toMatchObject({ ok: true, done: true, status: "completed" });
+      expect(status.items[0]).toMatchObject({ accountId: 1, status: "success", uploaded: true });
+      const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "accounts.json"), "utf8"));
+      expect(stored.accounts).toHaveLength(1);
+      expect(stored.accounts[0]).toMatchObject({
+        id: 1,
+        email: "a@x.com",
+        refreshToken: "new-rt",
+        projectId: "project-1",
+        planType: "premium",
+        enabled: true,
+      });
+    });
+
+    it("rejects AdsPower reauthorization when the stored AgentAccount credentials are missing", async () => {
+      const { automation, agentAccounts } = makeMocks();
+      agentAccounts.getStoredCredentialsByEmail.mockResolvedValueOnce(null);
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+      svc.addAccount({ email: "missing@x.com", refreshToken: "old-rt", projectId: "project-1" });
+
+      const result = await (svc as any).adspowerReauthorize({ accountId: 1 });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(automation.startAutomation).not.toHaveBeenCalled();
     });
   });
 

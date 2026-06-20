@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ClaudeAccountService } from "../claude-account.service";
 
@@ -56,5 +56,43 @@ describe("listClaudeAccounts exposes persisted dead status", () => {
     expect(dead.quotaStatusReason).toBe("invalid_grant");
     // A healthy account reports "ok" (not undefined) so the UI can render a green dot.
     expect(ok.quotaStatus).toBe("ok");
+  });
+});
+
+describe("startAutoClaudeOAuth SK direct login", () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-claude-sk-"));
+    writeJson(path.join(dataDir, "anthropic-accounts.json"), { accounts: [] });
+  });
+
+  afterEach(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("accepts sessionKey onboarding without a mailbox password", () => {
+    const svc = new ClaudeAccountService({ dataDir } as any, stubAccessKey);
+    const run = vi.spyOn(svc as any, "runAutoOAuth").mockResolvedValue(undefined);
+
+    const res = svc.startAutoClaudeOAuth({
+      email: "sk-user@example.com",
+      password: "",
+      proxyUrl: "",
+      adspowerProfileId: "k1bvbavq",
+      sessionKey: "sk-ant-sid02-AbCdEf1234567890",
+    });
+
+    expect(res.ok).toBe(true);
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      "sk-user@example.com",
+      "",
+      "",
+      "k1bvbavq",
+      undefined,
+      undefined,
+      "sk-ant-sid02-AbCdEf1234567890",
+    );
   });
 });

@@ -89,6 +89,32 @@ export class AgentAccountService {
     return created.id;
   }
 
+  async getStoredCredentialsByEmail(email: string): Promise<{
+    loginEmail: string;
+    loginPassword: string;
+    totpSecret?: string;
+    recoveryEmail?: string;
+  } | null> {
+    const loginEmail = email.trim();
+    if (!loginEmail) return null;
+    const account = await this.prisma.agentAccount.findUnique({
+      where: { loginEmail },
+      select: {
+        loginEmail: true,
+        loginPassword: true,
+        totpSecret: true,
+        recoveryEmail: true,
+      },
+    });
+    if (!account?.loginPassword) return null;
+    return {
+      loginEmail: account.loginEmail,
+      loginPassword: account.loginPassword,
+      totpSecret: account.totpSecret ?? undefined,
+      recoveryEmail: account.recoveryEmail ?? undefined,
+    };
+  }
+
   // ── List / Stats ──
 
   async findAll(filters?: {

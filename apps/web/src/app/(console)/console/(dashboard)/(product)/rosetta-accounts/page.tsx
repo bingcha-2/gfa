@@ -145,6 +145,12 @@ const DEFAULT_VISIBLE = new Set([
 ]);
 
 const PAGE_SIZE = 20;
+const REAUTH_POLL_INTERVAL_MS = 3000;
+const REAUTH_MAX_POLLS = 120;
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 export default function RosettaAccountsPage() {
   const [accounts, setAccounts] = useState<RosettaAccount[]>([]);
@@ -179,6 +185,7 @@ export default function RosettaAccountsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [reauthingId, setReauthingId] = useState<string | null>(null);
   const [syncingCliProxyId, setSyncingCliProxyId] = useState<string | null>(null);
   // 出口代理行内编辑:正在编辑的账号 id、输入值、保存中。
   const [proxyEditId, setProxyEditId] = useState<string | null>(null);
@@ -367,7 +374,44 @@ export default function RosettaAccountsPage() {
   }
 
   async function handleReauthorize(accountId: string) {
-    await handleOAuthStart(accountId);
+    setReauthingId(accountId);
+    try {
+      const startRes = await fetch("/api/console/rosetta/adspower-reauthorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+      const startData = await startRes.json();
+      if (!startData.ok) throw new Error(startData.error || "自动重授权启动失败");
+
+      toast.success(`已提交自动重授权 ${startData.email || `#${accountId}`}`);
+      for (let attempt = 0; attempt < REAUTH_MAX_POLLS; attempt += 1) {
+        await delay(REAUTH_POLL_INTERVAL_MS);
+        const statusRes = await fetch(
+          `/api/console/rosetta/adspower-reauthorize-status?batchId=${encodeURIComponent(startData.batchId)}`,
+          { cache: "no-store" },
+        );
+        const statusData = await statusRes.json();
+        if (!statusData.ok) throw new Error(statusData.error || "自动重授权状态查询失败");
+
+        const item = Array.isArray(statusData.items)
+          ? statusData.items.find((entry: any) => String(entry.accountId) === String(accountId)) || statusData.items[0]
+          : null;
+        if (item?.status === "success") {
+          toast.success(`${item.email || `#${accountId}`} 已完成自动重授权`);
+          await loadAccounts();
+          return;
+        }
+        if (item?.status === "failed") {
+          throw new Error(item.error || "自动重授权失败");
+        }
+      }
+      throw new Error("自动重授权超时，请稍后刷新状态");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "自动重授权失败");
+    } finally {
+      setReauthingId(null);
+    }
   }
 
   async function handleOAuthSubmit() {
@@ -867,7 +911,7 @@ export default function RosettaAccountsPage() {
 
             {/* Right group: refresh + add */}
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => void handleOAuthStart()} disabled={oauthStarting || Boolean(oauthLoginId)}>
+              <Button variant="outline" size="sm" onClick={() => void handleOAuthStart()} disabled={oauthStarting || Boolean(oauthLoginId) || Boolean(reauthingId)}>
                 {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
                 OAuth 登录
               </Button>
@@ -1047,12 +1091,14 @@ export default function RosettaAccountsPage() {
                                   <Button
                                     variant="ghost"
                                     size="icon-xs"
-                                    disabled={busyId === account.id || Boolean(oauthLoginId) || oauthStarting}
+                                    disabled={busyId === account.id || Boolean(reauthingId) || Boolean(oauthLoginId) || oauthStarting}
                                     onClick={() => void handleReauthorize(account.id)}
                                   />
                                 }
                               >
-                                <KeyRound className="size-3.5 text-primary" />
+                                {reauthingId === account.id
+                                  ? <Spinner className="size-3.5" />
+                                  : <KeyRound className="size-3.5 text-primary" />}
                               </TooltipTrigger>
                               <TooltipContent>重新授权</TooltipContent>
                             </Tooltip>

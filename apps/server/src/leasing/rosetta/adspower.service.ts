@@ -11,15 +11,26 @@ import * as path from "path";
 import type { RosettaContext } from "./lib/context";
 import { nowIso, readJson, writeJson } from "./lib/store";
 
+type AntigravityAccountWriter = (payload: any) => { ok?: boolean; error?: string } & Record<string, unknown>;
+
 export class AdspowerService {
-  constructor(private readonly ctx: RosettaContext) {}
+  constructor(
+    private readonly ctx: RosettaContext,
+    private readonly writeAntigravityAccount?: AntigravityAccountWriter,
+  ) {}
 
   private get adspowerFile() {
     return path.join(this.ctx.dataDir, "adspower-import.json");
   }
 
+  private get reauthFile() {
+    return path.join(this.ctx.dataDir, "adspower-reauth.json");
+  }
+
   /** Terminal item states — no further polling needed. */
   private readonly ADSPOWER_TERMINAL = new Set(["success", "failed"]);
+  private readonly adspowerPoolUploadLocks = new Set<string>();
+  private readonly adspowerStatusLocks = new Map<string, Promise<void>>();
 
   /** Map an automation Task status to the frontend's item status vocabulary. */
   private mapAdspowerTaskStatus(taskData: any): { status: string; message?: string; error?: string } {
@@ -44,6 +55,46 @@ export class AdspowerService {
         };
       default:
         return { status: "running" };
+    }
+  }
+
+  private summarizeBatch(batch: any) {
+    const items = Array.isArray(batch.items) ? batch.items : [];
+    batch.completed = items.filter((i: any) => this.ADSPOWER_TERMINAL.has(i.status)).length;
+    batch.failed = items.filter((i: any) => i.status === "failed").length;
+    batch.done = items.every((i: any) => this.ADSPOWER_TERMINAL.has(i.status));
+    batch.status = batch.done ? "completed" : "running";
+    batch.updatedAt = nowIso();
+    return batch;
+  }
+
+  private adspowerPoolUploadLockKey(batchId: string, item: any): string {
+    return [
+      batchId,
+      String(item?.taskId || ""),
+      String(item?.agentAccountId || ""),
+      String(item?.email || ""),
+    ].join(":");
+  }
+
+  private async withAdspowerStatusLock<T>(batchId: string, work: () => Promise<T>): Promise<T> {
+    const key = batchId || "__missing_batch__";
+    const previous = this.adspowerStatusLocks.get(key) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => current);
+    this.adspowerStatusLocks.set(key, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.adspowerStatusLocks.get(key) === tail) {
+        this.adspowerStatusLocks.delete(key);
+      }
     }
   }
 
@@ -125,7 +176,142 @@ export class AdspowerService {
 
   /** Poll automation task status for each pending item; upload successes to the pool. */
   async adspowerImportStatus(batchId: string) {
+    return this.withAdspowerStatusLock(String(batchId || ""), async () => {
+      const data = readJson(this.adspowerFile, null);
+      if (!data || data.batchId !== batchId) return { ok: false, error: "batch not found" };
+
+      if (this.ctx.automation) {
+        for (const item of data.items || []) {
+          if (!item.taskId || this.ADSPOWER_TERMINAL.has(item.status)) continue;
+          try {
+            const taskData = await this.ctx.automation.getTaskStatus(item.taskId);
+            const mapped = this.mapAdspowerTaskStatus(taskData);
+
+            if (mapped.status === "success") {
+              // OAuth done → token is on the AgentAccount; push it into the pool.
+              if (!item.uploaded && item.agentAccountId && this.ctx.agentAccounts) {
+                const uploadLockKey = this.adspowerPoolUploadLockKey(String(data.batchId || batchId), item);
+                if (this.adspowerPoolUploadLocks.has(uploadLockKey)) {
+                  item.status = "running";
+                  item.message = "正在录入账号池";
+                  item.error = "";
+                  continue;
+                }
+
+                this.adspowerPoolUploadLocks.add(uploadLockKey);
+                try {
+                  await this.ctx.agentAccounts.uploadToRosetta([item.agentAccountId]);
+                  item.uploaded = true;
+                  item.status = "success";
+                  item.message = "已录入账号池";
+                  item.error = "";
+                } catch (err: any) {
+                  item.status = "failed";
+                  item.error = `OAuth成功但入池失败: ${err?.message || String(err)}`;
+                } finally {
+                  this.adspowerPoolUploadLocks.delete(uploadLockKey);
+                }
+              } else {
+                item.status = "success";
+                item.message = "已录入账号池";
+              }
+            } else {
+              item.status = mapped.status;
+              if (mapped.message !== undefined) item.message = mapped.message;
+              if (mapped.error !== undefined) item.error = mapped.error;
+            }
+          } catch {
+            // task not found yet / transient — leave item unchanged for next poll
+          }
+        }
+
+        data.completed = (data.items || []).filter((i: any) => this.ADSPOWER_TERMINAL.has(i.status)).length;
+        data.failed = (data.items || []).filter((i: any) => i.status === "failed").length;
+        data.done = (data.items || []).every((i: any) => this.ADSPOWER_TERMINAL.has(i.status));
+        data.status = data.done ? "completed" : "running";
+        data.updatedAt = nowIso();
+        writeJson(this.adspowerFile, data);
+      }
+
+      return { ok: true, ...data };
+    });
+  }
+
+  adspowerImportHistory() {
     const data = readJson(this.adspowerFile, null);
+    if (!data) return { ok: true, batchId: null };
+    return { ok: true, ...data };
+  }
+
+  async adspowerReauthorize(payload: any) {
+    const accountId = Number(payload?.accountId || 0);
+    if (!accountId) return { ok: false, error: "accountId required" };
+    if (!this.ctx.automation || !this.ctx.agentAccounts) {
+      return { ok: false, error: "automation service unavailable" };
+    }
+
+    const accounts = Array.isArray(this.ctx.accountsFile.read().accounts)
+      ? this.ctx.accountsFile.read().accounts
+      : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    const email = String(account.email || "").trim();
+    if (!email) return { ok: false, error: "账号邮箱为空" };
+
+    const credentials = await this.ctx.agentAccounts.getStoredCredentialsByEmail(email);
+    if (!credentials) {
+      return {
+        ok: false,
+        error: "未找到 AdsPower 录入凭证，请先在 AdsPower 录入页导入该邮箱/密码/TOTP",
+        manualPasswordRequired: true,
+      };
+    }
+
+    try {
+      const result = await this.ctx.automation.startAutomation(
+        "oauth",
+        {
+          email: credentials.loginEmail,
+          password: credentials.loginPassword,
+          recoveryEmail: credentials.recoveryEmail,
+          totpSecret: credentials.totpSecret,
+        },
+        undefined,
+        undefined,
+        {
+          source: "rosetta-account-repair",
+          keepBrowserOpenOnChallenge: true,
+        },
+      );
+
+      const batchId = `reauth_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+      const batch = {
+        batchId,
+        type: "adspower-reauth",
+        status: "running",
+        total: 1,
+        completed: 0,
+        failed: 0,
+        done: false,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        items: [{
+          accountId,
+          email,
+          taskId: result?.taskId,
+          status: "running",
+          message: "已入队",
+        }],
+      };
+      writeJson(this.reauthFile, batch);
+      return { ok: true, batchId, accountId, email, taskId: result?.taskId };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  }
+
+  async adspowerReauthorizeStatus(batchId: string) {
+    const data = readJson(this.reauthFile, null);
     if (!data || data.batchId !== batchId) return { ok: false, error: "batch not found" };
 
     if (this.ctx.automation) {
@@ -136,46 +322,46 @@ export class AdspowerService {
           const mapped = this.mapAdspowerTaskStatus(taskData);
 
           if (mapped.status === "success") {
-            // OAuth done → token is on the AgentAccount; push it into the pool.
-            if (!item.uploaded && item.agentAccountId && this.ctx.agentAccounts) {
-              try {
-                await this.ctx.agentAccounts.uploadToRosetta([item.agentAccountId]);
-                item.uploaded = true;
-                item.status = "success";
-                item.message = "已录入账号池";
-                item.error = "";
-              } catch (err: any) {
-                item.status = "failed";
-                item.error = `OAuth成功但入池失败: ${err?.message || String(err)}`;
-              }
-            } else {
-              item.status = "success";
-              item.message = "已录入账号池";
+            const refreshToken = String(taskData?.result?.refresh_token || taskData?.result?.refreshToken || "").trim();
+            if (!refreshToken) {
+              item.status = "failed";
+              item.error = "OAuth 成功但未返回 refresh_token";
+              continue;
             }
+            if (!this.writeAntigravityAccount) {
+              item.status = "failed";
+              item.error = "account writer unavailable";
+              continue;
+            }
+            const result = this.writeAntigravityAccount({
+              targetAccountId: item.accountId,
+              email: item.email,
+              refreshToken,
+              enabled: true,
+            });
+            if (!result?.ok) {
+              item.status = "failed";
+              item.error = result?.error || "回写账号失败";
+              continue;
+            }
+            item.uploaded = true;
+            item.status = "success";
+            item.message = "已更新原账号授权";
+            item.error = "";
           } else {
             item.status = mapped.status;
             if (mapped.message !== undefined) item.message = mapped.message;
             if (mapped.error !== undefined) item.error = mapped.error;
           }
         } catch {
-          // task not found yet / transient — leave item unchanged for next poll
+          // task not found yet / transient - leave item unchanged for next poll
         }
       }
 
-      data.completed = (data.items || []).filter((i: any) => this.ADSPOWER_TERMINAL.has(i.status)).length;
-      data.failed = (data.items || []).filter((i: any) => i.status === "failed").length;
-      data.done = (data.items || []).every((i: any) => this.ADSPOWER_TERMINAL.has(i.status));
-      data.status = data.done ? "completed" : "running";
-      data.updatedAt = nowIso();
-      writeJson(this.adspowerFile, data);
+      this.summarizeBatch(data);
+      writeJson(this.reauthFile, data);
     }
 
-    return { ok: true, ...data };
-  }
-
-  adspowerImportHistory() {
-    const data = readJson(this.adspowerFile, null);
-    if (!data) return { ok: true, batchId: null };
     return { ok: true, ...data };
   }
 }

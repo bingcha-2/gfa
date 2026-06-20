@@ -112,7 +112,7 @@ export class RosettaService {
     this.googleSvc = new GoogleOAuthService(this.ctx, (p: any) => this.antigravitySvc.addAccountChecked(p));
     this.sessionPoolSvc = new ClaudeSessionPoolService(this.ctx);
     this.creditsSvc = new CreditsQuotaService(this.ctx);
-    this.adspowerSvc = new AdspowerService(this.ctx);
+    this.adspowerSvc = new AdspowerService(this.ctx, (payload: any) => this.antigravitySvc.addAccount(payload));
   }
 
   // ── Employees (not a separate domain; small, stays here) ────────────────
@@ -326,6 +326,8 @@ export class RosettaService {
   adspowerImport(payload: any) { return this.adspowerSvc.adspowerImport(payload); }
   adspowerImportStatus(batchId: string) { return this.adspowerSvc.adspowerImportStatus(batchId); }
   adspowerImportHistory() { return this.adspowerSvc.adspowerImportHistory(); }
+  adspowerReauthorize(payload: any) { return this.adspowerSvc.adspowerReauthorize(payload); }
+  adspowerReauthorizeStatus(batchId: string) { return this.adspowerSvc.adspowerReauthorizeStatus(batchId); }
 
   // ── CLIProxy management ──
 

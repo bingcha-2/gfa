@@ -288,7 +288,12 @@ export default function ClaudeAccountsPage() {
       const parts = credsLine.split(/----+|---+|--/);
       if (parts.length >= 2) {
         email = parts[0]?.trim() || "";
-        password = parts[1]?.trim() || "";
+        const second = parts[1]?.trim() || "";
+        if (second.startsWith("sk-ant-")) {
+          sessionKey = second.match(/sk-ant-sid02-[A-Za-z0-9\-_]+/)?.[0] || second;
+        } else {
+          password = second;
+        }
 
         for (let i = 2; i < parts.length; i++) {
           const part = parts[i].trim();
@@ -329,8 +334,8 @@ export default function ClaudeAccountsPage() {
 
   function handleImportParse() {
     const parsed = parseImportLine(importLine);
-    if (!parsed || !parsed.email || !parsed.password) {
-      toast.error("格式不对，必须至少包含：邮箱----密码");
+    if (!parsed || !parsed.email || (!parsed.password && !parsed.sessionKey)) {
+      toast.error("格式不对，必须至少包含：邮箱----密码 或 邮箱----sessionKey");
       return;
     }
     setImportParsed(parsed);
@@ -408,16 +413,21 @@ export default function ClaudeAccountsPage() {
     }
   }
 
-  async function handleAutoOAuth() {
+  async function handleAutoOAuth(skMode = false) {
     if (!importParsed) {
       toast.error("请先粘贴并解析账号行");
       return;
     }
     if (!importParsed.proxyUrl && !importParsed.adspowerProfileId) {
-      toast.error("全自动需要 SOCKS5 代理（或使用指纹浏览器号）");
+      toast.error(`${skMode ? "SK 直登" : "全自动"}需要 SOCKS5 代理（或使用指纹浏览器号）`);
       return;
     }
-    if (!importParsed.password) {
+    if (skMode) {
+      if (!importParsed.sessionKey) {
+        toast.error("未解析到 sessionKey(sk-ant-sid0x...)，无法 SK 直登");
+        return;
+      }
+    } else if (!importParsed.password) {
       toast.error("全自动需要邮箱密码(用于抓取 magic link)");
       return;
     }
@@ -434,7 +444,7 @@ export default function ClaudeAccountsPage() {
           password: importParsed.password,
           proxyUrl: importParsed.proxyUrl,
           adspowerProfileId: importParsed.adspowerProfileId,
-          sessionKey: importParsed.sessionKey,
+          sessionKey: skMode ? importParsed.sessionKey : "",
           recoveryEmail: importParsed.recoveryEmail,
           totpSecret: importParsed.totpSecret,
         }),
@@ -759,7 +769,7 @@ export default function ClaudeAccountsPage() {
             <div className="space-y-3 rounded-md border p-3 text-sm">
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
                 <span>邮箱: <span className="text-foreground">{importParsed.email}</span></span>
-                <span>密码: <span className="text-foreground">***</span></span>
+                <span>密码: <span className="text-foreground">{importParsed.password ? "***" : "未提供"}</span></span>
                 {importParsed.recoveryEmail ? (
                   <span>恢复邮箱: <span className="text-foreground">{importParsed.recoveryEmail}</span></span>
                 ) : null}
@@ -772,10 +782,22 @@ export default function ClaudeAccountsPage() {
                 ) : null}
               </div>
 
+              {/* SK 直登: 指纹浏览器内注入 sessionKey，免邮箱密码、免抓信，直接换 token */}
+              {importParsed.sessionKey ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">SK 直登（指纹浏览器 + 代理，免邮箱）</span>
+                  <Button size="sm" variant="default" onClick={() => handleAutoOAuth(true)} disabled={autoRunning}>
+                    {autoRunning ? <Spinner size={14} /> : <KeyRoundIcon className="size-3.5" />}
+                    {autoRunning ? "注入登录中…" : "SK 一键上号"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">已检测到 sessionKey</span>
+                </div>
+              ) : null}
+
               {/* Full auto: Playwright headless browser through SOCKS5 */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">全自动（无头浏览器）</span>
-                <Button size="sm" variant="default" onClick={handleAutoOAuth} disabled={autoRunning}>
+                <span className="font-medium">全自动（magic-link，需邮箱密码）</span>
+                <Button size="sm" variant="outline" onClick={() => handleAutoOAuth(false)} disabled={autoRunning}>
                   {autoRunning ? <Spinner size={14} /> : null}
                   {autoRunning ? "自动化中…" : "一键全自动"}
                 </Button>

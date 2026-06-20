@@ -5,6 +5,7 @@ import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
+import { Public } from "../../shared/auth/public.decorator";
 
 // NOTE: intentionally NOT @Public() — these are admin-console operations
 // (account pool, access keys, Codex OAuth token import) that must be gated by the
@@ -439,6 +440,26 @@ export class RosettaController {
 
   // ── Per-card token usage (aggregated) ───────────────────────────────────
 
+  @Post("adspower-reauthorize")
+  adspowerReauthorize(@Body() body: any) {
+    return this.rosetta.adspowerReauthorize(body);
+  }
+
+  @Get("adspower-reauthorize-status")
+  async adspowerReauthorizeStatus(@Query("batchId") batchId: string) {
+    const result = await this.rosetta.adspowerReauthorizeStatus(batchId);
+    if (result?.ok && Array.isArray((result as any).items)) {
+      let reactivated = 0;
+      for (const item of (result as any).items) {
+        if (item?.status !== "success" || !item?.accountId) continue;
+        const r = this.tokenServer.reactivateIfAuthDead(Number(item.accountId));
+        if (r.reactivated) reactivated += 1;
+      }
+      return { ...result, reactivated };
+    }
+    return result;
+  }
+
   @Get("card-token-usage-summary")
   getCardTokenUsageSummary(@Query("cardId") cardId: string, @Query("days") days?: string) {
     return this.tokenUsageStats.getCardUsageSummary({
@@ -472,6 +493,7 @@ export class RosettaController {
   }
 
   @Post("cliproxy-report")
+  @Public()
   reportCliProxyFailure(@Headers("x-cliproxy-report-secret") secret: string, @Body() body: any) {
     if (!process.env.CLIPROXY_REPORT_SECRET || secret !== process.env.CLIPROXY_REPORT_SECRET) {
       throw new UnauthorizedException("Invalid CLIProxy report secret");
