@@ -39,6 +39,7 @@ interface AppState {
   autoLeaseRunning: boolean
   cardUnusable: boolean
   cardProducts: string[]
+  entitledProducts: string[]  // 订阅授权产品并集(跨所有生效订阅);空=冷启动未知→回退 cardProducts
   quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
   accountFractions: Record<string, number>  // 整号上游余量(号余量条)
   accountResetMs: Record<string, number>
@@ -132,6 +133,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoLeaseRunning: false,
   cardUnusable: false,
   cardProducts: [],
+  entitledProducts: [],
   quotaMode: '',
   accountFractions: {},
   accountResetMs: {},
@@ -198,6 +200,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         autoLeaseRunning: data.leaser?.autoLeaseRunning || false,
         cardUnusable: data.leaser?.cardUnusable || false,
         cardProducts: data.leaser?.accessKeyStatus?.products || [],
+        entitledProducts: (data.leaser?.entitledProducts as string[] | undefined) || [],
         quotaMode: (data.leaser as any)?.quotaMode || (data.leaser?.accessKeyStatus as any)?.quotaMode || '',
         accountFractions: data.leaser?.accountFractions || {},
         accountResetMs: data.leaser?.accountResetMs || {},

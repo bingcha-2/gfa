@@ -6,6 +6,7 @@ import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
+import { SubscriptionUsageCarousel } from '@/components/SubscriptionUsageCarousel'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts } from '@/lib/usageBars'
@@ -109,7 +110,8 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
 export function DashboardPage() {
   const t = useT()
   const {
-    leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
+    account,
+    leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, entitledProducts,
     accountFractions, accountResetMs, accountResetAt, myFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
     cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
     codexQuota, claudeQuota,
@@ -117,8 +119,10 @@ export function DashboardPage() {
     todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
   } = useAppStore()
 
-  // 绑定卡只显示它绑了的产品的用量条;池子卡(无 products)三条都显示。
-  const visibleBars = usageBarsForProducts(cardProducts)
+  // 显示「每个已订阅产品」一张用量卡:优先用订阅授权并集(跨所有生效订阅,故 codex+anthropic
+  // 都显示);冷启动授权未知时回退到单卡 products(保持现有行为,不空屏)。
+  // 注:同产品多订阅(如两个 anthropic)在客户端按产品键控会塌成一张卡 —— 那是更深的架构限制。
+  const visibleBars = usageBarsForProducts(entitledProducts.length ? entitledProducts : cardProducts)
   // 绑定账号当前不可用(租号报错且非致命):额度数据不可信 → 血条显示「未知」+ 顶部提示,
   // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
   // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
@@ -258,7 +262,9 @@ export function DashboardPage() {
               {t('dashboard.accountProblem', { error: leaserError })}
             </div>
           )}
-          {(() => {
+          {account?.subscriptions && account.subscriptions.length > 0 ? (
+            <SubscriptionUsageCarousel subscriptions={account.subscriptions} />
+          ) : (() => {
             const PROVIDERS = [
               { id: 'antigravity', name: 'Antigravity' },
               { id: 'codex', name: 'Codex' },

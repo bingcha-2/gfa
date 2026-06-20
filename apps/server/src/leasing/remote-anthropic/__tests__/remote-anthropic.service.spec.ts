@@ -185,6 +185,54 @@ describe("RemoteAnthropicService", () => {
     expect(weekly?.windowStart).toBe(currentTime + 4 * 24 * 60 * 60 * 1000 - 7 * 24 * 60 * 60 * 1000); // reset 在 +4d → 起点 −3d
   });
 
+  it("returns claudeWindows + accountBuckets on report so the client refreshes account-total without a fresh lease", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    writeJson(accessKeysFilePath, {
+      keys: [
+        {
+          id: "claude-card-1",
+          key: "claude-secret-card",
+          status: "active",
+          durationMs: 60 * 60 * 1000,
+          bindings: { anthropic: 21 },
+        },
+      ],
+    });
+    const service = makeService();
+    const lease = await service.leaseToken(
+      sessionReqFor("claude-card-1"),
+      { clientId: "client-a", modelKey: MODEL },
+    );
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+    const report = await service.reportResult(
+      sessionReqFor("claude-card-1"),
+      {
+        leaseId: lease.leaseId,
+        reportId: "acct-total-1",
+        status: 200,
+        modelKey: MODEL,
+        inputTokens: 100,
+        outputTokens: 0,
+        totalTokens: 100,
+        accountQuota: {
+          planType: "max",
+          claudeQuota: {
+            hourlyPercent: 90,
+            weeklyPercent: 50,
+            hourlyResetTime: hourlyReset,
+            weeklyResetTime: weeklyReset,
+          },
+        },
+      },
+    );
+    // 账号总剩余两条路都随上报回带:claudeWindows(周血条唯一来源)+ accountBuckets(5h 兜底)。
+    // 否则客户端只有「拿新号」那一下才更新整号余量,平时闪「未知」。响应是动态形状,断言时取 any。
+    const r = report as any;
+    expect(r.claudeWindows).toMatchObject({ hourlyPercent: 90, weeklyPercent: 50 });
+    expect(Object.keys(r.accountBuckets ?? {})).toContain("anthropic-claude");
+  });
+
   it("attributes a weekly account-consumption segment into the bound card's T_i", () => {
     // 重构后不再反推上游预算:周快照下降时,把这一段账号消耗 Δ = max(0, 低水位 − fraction)
     // 按本段各卡加权用量比例分摊进各人 T_i(只增不减)。绑卡是唯一参与者 → 整段归它。

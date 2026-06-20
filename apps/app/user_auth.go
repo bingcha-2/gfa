@@ -53,9 +53,10 @@ type loginResponse struct {
 		ExpiresAt      string            `json:"expiresAt"`
 		DeviceLimit    int               `json:"deviceLimit"`
 		Priority       int               `json:"priority"`
-		Products       []string          `json:"products"`
-		Levels         map[string]string `json:"levels"`
-		RemainFraction *float64          `json:"remainFraction"`
+		Products       []string                      `json:"products"`
+		Levels         map[string]string             `json:"levels"`
+		RemainFraction *float64                      `json:"remainFraction"`
+		ProductQuota   map[string]ProductQuotaWindow `json:"productQuota"`
 	} `json:"subscriptions"`
 }
 
@@ -72,6 +73,7 @@ func (r loginResponse) snapshots() []SubscriptionSnapshot {
 			Products:       s.Products,
 			Levels:         s.Levels,
 			RemainFraction: s.RemainFraction,
+			ProductQuota:   s.ProductQuota,
 		})
 	}
 	return out
@@ -481,9 +483,40 @@ func parseHeartbeatSubscriptions(result map[string]interface{}) ([]SubscriptionS
 			f := v
 			snap.RemainFraction = &f
 		}
+		if v, ok := m["productQuota"].(map[string]interface{}); ok {
+			snap.ProductQuota = parseProductQuota(v)
+		}
 		out = append(out, snap)
 	}
 	return out, true
+}
+
+// parseProductQuota 从心跳订阅项的 productQuota map 解析逐产品整号 5h/周剩余(供逐订阅按产品画血条)。
+func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow {
+	out := map[string]ProductQuotaWindow{}
+	for product, v := range raw {
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var w ProductQuotaWindow
+		if f, ok := m["hourlyPercent"].(float64); ok {
+			ff := f
+			w.HourlyPercent = &ff
+		}
+		if f, ok := m["weeklyPercent"].(float64); ok {
+			ff := f
+			w.WeeklyPercent = &ff
+		}
+		if s, ok := m["hourlyResetAt"].(string); ok {
+			w.HourlyResetAt = s
+		}
+		if s, ok := m["weeklyResetAt"].(string); ok {
+			w.WeeklyResetAt = s
+		}
+		out[product] = w
+	}
+	return out
 }
 
 // HeartbeatCheck sends a heartbeat to the server (frontend polls ~60s),

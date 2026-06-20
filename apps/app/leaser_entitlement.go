@@ -1,5 +1,23 @@
 package main
 
+import "strings"
+
+// shouldSurfaceLeaseError 决定一次租号失败是否该写入全局 lastError(供前端「绑定账号不可用」横幅)。
+// 「未开通该产品」的拒绝(SUBSCRIPTION_EXPIRED 且本端不该跑该产品 = !coversProduct,如订阅只开了
+// codex/anthropic 却被 IDE 轮询去租 antigravity)不是账号异常 —— 不写全局 error,否则会错挂到
+// anthropic/codex 卡上弹假横幅、把整号余量打成「未知」。其它真错误照常写,不误吞。
+func shouldSurfaceLeaseError(errMsg string, coversProduct bool) bool {
+	if !coversProduct && isSubscriptionExpiredError(errMsg) {
+		return false
+	}
+	return true
+}
+
+// isSubscriptionExpiredError 识别「未开通/订阅未覆盖该产品」类拒绝(服务端回 SUBSCRIPTION_EXPIRED)。
+func isSubscriptionExpiredError(errMsg string) bool {
+	return strings.Contains(errMsg, "SUBSCRIPTION_EXPIRED")
+}
+
 // 订阅授权门控:解决「冷启动盲租 antigravity」误判整卡不可用的问题。
 //
 // 老问题:客户端启动时还不知道订阅开了哪些产品(products 只能从一次成功租号的响应里拿),
@@ -61,6 +79,18 @@ func (l *Leaser) ResetEntitlements() {
 	l.subActive = false
 	l.cardUnusable = false
 	l.mu.Unlock()
+}
+
+// EntitledProducts 返回当前已知的订阅授权产品并集(心跳喂入,跨该用户所有生效订阅)。供前端决定
+// 「显示哪些产品的用量卡」—— 用并集而非单张卡的 products,这样订了 codex+anthropic 就两张都显示。
+// 冷启动授权尚未知时返回 nil,前端回退到单卡 products(保持现有行为,不空屏)。
+func (l *Leaser) EntitledProducts() []string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if !l.entitlementsKnown {
+		return nil
+	}
+	return append([]string(nil), l.entitledProducts...)
 }
 
 // entitlementsKnownNoSub 报告「已确知无生效订阅」—— 心跳已返回且 subscriptions 为空。

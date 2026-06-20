@@ -195,6 +195,9 @@ func (a *App) GetStats() map[string]interface{} {
 	}
 	// 绑定卡各产品当前租到的账号信息 + token,供前端「绑定账号信息」面板显示。
 	leaserStatus["boundAccounts"] = collectBoundAccounts()
+	// 订阅授权产品并集(跨所有生效订阅)→ 前端据此显示「每个订阅产品一张用量卡」,而非只显示
+	// 单张卡的产品。冷启动授权未知时为 nil,前端回退单卡 products。
+	leaserStatus["entitledProducts"] = GetLeaser().EntitledProducts()
 
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()

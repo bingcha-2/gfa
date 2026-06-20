@@ -11,6 +11,14 @@ import { CustomerAuthService } from "../../account/customer-auth/customer-auth.s
 import { CustomerTokenService } from "../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../account/device/device.service";
 
+// 单产品的整号 5h/周剩余(逐订阅展示用)。来自 AccountQuotaSnapshot,百分比 0-100;null=无数据。
+interface ProductQuotaWindow {
+  hourlyPercent: number | null;
+  weeklyPercent: number | null;
+  hourlyResetAt: string | null;
+  weeklyResetAt: string | null;
+}
+
 function buildSubscriptionSummary(
   subscription: {
     id: string;
@@ -21,7 +29,8 @@ function buildSubscriptionSummary(
     productEntitlements: string;
     levels?: string | null;
   } | null,
-  remainFraction: number | null = null
+  remainFraction: number | null = null,
+  productQuota: Record<string, ProductQuotaWindow> = {}
 ) {
   if (!subscription) return null;
 
@@ -45,7 +54,10 @@ function buildSubscriptionSummary(
     levels: parseLevels(subscription.levels),
     // 每订阅「最紧复合桶」的剩余额度比例(0-1);null=无限额/无额度数据。客户端据此画余量条,
     // 用来区分同产品同到期的多个订阅(谁在消耗、谁备用满额)。
-    remainFraction
+    remainFraction,
+    // 每产品(该订阅 bindings 绑定号)的整号 5h/周剩余,供客户端逐订阅按产品画 5h/周血条。
+    // 多产品订阅 → 多个 key;无绑定/无快照 → 该产品缺省。
+    productQuota
   };
 }
 
@@ -101,6 +113,49 @@ export class AppAuthService {
     return has ? min : null;
   }
 
+  /**
+   * 逐产品整号 5h/周剩余 —— 解析订阅 bindings(产品→accountId),按每个绑定号读最新一条
+   * AccountQuotaSnapshot(provider=产品)。供客户端逐订阅、逐产品画 5h/周血条(不必正在租号)。
+   * 「我的份额」是跨同号用户的现算值(不在此表),故这里只给整号余量;客户端对正在用的订阅
+   * 叠加实时份额。Best-effort:解析/查询异常一律降级为缺省(绝不阻断心跳)。
+   */
+  private async productQuotaForSubscription(
+    bindingsJson: string | null | undefined
+  ): Promise<Record<string, ProductQuotaWindow>> {
+    if (!bindingsJson) return {};
+    let bindings: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(bindingsJson);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      bindings = parsed as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+    const out: Record<string, ProductQuotaWindow> = {};
+    for (const [product, rawId] of Object.entries(bindings)) {
+      const accountId = Number(rawId);
+      if (!Number.isFinite(accountId) || accountId <= 0) continue;
+      let snap: any;
+      try {
+        snap = await this.prisma.accountQuotaSnapshot.findFirst({
+          where: { provider: product, accountId },
+          orderBy: { timestamp: "desc" }
+        });
+      } catch {
+        continue;
+      }
+      if (!snap) continue;
+      const iso = (d: any) => (d ? new Date(d).toISOString() : null);
+      out[product] = {
+        hourlyPercent: snap.hourlyPercent ?? null,
+        weeklyPercent: snap.weeklyPercent ?? null,
+        hourlyResetAt: iso(snap.hourlyResetAt),
+        weeklyResetAt: iso(snap.weeklyResetAt)
+      };
+    }
+    return out;
+  }
+
   private async listActiveSubscriptionsSorted(customerId: string) {
     const now = new Date();
     const rows = await this.prisma.subscription.findMany({
@@ -110,7 +165,7 @@ export class AppAuthService {
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }]
       },
       orderBy: { priority: "asc" },
-      select: { id: true, status: true, expiresAt: true, deviceLimit: true, priority: true, productEntitlements: true, levels: true }
+      select: { id: true, status: true, expiresAt: true, deviceLimit: true, priority: true, productEntitlements: true, levels: true, bindings: true }
     });
     // Secondary JS sort ensures stable order even in test mocks that ignore orderBy
     return rows.slice().sort((a, b) => a.priority - b.priority);
@@ -281,7 +336,15 @@ export class AppAuthService {
     });
 
     const subs = await this.listActiveSubscriptionsSorted(dto.customerId);
-    const subscriptions = subs.map((s) => buildSubscriptionSummary(s, this.subscriptionRemainFraction(s.id)));
+    const subscriptions = await Promise.all(
+      subs.map(async (s) =>
+        buildSubscriptionSummary(
+          s,
+          this.subscriptionRemainFraction(s.id),
+          await this.productQuotaForSubscription((s as { bindings?: string | null }).bindings)
+        )
+      )
+    );
 
     return {
       ok: true,

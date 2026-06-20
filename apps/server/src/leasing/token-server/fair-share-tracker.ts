@@ -39,6 +39,19 @@ const DEFAULT_SEAT_CAPACITY = 8;
 /** reset 对齐容差:windowStart 前移超过此值才认作上游窗口 reset。 */
 const RESET_DRIFT_MS = 60_000;
 
+/**
+ * 低水位回升确认:上游可能「刷额度不动 resetAt」(重置额度 ≠ 重置时间)或周窗口老用量滑出而
+ * 自然回升,此时 resetAt 不前移、forward-reset 不触发,低水位会停在旧低点把所有人份额缩小。
+ * 故允许低水位回升——但要「持续够久 + 至少 2 次读数 + 涨幅超容差」才抬,滤掉 seven_day 偶发漏返
+ * 的瞬时虚高(否则虚高被采纳、随后真值回落会把同一段消耗二次归因)。
+ * 为什么按时间而非纯次数:纯次数与上报频率挂钩——高频号几秒就能「凑够」次数,等于没护栏;按
+ * 「持续够久仍高」与流量快慢无关,瞬时坏值满足不了。单次/乱序回升仍不抬(见 #32/#34)。
+ * 不要求读数相同:任何高于低水位 >EPS 的读数都算一次确认,采纳这段的最低高值(保守棘轮)。
+ */
+const REBOUND_CONFIRM_MS = 5 * 60 * 1000; // 回升需持续此时长才采纳
+const REBOUND_MIN_CONFIRMATIONS = 2; // 且至少 2 次读数(防时间窗内仅 1 个孤值)
+const REBOUND_EPS = 0.02;
+
 /** 定时批量持久化间隔。 */
 const FLUSH_INTERVAL_MS = 30_000;
 
@@ -88,6 +101,12 @@ interface BucketTracker {
   primed: boolean;
   /** 锁定份额态;reset 时算定,null 表示尚未算(懒算兜底)。 */
   locked: LockedShare | null;
+  /**
+   * 回升待确认态(仅内存,不持久化):观察到 fraction 持续高于低水位时,记起始时刻 since + 读数次数
+   * count + 这段的保守(最低)高值 fraction;持续够久且够多次才抬低水位。真跌 / 回落到低水位附近 →
+   * 清零。重启后从 null 起算(重新确认即可),无需入库。
+   */
+  pendingRise?: { fraction: number; since: number; count: number } | null;
 }
 
 export interface FairShareCheck {
@@ -432,8 +451,27 @@ export class FairShareTracker {
       // 已归并(或无人认领)→ 清段内增量;无人认领的 Δ账号 留作未认领消耗,不进任何 T_i。
       tracker.perCard.clear();
     }
-    // 低水位单调不增:仅真实下降才降。
-    if (fraction < tracker.lastFraction) tracker.lastFraction = fraction;
+    // 低水位:真跌立即降并清空回升确认;明显回升(超容差)需连续 N 次确认才抬(不靠 resetAt,
+    // 上游可能刷额度不动时间);介于两者之间(≈低水位)视为未回升,清确认 → 要求确认必须连续。
+    if (fraction < tracker.lastFraction) {
+      tracker.lastFraction = fraction;
+      tracker.pendingRise = null;
+    } else if (fraction > tracker.lastFraction + REBOUND_EPS) {
+      const pending = tracker.pendingRise;
+      tracker.pendingRise = pending
+        ? { fraction: Math.min(pending.fraction, fraction), since: pending.since, count: pending.count + 1 }
+        : { fraction, since: now, count: 1 };
+      // 持续 ≥REBOUND_CONFIRM_MS(抗高频凑次数)且 ≥2 次读数(抗孤值)才抬,采纳保守(最低)高值。
+      if (
+        now - tracker.pendingRise.since >= REBOUND_CONFIRM_MS &&
+        tracker.pendingRise.count >= REBOUND_MIN_CONFIRMATIONS
+      ) {
+        tracker.lastFraction = tracker.pendingRise.fraction;
+        tracker.pendingRise = null;
+      }
+    } else {
+      tracker.pendingRise = null;
+    }
     this.dirty = true;
   }
 
@@ -444,6 +482,7 @@ export class FairShareTracker {
     tracker.attributed.clear();
     tracker.lastFraction = clamp01(freshFraction);
     tracker.primed = true; // reset 出来的基线是真值(账号刚刷新 ≈1 或自计时归 1),非占位。
+    tracker.pendingRise = null; // 新窗口重新累计回升确认。
     tracker.locked = this.computeLocked(accountId);
     this.dirty = true;
   }
@@ -506,6 +545,7 @@ export class FairShareTracker {
         lastFraction: 1.0, // 占位:基线由首个有效快照采纳(primed=false,见 applySnapshot 3a)。
         primed: false,
         locked: null,
+        pendingRise: null,
       };
       bucketMap.set(bucket, tracker);
     }

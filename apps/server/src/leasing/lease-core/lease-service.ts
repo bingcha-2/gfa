@@ -1166,14 +1166,21 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
-    // Blood bars: only hard-bound cards carry fair-share fractions, so the client
-    // can repaint its quota bars from the just-merged segment without a fresh lease.
+    // Blood bars: repaint from the just-merged segment WITHOUT waiting for a fresh
+    // lease. Fair-share ("我的份额") needs a hard binding; the account-level bars
+    // ("账号总剩余") ride along on every report — accountBuckets (5h fallback) +
+    // leaseResponseExtras (claudeWindows/codexWindows, the ONLY weekly source). Lease
+    // already sends these (see buildLeaseResponse); the report path omitted them, so
+    // "账号总剩余" only refreshed on a new lease and flickered "未知" in between.
     const q = hardBound ? this.buildLeaseQuotaPayload(auth.record, accountId, modelKey) : null;
+    const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
     return {
       ok: true,
       accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
+      ...(q ? { accountBuckets: q.accountBucketsData } : {}),
       ...(q?.fairShareQuota ? { fairShareQuota: q.fairShareQuota } : {}),
       ...(q?.weeklyFairShareQuota ? { weeklyFairShareQuota: q.weeklyFairShareQuota } : {}),
+      ...(servingAccount ? this.provider.leaseResponseExtras(servingAccount) : {}),
     };
   }
 

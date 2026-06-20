@@ -129,6 +129,7 @@ export interface StatsResponse {
     hasToken: boolean
     lastError: string
     activationExpiresAt: string
+    entitledProducts?: string[]
     accessKeyStatus: {
       products?: string[]
       opusTokensUsed?: number

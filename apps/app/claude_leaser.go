@@ -209,6 +209,18 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	return lease, nil
 }
 
+// applyClaudeWindowsFromBody 从上报/租号响应体解析 claudeWindows 并应用(供血条「账号总剩余」)。
+// 与 lease 路径(applyClaudeWindows(leaseResp.ClaudeWindows))同形;响应无该字段 → nil → 保留旧值。
+func (l *ClaudeLeaser) applyClaudeWindowsFromBody(body []byte) {
+	var resp struct {
+		ClaudeWindows *ClaudeQuotaWindow `json:"claudeWindows"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return
+	}
+	l.applyClaudeWindows(resp.ClaudeWindows)
+}
+
 // applyClaudeWindows 用服务端下发的 5h/周窗口更新本地持久快照(供血条显示)。
 // nil 表示服务端暂无该号窗口数据 → 保留现有快照,不清空。
 func (l *ClaudeLeaser) applyClaudeWindows(w *ClaudeQuotaWindow) {
@@ -288,6 +300,9 @@ func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, c
 	// 立即刷新血条 —— 每次上报后即时更新,不必等下一次租号。
 	recordAccountBuckets(body)
 	recordFairShareQuota(body)
+	// 账号总剩余的「周血条」只能靠 claudeWindows(accountBuckets 仅含 5h 绑定桶)。服务端现在每次
+	// 上报也回带 claudeWindows → 随上报应用,整号余量不必等下次租号才刷新(否则平时闪「未知」)。
+	l.applyClaudeWindowsFromBody(body)
 	billable := claudeDisplayBillable(payloadInt64(payload["rawTotalTokens"]), payloadInt64(payload["cachedInputTokens"]))
 	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v 计费=%d 原始=%v)→ 服务端额度应已更新", payload["leaseId"], billable, payload["totalTokens"])
 	l.flushClaudePending(card, upstreamProxy)

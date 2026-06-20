@@ -462,7 +462,70 @@ describe("§15.1 低水位(fraction 非单调)", () => {
     // fraction 暴涨到 0.95 但 resetAt 未喂入 → 不当作 reset
     t.applyAccountQuotaSnapshot(1, BK, 0.95);
     expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.9, 6); // 未清零
-    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.1, 6); // 低水位不被抬
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.1, 6); // 低水位不被抬(单次)
+  });
+
+  // 上游可能「刷额度不动 resetAt」(重置额度 ≠ 重置时间),故回升判定不能靠 resetAt 前移。
+  // 也不能靠纯次数(高频号几秒就凑够),改用「持续 ≥5min + ≥2 次读数 + 涨幅超容差」才抬。
+  const REBOUND_MS = 5 * 60 * 1000;
+  it("★#35 回升持续够久才抬低水位(刷额度不动 resetAt 也能回升)", () => {
+    let now = T;
+    const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.6); // 低水位 0.6,T_O1=0.4
+    // 回升候选,但持续时间不够 → 不抬
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.6, 6);
+    now += 60 * 1000; // +1min(未达 5min)
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.6, 6);
+    // 持续超过 5min 后再确认 → 抬到 0.9(无 resetAt 喂入);T_O1 不变(回升不归因)
+    now += REBOUND_MS;
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.9, 6);
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.4, 6);
+  });
+
+  it("★#35b 高频凑次数但持续时间不够 → 不抬(抗瞬时虚高)", () => {
+    let now = T;
+    const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.6); // 低水位 0.6
+    // 高频连刷 6 次高值,但总共只跨 3min(<5min)→ 次数够、时间不够 → 不抬
+    for (let i = 0; i < 6; i++) {
+      now += 30 * 1000;
+      t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    }
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.6, 6);
+  });
+
+  it("★#35c 回升不要求读数相同:抖动的高值也确认(取最低高值)", () => {
+    let now = T;
+    const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.6); // 低水位 0.6
+    t.applyAccountQuotaSnapshot(1, BK, 0.95); // 高值(不同数)
+    now += REBOUND_MS;
+    t.applyAccountQuotaSnapshot(1, BK, 0.92); // 仍是高值但数不同 → 确认,抬到最低高值 0.92
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.92, 6);
+  });
+
+  it("★#35d 回升中途被真跌打断 → 重新计时,不抬", () => {
+    let now = T;
+    const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.6); // 低水位 0.6
+    t.applyAccountQuotaSnapshot(1, BK, 0.9); // 回升候选(since=now)
+    now += REBOUND_MS; // 时间已够
+    t.applyAccountQuotaSnapshot(1, BK, 0.5); // 但真跌打断 → 低水位降到 0.5,计时清零
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.5, 6);
+    // 再回升:since 重置为现在,刚开始不抬
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.5, 6);
   });
 });
 

@@ -64,6 +64,17 @@ type SubscriptionSnapshot struct {
 	// RemainFraction 是该订阅「最紧复合桶」的剩余额度比例(0-1);nil=无限额/无数据。
 	// 用于客户端多订阅余量条 —— 区分同产品同到期的订阅(谁在消耗、谁备用满额)。
 	RemainFraction *float64 `json:"remainFraction"`
+	// ProductQuota 是该订阅每个产品(绑定号)的整号 5h/周剩余,供逐订阅按产品画 5h/周血条。
+	// 来自服务端心跳(读 AccountQuotaSnapshot);空/缺产品 = 暂无该产品额度数据。
+	ProductQuota map[string]ProductQuotaWindow `json:"productQuota,omitempty"`
+}
+
+// ProductQuotaWindow 单产品整号 5h/周剩余(百分比 0-100;nil=无数据)。与服务端 buildSubscriptionSummary 对齐。
+type ProductQuotaWindow struct {
+	HourlyPercent *float64 `json:"hourlyPercent"`
+	WeeklyPercent *float64 `json:"weeklyPercent"`
+	HourlyResetAt string   `json:"hourlyResetAt"`
+	WeeklyResetAt string   `json:"weeklyResetAt"`
 }
 
 var (

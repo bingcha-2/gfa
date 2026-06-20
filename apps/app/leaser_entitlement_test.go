@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+// 租号失败是否该写入全局 lastError(供前端「绑定账号不可用」横幅)。
+// 「未开通该产品」(SUBSCRIPTION_EXPIRED 且本端不该跑该产品)不是账号异常 —— 否则 antigravity
+// 的「没开通」会错挂到 anthropic/codex 卡上,弹假横幅 + 把整号余量打成「未知」(实测 bug)。
+func TestShouldSurfaceLeaseError(t *testing.T) {
+	cases := []struct {
+		name    string
+		errMsg  string
+		covers  bool
+		surface bool
+	}{
+		{"未开通该产品的 SUBSCRIPTION_EXPIRED → 不写", " - SUBSCRIPTION_EXPIRED", false, false},
+		{"已开通该产品的 SUBSCRIPTION_EXPIRED(账号真过期)→ 写", " - SUBSCRIPTION_EXPIRED", true, true},
+		{"真额度/网络错误(未开通)→ 仍写,不误吞", "429 quota exhausted", false, true},
+		{"真额度错误(已开通)→ 写", "lease failed: timeout", true, true},
+	}
+	for _, c := range cases {
+		if got := shouldSurfaceLeaseError(c.errMsg, c.covers); got != c.surface {
+			t.Fatalf("%s: shouldSurfaceLeaseError(%q,%v)=%v,want %v", c.name, c.errMsg, c.covers, got, c.surface)
+		}
+	}
+}
+
 // 冷启动盲租 antigravity 的核心决策:接管启动时,是否该发起 antigravity 常驻租号。
 // 纯函数,覆盖「心跳已知授权」与「冷启动未知(回退老 lease-products 逻辑)」两套输入。
 func TestDecideAntigravity(t *testing.T) {

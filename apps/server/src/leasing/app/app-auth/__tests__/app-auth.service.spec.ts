@@ -172,6 +172,9 @@ async function makeAppAuthService(options: {
     subscription: {
       findFirst: vi.fn(async () => null), // no subscriptions in these tests
       findMany: vi.fn(async () => [])     // effectiveDeviceLimit → no subs → limit 1
+    },
+    accountQuotaSnapshot: {
+      findFirst: vi.fn(async () => null)  // 逐订阅 5h/周明细:测试无快照 → 缺省
     }
   };
 

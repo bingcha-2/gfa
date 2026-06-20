@@ -43,6 +43,15 @@ export interface AccountSubscription {
   products: string[] // antigravity | codex | anthropic
   levels?: Record<string, string> // purchased bind level per product, e.g. { codex: "pro" }
   remainFraction: number | null // 最紧复合桶剩余额度比例(0-1);null=无限额/无数据
+  productQuota?: Record<string, ProductQuotaWindow> // 每产品(绑定号)整号 5h/周剩余,逐订阅按产品画血条
+}
+
+// 单产品整号 5h/周剩余(百分比 0-100;null=无数据)。与服务端 buildSubscriptionSummary 对齐。
+export interface ProductQuotaWindow {
+  hourlyPercent: number | null
+  weeklyPercent: number | null
+  hourlyResetAt: string | null
+  weeklyResetAt: string | null
 }
 
 // ===== Account State =====

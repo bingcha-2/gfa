@@ -424,8 +424,14 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		if errMsg == "" {
 			errMsg = getApiErrorMessage(leaseResp.Code)
 		}
+		// 「未开通该产品」的拒绝(订阅没开 antigravity,却被 IDE 轮询去租)不是账号异常:不污染
+		// 全局 lastError,否则会错挂到 anthropic/codex 卡上弹假横幅。仍把错误返回给调用方(代理据此
+		// 回落缓存/兜底)。covers=true 的真账号过期照常写,弹该产品的账号异常。
+		surface := shouldSurfaceLeaseError(errMsg, l.coversAntigravity())
 		l.mu.Lock()
-		l.lastError = errMsg
+		if surface {
+			l.lastError = errMsg
+		}
 		l.mu.Unlock()
 		Log("[token-leaser] Lease token failed: %s - %s", leaseResp.Code, errMsg)
 		syncQuotaStateFromBody(l, body)
