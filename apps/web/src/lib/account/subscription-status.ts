@@ -67,7 +67,7 @@ export function subscriptionPlanLabel(
 }
 
 export function quotaMeterPercent(
-  bucket: Pick<QuotaBucket, "used" | "limit"> | null | undefined
+  bucket: Pick<QuotaBucket, "bucket" | "used" | "limit"> | null | undefined
 ): number | null {
   if (!bucket || Number(bucket.limit) <= 0) return null;
   const used = Number(bucket.used ?? 0);
@@ -75,7 +75,7 @@ export function quotaMeterPercent(
 }
 
 export function quotaMeterValueLabel(
-  bucket: Pick<QuotaBucket, "used" | "limit"> | null | undefined
+  bucket: Pick<QuotaBucket, "bucket" | "used" | "limit"> | null | undefined
 ): string | null {
   const pct = quotaMeterPercent(bucket);
   return pct == null ? null : `${pct}%`;

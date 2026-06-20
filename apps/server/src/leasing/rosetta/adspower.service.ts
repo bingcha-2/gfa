@@ -32,6 +32,24 @@ export class AdspowerService {
   private readonly adspowerPoolUploadLocks = new Set<string>();
   private readonly adspowerStatusLocks = new Map<string, Promise<void>>();
 
+  private findExistingPoolAccountWithRefreshToken(email: string): { id: number; email: string } | null {
+    const needle = email.trim().toLowerCase();
+    if (!needle) return null;
+
+    const data = this.ctx.accountsFile.read();
+    const accounts = Array.isArray(data?.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => (
+      String(item?.email || "").trim().toLowerCase() === needle &&
+      Boolean(String(item?.refreshToken || "").trim())
+    ));
+    if (!account) return null;
+
+    return {
+      id: Number(account.id || 0),
+      email: String(account.email || email),
+    };
+  }
+
   /** Map an automation Task status to the frontend's item status vocabulary. */
   private mapAdspowerTaskStatus(taskData: any): { status: string; message?: string; error?: string } {
     const backend = String(taskData?.status || "");
@@ -134,6 +152,19 @@ export class AdspowerService {
         : undefined;
 
       try {
+        const existingPoolAccount = this.findExistingPoolAccountWithRefreshToken(email);
+        if (existingPoolAccount) {
+          items.push({
+            email,
+            accountId: existingPoolAccount.id,
+            status: "success",
+            skipped: true,
+            uploaded: true,
+            message: "已在账号池中，自动跳过",
+          });
+          continue;
+        }
+
         const agentAccountId = await this.ctx.agentAccounts.ensureAgentAccount({
           loginEmail: email,
           loginPassword: password,

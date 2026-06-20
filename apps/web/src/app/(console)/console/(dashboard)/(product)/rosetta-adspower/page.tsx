@@ -17,14 +17,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { PlayIcon, SquareIcon } from "lucide-react";
-
-type Credential = {
-  email: string;
-  password: string;
-  recoveryEmail?: string;
-  totpSecret?: string;
-  phones?: { phoneNumber: string; smsUrl: string }[];
-};
+import {
+  parseCredentialLine,
+  type RosettaAdspowerCredential as Credential,
+} from "@/lib/console/rosetta-adspower-parser";
 
 type AccountStatus = {
   email: string;
@@ -43,58 +39,6 @@ type BatchProgress = {
   done?: boolean;
   items: AccountStatus[];
 };
-
-function parseCredentialLine(line: string): Credential | null {
-  if (!line || !line.trim()) return null;
-
-  const mainAndPhone = line.trim().split(/------/);
-  const mainPart = (mainAndPhone[0] || "").trim();
-  const phonePart = (mainAndPhone[1] || "").trim();
-
-  const parts = mainPart
-    .split(/\||\t/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length < 2) return null;
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const totpRegex = /^[a-z2-7\s\-=]{16,}$/i;
-  const isTotpLike = (s: string) =>
-    /2fa\.live\/tok\//i.test(s) || (totpRegex.test(s) && !/^\d{4}$/.test(s));
-
-  const email = parts[0];
-  const password = parts[1];
-
-  if (!emailRegex.test(email)) return null;
-  if (!password) return null;
-
-  let recoveryEmail: string | undefined;
-  let totpSecret: string | undefined;
-
-  for (let i = 2; i < parts.length; i++) {
-    const p = parts[i];
-    if (!recoveryEmail && emailRegex.test(p)) {
-      recoveryEmail = p;
-    } else if (!totpSecret && isTotpLike(p)) {
-      totpSecret = p;
-    }
-  }
-
-  let phones: { phoneNumber: string; smsUrl: string }[] | undefined;
-  if (phonePart) {
-    const phoneParts = phonePart
-      .split(/\|/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (phoneParts.length >= 2) {
-      const phoneNumber = phoneParts[0];
-      const smsUrl = phoneParts.slice(1).join("|");
-      phones = [{ phoneNumber, smsUrl }];
-    }
-  }
-
-  return { email, password, recoveryEmail, totpSecret, phones };
-}
 
 function statusBadgeVariant(
   status: string

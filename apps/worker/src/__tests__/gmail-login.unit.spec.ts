@@ -56,11 +56,13 @@ function buildMockPage(opts: {
   urlSequence?: string[];
   /** map from selector fragment to override locator */
   locatorOverrides?: Record<string, ReturnType<typeof buildLocator>>;
-  evaluateResult?: string;
+  evaluateResult?: unknown;
+  evaluateResults?: unknown[];
   gotoError?: Error;
 } = {}) {
   const urls = opts.urlSequence ?? ["https://accounts.google.com"];
   let urlIdx = 0;
+  const evaluateResults = [...(opts.evaluateResults ?? [])];
 
   // Stateful URL: advances on goto and waitForURL
   function currentUrl() { return urls[Math.min(urlIdx, urls.length - 1)]; }
@@ -79,7 +81,14 @@ function buildMockPage(opts: {
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     keyboard: { press: vi.fn().mockResolvedValue(undefined) },
-    evaluate: vi.fn().mockResolvedValue(opts.evaluateResult ?? ""),
+    evaluate: vi.fn().mockImplementation(async (fn?: unknown) => {
+      const source = String(fn ?? "");
+      if (source.includes("document.body?.innerText ??")) {
+        return typeof opts.evaluateResult === "string" ? opts.evaluateResult : "";
+      }
+      if (evaluateResults.length > 0) return evaluateResults.shift();
+      return opts.evaluateResult ?? "";
+    }),
     locator: vi.fn((selector: string) => {
       if (opts.locatorOverrides) {
         for (const [fragment, loc] of Object.entries(opts.locatorOverrides)) {
@@ -220,6 +229,105 @@ describe("gmailLogin — TOTP challenge", () => {
     if (!result.success) {
       expect(result.reason).toBe("VERIFICATION_REQUIRED");
     }
+  });
+
+  it("returns VERIFICATION_REQUIRED immediately when the first TOTP code is rejected", async () => {
+    const body = buildLocator({
+      count: 1,
+      textContent: "2-Step Verification\nEnter code\nWrong code. Try again.",
+    });
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com/challenge/pwd",
+        "https://accounts.google.com/challenge/pwd",
+        "https://accounts.google.com/challenge/totp",
+      ],
+      locatorOverrides: {
+        "email": buildLocator({ count: 1 }),
+        "password": buildLocator({ count: 1 }),
+        "totpPin": buildLocator({ count: 1 }),
+        "body": body,
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      {
+        loginEmail: "u@gmail.com",
+        loginPassword: "pw",
+        totpSecret: "JBSWY3DPEHPK3PXP",
+      },
+      buildMockLogger()
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("VERIFICATION_REQUIRED");
+      expect(result.detail).toContain("TOTP");
+      expect(body.innerText).toHaveBeenCalled();
+    }
+  });
+
+  it("waits for a real challenge picker before treating selection URL as stale login page", async () => {
+    const stalePasswordFill = vi.fn().mockResolvedValue(undefined);
+    const totpOptionClick = vi.fn().mockResolvedValue(undefined);
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com",
+        "https://accounts.google.com/challenge/pwd",
+        "https://accounts.google.com/challenge/selection",
+        "https://myaccount.google.com/",
+      ],
+      evaluateResults: [
+        {
+          hasChallenge: false,
+          hasEmailInput: true,
+          hasPwdInput: true,
+          hasVisibleEmailInput: false,
+          hasVisiblePwdInput: false,
+          bodySnippet: "Welcome",
+        },
+        {
+          hasChallenge: true,
+          hasEmailInput: false,
+          hasPwdInput: false,
+          hasVisibleEmailInput: false,
+          hasVisiblePwdInput: false,
+          bodySnippet: "Choose how you want to sign in",
+        },
+        {
+          challengeItems: [
+            { tag: "DIV", type: "6", index: "2", text: "Get a verification code from Google Authenticator", classes: "" },
+          ],
+          linkItems: [],
+          bodyText: "Choose how you want to sign in",
+        },
+      ],
+      locatorOverrides: {
+        "email": buildLocator({ count: 1 }),
+        "#passwordNext": buildLocator({ count: 1 }),
+        "password": buildLocator({ count: 1, fill: stalePasswordFill }),
+        "[data-challengetype]": buildLocator({ count: 1 }),
+        "data-challengetype=\"6\"": buildLocator({ count: 1, click: totpOptionClick }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      {
+        loginEmail: "u@gmail.com",
+        loginPassword: "pw",
+        totpSecret: "JBSWY3DPEHPK3PXP",
+      },
+      buildMockLogger()
+    );
+
+    expect(totpOptionClick).toHaveBeenCalled();
+    expect(stalePasswordFill).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
   });
 });
 

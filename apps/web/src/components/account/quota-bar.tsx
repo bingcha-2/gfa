@@ -120,7 +120,7 @@ export function QuotaBar({ quota }: { quota: SubscriptionQuota }) {
           <Bar
             key={bucket.bucket}
             label={bucket.bucket}
-            used={bucket.used}
+            used={bucket.used ?? 0}
             limit={bucket.limit}
             resetText={
               windowResetText ? fmt(q.resetIn, { time: windowResetText }) : null

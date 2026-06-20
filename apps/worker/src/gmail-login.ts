@@ -618,6 +618,12 @@ export async function gmailLogin(
           await logger.log("INFO", "[gmail-login] TOTP page URL unchanged after submit — waiting for navigation");
           await page.waitForURL((url) => url.toString() !== totpUrl, { timeout: 8000 }).catch(() => {});
         }
+        const totpError = await detectTotpWrongCode(page);
+        if (totpError) {
+          const detail = `TOTP secret appears invalid: ${totpError}`;
+          await logger.log("ERROR", `[gmail-login] ${detail}`);
+          return { success: false, reason: "VERIFICATION_REQUIRED", detail };
+        }
         const postTotpState = await waitForPostTotpState(page, logger, totpUrl, 12_000);
         if (postTotpState === "phone") {
           const detail = `Phone verification required after TOTP: ${page.url()}`;
@@ -687,25 +693,18 @@ export async function gmailLogin(
       if (roundUrl.includes("challenge/selection")) {
         await logger.log("INFO", `[gmail-login] ✅ MATCHED challenge/selection URL. totpSecret=${totpSecret ? 'YES(' + totpSecret.substring(0,4) + '...)' : 'NO'}`);
 
-        // Verify this is actually a challenge selection page and not a stale URL
-        // showing a different page (e.g. Welcome/email page after session reset).
-        const pageActualContent = await page.evaluate(() => {
-          const hasChallenge = document.querySelectorAll('[data-challengetype]').length > 0;
-          const bodySnippet = document.body?.innerText?.slice(0, 200) || '';
-          const hasEmailInput = !!document.querySelector('input[type="email"], input#identifierId');
-          const hasPwdInput = !!document.querySelector('input[type="password"]:not([aria-hidden="true"])');
-          return { hasChallenge, bodySnippet, hasEmailInput, hasPwdInput };
-        });
+        const pageActualContent = await waitForChallengeSelectionState(page, logger);
 
-        if (!pageActualContent.hasChallenge && (pageActualContent.hasEmailInput || pageActualContent.bodySnippet.includes('Welcome'))) {
-          await logger.log("WARN", `[gmail-login] URL says challenge/selection but page is actually login/welcome page (emailInput=${pageActualContent.hasEmailInput}). Skipping selection logic.`);
+        if (!pageActualContent.hasChallenge && (pageActualContent.hasVisibleEmailInput || pageActualContent.hasVisiblePwdInput || pageActualContent.bodySnippet.includes('Welcome'))) {
+          await logger.log("WARN", `[gmail-login] URL says challenge/selection but page is actually login/welcome page (visibleEmail=${pageActualContent.hasVisibleEmailInput}, visiblePassword=${pageActualContent.hasVisiblePwdInput}). Skipping selection logic.`);
           // If password input is visible, try to fill it
-          if (pageActualContent.hasPwdInput && loginPassword) {
+          if (pageActualContent.hasVisiblePwdInput && loginPassword) {
             const pwdInput = page.locator('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])');
-            if ((await pwdInput.count()) > 0) {
+            const pwdVisible = (await pwdInput.count()) > 0 && await pwdInput.first().isVisible().catch(() => false);
+            if (pwdVisible) {
               await logger.log("INFO", "[gmail-login] Found password input on stale selection URL — filling password");
               await pwdInput.first().fill(loginPassword);
-              await clickNext(page, logger);
+              await clickNext(page, logger, 0, "password");
               await waitForNextState(page, 5000);
             }
           }
@@ -817,6 +816,79 @@ export async function gmailLogin(
 
     return { success: false, reason: "UNKNOWN", detail };
   }
+}
+
+type ChallengeSelectionState = {
+  hasChallenge: boolean;
+  bodySnippet: string;
+  hasVisibleEmailInput: boolean;
+  hasVisiblePwdInput: boolean;
+  challengeCount: number;
+  visibleChallengeCount: number;
+  emailInputCount: number;
+  pwdInputCount: number;
+};
+
+async function readChallengeSelectionState(page: Page): Promise<ChallengeSelectionState> {
+  const raw = await page.evaluate(() => {
+    const isVisible = (el: Element): boolean => {
+      const element = el as HTMLElement;
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 || rect.height > 0 || element.getClientRects().length > 0;
+    };
+
+    const challengeEls = Array.from(document.querySelectorAll('[data-challengetype]'));
+    const emailInputs = Array.from(document.querySelectorAll('input[type="email"], input#identifierId'));
+    const pwdInputs = Array.from(document.querySelectorAll('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'));
+    const visibleChallengeCount = challengeEls.filter(isVisible).length;
+    const visibleEmailInputCount = emailInputs.filter(isVisible).length;
+    const visiblePwdInputCount = pwdInputs.filter(isVisible).length;
+
+    return {
+      hasChallenge: visibleChallengeCount > 0,
+      bodySnippet: document.body?.innerText?.slice(0, 200) || "",
+      hasVisibleEmailInput: visibleEmailInputCount > 0,
+      hasVisiblePwdInput: visiblePwdInputCount > 0,
+      challengeCount: challengeEls.length,
+      visibleChallengeCount,
+      emailInputCount: emailInputs.length,
+      pwdInputCount: pwdInputs.length,
+    };
+  }).catch(() => null);
+
+  const state = typeof raw === "object" && raw ? raw as Partial<ChallengeSelectionState> : {};
+  return {
+    hasChallenge: Boolean(state.hasChallenge),
+    bodySnippet: String(state.bodySnippet || ""),
+    hasVisibleEmailInput: Boolean(state.hasVisibleEmailInput),
+    hasVisiblePwdInput: Boolean(state.hasVisiblePwdInput),
+    challengeCount: Number(state.challengeCount || 0),
+    visibleChallengeCount: Number(state.visibleChallengeCount || 0),
+    emailInputCount: Number(state.emailInputCount || 0),
+    pwdInputCount: Number(state.pwdInputCount || 0),
+  };
+}
+
+async function waitForChallengeSelectionState(page: Page, logger: TaskLogger): Promise<ChallengeSelectionState> {
+  let state = await readChallengeSelectionState(page);
+
+  if (!state.hasChallenge) {
+    await page.locator(
+      '[data-challengetype], li[role="link"], div[role="link"], button[data-challengetype]'
+    ).first().waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
+    state = await readChallengeSelectionState(page);
+  }
+
+  await logger.log(
+    "DEBUG",
+    `[gmail-login] challenge/selection state: challenge=${state.hasChallenge} visibleChallenge=${state.visibleChallengeCount}/${state.challengeCount}, visibleEmail=${state.hasVisibleEmailInput} (${state.emailInputCount}), visiblePassword=${state.hasVisiblePwdInput} (${state.pwdInputCount}), body="${state.bodySnippet.replace(/\s+/g, " ").slice(0, 120)}"`
+  );
+
+  return state;
 }
 
 /**
@@ -968,6 +1040,21 @@ async function handleTotp(
 }
 
 /** Handle age / birthday verification — fill 1990-01-01 */
+async function detectTotpWrongCode(page: Page): Promise<string | null> {
+  const text = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+
+  const lower = normalized.toLowerCase();
+  const isWrongCode =
+    lower.includes("wrong code") ||
+    lower.includes("invalid code") ||
+    lower.includes("incorrect code") ||
+    (lower.includes("try again") && lower.includes("code"));
+
+  return isWrongCode ? normalized.slice(0, 200) : null;
+}
+
 async function handleAgVerification(page: Page, logger: TaskLogger): Promise<void> {
   await logger.log("INFO", "[gmail-login] Age/birthday verification detected, filling 1990-01-01");
 

@@ -42,7 +42,7 @@ function usedPercent(quota: SubscriptionQuota | null): number | null {
   if (!quota) return null;
   const first = quota.buckets[0];
   if (!first || first.limit <= 0) return null;
-  return Math.min(100, Math.round((first.used / first.limit) * 100));
+  return Math.min(100, Math.round(((first.used ?? 0) / first.limit) * 100));
 }
 
 function productKey(p: string): "codex" | "claude" | "antigravity" | "" {

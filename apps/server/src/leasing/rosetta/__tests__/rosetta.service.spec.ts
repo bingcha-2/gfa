@@ -1529,6 +1529,54 @@ describe("RosettaService", () => {
       expect(batch.items[0]).toMatchObject({ email: "a@x.com", taskId: "task-1", agentAccountId: "agent-1", status: "running" });
     });
 
+    it("skips an AdsPower import when the email is already in the Antigravity pool with a refresh token", async () => {
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [{ id: 7, email: "A@x.com", refreshToken: "existing-rt", enabled: true }],
+      });
+      const { automation, agentAccounts } = makeMocks();
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+
+      const result = await svc.adspowerImport({
+        credentials: [{ email: "a@x.com", password: "pw" }],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(agentAccounts.ensureAgentAccount).not.toHaveBeenCalled();
+      expect(automation.startAutomation).not.toHaveBeenCalled();
+      const batch = readBatch();
+      expect(batch).toMatchObject({ total: 1, completed: 1, failed: 0, done: true, status: "completed" });
+      expect(batch.items[0]).toMatchObject({
+        email: "a@x.com",
+        accountId: 7,
+        status: "success",
+        skipped: true,
+        uploaded: true,
+      });
+    });
+
+    it("still enqueues an AdsPower import when the matching pool account has no refresh token", async () => {
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [{ id: 7, email: "a@x.com", enabled: true }],
+      });
+      const { automation, agentAccounts } = makeMocks();
+      const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
+
+      await svc.adspowerImport({
+        credentials: [{ email: "a@x.com", password: "pw" }],
+      });
+
+      expect(agentAccounts.ensureAgentAccount).toHaveBeenCalledTimes(1);
+      expect(automation.startAutomation).toHaveBeenCalledTimes(1);
+      const batch = readBatch();
+      expect(batch).toMatchObject({ total: 1, completed: 0, failed: 0, done: false, status: "running" });
+      expect(batch.items[0]).toMatchObject({
+        email: "a@x.com",
+        agentAccountId: "agent-1",
+        taskId: "task-1",
+        status: "running",
+      });
+    });
+
     it("marks a credential failed (without enqueuing) when password is missing", async () => {
       const { automation, agentAccounts } = makeMocks();
       const svc = new RosettaService({ dataDir: tempDir }, automation as any, agentAccounts as any);
