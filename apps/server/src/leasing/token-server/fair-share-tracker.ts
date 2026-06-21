@@ -267,6 +267,24 @@ export class FairShareTracker {
     return this.trackWeekly;
   }
 
+  /**
+   * 中途加绑即时生效:把该号当前在册硬绑定全部升格为「本窗口 participant」,按 D=max(N,Σw) 重算锁定态,
+   * 不重置窗口(保留 T_i/u_i/低水位/windowStart)。用于满号超卖新成员当窗口即享保底份额 —— 与默认
+   * 「reset 才锁定 participants(加人下个窗口才生效)」相对。代价:稀释已有成员本窗口已锁定的份额
+   * (D 变大 → 各人 e_i=w_i/D 变小);因 D≥Σw → Σe≤1 恒成立,账号仍永不撞墙。
+   *
+   * 仅刷新已存在的 tracker:尚无 tracker 的号首次用量时 ensureLocked 已按当前绑定算定,无需预建。
+   * 绑定写库 + reloadAccessKeys 之后调用,使 getBoundCardWeights 已含新成员。
+   */
+  refreshParticipants(accountId: number): void {
+    const bucketMap = this.trackers.get(accountId);
+    if (!bucketMap) return;
+    for (const tracker of bucketMap.values()) {
+      tracker.locked = this.computeLocked(accountId);
+    }
+    this.dirty = true;
+  }
+
   /** 一张卡本 5h 窗口的段内加权用量(跨该号所有 5h bucket 求和)。 */
   getCardWindowUsed(accountId: number, cardId: string): number {
     const bucketMap = this.trackers.get(accountId);

@@ -22,6 +22,7 @@ import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
 import { AccessKeyStore } from "../token-server/access-key-store";
+import { sharedFairShareRegistry } from "../token-server/fair-share-registry";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
@@ -145,6 +146,13 @@ export class EntitlementSyncService {
 
     config.bindings = existingBindings;
     this.registerRecord(sub, config);
+
+    // 中途加超卖人即时生效:本次新绑的产品,把新成员当窗口升为 participant(满号超卖号当窗口即享
+    // 保底份额,不必等下个窗口 reset)。registerRecord 后内存绑定已含本卡,getBoundCardWeights 可见。
+    for (const product of unbound) {
+      const accountId = Number(existingBindings[product]);
+      if (accountId > 0) sharedFairShareRegistry.get(product)?.refreshParticipants(accountId);
+    }
   }
 
   /**
@@ -210,6 +218,9 @@ export class EntitlementSyncService {
       this.tokenServer.reloadAccessKeys();
       this.remoteCodex.reloadAccessKeys();
       this.remoteAnthropic.reloadAccessKeys();
+      // 中途加超卖人即时生效:换绑/加绑后把该号当前在册成员升为本窗口 participant(满号超卖
+      // 当窗口即享保底,不等下个窗口 reset);reload 后 getBoundCardWeights 已含本卡。
+      sharedFairShareRegistry.get(product)?.refreshParticipants(acctId);
       this.logger.log(`[rebind] sub ${subscriptionId} product ${product} → account #${acctId}${force ? " (force)" : ""}`);
       return { ok: true, product, accountId: acctId };
     });

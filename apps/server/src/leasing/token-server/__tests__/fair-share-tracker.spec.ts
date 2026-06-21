@@ -781,6 +781,75 @@ describe("D. 超卖 / 永不烧爆", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// E. 中途加超卖人即时生效(refreshParticipants)
+// ────────────────────────────────────────────────────────────────────────────
+describe("E. refreshParticipants:满号中途加人当窗口生效", () => {
+  it("★#47 满号窗口内加人 + refreshParticipants:即时升 participant、当窗口享保底", () => {
+    const bound: BoundMap = { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] };
+    const t = track(makeTracker({ now: () => T, bound, seats: { 1: 2 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // 满号:participants={O1,O2},D=2,reserve=0
+    bound[1].push({ cardId: "O3", weight: 1 }); // 窗口内加超卖第 3 人
+    expect(t.checkFairShare(1, "O3", BK).allowed).toBe(false); // 提升前:无预留 → 拦
+    t.refreshParticipants(1); // 中途提升:重算 D=max(2,3)=3,O3 成 participant
+    const st = t.getBucketStateForTesting(1, BK)!;
+    expect(st.D).toBe(3);
+    expect(st.participants.sort()).toEqual(["O1", "O2", "O3"]);
+    expect(t.checkFairShare(1, "O3", BK).allowed).toBe(true); // O3 当窗口即享 e=1/3
+    expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true); // 老人被稀释但仍可用
+  });
+
+  it("★#48 refreshParticipants 保留已烧 T_i / 低水位,不重置窗口", () => {
+    const bound: BoundMap = { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] };
+    const t = track(makeTracker({ now: () => T, bound, seats: { 1: 2 } }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.7); // Δ=0.3 → T_O1=0.3
+    bound[1].push({ cardId: "O3", weight: 1 });
+    t.refreshParticipants(1);
+    const st = t.getBucketStateForTesting(1, BK)!;
+    expect(st.attributed.O1).toBeCloseTo(0.3, 6); // T_i 保留
+    expect(st.lastFraction).toBeCloseTo(0.7, 6); // 低水位保留
+    expect(st.windowStart).toBe(T); // 窗口未重置
+  });
+
+  it("★#49 同时刷新 5h 与周窗口", () => {
+    const bound: BoundMap = { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] };
+    const t = track(makeTracker({ now: () => T, bound, seats: { 1: 2 }, trackWeekly: true }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    t.applyWeeklyAccountQuotaSnapshot(1, BK, 1.0);
+    bound[1].push({ cardId: "O3", weight: 1 });
+    expect(t.checkFairShare(1, "O3", BK).allowed).toBe(false); // 周窗口满 → 拦
+    t.refreshParticipants(1);
+    expect(t.getBucketStateForTesting(1, BK)?.D).toBe(3);
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey(BK))?.D).toBe(3);
+    expect(t.checkFairShare(1, "O3", BK).allowed).toBe(true);
+  });
+
+  it("★#50 无 tracker 的号 no-op(首用懒算已正确,不预建)", () => {
+    const bound: BoundMap = { 1: [{ cardId: "O1", weight: 1 }] };
+    const t = track(makeTracker({ now: () => T, bound, seats: { 1: 8 } }));
+    t.refreshParticipants(1);
+    expect(t.getBucketStateForTesting(1, BK)).toBeNull();
+  });
+
+  it("★#51 提升后跨重启仍是 participant(持久化 isParticipant)", async () => {
+    const { prisma } = makeFsPrisma();
+    const bound: BoundMap = { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] };
+    const t1 = track(makeTracker({ now: () => T, bound, seats: { 1: 2 }, prisma }));
+    t1.applyAccountQuotaSnapshot(1, BK, 1.0);
+    bound[1].push({ cardId: "O3", weight: 1 });
+    t1.refreshParticipants(1);
+    await t1.flush();
+
+    const t2 = track(makeTracker({ now: () => T, bound, seats: { 1: 2 }, prisma }));
+    await t2.load();
+    const st = t2.getBucketStateForTesting(1, BK)!;
+    expect(st.participants.sort()).toEqual(["O1", "O2", "O3"]); // O3 升格随重启保留
+    expect(t2.checkFairShare(1, "O3", BK).allowed).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // F. 血条
 // ────────────────────────────────────────────────────────────────────────────
 describe("F. 血条 / 永不超卖显示", () => {
