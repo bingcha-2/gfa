@@ -129,6 +129,8 @@ export interface FairShareTrackerOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   /** 某号保底席位数 N(salesSeatCapacity,默认 8)。 */
   getSeatCapacity?: (accountId: number) => number;
+  /** 该卡是否独享(营销标签):血条只看自身用量 (e−T)/e,不随同号他人/未认领消耗缩放。 */
+  isExclusive?: (cardId: string) => boolean;
   /** 是否启用「周公平份额」第二层窗口。codex/anthropic=true;antigravity 仅 5h=false。 */
   trackWeekly?: boolean;
   /** PrismaService for FairShareWindow persistence. 省略则禁用持久化。 */
@@ -355,6 +357,9 @@ export class FairShareTracker {
     if (e <= 0) return 0;
     const t = tracker.attributed.get(cardId) || 0;
     const mine = Math.max(0, e - t);
+    // 独享(营销标签):血条只反映自身用量 (e−T)/e,不被同号他人/未认领消耗缩放 —— 不用就 100%。
+    // 代价:号被他人烧爆时血条仍可显满,但实际请求会在取号闸(checkWindow)按真实余量被拦。
+    if (this.opts.isExclusive?.(cardId)) return clamp01(mine / e);
     const sumRem = this.sumRemaining(accountId, tracker);
     const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
     return clamp01((mine * scale) / e);

@@ -61,6 +61,8 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         service.accessKeyStore.getHardBoundCardWeights(accountId, provider.id),
       getSeatCapacity: (accountId: number) =>
         service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
+      isExclusive: (cardId: string) =>
+        (service.accessKeyStore.findById(cardId) as any)?.exclusive === true,
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,
