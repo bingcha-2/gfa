@@ -70,11 +70,18 @@ type SubscriptionSnapshot struct {
 }
 
 // ProductQuotaWindow 单产品整号 5h/周剩余(百分比 0-100;nil=无数据)。与服务端 buildSubscriptionSummary 对齐。
+// My* 字段:该订阅在绑定母号上的「我的份额」(fair-share,0-1),供逐订阅画双层血条
+// (母号 HourlyPercent 打底 + 我的 MyHourlyFraction 叠加)。nil=服务端未下发/取不到 → 客户端退单层。
+// MyShare=e_i(我的份额占整号比例,双层外层几何)。不加这些字段,Go 解析会静默丢掉它们。
 type ProductQuotaWindow struct {
 	HourlyPercent *float64 `json:"hourlyPercent"`
 	WeeklyPercent *float64 `json:"weeklyPercent"`
 	HourlyResetAt string   `json:"hourlyResetAt"`
 	WeeklyResetAt string   `json:"weeklyResetAt"`
+
+	MyHourlyFraction *float64 `json:"myHourlyFraction,omitempty"`
+	MyWeeklyFraction *float64 `json:"myWeeklyFraction,omitempty"`
+	MyShare          *float64 `json:"myShare,omitempty"`
 }
 
 var (

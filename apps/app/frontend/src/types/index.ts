@@ -47,11 +47,17 @@ export interface AccountSubscription {
 }
 
 // 单产品整号 5h/周剩余(百分比 0-100;null=无数据)。与服务端 buildSubscriptionSummary 对齐。
+// my* 字段:该订阅在绑定母号上的「我的份额」(fair-share,0-1),逐订阅画双层血条
+// (母号 hourlyPercent 打底 + 我的 myHourlyFraction 叠加);myShare=e_i(占整号比例,外层几何)。
+// 缺省(老服务端/取不到)→ 退回单层条。
 export interface ProductQuotaWindow {
   hourlyPercent: number | null
   weeklyPercent: number | null
   hourlyResetAt: string | null
   weeklyResetAt: string | null
+  myHourlyFraction?: number | null
+  myWeeklyFraction?: number | null
+  myShare?: number | null
 }
 
 // ===== Account State =====

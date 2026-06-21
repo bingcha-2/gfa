@@ -6,6 +6,18 @@ import { productLabel } from '@/lib/usageBars'
 import { formatResetDuration } from '@/lib/quotaDisplay'
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
+import { NestedShareBar } from './NestedShareBar'
+
+function isFutureIso(iso: string | null | undefined): boolean {
+  if (!iso) return false
+  const ms = Date.parse(iso) - Date.now()
+  return Number.isFinite(ms) && ms > 0
+}
+function resetMsOf(iso: string | null | undefined): number {
+  if (!iso) return 0
+  const ms = Date.parse(iso) - Date.now()
+  return Number.isFinite(ms) && ms > 0 ? ms : 0
+}
 
 // 逐订阅余量轮播:多个订阅时一次显示一个,左右切换。每页 = 一个订阅(按 #id 区分),顶部是
 // 订阅整体(产品 chip + #短id + 订阅总剩余%),下面按产品分小节,各画该产品整号 5h/周血条。
@@ -52,8 +64,33 @@ function AccountBar({ label, percent, reset }: { label: string; percent: number 
   )
 }
 
-function ProductSection({ product, level, quota }: { product: string; level?: string; quota?: ProductQuotaWindow }) {
+function ProductSection({ subId, product, level, quota }: { subId: string; product: string; level?: string; quota?: ProductQuotaWindow }) {
   const t = useT()
+  // 每窗口:有「我的份额」(fair-share)→ 双层血条(母号打底 + 我的叠加);否则退单层账号条。
+  const renderWindow = (
+    win: '5h' | '7d',
+    label: string,
+    accountPercent: number | null | undefined,
+    myFraction: number | null | undefined,
+    resetIso: string | null | undefined,
+  ) => {
+    if (myFraction != null && quota?.myShare != null) {
+      return (
+        <div className="py-1.5">
+          <NestedShareBar
+            label={label}
+            myFraction={myFraction}
+            accountFraction={accountPercent != null ? accountPercent / 100 : -1}
+            shareSeats={quota.myShare}
+            shareCapacity={1}
+            resetMs={resetMsOf(resetIso)}
+            displayKey={isFutureIso(resetIso) ? `${subId}:${product}:${win}:${resetIso}` : undefined}
+          />
+        </div>
+      )
+    }
+    return <AccountBar label={label} percent={accountPercent ?? null} reset={resetText(resetIso)} />
+  }
   return (
     <div className="mt-3">
       <div className="flex items-center gap-1.5 mb-0.5">
@@ -66,8 +103,8 @@ function ProductSection({ product, level, quota }: { product: string; level?: st
         )}
       </div>
       <div className="flex flex-col divide-y divide-[var(--border-light)]">
-        <AccountBar label={t('dashboard.acct5h')} percent={quota?.hourlyPercent ?? null} reset={resetText(quota?.hourlyResetAt)} />
-        <AccountBar label={t('dashboard.acctWeek')} percent={quota?.weeklyPercent ?? null} reset={resetText(quota?.weeklyResetAt)} />
+        {renderWindow('5h', t('dashboard.acct5h'), quota?.hourlyPercent, quota?.myHourlyFraction, quota?.hourlyResetAt)}
+        {renderWindow('7d', t('dashboard.acctWeek'), quota?.weeklyPercent, quota?.myWeeklyFraction, quota?.weeklyResetAt)}
       </div>
     </div>
   )
@@ -130,7 +167,7 @@ export function SubscriptionUsageCarousel({ subscriptions }: { subscriptions: Ac
           )}
 
           {sub.products.map((p) => (
-            <ProductSection key={p} product={p} level={sub.levels?.[p]} quota={sub.productQuota?.[p]} />
+            <ProductSection key={p} subId={sub.id} product={p} level={sub.levels?.[p]} quota={sub.productQuota?.[p]} />
           ))}
         </div>
 

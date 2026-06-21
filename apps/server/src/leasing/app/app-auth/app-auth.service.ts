@@ -7,16 +7,23 @@ import {
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
+import { sharedFairShareRegistry } from "../../token-server/fair-share-registry";
 import { CustomerAuthService } from "../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../account/device/device.service";
 
 // 单产品的整号 5h/周剩余(逐订阅展示用)。来自 AccountQuotaSnapshot,百分比 0-100;null=无数据。
-interface ProductQuotaWindow {
+// my* 字段:该订阅在绑定母号上的「我的份额」(fair-share),供客户端逐订阅画双层血条
+// (母号 hourlyPercent 打底 + 我的 myHourlyFraction 叠加)。来自 FairShareTracker 实时现算,
+// 取不到则缺省 → 客户端退回单层。myShare=e_i(我的份额占整号比例,双层外层几何)。
+export interface ProductQuotaWindow {
   hourlyPercent: number | null;
   weeklyPercent: number | null;
   hourlyResetAt: string | null;
   weeklyResetAt: string | null;
+  myHourlyFraction?: number | null;
+  myWeeklyFraction?: number | null;
+  myShare?: number | null;
 }
 
 function buildSubscriptionSummary(
@@ -120,6 +127,7 @@ export class AppAuthService {
    * 叠加实时份额。Best-effort:解析/查询异常一律降级为缺省(绝不阻断心跳)。
    */
   private async productQuotaForSubscription(
+    subscriptionId: string,
     bindingsJson: string | null | undefined
   ): Promise<Record<string, ProductQuotaWindow>> {
     if (!bindingsJson) return {};
@@ -146,14 +154,56 @@ export class AppAuthService {
       }
       if (!snap) continue;
       const iso = (d: any) => (d ? new Date(d).toISOString() : null);
+      // 我的份额(fair-share):该订阅(=cardId)在母号 accountId 上的实时自份额剩余 + e_i。
+      // tracker 按 provider 现算;取该产品下「最紧桶」为代表(与账号级最紧桶口径一致)。
+      // Best-effort:无 tracker/无数据一律缺省,客户端退单层,绝不阻断心跳。
+      const my = this.myFairShareForProduct(product, accountId, subscriptionId);
       out[product] = {
         hourlyPercent: snap.hourlyPercent ?? null,
         weeklyPercent: snap.weeklyPercent ?? null,
         hourlyResetAt: iso(snap.hourlyResetAt),
-        weeklyResetAt: iso(snap.weeklyResetAt)
+        weeklyResetAt: iso(snap.weeklyResetAt),
+        myHourlyFraction: my.hourlyFraction,
+        myWeeklyFraction: my.weeklyFraction,
+        myShare: my.share
       };
     }
     return out;
+  }
+
+  /**
+   * 该订阅在母号上的「我的份额」(fair-share)5h/周剩余 + e_i,实时取自 FairShareTracker。
+   * 同一 provider 可能有多个复合桶(多模型),取「最紧」(fraction 最小)为该产品代表;
+   * e_i(share)对同一(母号,卡)恒定,取代表桶的即可。取不到一律 null。
+   */
+  private myFairShareForProduct(
+    product: string,
+    accountId: number,
+    cardId: string
+  ): { hourlyFraction: number | null; weeklyFraction: number | null; share: number | null } {
+    const tracker = sharedFairShareRegistry.get(product);
+    if (!tracker) return { hourlyFraction: null, weeklyFraction: null, share: null };
+    const tightest = (
+      map: Record<string, { fraction: number; share: number }>
+    ): { fraction: number; share: number } | null => {
+      let best: { fraction: number; share: number } | null = null;
+      for (const v of Object.values(map)) {
+        if (!Number.isFinite(v.fraction) || v.fraction < 0) continue; // -1=未知,跳过
+        if (!best || v.fraction < best.fraction) best = { fraction: v.fraction, share: v.share };
+      }
+      return best;
+    };
+    try {
+      const h = tightest(tracker.getCardQuotaFractions(accountId, cardId));
+      const w = tightest(tracker.getCardWeeklyQuotaFractions(accountId, cardId));
+      return {
+        hourlyFraction: h ? h.fraction : null,
+        weeklyFraction: w ? w.fraction : null,
+        share: h ? h.share : w ? w.share : null
+      };
+    } catch {
+      return { hourlyFraction: null, weeklyFraction: null, share: null };
+    }
   }
 
   private async listActiveSubscriptionsSorted(customerId: string) {
@@ -341,7 +391,7 @@ export class AppAuthService {
         buildSubscriptionSummary(
           s,
           this.subscriptionRemainFraction(s.id),
-          await this.productQuotaForSubscription((s as { bindings?: string | null }).bindings)
+          await this.productQuotaForSubscription(s.id, (s as { bindings?: string | null }).bindings)
         )
       )
     );

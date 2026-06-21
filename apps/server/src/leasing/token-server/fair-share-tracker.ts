@@ -21,6 +21,7 @@
 import { QUOTA_WEIGHTS } from "@gfa/shared";
 
 import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/product-bucket";
+import { sharedFairShareRegistry } from "./fair-share-registry";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
 export { quotaWeightFor };
@@ -164,6 +165,9 @@ export class FairShareTracker {
         void this.flush();
       }, FLUSH_INTERVAL_MS);
     }
+    // Self-register so the heartbeat (app-auth) can read this provider's live
+    // 我的份额 without a cross-module DI path. See fair-share-registry.ts.
+    if (this.providerId) sharedFairShareRegistry.register(this.providerId, this);
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
