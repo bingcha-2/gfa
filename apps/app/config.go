@@ -82,6 +82,9 @@ type ProductQuotaWindow struct {
 	MyHourlyFraction *float64 `json:"myHourlyFraction,omitempty"`
 	MyWeeklyFraction *float64 `json:"myWeeklyFraction,omitempty"`
 	MyShare          *float64 `json:"myShare,omitempty"`
+	// Exclusive=独享(营销标签):权威标志。true → 前端血条画单层「剩余 X%」,不走拼车双层。
+	// 不加此字段,Go 解析会静默丢掉服务端下发的 exclusive,前端永远收不到。
+	Exclusive *bool `json:"exclusive,omitempty"`
 }
 
 var (

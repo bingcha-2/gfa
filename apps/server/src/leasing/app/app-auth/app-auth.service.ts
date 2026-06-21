@@ -7,6 +7,7 @@ import {
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
+import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
 import { sharedFairShareRegistry } from "../../token-server/fair-share-registry";
 import { CustomerAuthService } from "../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../account/customer-auth/customer-token.service";
@@ -23,6 +24,9 @@ export interface ProductQuotaWindow {
   weeklyResetAt: string | null;
   myHourlyFraction?: number | null;
   myWeeklyFraction?: number | null;
+  // myShare = 客户端双层血条「我那一席」的【名义份额 X/Y】= weight/号总份数(遮超卖,超卖前口径)。
+  // 注意:不是真实 e_i=w/D —— 真实份额会随超卖(D=max(N,Σw))被摊薄(如 1/8 变 1/12),
+  // 客户端 carousel 直接拿它当 nominalShare 画条,下发真实值会让没用过的卡也显示掉血。与 Dashboard 一致。
   myShare?: number | null;
   // 独享(营销标签):该卡是否独享。权威标志,客户端据此画单层「剩余 X%」血条,
   // 不走拼车双层(我的总剩余/账号总剩余)。缺省/false → 客户端走双层。
@@ -144,7 +148,12 @@ export class AppAuthService {
     }
     const out: Record<string, ProductQuotaWindow> = {};
     // 独享是卡级(整个订阅)标志,与具体 product 无关:一次判定,逐 product 盖章。
-    const exclusive = (this.store.findById(subscriptionId) as any)?.exclusive === true;
+    // 与血条数字同源(access-key-store.isExclusiveCard):显式 exclusive 或 weight≥号总份数。
+    const exclusive = this.store.isExclusiveCard(subscriptionId);
+    // 名义份额 = weight/号总份数(遮超卖,超卖前口径)。下发给客户端当双层条的「我那一席」几何,
+    // 不下发真实 e_i=w/D(会随超卖摊薄,让没用过的卡也掉血,即 11.1.2 回归的根因)。
+    const cardWeight = Math.max(1, Math.floor(Number((this.store.findById(subscriptionId) as any)?.weight) || 1));
+    const nominalShare = Math.min(1, Math.max(0, cardWeight / ACCOUNT_SHARE_CAPACITY));
     for (const [product, rawId] of Object.entries(bindings)) {
       const accountId = Number(rawId);
       if (!Number.isFinite(accountId) || accountId <= 0) continue;
@@ -170,7 +179,7 @@ export class AppAuthService {
         weeklyResetAt: iso(snap.weeklyResetAt),
         myHourlyFraction: my.hourlyFraction,
         myWeeklyFraction: my.weeklyFraction,
-        myShare: my.share,
+        myShare: nominalShare,
         exclusive
       };
     }

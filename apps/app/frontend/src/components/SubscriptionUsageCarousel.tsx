@@ -78,6 +78,7 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
             label={label}
             myFraction={myFraction}
             accountFraction={accountPercent != null ? accountPercent / 100 : -1}
+            // myShare 已是名义份额(weight/容量,遮超卖),直接当「我那一席」几何;capacity=1。
             shareSeats={quota.myShare}
             shareCapacity={1}
             exclusive={quota.exclusive === true}

@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 import { AccessKeyStore } from '../access-key-store';
+import { ACCOUNT_SHARE_CAPACITY } from '../token-billing';
 import { cardIdSessionResolver, sessionReqFor } from './session-test-util';
 
 let tmpDir: string;
@@ -53,6 +54,34 @@ describe('AccessKeyStore.computeUsageDetail (normalizeUsageToGross 收口)', () 
     );
     expect(d.inputTokens).toBe(180);
     expect(d.totalTokens).toBe(128); // 200-80+8
+  });
+});
+
+// ── isExclusiveCard(独享判定:显式 exclusive 或 weight≥号总份数)────────────────
+
+describe('AccessKeyStore.isExclusiveCard', () => {
+  it('显式 exclusive:true → 独享', () => {
+    const store = makeStore([{ id: 'ex', key: 's', status: 'active', exclusive: true, weight: 1 }]);
+    expect(store.isExclusiveCard('ex')).toBe(true);
+  });
+
+  it('weight≥号总份数(满容量)→ 独享(即便没显式 exclusive)', () => {
+    const store = makeStore([{ id: 'full', key: 's', status: 'active', weight: ACCOUNT_SHARE_CAPACITY }]);
+    expect(store.isExclusiveCard('full')).toBe(true);
+  });
+
+  it('weight<容量(拼车)→ 非独享', () => {
+    const store = makeStore([
+      { id: 'half', key: 's', status: 'active', weight: ACCOUNT_SHARE_CAPACITY - 1 },
+      { id: 'one', key: 's2', status: 'active', weight: 1 },
+    ]);
+    expect(store.isExclusiveCard('half')).toBe(false);
+    expect(store.isExclusiveCard('one')).toBe(false);
+  });
+
+  it('不存在的卡 → false', () => {
+    const store = makeStore([]);
+    expect(store.isExclusiveCard('nope')).toBe(false);
   });
 });
 

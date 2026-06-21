@@ -610,6 +610,19 @@ export class AccessKeyStore {
     return cap > 0 ? cap : ACCOUNT_SHARE_CAPACITY;
   }
 
+  /**
+   * 该卡是否独享(营销标签,唯一判定源)。口径:显式 config.exclusive===true,
+   * 或 weight≥号总份数(买满整号容量 = 独享展示)。仅作展示/血条用(独享走裸份额、单层条);
+   * 不影响座位分配/发卡闸 —— 即「只标独享标签,不锁号」,满容量卡仍可被超卖、与他人共用。
+   */
+  isExclusiveCard(cardId: string): boolean {
+    const rec = this.findById(cardId) as any;
+    if (!rec) return false;
+    if (rec.exclusive === true) return true;
+    const weight = Math.max(1, Math.floor(Number(rec.weight) || 1));
+    return weight >= ACCOUNT_SHARE_CAPACITY;
+  }
+
   // ── Request resolution ─────────────────────────────────────────────────
 
   /** Injected session-JWT → subscription resolver (see SessionResolverLike). */

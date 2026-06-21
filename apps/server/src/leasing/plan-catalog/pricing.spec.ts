@@ -80,7 +80,7 @@ describe("computePurchase 独享(exclusive)", () => {
 });
 
 describe("computePurchase bind line", () => {
-  it("uses shareSeats=8 as full-account seats without a seat discount", () => {
+  it("uses shareSeats=8 as full-account seats without a seat discount, marks it exclusive(满容量即独享)", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
@@ -96,7 +96,8 @@ describe("computePurchase bind line", () => {
       shareSeats: 8,
       shareCapacity: 8,
       weight: 8,
-      exclusive: false,
+      // 满容量(shareSeats==shareCapacity)→ 即便没显式勾 exclusive 也标独享(营销标签,不锁号)。
+      exclusive: true,
       assignmentPolicy: "pinned",
       deviceLimit: 1,
       windowMs: 18000000,

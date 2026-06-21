@@ -712,6 +712,7 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 					"myHourlyFraction": 0.55,
 					"myWeeklyFraction": 0.77,
 					"myShare":          0.25,
+					"exclusive":        true,
 				},
 			},
 		}},
@@ -740,6 +741,9 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 	}
 	if q.MyShare == nil || *q.MyShare != 0.25 {
 		t.Fatalf("MyShare = %v, want 0.25", q.MyShare)
+	}
+	if q.Exclusive == nil || *q.Exclusive != true {
+		t.Fatalf("Exclusive = %v, want true", q.Exclusive)
 	}
 }
 

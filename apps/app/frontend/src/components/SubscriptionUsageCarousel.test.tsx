@@ -54,6 +54,32 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.getAllByText(/账号总剩余/).length).toBe(2)
   })
 
+  it('renders myShare as the nominal seat (遮超卖) — unused card shows full nominal share', () => {
+    // 服务端下发 myShare=名义份额 weight/容量=4/8=0.5(超卖前),而非真实 e_i=w/D。
+    // 未用、账号 100% → 应显示名义 50%,不随超卖摊薄。
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            productQuota: {
+              anthropic: {
+                hourlyPercent: 100,
+                weeklyPercent: 100,
+                hourlyResetAt: null,
+                weeklyResetAt: null,
+                myHourlyFraction: 1,
+                myWeeklyFraction: 1,
+                myShare: 0.5,
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getAllByText(/我的总剩余 50%/).length).toBe(2)
+  })
+
   it('renders single-layer "剩余" bars (no nested 账号总剩余) for exclusive cards', () => {
     render(
       <SubscriptionUsageCarousel

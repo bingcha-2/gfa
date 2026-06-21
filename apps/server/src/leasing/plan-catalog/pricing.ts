@@ -86,9 +86,11 @@ function computePool(catalog: CatalogConfig, selection: PoolSelection): Purchase
 function computeBind(catalog: CatalogConfig, selection: BindSelection): PurchaseResult {
   const bind = catalog.pricing.bind;
   const shareCapacity = catalog.shareCapacity ?? 8;
-  const exclusive = selection.exclusive === true;
   // 独享:占满整号(shareSeats=shareCapacity),绕过拼车的 SEAT_OPTIONS 校验。
-  const share = exclusive ? { shareSeats: shareCapacity } : resolveShareSelection(selection, shareCapacity);
+  const share = selection.exclusive === true ? { shareSeats: shareCapacity } : resolveShareSelection(selection, shareCapacity);
+  // 满容量即独享:显式勾选,或 shareSeats 买满 shareCapacity(占满整号份数)→ 标 exclusive。
+  // 与展示层 access-key-store.isExclusiveCard(weight≥容量)同口径。只是营销标签,不锁号(仍可超卖)。
+  const exclusive = selection.exclusive === true || share.shareSeats >= shareCapacity;
   let fullPriceCents = 0;
   const products: string[] = [];
   const levels: Record<string, string> = {};

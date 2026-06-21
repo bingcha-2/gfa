@@ -55,7 +55,7 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
       getSeatCapacity: (accountId: number) =>
         service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
       isExclusive: (cardId: string) =>
-        (service.accessKeyStore.findById(cardId) as any)?.exclusive === true,
+        service.accessKeyStore.isExclusiveCard(cardId),
       // Claude 上游有 5h + 周双限额 → 启用周公平份额第二层窗口。
       trackWeekly: true,
       prisma: options.prisma,

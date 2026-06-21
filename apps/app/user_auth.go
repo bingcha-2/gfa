@@ -526,6 +526,10 @@ func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow
 			ff := f
 			w.MyShare = &ff
 		}
+		if b, ok := m["exclusive"].(bool); ok {
+			bb := b
+			w.Exclusive = &bb
+		}
 		out[product] = w
 	}
 	return out
