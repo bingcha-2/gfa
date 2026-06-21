@@ -80,6 +80,7 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
             accountFraction={accountPercent != null ? accountPercent / 100 : -1}
             shareSeats={quota.myShare}
             shareCapacity={1}
+            exclusive={quota.exclusive === true}
             resetMs={resetMsOf(resetIso)}
             displayKey={isFutureIso(resetIso) ? `${subId}:${product}:${win}:${resetIso}` : undefined}
           />

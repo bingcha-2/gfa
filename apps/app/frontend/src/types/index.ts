@@ -58,6 +58,8 @@ export interface ProductQuotaWindow {
   myHourlyFraction?: number | null
   myWeeklyFraction?: number | null
   myShare?: number | null
+  // 独享(营销标签):权威标志。true → 血条画单层「剩余 X%」,不走拼车双层。
+  exclusive?: boolean
 }
 
 // ===== Account State =====

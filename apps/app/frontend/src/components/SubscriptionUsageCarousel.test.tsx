@@ -54,6 +54,34 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.getAllByText(/账号总剩余/).length).toBe(2)
   })
 
+  it('renders single-layer "剩余" bars (no nested 账号总剩余) for exclusive cards', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            productQuota: {
+              anthropic: {
+                hourlyPercent: 80,
+                weeklyPercent: 60,
+                hourlyResetAt: null,
+                weeklyResetAt: null,
+                myHourlyFraction: 0.9,
+                myWeeklyFraction: 0.7,
+                myShare: 1,
+                exclusive: true,
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    // 独享 → 单层「剩余 X%」,不展示拼车双层。
+    expect(screen.getAllByText(/^剩余/).length).toBe(2)
+    expect(screen.queryByText(/我的总剩余/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/账号总剩余/)).not.toBeInTheDocument()
+  })
+
   it('falls back to single-layer account bars when fair-share fields are absent', () => {
     render(
       <SubscriptionUsageCarousel

@@ -24,6 +24,9 @@ export interface ProductQuotaWindow {
   myHourlyFraction?: number | null;
   myWeeklyFraction?: number | null;
   myShare?: number | null;
+  // 独享(营销标签):该卡是否独享。权威标志,客户端据此画单层「剩余 X%」血条,
+  // 不走拼车双层(我的总剩余/账号总剩余)。缺省/false → 客户端走双层。
+  exclusive?: boolean;
 }
 
 function buildSubscriptionSummary(
@@ -140,6 +143,8 @@ export class AppAuthService {
       return {};
     }
     const out: Record<string, ProductQuotaWindow> = {};
+    // 独享是卡级(整个订阅)标志,与具体 product 无关:一次判定,逐 product 盖章。
+    const exclusive = (this.store.findById(subscriptionId) as any)?.exclusive === true;
     for (const [product, rawId] of Object.entries(bindings)) {
       const accountId = Number(rawId);
       if (!Number.isFinite(accountId) || accountId <= 0) continue;
@@ -165,7 +170,8 @@ export class AppAuthService {
         weeklyResetAt: iso(snap.weeklyResetAt),
         myHourlyFraction: my.hourlyFraction,
         myWeeklyFraction: my.weeklyFraction,
-        myShare: my.share
+        myShare: my.share,
+        exclusive
       };
     }
     return out;
