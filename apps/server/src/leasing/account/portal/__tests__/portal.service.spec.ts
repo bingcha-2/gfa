@@ -626,6 +626,60 @@ describe("PortalService.getUsageStats", () => {
     expect(r.totals.savedUSD).toBe(25.25);
   });
 
+  it("prices cache-read at the cache rate (server input is gross → netInput excludes cache_read)", async () => {
+    // claude 行:stored inputTokens 是 gross(= net 200k + cache_read 800k),output 0。
+    // 正确 USD = net 200k·5/M + cache_read 800k·0.5/M = 1.0 + 0.4 = $1.40
+    // (与客户端 estimateOfficialCostUSD 同口径;此处 cache_creation=0 故精确一致)。
+    // 旧实现 savedUSDFor(gross,output) 会把 cache_read 按满额 input 单价计 → $5.00(10× 偏高)。
+    const prisma = makePrisma({
+      hourlyRecords: [
+        recentRow({ bucket: "antigravity-claude", inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 800_000, totalTokens: 200_000 }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+    expect(r.totals.savedUSD).toBe(1.4);
+  });
+
+  it("per-model estimatedUSD does not double-count cache-read", async () => {
+    // 旧实现 officialCostFor(gross,output,cached,0) 把 cache_read 既算进 gross·inP 又 +cached·cacheReadP。
+    // 修正后用 netInput → estimatedUSD = 1.40,与 totals.savedUSD 一致。
+    const prisma = makePrisma({
+      hourlyRecords: [
+        recentRow({ bucket: "antigravity-claude", inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 800_000, totalTokens: 200_000 }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+    expect(r.byModel[0].estimatedUSD).toBe(1.4);
+    expect(r.byModel[0].estimatedUSD).toBe(r.totals.savedUSD);
+  });
+
+  it("bills cache-write (cache_creation) at its own rate from the cacheCreationTokens column", async () => {
+    // claude gross input = 1M(= net 100k + cache_read 800k + cache_write 100k),output 0。
+    // USD = net 100k·5/M + cache_read 800k·0.5/M + cache_write 100k·6.25/M = 0.5 + 0.4 + 0.625 = $1.525
+    // (与客户端 estimateOfficialCostUSD 完全一致)。
+    const prisma = makePrisma({
+      hourlyRecords: [
+        recentRow({
+          bucket: "antigravity-claude",
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          cachedInputTokens: 800_000,
+          cacheCreationTokens: 100_000,
+          totalTokens: 200_000,
+        }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+    expect(r.totals.savedUSD).toBe(1.525);
+    expect(r.byModel[0].estimatedUSD).toBe(1.525);
+  });
+
   it("savedUSD falls back to gemini pricing for an unknown/empty bucket family (matches client priceFor)", async () => {
     const prisma = makePrisma({
       hourlyRecords: [

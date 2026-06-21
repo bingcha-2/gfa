@@ -46,8 +46,8 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
     } as any;
     // record() 用 new Date() 盖 timestamp,这里直接构造队列以固定 hourStart。
     (tracker as any).queue.push(
-      { ...base, inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, rawTotalTokens: 15, totalTokens: 15 },
-      { ...base, inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, rawTotalTokens: 23, totalTokens: 23 },
+      { ...base, inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, cacheCreationTokens: 2, rawTotalTokens: 15, totalTokens: 15 },
+      { ...base, inputTokens: 20, outputTokens: 3, cachedInputTokens: 0, cacheCreationTokens: 4, rawTotalTokens: 23, totalTokens: 23 },
     );
     await tracker.flush();
 
@@ -57,8 +57,9 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
       accessKeyId: "sub-1", accountEmail: "a@x.com", customerId: "cust-1",
       modelKey: "gpt-5-codex", bucket: "codex-gpt",
     });
-    expect(arg.create).toMatchObject({ requests: 2, failedRequests: 0, inputTokens: 30, outputTokens: 8, totalTokens: 38 });
+    expect(arg.create).toMatchObject({ requests: 2, failedRequests: 0, inputTokens: 30, outputTokens: 8, cacheCreationTokens: 6, totalTokens: 38 });
     expect(arg.update.requests).toEqual({ increment: 2 });
+    expect(arg.update.cacheCreationTokens).toEqual({ increment: 6 });
     expect(arg.update.totalTokens).toEqual({ increment: 38 });
     tracker.destroy();
   });

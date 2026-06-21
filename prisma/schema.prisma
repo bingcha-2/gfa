@@ -471,6 +471,7 @@ model CardUsageHourly {
   inputTokens       Int      @default(0)
   outputTokens      Int      @default(0)
   cachedInputTokens Int      @default(0)
+  cacheCreationTokens Int    @default(0)          // 缓存写(cache_creation);仅 claude 非零,历史行=0
   rawTotalTokens    Int      @default(0)
   totalTokens       Int      @default(0)          // 计费 token(扣缓存折扣后)
   updatedAt         DateTime @updatedAt

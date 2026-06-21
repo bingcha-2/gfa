@@ -131,14 +131,15 @@ export class TokenUsageStatsService {
         inputTokens: true,
         outputTokens: true,
         cachedInputTokens: true,
+        cacheCreationTokens: true,
         rawTotalTokens: true,
         totalTokens: true,
       },
     });
 
     // `tokens` 是计费口径(billable,缓存读已 1/10 折);拆分出净输入 / 输出 /
-    // 缓存写入(cache_creation,= rawTotal − 净输入 − 输出 − 缓存读,无此项的家族 clamp 到 0) /
-    // 缓存读,让前端能解释"为什么计费 token 比净对话大"。
+    // 缓存写入(cache_creation,单独列) / 缓存读,让前端能解释"为什么计费 token 比净对话大"。
+    // stored inputTokens 是 gross(含缓存读+写),净输入 = gross − 缓存读 − 缓存写。
     const empty = () => ({
       tokens: 0,
       requests: 0,
@@ -154,14 +155,17 @@ export class TokenUsageStatsService {
       anthropic: empty(),
     };
     for (const r of rows) {
-      const cacheWrite = Math.max(0, r.rawTotalTokens - r.inputTokens - r.outputTokens - r.cachedInputTokens);
+      const cacheWrite = Number(r.cacheCreationTokens) || 0;
+      const cacheRead = r.cachedInputTokens;
+      // stored inputTokens 是 gross,净输入 = gross − 缓存读 − 缓存写(clamp ≥0)。
+      const netInput = Math.max(0, r.inputTokens - cacheRead - cacheWrite);
       for (const t of [totals, byProvider[bucketProduct(r.bucket)]]) {
         t.tokens += r.totalTokens;
         t.requests += r.requests;
-        t.inputTokens += r.inputTokens;
+        t.inputTokens += netInput;
         t.outputTokens += r.outputTokens;
         t.cacheWriteTokens += cacheWrite;
-        t.cacheReadTokens += r.cachedInputTokens;
+        t.cacheReadTokens += cacheRead;
       }
     }
 

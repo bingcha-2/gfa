@@ -45,6 +45,7 @@ export type TokenUsageTracker = {
     inputTokens?: number;
     outputTokens?: number;
     cachedInputTokens?: number;
+    cacheCreationTokens?: number;
     rawTotalTokens?: number;
     totalTokens?: number;
   }) => void;
@@ -1076,6 +1077,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           inputTokens: detail.inputTokens,
           outputTokens: detail.outputTokens,
           cachedInputTokens: detail.cachedInputTokens,
+          cacheCreationTokens: detail.cacheCreationTokens,
           rawTotalTokens: detail.rawTotalTokens,
           totalTokens: detail.totalTokens,
         });

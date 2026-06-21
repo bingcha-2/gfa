@@ -169,20 +169,22 @@ describe("TokenUsageStatsService.getCardUsageSummary", () => {
 describe("TokenUsageStatsService.getTodayUsage", () => {
   it("splits today's billable tokens into net input / output / cache-write / cache-read per provider", async () => {
     const now = new Date();
-    // Anthropic: net input 100 + output 260 + cache_creation 39000 + cache_read 3000
-    //   rawTotal = 42360; billable = rawTotal − cacheRead + ceil(cacheRead/10) = 39660.
-    //   cache_creation is derived as rawTotal − input − output − cacheRead = 39000.
+    // Anthropic: net input 100 + output 260 + cache_creation 39000 + cache_read 3000。
+    //   stored inputTokens 是 gross = net + cacheRead + cacheWrite = 42100;rawTotal = 42360;
+    //   billable = rawTotal − cacheRead + ceil(cacheRead/10) = 39660;cache_creation 从列直接取 = 39000。
+    //   净输入 = gross − cacheRead − cacheWrite = 42100 − 3000 − 39000 = 100。
     const svc = makeService([
       row({
         bucket: "anthropic-sonnet",
-        inputTokens: 100,
+        inputTokens: 42100,
         outputTokens: 260,
         cachedInputTokens: 3000,
+        cacheCreationTokens: 39000,
         rawTotalTokens: 42360,
         totalTokens: 39660,
         hourStart: now,
       }),
-      // Codex: no cache → cache-write derives to 0.
+      // Codex: no cache → cache-write = 0,净输入 = gross 100。
       row({ bucket: "codex-gpt", inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, rawTotalTokens: 110, totalTokens: 110, hourStart: now }),
     ]);
 

@@ -23,6 +23,7 @@ interface TokenUsageEvent {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  cacheCreationTokens: number;
   rawTotalTokens: number;
   totalTokens: number;
   timestamp: Date;
@@ -55,6 +56,7 @@ export class TokenUsageTracker {
     inputTokens?: number;
     outputTokens?: number;
     cachedInputTokens?: number;
+    cacheCreationTokens?: number;
     rawTotalTokens?: number;
     totalTokens?: number;
   }): void {
@@ -71,6 +73,7 @@ export class TokenUsageTracker {
       inputTokens: Number(event.inputTokens || 0),
       outputTokens: Number(event.outputTokens || 0),
       cachedInputTokens: Number(event.cachedInputTokens || 0),
+      cacheCreationTokens: Number(event.cacheCreationTokens || 0),
       rawTotalTokens: Number(event.rawTotalTokens || 0),
       totalTokens: Number(event.totalTokens || 0),
       timestamp: new Date(),
@@ -104,7 +107,7 @@ export class TokenUsageTracker {
       hourStart: Date; accessKeyId: string; accountEmail: string; customerId: string;
       modelKey: string; bucket: string;
       requests: number; failedRequests: number; inputTokens: number; outputTokens: number;
-      cachedInputTokens: number; rawTotalTokens: number; totalTokens: number;
+      cachedInputTokens: number; cacheCreationTokens: number; rawTotalTokens: number; totalTokens: number;
     }>();
     for (const e of batch) {
       const hourStart = TokenUsageTracker.hourStart(e.timestamp);
@@ -116,7 +119,7 @@ export class TokenUsageTracker {
       let g = groups.get(key);
       if (!g) {
         g = { hourStart, accessKeyId: e.accessKeyId, accountEmail, customerId, modelKey, bucket,
-          requests: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, rawTotalTokens: 0, totalTokens: 0 };
+          requests: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 0, totalTokens: 0 };
         groups.set(key, g);
       }
       g.requests += 1;
@@ -125,6 +128,7 @@ export class TokenUsageTracker {
       g.inputTokens += e.inputTokens;
       g.outputTokens += e.outputTokens;
       g.cachedInputTokens += e.cachedInputTokens;
+      g.cacheCreationTokens += e.cacheCreationTokens;
       g.rawTotalTokens += e.rawTotalTokens;
       g.totalTokens += e.totalTokens;
     }
@@ -132,7 +136,7 @@ export class TokenUsageTracker {
     for (const g of groups.values()) {
       const sums = {
         requests: g.requests, failedRequests: g.failedRequests, inputTokens: g.inputTokens, outputTokens: g.outputTokens,
-        cachedInputTokens: g.cachedInputTokens, rawTotalTokens: g.rawTotalTokens, totalTokens: g.totalTokens,
+        cachedInputTokens: g.cachedInputTokens, cacheCreationTokens: g.cacheCreationTokens, rawTotalTokens: g.rawTotalTokens, totalTokens: g.totalTokens,
       };
       try {
         await this.prisma.cardUsageHourly.upsert({
@@ -152,6 +156,7 @@ export class TokenUsageTracker {
             inputTokens: { increment: sums.inputTokens },
             outputTokens: { increment: sums.outputTokens },
             cachedInputTokens: { increment: sums.cachedInputTokens },
+            cacheCreationTokens: { increment: sums.cacheCreationTokens },
             rawTotalTokens: { increment: sums.rawTotalTokens },
             totalTokens: { increment: sums.totalTokens },
           },

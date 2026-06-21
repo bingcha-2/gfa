@@ -32,6 +32,7 @@ export function computeUsageDetail(usage: any = {}, modelKey = '', product = '')
   const inputTokens = readTokenCount(norm.inputTokens);
   const outputTokens = readTokenCount(norm.outputTokens);
   const cachedInputTokens = readTokenCount(norm.cachedInputTokens);
+  const cacheCreationTokens = readTokenCount(norm.cacheCreationTokens);
   const rawTotalTokens = readTokenCount(norm.rawTotalTokens) || inputTokens + outputTokens;
   const totalTokens = billableTokenUsageTotal(
     { ...norm, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
@@ -41,6 +42,7 @@ export function computeUsageDetail(usage: any = {}, modelKey = '', product = '')
     inputTokens,
     outputTokens,
     cachedInputTokens,
+    cacheCreationTokens,
     rawTotalTokens,
     totalTokens,
     bucket: requestBucket(product, modelKey || ''),

@@ -23,19 +23,6 @@ type PortalQuota = {
   totalTokensUsed: number;
 };
 
-/** Fallback quota for a subscription whose shadow record doesn't exist in the store. */
-const UNLIMITED_QUOTA: PortalQuota = {
-  quotaMode: "unlimited",
-  buckets: [],
-  weeklyBuckets: [],
-  recentWindowTokens: 0,
-  tokenWindowResetMs: null as number | null,
-  weeklyTokenLimit: null as number | null,
-  weeklyWindowResetMs: null as number | null,
-  weeklyWindowTokens: 0,
-  totalTokensUsed: 0,
-};
-
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
@@ -48,8 +35,12 @@ function formatBucketLabel(start: Date, granularity: "hour" | "day"): string {
 
 /**
  * 省钱折算价(美元/百万 token),与客户端 apps/app/pricing.json 同一份表。
- * 节省金额算法与客户端 UsageStatsStore.AddTokens 一致:
- *   savedUSD += 净输入/1e6 * inPerM + 输出/1e6 * outPerM(不含缓存)。
+ * USD 算法与客户端 estimateOfficialCostUSD 对齐(含缓存读/写单价):
+ *   USD = 净输入·inPerM + 输出·outPerM + 缓存读·cacheReadPerM + 缓存写·cacheWritePerM(均 /1e6)。
+ * ⚠️ 服务端 CardUsageHourly.inputTokens 是 **gross**(= 净输入 + 缓存读 + 缓存写,见
+ *    normalizeUsageToGross);缓存读/写分别落在 cachedInputTokens / cacheCreationTokens 列。
+ *    故计 USD 前必须先还原 netInput = gross − 缓存读 − 缓存写,缓存读/写各按自己单价计。
+ *    直接拿 gross 算会把缓存读按满额 input 单价计(10× 偏高)。
  * family 取自 bucket 后缀(`<product>-<family>`,如 antigravity-claude);
  * 未知/缺失家族回退 gemini(与客户端 priceFor 一致)。
  */
@@ -65,15 +56,10 @@ function familyOfBucket(bucket: string): string {
   return i < 0 ? "" : bucket.slice(i + 1);
 }
 
-/** 累计节省(不含缓存)—— 与客户端 UsageStatsStore.AddTokens 的 SavedMoneyUSD 同口径。勿动。 */
-function savedUSDFor(bucket: string, input: number, output: number): number {
-  const p = FAMILY_PRICING[familyOfBucket(bucket)] ?? FAMILY_PRICING.gemini;
-  return (input / 1_000_000) * p.inPerM + (output / 1_000_000) * p.outPerM;
-}
-
 /**
- * 按模型「官方 API 价估算」—— 与客户端 estimateOfficialCostUSD 同一算法(含缓存读/写)。
- * 注:服务端 CardTokenUsage 未单独记录缓存写,故 cacheWrite 入参恒为 0;其余口径一致。
+ * 「官方 API 价估算」USD —— 与客户端 estimateOfficialCostUSD 同一算法(含缓存读/写)。
+ * `input` 必须是 **净输入**(= gross − 缓存读 − 缓存写);缓存读/写从各自的列(cachedInputTokens /
+ * cacheCreationTokens)取真实值。totals.savedUSD 与 per-model estimatedUSD 共用此函数,口径自洽。
  */
 function officialCostFor(
   bucket: string, input: number, output: number, cacheRead: number, cacheWrite: number,
@@ -342,6 +328,7 @@ export class PortalService {
         inputTokens: true,
         outputTokens: true,
         cachedInputTokens: true,
+        cacheCreationTokens: true,
         totalTokens: true,
       },
     });
@@ -380,14 +367,17 @@ export class PortalService {
       b.requests += reqs;
 
       const cached = Number(r.cachedInputTokens) || 0;
+      const cacheCreation = Number(r.cacheCreationTokens) || 0;
+      // stored input 是 gross(= 净输入 + 缓存读 + 缓存写);计 USD 先还原净输入,缓存读/写各按自己单价计。
+      const netInput = Math.max(0, input - cached - cacheCreation);
       const m = byModel.get(r.modelKey) ?? { totalTokens: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, savedUSD: 0 };
       m.totalTokens += total;
       m.requests += reqs;
       m.inputTokens += input;
       m.outputTokens += output;
       m.cachedTokens += cached;
-      // per-model 成本对齐客户端 estimateOfficialCostUSD(含缓存读;服务端无缓存写→0)。
-      m.savedUSD += officialCostFor(r.bucket, input, output, cached, 0);
+      // per-model 成本对齐客户端 estimateOfficialCostUSD(净输入 + 缓存读 + 缓存写)。
+      m.savedUSD += officialCostFor(r.bucket, netInput, output, cached, cacheCreation);
       byModel.set(r.modelKey, m);
 
       success += reqs - fails;
@@ -397,7 +387,7 @@ export class PortalService {
       totals.outputTokens += output;
       totals.totalTokens += total;
       totals.requests += reqs;
-      totals.savedUSD += savedUSDFor(r.bucket, input, output);
+      totals.savedUSD += officialCostFor(r.bucket, netInput, output, cached, cacheCreation);
     }
 
     // 浮点累加去噪:保留到分以下 4 位,前端按 toFixed(2) 展示。

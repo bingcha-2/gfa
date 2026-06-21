@@ -336,14 +336,17 @@ export function eventUsageForLimit(item: any = {}): number {
 
 /**
  * 统一用量口径(CANON):把客户端上报的 usage 归一为 "gross input" 约定 ——
- *   inputTokens       = gross 输入(含全部缓存 cache_read + cache_creation)
- *   cachedInputTokens = 可折扣的缓存读(cache_read),且 ⊆ inputTokens
- *   rawTotalTokens    = inputTokens + outputTokens
+ *   inputTokens         = gross 输入(含全部缓存 cache_read + cache_creation)
+ *   cachedInputTokens   = 可折扣的缓存读(cache_read),且 ⊆ inputTokens
+ *   cacheCreationTokens = 缓存写(cache_creation),且 ⊆ inputTokens;仅 claude 上报含此项,
+ *                         其余家族 = 0。净输入 = inputTokens − cachedInputTokens − cacheCreationTokens。
+ *   rawTotalTokens      = inputTokens + outputTokens
  * 按**模型家族**(modelFamily: claude / gemini / gpt)分支,只看模型属于哪家、
  * 不看客户端版本,故新老客户端走同一条路径(零兼容分支)。
  *  - claude:上游 input_tokens 是 net(不含 cache)。gross = rawTotal - output
  *    (rawTotal 已含 net+output+cache_creation+cache_read);rawTotal 缺失时退回 input+cached。
- *  - gemini/gpt:上游 input 已是 gross;仅 clamp cached≤input,rawTotal=input+output。
+ *    cache_creation = rawTotal − net − output − cache_read(rawTotal 缺失→0)。
+ *  - gemini/gpt:上游 input 已是 gross;仅 clamp cached≤input,rawTotal=input+output,缓存写=0。
  * 计费(billableTokenUsageTotal)与拼车(weightedCost)都先经此归一,口径自洽。
  */
 export function normalizeUsageToGross(usage: any = {}, modelKey = ''): any {
@@ -356,21 +359,29 @@ export function normalizeUsageToGross(usage: any = {}, modelKey = ''): any {
     const reportedRaw = readTokenCount(usage.rawTotalTokens);
     const grossInput =
       reportedRaw > 0 ? Math.max(0, reportedRaw - outputTokens) : inputTokens + cachedInputTokens;
+    // 缓存写 = rawTotal − net − output − cache_read。归一后 gross 把 net/cache_creation 混在一起,
+    // 故必须在此(还有原始 net=inputTokens 时)算出并单独留存,否则下游无从还原。
+    const cacheCreationTokens =
+      reportedRaw > 0
+        ? Math.max(0, reportedRaw - inputTokens - outputTokens - cachedInputTokens)
+        : 0;
     return {
       ...usage,
       inputTokens: grossInput,
       outputTokens,
       cachedInputTokens: Math.min(cachedInputTokens, grossInput),
+      cacheCreationTokens: Math.min(cacheCreationTokens, grossInput),
       rawTotalTokens: grossInput + outputTokens,
     };
   }
 
-  // gemini / gpt:input 本就是 gross(含 cached)
+  // gemini / gpt:input 本就是 gross(含 cached);上游无单独缓存写 → 0
   return {
     ...usage,
     inputTokens,
     outputTokens,
     cachedInputTokens: Math.min(cachedInputTokens, inputTokens),
+    cacheCreationTokens: 0,
     rawTotalTokens: inputTokens + outputTokens,
   };
 }

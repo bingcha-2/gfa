@@ -120,26 +120,29 @@ describe('normalizeUsageToGross', () => {
     );
     expect(out.inputTokens).toBe(230); // gross = rawTotal - output = 240-10 (含 cache_creation 50)
     expect(out.cachedInputTokens).toBe(80); // cache_read 不变
+    expect(out.cacheCreationTokens).toBe(50); // cache_write = rawTotal - net - output - cacheRead = 240-100-10-80
     expect(out.outputTokens).toBe(10);
     expect(out.rawTotalTokens).toBe(240); // 不变
   });
 
-  it('claude: rawTotal 缺失时回退 input+cached', () => {
+  it('claude: rawTotal 缺失时回退 input+cached,缓存写无从还原 → 0', () => {
     const out = normalizeUsageToGross(
       { inputTokens: 100, outputTokens: 10, cachedInputTokens: 80 },
       'claude-sonnet-4',
     );
     expect(out.inputTokens).toBe(180); // 100 + 80
+    expect(out.cacheCreationTokens).toBe(0); // rawTotal 缺失 → 缓存写记 0
     expect(out.rawTotalTokens).toBe(190); // gross + output
   });
 
-  it('gemini: 已是 gross,clamp cached≤input,rawTotal=input+output', () => {
+  it('gemini: 已是 gross,clamp cached≤input,rawTotal=input+output,缓存写=0', () => {
     const out = normalizeUsageToGross(
       { inputTokens: 180, outputTokens: 20, cachedInputTokens: 80 },
       'gemini-2.5-pro',
     );
     expect(out.inputTokens).toBe(180);
     expect(out.cachedInputTokens).toBe(80);
+    expect(out.cacheCreationTokens).toBe(0); // 非 claude 家族无单独缓存写
     expect(out.rawTotalTokens).toBe(200);
   });
 
