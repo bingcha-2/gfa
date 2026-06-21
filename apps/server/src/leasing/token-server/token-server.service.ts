@@ -4,7 +4,6 @@ import { LeaseService, LeaseServiceHttpError, type TokenUsageTracker, type Accou
 import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
-import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
 import type { AccessKeyStore } from "./access-key-store";
 import { rowToConfig, subscriptionToLimitRecord } from "../subscription/subscription-config";
 
@@ -62,8 +61,6 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         service.accessKeyStore.getHardBoundCardWeights(accountId, provider.id),
       getSeatCapacity: (accountId: number) =>
         service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
-      isExclusiveAccount: (accountId: number) =>
-        service.accessKeyStore.isExclusiveAccount(accountId, provider.id),
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,

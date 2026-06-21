@@ -129,8 +129,6 @@ export interface FairShareTrackerOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   /** 某号保底席位数 N(salesSeatCapacity,默认 8)。 */
   getSeatCapacity?: (accountId: number) => number;
-  /** 该号是否被独享订阅独占。独享号:D=Σw(忽略 N 保底)→ 独享主人 e=w/Σw=1.0,吃满整号。 */
-  isExclusiveAccount?: (accountId: number) => boolean;
   /** 是否启用「周公平份额」第二层窗口。codex/anthropic=true;antigravity 仅 5h=false。 */
   trackWeekly?: boolean;
   /** PrismaService for FairShareWindow persistence. 省略则禁用持久化。 */
@@ -506,9 +504,8 @@ export class FairShareTracker {
 
   /** 由 Σw + participants 算定锁定态(D=max(N,Σw) 或 forcedD,预留 R0=max(0,1−Σw/D))。 */
   private lockedFrom(accountId: number, sumW: number, participants: Set<string>, forcedD?: number): LockedShare {
-    // 独享号:D=Σw(不取 N 保底)→ 独享主人 e=w/Σw,单主时 =1.0、预留=0,独占整号额度。
-    const exclusive = this.opts.isExclusiveAccount?.(accountId) === true;
-    const N = exclusive ? Math.max(1, sumW) : Math.max(1, Math.floor(this.opts.getSeatCapacity?.(accountId) ?? DEFAULT_SEAT_CAPACITY));
+    // 独享超卖改造:不再区分 exclusive,统一 D=max(N,Σw)。
+    const N = Math.max(1, Math.floor(this.opts.getSeatCapacity?.(accountId) ?? DEFAULT_SEAT_CAPACITY));
     const D = forcedD && forcedD > 0 ? forcedD : Math.max(N, sumW);
     const reserve0 = Math.max(0, 1 - (D > 0 ? sumW / D : 0));
     return { D, participants, reserveAvail: reserve0, grantedReserve: new Map() };

@@ -100,3 +100,36 @@ describe('NestedShareBar monotonic display', () => {
     expect(screen.getByText(/我的总剩余 95%/)).toBeInTheDocument()
   })
 })
+
+describe('独享单层血条', () => {
+  it('独享只展示「剩余 X%」,不展示账号总剩余', () => {
+    render(
+      <NestedShareBar
+        label="5h 份额"
+        myFraction={0.7}
+        accountFraction={0.3}
+        shareSeats={8}
+        shareCapacity={8}
+        exclusive
+      />,
+    )
+
+    expect(screen.getByText(/剩余 70%/)).toBeInTheDocument()
+    expect(screen.queryByText(/账号总剩余/)).toBeNull()
+  })
+
+  it('拼车仍然展示双层(我的总剩余 + 账号总剩余)', () => {
+    render(
+      <NestedShareBar
+        label="5h 份额"
+        myFraction={0.5}
+        accountFraction={0.8}
+        shareSeats={1}
+        shareCapacity={8}
+      />,
+    )
+
+    expect(screen.getByText(/我的总剩余/)).toBeInTheDocument()
+    expect(screen.getByText(/账号总剩余/)).toBeInTheDocument()
+  })
+})

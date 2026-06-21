@@ -251,7 +251,7 @@ export function DashboardPage() {
           <CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle>
           {exclusiveCard && (
             <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-500">
-              <Crown size={11} /> 尊贵 · 独享整号
+              <Crown size={11} /> 尊贵 · 独享
             </span>
           )}
         </CardHeader>

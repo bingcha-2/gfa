@@ -2,23 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import { countBoundSeats, exclusiveLockedByAccount, isExclusive, occupiedSharesByAccount } from "./seat";
 
-// 独享锁定号集合:某产品下被「line=bind 且 exclusive」订阅独占的上游号 id。
-// 分配器据此对所有新绑定隐藏这些号(独享号别人不得绑入)。
-describe("exclusiveLockedByAccount — 独享锁定的号集合", () => {
-  it("只收 line=bind 且 exclusive 的订阅所绑的本产品号", () => {
+// 独享超卖改造:exclusiveLockedByAccount 已废弃,永远返回空集。
+describe("exclusiveLockedByAccount — 废弃,永远返回空集", () => {
+  it("即使有 exclusive 订阅也不再锁号(返回空集)", () => {
     const configs = [
       { id: "a", line: "bind", exclusive: true, bindings: { anthropic: 7 } },
-      { id: "b", line: "bind", bindings: { anthropic: 8 } }, // 非独享,不锁
-      { id: "c", line: "bind", exclusive: true, bindings: { codex: 7 } }, // 别的产品,不算
-      { id: "d", line: "pool", exclusive: true, bindings: { anthropic: 9 } }, // 号池不占座,不锁
+      { id: "b", line: "bind", bindings: { anthropic: 8 } },
     ];
     const locked = exclusiveLockedByAccount(configs, "anthropic");
-    expect([...locked].sort()).toEqual([7]);
-  });
-
-  it("excludeId 排除自身(resync 不把自己锁住)", () => {
-    const configs = [{ id: "self", line: "bind", exclusive: true, bindings: { anthropic: 7 } }];
-    expect(exclusiveLockedByAccount(configs, "anthropic", "self").has(7)).toBe(false);
+    expect(locked.size).toBe(0);
   });
 });
 

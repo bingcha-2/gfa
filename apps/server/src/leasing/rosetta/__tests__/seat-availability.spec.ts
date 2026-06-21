@@ -174,56 +174,56 @@ describe("选号优先级:立刻能用 → 人数最多 → 回血最快 → id"
   });
 });
 
-// 独享重构:独享请求只落到「干净号」(occupied==0)且永不超卖;被独享锁定的号对所有人不可见;
-// 拼车超卖封顶 = oversellCeiling(占用+本单 ≤ ceiling 才可超卖)。
-describe("独享给干净号 / 拼车封顶超卖", () => {
-  it("独享请求只落干净号(occupied==0),不抢已有占用的号", () => {
+// 独享超卖改造:exclusive 不再享有特权(干净号 / 锁号),走和拼车完全一样的超卖路径。
+// exclusive 只是客户端展示标签,后端座位分配不区分。exclusiveLocked 参数废弃(空集)。
+describe("独享走拼车路径(超卖改造)", () => {
+  it("exclusive 有余量号时正常分到(和拼车一样先填有空的号)", () => {
     writePool("anthropic-accounts.json", [
       { id: 1, refreshToken: "rt", enabled: true, planType: "pro" },
       { id: 4, refreshToken: "rt", enabled: true, planType: "pro" },
     ]);
     svc = new RosettaService({ dataDir: tempDir });
-    // 号1 有人(还有余量)、号4 干净。旧逻辑按「人多」会选号1;独享必须选干净的号4。
     const occupied = new Map([[1, 1], [4, 0]]);
     const counts = new Map([[1, 1], [4, 0]]);
     const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, counts, CAP, { exclusive: true });
-    expect(got).toBe(4);
+    // 和拼车一样:优先「人多」→ 号1(人多且有余量)胜过号4(空号)
+    expect(got).toBe(1);
   });
 
-  it("独享请求无干净号 → null(不超卖、不抢占有人的号)", () => {
-    // 唯一的 pro 号已有人 → 独享拿不到干净号 → null(旧逻辑会超卖塞进去)。
-    const occupied = new Map([[1, 1]]);
+  it("exclusive 无余量号时超卖(和拼车一样,不再返回 null)", () => {
+    const occupied = new Map([[1, CAP]]);
+    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, { exclusive: true });
+    expect(got).toBe(1);
+  });
+
+  it("exclusive 受 oversellCeiling 封顶(和拼车一样)", () => {
     expect(
-      svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, { exclusive: true }),
-    ).toBeNull();
-  });
-
-  it("被独享锁定的号对拼车不可见(locked 排除)", () => {
-    writePool("anthropic-accounts.json", [
-      { id: 1, refreshToken: "rt", enabled: true, planType: "pro" },
-      { id: 4, refreshToken: "rt", enabled: true, planType: "pro" },
-    ]);
-    svc = new RosettaService({ dataDir: tempDir });
-    // 号1 人多(旧逻辑首选)但被独享锁定 → 拼车必须落到号4。
-    const occupied = new Map([[1, 2], [4, 0]]);
-    const counts = new Map([[1, 2], [4, 0]]);
-    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, counts, CAP, {
-      exclusiveLocked: new Set([1]),
-    });
-    expect(got).toBe(4);
-  });
-
-  it("唯一的号被独享锁定 → 拼车 null(不超卖进独享号)", () => {
-    const occupied = new Map([[1, 1]]);
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", new Map([[1, CAP]]), new Map(), CAP, {
+        exclusive: true, oversellCeiling: CAP + 1,
+      }),
+    ).toBe(1);
     expect(
-      svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, {
-        exclusiveLocked: new Set([1]),
+      svc.assignSeatForProductFromShares("anthropic", 1, "pro", new Map([[1, CAP + 1]]), new Map(), CAP, {
+        exclusive: true, oversellCeiling: CAP + 1,
       }),
     ).toBeNull();
   });
 
+  it("exclusive 可以落到已有占用的号(不再要求 occupied==0)", () => {
+    const occupied = new Map([[1, 2]]);
+    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, { exclusive: true });
+    expect(got).toBe(1);
+  });
+
+  it("exclusiveLocked 参数废弃:传了也不过滤(向后兼容但无效果)", () => {
+    const occupied = new Map([[1, 1]]);
+    const got = svc.assignSeatForProductFromShares("anthropic", 1, "pro", occupied, new Map(), CAP, {
+      exclusiveLocked: new Set([1]),
+    });
+    expect(got).toBe(1);
+  });
+
   it("拼车超卖封顶:到达 ceiling 后再超卖被拒(null)", () => {
-    // ceiling=CAP+1:占用 CAP(满)时还能超卖一份 → 落到号1;占用已达 CAP+1 → 超过封顶 → null。
     expect(
       svc.assignSeatForProductFromShares("anthropic", 1, "pro", new Map([[1, CAP]]), new Map(), CAP, {
         oversellCeiling: CAP + 1,

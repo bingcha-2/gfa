@@ -451,15 +451,11 @@ export class AccessKeyService {
     if (!lvl) return null;
     const need = cardWeight({ weight });
     const capacity = normalizeSalesCapacity(salesCapacity);
-    const exclusive = opts.exclusive === true;
-    const exclusiveLocked = opts.exclusiveLocked ?? new Set<number>();
-    // 拼车超卖封顶 = ceil(C × factor),由调用方按 catalog 算好传入;缺省 Infinity = 不封顶(旧行为)。
+    // 独享超卖改造:exclusive 不再享有特权,走和拼车完全一样的路径。exclusiveLocked 废弃。
     const ceiling = Number.isFinite(opts.oversellCeiling as number) ? (opts.oversellCeiling as number) : Infinity;
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
     const candidates = (Array.isArray(pool.accounts) ? pool.accounts : [])
       .filter((a: any) => this.isAccountBindable(product, a, lvl))
-      // 被独享锁定的号已被某人独占,对所有新绑定(含其他独享)一律不可见。
-      .filter((a: any) => !exclusiveLocked.has(Number(a.id)))
       .map((a: any) => {
         const id = Number(a.id);
         const occupied = occupiedShares.get(id) || 0;
@@ -473,29 +469,19 @@ export class AccessKeyService {
           soonestReset: q.soonestReset,
         };
       });
-    // 候选集为空 = 该等级真·无可绑号(等级/停用/配额过滤 + 独享锁定后无人)→ 才拒。
     if (candidates.length === 0) return null;
 
-    // 原优先级:② 立刻能用 → ③ 人数最多 → ④ 回血最快 → ⑤ id 兜底。
     const seatSort = (a: any, b: any) =>
       Number(b.usableNow) - Number(a.usableNow) ||
       b.count - a.count ||
       (a.soonestReset || Infinity) - (b.soonestReset || Infinity) ||
       a.id - b.id;
 
-    // 独享:只落到干净号(occupied==0),永不超卖、绝不抢占有人的号。无干净号 → null。
-    if (exclusive) {
-      const clean = candidates.filter((r: any) => r.occupied === 0);
-      if (clean.length === 0) return null;
-      return clean.sort(seatSort)[0].id;
-    }
-
-    // 拼车 ① 优先没占满(free≥need)—— 先填满再超卖。
+    // ① 优先没占满(free≥need)—— 先填满再超卖。
     const withRoom = candidates.filter((r: any) => r.free >= need);
     if (withRoom.length > 0) return withRoom.sort(seatSort)[0].id;
 
-    // 拼车 ② 超卖(§7/决策7):仅限「占用+本单 ≤ 封顶线」的号,选最闲(free 最大),同闲走原优先级。
-    // 超过封顶线则无可绑号 → null(不再无上限超卖)。
+    // ② 超卖:仅限「占用+本单 ≤ 封顶线」的号,选最闲(free 最大),同闲走原优先级。
     const oversellable = candidates.filter((r: any) => r.occupied + need <= ceiling);
     if (oversellable.length === 0) return null;
     return oversellable.sort((a: any, b: any) => b.free - a.free || seatSort(a, b))[0].id;

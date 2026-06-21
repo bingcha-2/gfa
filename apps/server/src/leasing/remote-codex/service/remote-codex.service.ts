@@ -6,7 +6,6 @@ import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
-import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
 
 type ServiceOptions = {
@@ -54,8 +53,6 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         service.accessKeyStore.getHardBoundCardWeights(accountId, provider.id),
       getSeatCapacity: (accountId: number) =>
         service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
-      isExclusiveAccount: (accountId: number) =>
-        service.accessKeyStore.isExclusiveAccount(accountId, provider.id),
       // Codex 上游有 5h + 周双限额 → 启用周公平份额第二层窗口。
       trackWeekly: true,
       prisma: options.prisma,

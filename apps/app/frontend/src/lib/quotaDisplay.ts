@@ -120,12 +120,23 @@ export function nestedBarDisplay(input: {
   exclusive?: boolean
 }): NestedBarDisplay {
   const exclusive = input.exclusive === true
-  const nominalShare = exclusive
-    ? 1
-    : input.shareCapacity > 0
-      ? clamp01(input.shareSeats / input.shareCapacity)
-      : 1 // 容量缺失守卫:退化成「我=账号封顶」,不除零
   const myKnown = input.myFraction >= 0
+
+  // 独享单层:直接 = myFraction,不按名义份额缩放、不被 accountFraction 封顶、不暴露账号层。
+  if (exclusive) {
+    return {
+      myTotalRemain: myKnown ? clamp01(input.myFraction) : -1,
+      accountRemain: -1,
+      seatFill: input.myFraction,
+      nominalShare: 1,
+      exclusive: true,
+    }
+  }
+
+  // 拼车双层:保留原逻辑(名义份额缩放 + 账号封顶)。
+  const nominalShare = input.shareCapacity > 0
+    ? clamp01(input.shareSeats / input.shareCapacity)
+    : 1
   const acctKnown = input.accountFraction >= 0
   const raw = myKnown ? clamp01(nominalShare * input.myFraction) : -1
   const myTotalRemain = myKnown && acctKnown ? Math.min(raw, input.accountFraction) : raw
@@ -134,7 +145,7 @@ export function nestedBarDisplay(input: {
     accountRemain: input.accountFraction,
     seatFill: input.myFraction,
     nominalShare,
-    exclusive,
+    exclusive: false,
   }
 }
 

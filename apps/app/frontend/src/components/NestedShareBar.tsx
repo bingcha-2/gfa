@@ -79,8 +79,14 @@ export function NestedShareBar({ label, myFraction, accountFraction, shareSeats,
       </div>
 
       <div className="flex justify-between text-[10px] text-[var(--text-muted)]">
-        <span>我的总剩余 {myKnown ? `${formatPercent(displayMyTotalRemain)}%（占总帐号份额）` : '未知'}</span>
-        <span>账号总剩余 {acctKnown ? `${formatPercent(d.accountRemain)}%` : '未知'}</span>
+        {d.exclusive ? (
+          <span>剩余 {myKnown ? `${formatPercent(displayMyTotalRemain)}%` : '未知'}</span>
+        ) : (
+          <>
+            <span>我的总剩余 {myKnown ? `${formatPercent(displayMyTotalRemain)}%（占总帐号份额）` : '未知'}</span>
+            <span>账号总剩余 {acctKnown ? `${formatPercent(d.accountRemain)}%` : '未知'}</span>
+          </>
+        )}
       </div>
     </div>
   )

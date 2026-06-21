@@ -306,10 +306,15 @@ describe('nestedBarDisplay (客户端遮超卖:8人车口径 + 账号封顶)', (
     expect(d.myTotalRemain).toBeLessThanOrEqual(d.accountRemain + 1e-9)
   })
 
-  it('N5 独享卡:名义份额=1,我的总剩余 = min(myFraction, 账号)', () => {
-    const d = nestedBarDisplay({ myFraction: 0.3, accountFraction: 0.5, shareSeats: 8, shareCapacity: 8, exclusive: true })
-    expect(d.nominalShare).toBeCloseTo(1, 6)
-    expect(d.myTotalRemain).toBeCloseTo(0.3, 6)
+  it('N5 独享卡(单层):myTotalRemain = myFraction(不看 accountFraction,不按名义份额缩放)', () => {
+    const d = nestedBarDisplay({ myFraction: 0.3, accountFraction: 0.05, shareSeats: 8, shareCapacity: 8, exclusive: true })
+    expect(d.myTotalRemain).toBeCloseTo(0.3, 6) // 直接 = myFraction,不被 accountFraction=0.05 封顶
+    expect(d.accountRemain).toBe(-1) // 独享不暴露账号层
+  })
+
+  it('N5b 独享卡:accountFraction 更低也不影响 myTotalRemain', () => {
+    const d = nestedBarDisplay({ myFraction: 0.8, accountFraction: 0.1, shareSeats: 1, shareCapacity: 8, exclusive: true })
+    expect(d.myTotalRemain).toBeCloseTo(0.8, 6) // 拼车会被封顶到 0.1,独享不会
   })
 
   it('N6 我的份额未知(-1)→ 我的总剩余未知', () => {

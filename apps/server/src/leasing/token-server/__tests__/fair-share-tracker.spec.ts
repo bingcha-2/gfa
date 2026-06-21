@@ -82,7 +82,6 @@ function makeTracker(cfg: {
     },
     getBoundCardWeights: (accountId: number) => cfg.bound[accountId] || [],
     getSeatCapacity: (accountId: number) => cfg.seats?.[accountId] ?? 8,
-    isExclusiveAccount: (accountId: number) => cfg.exclusiveAccounts?.has(accountId) ?? false,
     trackWeekly: cfg.trackWeekly,
     prisma: cfg.prisma,
     provider: "codex",
@@ -128,56 +127,56 @@ function totalAttributed(t: FairShareTracker, acc: number, bucket = BK): number 
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 独享号:D=Σw(忽略 N 保底),独享主人吃满账号 100% → e=1.0
+// 独享超卖改造:exclusive 不再特殊化,D 统一 = max(N, Σw)
 // ────────────────────────────────────────────────────────────────────────────
-describe("独享号 e=1.0", () => {
-  it("独享单主 weight=4、N=10 → D=Σw=4(不被 N=10 稀释成 0.4)", () => {
+describe("独享走拼车路径(超卖改造)", () => {
+  it("原独享号 weight=4、N=10 → D=max(10,4)=10(和非独享一样,不再特判 D=Σw)", () => {
     const t = track(makeTracker({
       now: () => T,
       bound: { 1: [{ cardId: "EX", weight: 4 }] },
       seats: { 1: 10 },
       exclusiveAccounts: new Set([1]),
     }));
-    t.applyAccountQuotaSnapshot(1, BK, 1.0); // 锁定 participants={EX}
-    expect(t.getBucketStateForTesting(1, BK)?.D).toBe(4); // D=Σw,不是 max(10,4)=10
-    // e=w/D=4/4=1.0 → 独享主人能吃到账号 100%:烧到 99% 仍放行。
-    use(t, 1, "EX", 1000);
-    t.applyAccountQuotaSnapshot(1, BK, 0.01);
-    expect(t.checkFairShare(1, "EX", BK).allowed).toBe(true);
-  });
-
-  it("非独享对照:同样 weight=4、N=10 → D=max(10,4)=10(e=0.4)", () => {
-    const t = track(makeTracker({
-      now: () => T,
-      bound: { 1: [{ cardId: "C", weight: 4 }] },
-      seats: { 1: 10 },
-    }));
     t.applyAccountQuotaSnapshot(1, BK, 1.0);
     expect(t.getBucketStateForTesting(1, BK)?.D).toBe(10);
   });
+
+  it("原独享号不再吃满 100%:e=4/10=0.4,烧到 99% 时被拦", () => {
+    const t = track(makeTracker({
+      now: () => T,
+      bound: { 1: [{ cardId: "EX", weight: 4 }] },
+      seats: { 1: 10 },
+      exclusiveAccounts: new Set([1]),
+    }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    use(t, 1, "EX", 1000);
+    t.applyAccountQuotaSnapshot(1, BK, 0.01);
+    // e=0.4 → 本人份额 40%,烧到号剩 1% 时已远超自己那 40% → 被拦
+    expect(t.checkFairShare(1, "EX", BK).allowed).toBe(false);
+  });
 });
 
-// 双层血条几何:getCardQuotaFractions 每桶带 share=e_i(我的份额占整号比例)。
-describe("share 字段(e_i,供客户端双层血条)", () => {
+// share 字段(e_i,供客户端血条)
+describe("share 字段(e_i,供客户端血条)", () => {
   it("双主平权(N=2)→ 每人 share=0.5", () => {
     const t = track(makeTracker({
       now: () => T,
       bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] },
       seats: { 1: 2 },
     }));
-    t.applyAccountQuotaSnapshot(1, BK, 1.0); // D=2,e=0.5
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
     expect(t.getCardQuotaFractions(1, "O1")[BK].share).toBeCloseTo(0.5, 6);
   });
 
-  it("独享单主 → share=1.0(独占整号)", () => {
+  it("原独享单主 weight=4、N=10 → share=0.4(不再是 1.0)", () => {
     const t = track(makeTracker({
       now: () => T,
       bound: { 1: [{ cardId: "EX", weight: 4 }] },
       seats: { 1: 10 },
       exclusiveAccounts: new Set([1]),
     }));
-    t.applyAccountQuotaSnapshot(1, BK, 1.0); // D=Σw=4,e=1.0
-    expect(t.getCardQuotaFractions(1, "EX")[BK].share).toBeCloseTo(1.0, 6);
+    t.applyAccountQuotaSnapshot(1, BK, 1.0);
+    expect(t.getCardQuotaFractions(1, "EX")[BK].share).toBeCloseTo(0.4, 6);
   });
 });
 

@@ -27,7 +27,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
 import { oversellFactor } from "../plan-catalog/unified-entitlement";
 import type { CatalogConfig } from "../plan-catalog/pricing";
-import { boundSeatsByAccount, exclusiveLockedByAccount, isExclusive, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
+import { boundSeatsByAccount, isExclusive, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
@@ -119,19 +119,15 @@ export class EntitlementSyncService {
             );
             continue;
           }
-          const { shares, counts, exclusiveLocked } = await this.seatOccupancyFromDb(product, sub.id);
+          const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
           const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
-          // 独享请求只落干净号、永不超卖;拼车排除被独享锁定的号,且超卖封顶 = ceil(C × factor)。
           const accountId = this.rosetta.assignSeatForProductFromShares(
             product, weight, level, shares, counts, salesCapacity,
-            { exclusive, exclusiveLocked, oversellCeiling: Math.ceil(salesCapacity * factor) },
+            { exclusive, oversellCeiling: Math.ceil(salesCapacity * factor) },
           );
           if (!accountId) {
-            const why = exclusive
-              ? "独享需要一个干净号(无人占用),当前该等级无干净号"
-              : "等级不匹配 / 停用 / 配额耗尽 / 仅剩独享锁定号";
             this.logger.error(
-              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} exclusive=${exclusive} — no eligible account (${why});leaving it UNBOUND`,
+              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} exclusive=${exclusive} — no eligible account (等级不匹配 / 停用 / 配额耗尽);leaving it UNBOUND`,
             );
             continue;
           }
@@ -240,7 +236,7 @@ export class EntitlementSyncService {
   private async seatOccupancyFromDb(
     product: string,
     excludeId: string,
-  ): Promise<{ shares: Map<number, number>; counts: Map<number, number>; exclusiveLocked: Set<number> }> {
+  ): Promise<{ shares: Map<number, number>; counts: Map<number, number> }> {
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
       // config 空(卡迁移订阅)时要从 legacy 列回退,否则漏数其占用 → 选号超分。
@@ -254,7 +250,6 @@ export class EntitlementSyncService {
     return {
       shares: occupiedSharesByAccount(configs, product, excludeId),
       counts: boundSeatsByAccount(configs, product, excludeId),
-      exclusiveLocked: exclusiveLockedByAccount(configs, product, excludeId),
     };
   }
 

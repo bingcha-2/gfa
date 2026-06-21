@@ -6,7 +6,6 @@ import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { ClaudeAccount } from "../auth/claude-token-provider";
 import { ClaudeProvider } from "../claude.provider";
-import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
 
 type ServiceOptions = {
@@ -55,8 +54,6 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
         service.accessKeyStore.getHardBoundCardWeights(accountId, provider.id),
       getSeatCapacity: (accountId: number) =>
         service.accessKeyStore.getSeatCapacityFor(accountId, provider.id),
-      isExclusiveAccount: (accountId: number) =>
-        service.accessKeyStore.isExclusiveAccount(accountId, provider.id),
       // Claude 上游有 5h + 周双限额 → 启用周公平份额第二层窗口。
       trackWeekly: true,
       prisma: options.prisma,

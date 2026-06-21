@@ -597,18 +597,6 @@ export class AccessKeyStore {
   }
 
   /**
-   * 该号是否被独享订阅独占(有任一硬绑主人 record.exclusive === true)。
-   * fair-share 据此把 D 取作 Σw(忽略 N 保底)→ 独享主人 e=1.0,独占整号额度。
-   */
-  isExclusiveAccount(accountId: number, providerId: string): boolean {
-    for (const r of this.getRecordsBoundTo(accountId, providerId)) {
-      if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
-      if ((r as any).exclusive === true) return true;
-    }
-    return false;
-  }
-
-  /**
    * fair-share 保底席位数 N:取该号硬绑主人 config 里的 salesSeatCapacity[product](拼车销售容量,
    * 目录默认 10);无则回退 ACCOUNT_SHARE_CAPACITY。N 只影响欠卖时的保底/预留(D=max(N,Σw))。
    */
