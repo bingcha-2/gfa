@@ -690,6 +690,59 @@ func TestHeartbeat_Success_PersistsSubscription(t *testing.T) {
 	}
 }
 
+func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-quota")
+
+	resp := map[string]interface{}{
+		"ok": true,
+		"subscriptions": []interface{}{map[string]interface{}{
+			"id":       "sub-anthropic",
+			"status":   "ACTIVE",
+			"priority": 1,
+			"products": []interface{}{"anthropic"},
+			"productQuota": map[string]interface{}{
+				"anthropic": map[string]interface{}{
+					"hourlyPercent":    95.0,
+					"weeklyPercent":    93.0,
+					"hourlyResetAt":    "2026-06-21T10:00:00Z",
+					"weeklyResetAt":    "2026-06-23T10:00:00Z",
+					"myHourlyFraction": 0.55,
+					"myWeeklyFraction": 0.77,
+					"myShare":          0.25,
+				},
+			},
+		}},
+	}
+	srv := newHeartbeatServer(t, resp, http.StatusOK)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.HeartbeatCheck(); err != nil {
+		t.Fatalf("HeartbeatCheck: %v", err)
+	}
+
+	cfg := LoadConfig()
+	if len(cfg.Subscriptions) != 1 {
+		t.Fatalf("Subscriptions length = %d, want 1", len(cfg.Subscriptions))
+	}
+	q := cfg.Subscriptions[0].ProductQuota["anthropic"]
+	if q.MyHourlyFraction == nil || *q.MyHourlyFraction != 0.55 {
+		t.Fatalf("MyHourlyFraction = %v, want 0.55", q.MyHourlyFraction)
+	}
+	if q.MyWeeklyFraction == nil || *q.MyWeeklyFraction != 0.77 {
+		t.Fatalf("MyWeeklyFraction = %v, want 0.77", q.MyWeeklyFraction)
+	}
+	if q.MyShare == nil || *q.MyShare != 0.25 {
+		t.Fatalf("MyShare = %v, want 0.25", q.MyShare)
+	}
+}
+
 // ── TestGetAccountState ───────────────────────────────────────────────────────
 
 func TestGetAccountState(t *testing.T) {

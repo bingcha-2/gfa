@@ -48,11 +48,11 @@ type loginResponse struct {
 	} `json:"subscription"`
 	// Subscriptions 是全部生效订阅(服务端按 priority 升序),驱动客户端多订阅展示。
 	Subscriptions []struct {
-		Id             string            `json:"id"`
-		Status         string            `json:"status"`
-		ExpiresAt      string            `json:"expiresAt"`
-		DeviceLimit    int               `json:"deviceLimit"`
-		Priority       int               `json:"priority"`
+		Id             string                        `json:"id"`
+		Status         string                        `json:"status"`
+		ExpiresAt      string                        `json:"expiresAt"`
+		DeviceLimit    int                           `json:"deviceLimit"`
+		Priority       int                           `json:"priority"`
 		Products       []string                      `json:"products"`
 		Levels         map[string]string             `json:"levels"`
 		RemainFraction *float64                      `json:"remainFraction"`
@@ -513,6 +513,18 @@ func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow
 		}
 		if s, ok := m["weeklyResetAt"].(string); ok {
 			w.WeeklyResetAt = s
+		}
+		if f, ok := m["myHourlyFraction"].(float64); ok {
+			ff := f
+			w.MyHourlyFraction = &ff
+		}
+		if f, ok := m["myWeeklyFraction"].(float64); ok {
+			ff := f
+			w.MyWeeklyFraction = &ff
+		}
+		if f, ok := m["myShare"].(float64); ok {
+			ff := f
+			w.MyShare = &ff
 		}
 		out[product] = w
 	}
