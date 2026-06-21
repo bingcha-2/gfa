@@ -203,6 +203,94 @@ describe("BillingService.createCatalogOrder", () => {
     expect(cfg.weeklyBucketLimits).toBeUndefined();
   });
 
+  it("enriches antigravity bind orders as display-bound pool with weighted token buckets", async () => {
+    catalog.getPublished.mockResolvedValueOnce({
+      version: 9,
+      config: {
+        ...CATALOG_CONFIG,
+        products: ["antigravity"],
+        levels: { antigravity: ["ultra"] },
+        pricing: {
+          pool: { product: { antigravity: 3900 }, usage: { small: 0 }, devicePerExtra: 900 },
+          bind: {
+            levelPrice: { antigravity: { ultra: 19900 } },
+            share: { "1": 0, "2": 0, "4": 0, "8": 0 },
+            devicePerExtra: 900,
+          },
+        },
+      },
+    });
+    const selection = {
+      line: "bind",
+      items: [{ product: "antigravity", level: "ultra" }],
+      shareSeats: 1,
+      deviceLimit: 1,
+    };
+
+    await service.createCatalogOrder("cust-1", selection as any, "WXPAY");
+
+    const cfg = JSON.parse(prisma.planOrder.create.mock.calls[0][0].data.config);
+    expect(cfg).toMatchObject({
+      line: "bind",
+      products: ["antigravity"],
+      levels: { antigravity: "ultra" },
+      shareSeats: 1,
+      shareCapacity: 8,
+      weight: 1,
+      salesSeatCapacity: { antigravity: 10 },
+      assignmentPolicy: "display-bound-pool",
+      bucketLimits: {
+        "antigravity-gemini": 12_500_000,
+        "antigravity-claude": 1_500_000,
+      },
+      weeklyBucketLimits: {
+        "antigravity-gemini": 50_000_000,
+        "antigravity-claude": 5_000_000,
+      },
+    });
+  });
+
+  it("keeps mixed bind orders pinned so codex or anthropic are not moved onto antigravity's pool policy", async () => {
+    catalog.getPublished.mockResolvedValueOnce({
+      version: 10,
+      config: {
+        ...CATALOG_CONFIG,
+        products: ["antigravity", "codex"],
+        levels: { antigravity: ["ultra"], codex: ["pro"] },
+        pricing: {
+          pool: { product: { antigravity: 3900, codex: 3900 }, usage: { small: 0 }, devicePerExtra: 900 },
+          bind: {
+            levelPrice: { antigravity: { ultra: 19900 }, codex: { pro: 19900 } },
+            share: { "1": 0, "2": 0, "4": 0, "8": 0 },
+            devicePerExtra: 900,
+          },
+        },
+      },
+    });
+    const selection = {
+      line: "bind",
+      items: [
+        { product: "antigravity", level: "ultra" },
+        { product: "codex", level: "pro" },
+      ],
+      shareSeats: 1,
+      deviceLimit: 1,
+    };
+
+    await service.createCatalogOrder("cust-1", selection as any, "WXPAY");
+
+    const cfg = JSON.parse(prisma.planOrder.create.mock.calls[0][0].data.config);
+    expect(cfg).toMatchObject({
+      line: "bind",
+      products: ["antigravity", "codex"],
+      levels: { antigravity: "ultra", codex: "pro" },
+      salesSeatCapacity: { antigravity: 10, codex: 10 },
+      assignmentPolicy: "pinned",
+    });
+    expect(cfg.bucketLimits).toBeUndefined();
+    expect(cfg.weeklyBucketLimits).toBeUndefined();
+  });
+
   it("没有 PUBLISHED catalog → BadRequest(目录未发布,不能下单)", async () => {
     catalog.getPublished.mockResolvedValue(null);
     await expect(

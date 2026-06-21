@@ -1,7 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, KeyRoundIcon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  ActivityIcon,
+  BadgeCheckIcon,
+  BotIcon,
+  CheckCircleIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  GaugeIcon,
+  GitMergeIcon,
+  KeyRoundIcon,
+  LogInIcon,
+  MailIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 import { consoleApiPath } from "@/lib/console/client-api";
@@ -45,6 +60,36 @@ type ClaudeAccount = {
   quotaStatusReason?: string;
 };
 
+type PrechargeStatus =
+  | "NEW"
+  | "ORG_READY"
+  | "AWAITING_TOPUP"
+  | "TOPUP_DONE"
+  | "OAUTH_STARTED"
+  | "MOVED_TO_POOL"
+  | "NEEDS_RELOGIN"
+  | "PROBE_FAILED";
+
+type ClaudePrechargeAccount = {
+  id: number;
+  email: string;
+  proxyUrl: string;
+  adspowerProfileId: string;
+  orgId: string;
+  orgName: string;
+  capabilities: string[];
+  rateLimitTier: string;
+  billingType: string;
+  status: PrechargeStatus;
+  hasMailPassword: boolean;
+  hasSessionKey: boolean;
+  lastProbeAt: string;
+  lastError: string;
+  activateTaskId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
 }
@@ -72,6 +117,29 @@ function refreshAgo(ms: number): string {
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分前`;
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 时前`;
   return `${Math.floor(diff / 86400_000)} 天前`;
+}
+
+const prechargeStatusLabel: Record<PrechargeStatus, string> = {
+  NEW: "待取 ID",
+  ORG_READY: "已取 ID",
+  AWAITING_TOPUP: "待充值",
+  TOPUP_DONE: "已充值",
+  OAUTH_STARTED: "上号中",
+  MOVED_TO_POOL: "已入池",
+  NEEDS_RELOGIN: "需重登",
+  PROBE_FAILED: "探活失败",
+};
+
+function prechargeStatusVariant(status: PrechargeStatus): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "ORG_READY" || status === "TOPUP_DONE" || status === "OAUTH_STARTED" || status === "MOVED_TO_POOL") return "default";
+  if (status === "NEEDS_RELOGIN" || status === "PROBE_FAILED") return "destructive";
+  return status === "AWAITING_TOPUP" ? "secondary" : "outline";
+}
+
+function formatDateTime(value: string) {
+  if (!value) return "—";
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : value;
 }
 
 export default function ClaudeAccountsPage() {
@@ -125,6 +193,14 @@ export default function ClaudeAccountsPage() {
   const [autoPhase, setAutoPhase] = useState("");
   const [autoResult, setAutoResult] = useState<{ ok: boolean; email?: string; error?: string; phase?: string } | null>(null);
 
+  const [prechargeAccounts, setPrechargeAccounts] = useState<ClaudePrechargeAccount[]>([]);
+  const [prechargeLoading, setPrechargeLoading] = useState(false);
+  const [prechargeLines, setPrechargeLines] = useState("");
+  const [prechargeProxyUrl, setPrechargeProxyUrl] = useState("");
+  const [prechargeProfileId, setPrechargeProfileId] = useState("k1bvbavq");
+  const [prechargeImporting, setPrechargeImporting] = useState(false);
+  const [prechargeBusyId, setPrechargeBusyId] = useState<number | null>(null);
+
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
@@ -139,13 +215,84 @@ export default function ClaudeAccountsPage() {
     }
   }, []);
 
+  const fetchPrechargeAccounts = useCallback(async (silent = false) => {
+    if (!silent) setPrechargeLoading(true);
+    try {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-precharge-accounts"), { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setPrechargeAccounts(Array.isArray(data.accounts) ? data.accounts : []);
+    } catch (error) {
+      if (!silent) toast.error(`预充值池获取失败: ${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      if (!silent) setPrechargeLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await fetchAccounts(true);
+      await Promise.all([fetchAccounts(true), fetchPrechargeAccounts(true)]);
       setLoading(false);
     })();
-  }, [fetchAccounts]);
+  }, [fetchAccounts, fetchPrechargeAccounts]);
+
+  async function postPrecharge(path: string, body: Record<string, unknown>) {
+    const res = await fetch(consoleApiPath(`rosetta/${path}`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  async function handlePrechargeImport() {
+    if (!prechargeLines.trim()) {
+      toast.error("请粘贴预充值账号行");
+      return;
+    }
+    setPrechargeImporting(true);
+    try {
+      const data = await postPrecharge("anthropic-precharge-import", {
+        lines: prechargeLines,
+        proxyUrl: prechargeProxyUrl.trim(),
+        adspowerProfileId: prechargeProfileId.trim(),
+      });
+      toast.success(`预充值池导入 ${data.success}/${data.total}`);
+      setPrechargeLines("");
+      fetchPrechargeAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导入失败");
+    } finally {
+      setPrechargeImporting(false);
+    }
+  }
+
+  async function runPrechargeAction(account: ClaudePrechargeAccount, path: string, successText: string, refreshPool = false) {
+    setPrechargeBusyId(account.id);
+    try {
+      const data = await postPrecharge(path, { accountId: account.id });
+      toast.success(successText.replace("{email}", data.email || account.email));
+      await fetchPrechargeAccounts(true);
+      if (refreshPool) await fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "操作失败");
+      fetchPrechargeAccounts(true);
+    } finally {
+      setPrechargeBusyId(null);
+    }
+  }
+
+  async function handleCopyOrgId(account: ClaudePrechargeAccount) {
+    if (!account.orgId) {
+      toast.error("该账号还没有组织 ID");
+      return;
+    }
+    await navigator.clipboard.writeText(account.orgId);
+    toast.success("组织 ID 已复制");
+  }
 
   async function handleAdd() {
     if (!email.trim() || !refreshToken.trim()) {
@@ -723,12 +870,204 @@ export default function ClaudeAccountsPage() {
             {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
             OAuth 登录
           </Button>
-          <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              fetchAccounts();
+              fetchPrechargeAccounts(true);
+            }}
+            disabled={refreshing}
+          >
             {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
             刷新
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ActivityIcon className="size-4" /> 预充值号池
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={() => fetchPrechargeAccounts()} disabled={prechargeLoading}>
+            {prechargeLoading ? <Spinner size={14} /> : <RefreshCwIcon className="size-3.5" />}
+            刷新预充值池
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 lg:grid-cols-[minmax(320px,1fr)_minmax(220px,320px)_180px_auto] lg:items-end">
+            <Field>
+              <FieldLabel>预充值账号行</FieldLabel>
+              <Textarea
+                rows={3}
+                placeholder="email----password----sk-ant-sid02-可选"
+                value={prechargeLines}
+                onChange={(e) => setPrechargeLines(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>固定代理</FieldLabel>
+              <Input
+                placeholder="host:port:user:pass"
+                value={prechargeProxyUrl}
+                onChange={(e) => setPrechargeProxyUrl(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>AdsPower Profile</FieldLabel>
+              <Input
+                placeholder="k1bvbavq"
+                value={prechargeProfileId}
+                onChange={(e) => setPrechargeProfileId(e.target.value)}
+              />
+            </Field>
+            <Button onClick={handlePrechargeImport} disabled={prechargeImporting}>
+              {prechargeImporting ? <Spinner size={14} /> : <PlusIcon className="size-4" />}
+              导入预充值
+            </Button>
+          </div>
+
+          {!prechargeAccounts.length ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">暂无预充值账号</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>#</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>组织 ID</TableHead>
+                    <TableHead>网页登录态</TableHead>
+                    <TableHead>代理 / Profile</TableHead>
+                    <TableHead>最近探活</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {prechargeAccounts.map((account) => {
+                    const busy = prechargeBusyId === account.id;
+                    return (
+                      <TableRow key={account.id}>
+                        <TableCell className="font-medium">#{account.id}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{account.email}</div>
+                          {account.lastError ? <div className="max-w-[260px] truncate text-xs text-destructive" title={account.lastError}>{account.lastError}</div> : null}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={prechargeStatusVariant(account.status)}>
+                            {prechargeStatusLabel[account.status] || account.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {account.orgId ? (
+                            <button
+                              type="button"
+                              className="max-w-[220px] truncate font-mono text-xs underline-offset-2 hover:underline"
+                              title={account.orgId}
+                              onClick={() => handleCopyOrgId(account)}
+                            >
+                              {account.orgId}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">未获取</span>
+                          )}
+                          {account.orgName ? <div className="text-xs text-muted-foreground">{account.orgName}</div> : null}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            <Badge variant={account.hasMailPassword ? "secondary" : "outline"}>邮箱{account.hasMailPassword ? "有" : "无"}</Badge>
+                            <Badge variant={account.hasSessionKey ? "secondary" : "outline"}>SK{account.hasSessionKey ? "有" : "无"}</Badge>
+                          </div>
+                          {account.rateLimitTier || account.billingType ? (
+                            <div className="mt-1 max-w-[220px] truncate text-xs text-muted-foreground">
+                              {[account.rateLimitTier, account.billingType].filter(Boolean).join(" / ")}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <div className="max-w-[260px] truncate text-xs text-muted-foreground" title={account.proxyUrl}>{account.proxyUrl || "未配置代理"}</div>
+                          <div className="text-xs text-muted-foreground">Profile: {account.adspowerProfileId || "未配置"}</div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDateTime(account.lastProbeAt)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="邮箱登录探活并获取组织 ID"
+                              disabled={busy}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-login-probe", "{email} 已获取组织 ID")}
+                            >
+                              {busy ? <Spinner size={14} /> : <ActivityIcon className="size-4" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="SK 快速探活"
+                              disabled={busy || !account.hasSessionKey}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-quick-probe", "{email} 探活成功")}
+                            >
+                              <GaugeIcon className="size-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="复制组织 ID"
+                              disabled={!account.orgId}
+                              onClick={() => handleCopyOrgId(account)}
+                            >
+                              <CopyIcon className="size-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="标记已充值"
+                              disabled={busy}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-mark-topup", "{email} 已标记充值")}
+                            >
+                              <CheckCircleIcon className="size-4 text-green-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="邮箱密码优先一键上号"
+                              disabled={busy || !account.hasMailPassword}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-activate", "{email} 已开始上号", true)}
+                            >
+                              <LogInIcon className="size-4 text-blue-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="SK 兜底上号"
+                              disabled={busy || !account.hasSessionKey}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-activate-sk", "{email} 已开始 SK 兜底上号", true)}
+                            >
+                              <KeyRoundIcon className="size-4 text-amber-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="删除预充值账号"
+                              disabled={busy}
+                              onClick={() => runPrechargeAction(account, "anthropic-precharge-delete", "{email} 已删除")}
+                            >
+                              <Trash2Icon className="size-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

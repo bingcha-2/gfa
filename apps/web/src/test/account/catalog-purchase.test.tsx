@@ -98,16 +98,16 @@ describe("CatalogPurchase unified bind line", () => {
     expect(checkoutBtn()).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
-    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥9");
+    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥12.37");
 
     fireEvent.click(screen.getByRole("radio", { name: "Max 20x" }));
-    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥209");
+    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥37.37");
 
     fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));
-    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥229");
+    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥34.75");
 
     fireEvent.click(screen.getByRole("button", { name: "增加" }));
-    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥238");
+    expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥43.75");
     expect(checkoutBtn()).toBeEnabled();
   });
 

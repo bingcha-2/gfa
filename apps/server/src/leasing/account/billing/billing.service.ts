@@ -20,7 +20,7 @@ import {
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
-import { salesSeatCapacityFor } from "../../plan-catalog/unified-entitlement";
+import { buildFixedEntitlements, salesSeatCapacityFor } from "../../plan-catalog/unified-entitlement";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight, type SubConfig } from "../../subscription/seat";
 import { rowToConfig } from "../../subscription/subscription-config";
@@ -255,12 +255,23 @@ export class BillingService {
         salesSeatCapacityFor(catalog, product, String(levels[product] || ""), shareCapacity),
       ]),
     );
+    const antigravityOnly = products.length === 1 && products[0] === "antigravity";
+    const staticEntitlements = antigravityOnly
+      ? buildFixedEntitlements(catalog, {
+          products,
+          shareSeats: Number(config.shareSeats || config.weight || 1),
+          shareCapacity,
+        })
+      : {};
 
-    // 绑定卡额度由 fair-share 治理(硬绑 pinned),不再下发静态 bucketLimits/weeklyBucketLimits。
+    // Codex/Anthropic bind lines stay pinned and fair-share governed.
+    // Antigravity is display-bound only: static token buckets govern
+    // customer quota while runtime supply rotates through pro/premium accounts.
     return {
       ...config,
       salesSeatCapacity,
-      assignmentPolicy: "pinned",
+      ...staticEntitlements,
+      assignmentPolicy: antigravityOnly ? "display-bound-pool" : "pinned",
     };
   }
 

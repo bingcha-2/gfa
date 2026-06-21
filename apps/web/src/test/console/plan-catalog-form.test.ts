@@ -188,6 +188,48 @@ describe("formToConfig — 组装 + ×100", () => {
     ).toBe(12);
   });
 
+  it("round-trip converts editable fixed antigravity quota numbers through string inputs", () => {
+    const form = configToForm({
+      ...CATALOG,
+      supplyPolicies: {
+        antigravity: {
+          defaultLevel: "ultra",
+          salesSeatsPerAccount: { ultra: 8 },
+          buckets: {
+            "antigravity-gemini": {
+              source: "fixed",
+              window5h: 100_000_000,
+              weekly: 400_000_000,
+            },
+            "antigravity-claude": {
+              source: "fixed",
+              window5h: 12_000_000,
+              weekly: 40_000_000,
+            },
+          },
+        },
+      },
+    } as any);
+
+    const antigravity = form.supplyPolicies!.antigravity;
+    expect((antigravity.buckets["antigravity-gemini"] as any).window5h).toBe("100000000");
+    expect((antigravity.buckets["antigravity-gemini"] as any).weekly).toBe("400000000");
+
+    antigravity.buckets["antigravity-gemini"] = {
+      source: "fixed",
+      window5h: "125000000",
+      weekly: "450000000",
+    } as any;
+
+    const config = formToConfig(form as any);
+
+    expect(config.supplyPolicies!.antigravity.buckets["antigravity-gemini"]).toEqual({
+      source: "fixed",
+      window5h: 125_000_000,
+      weekly: 450_000_000,
+    });
+  });
+
   it("组装产物可直接喂 computePurchase,价格与原 catalog 一致", () => {
     const back = formToConfig(configToForm(CATALOG));
 

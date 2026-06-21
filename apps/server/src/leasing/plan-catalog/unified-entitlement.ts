@@ -1,10 +1,28 @@
-// 供给策略:目前只承载「每号销售席位容量」(salesSeatsPerAccount)。
-// 历史的 per-bucket 额度(QuotaSource: fixed/learned → bucketLimits/weeklyBucketLimits)已删除
-// —— 绑定卡额度统一由 fair-share 治理(见 QUOTA-REDESIGN.md),不再下发静态 entitlements。
+// Supply policies describe per-account sales capacity.
+// Codex/Anthropic bind quotas stay fair-share governed.
+// Antigravity bind quotas can additionally publish fixed token buckets.
 
 export interface SupplyPolicy {
   defaultLevel: string;
   salesSeatsPerAccount: Record<string, number>;
+  buckets?: Record<string, unknown>;
+}
+
+export interface FixedQuotaSource {
+  source: "fixed";
+  window5h: number;
+  weekly: number;
+}
+
+export interface EntitlementInput {
+  products: string[];
+  shareSeats: number;
+  shareCapacity: number;
+}
+
+export interface BucketEntitlements {
+  bucketLimits?: Record<string, number>;
+  weeklyBucketLimits?: Record<string, number>;
 }
 
 export interface SupplyPolicyCatalog {
@@ -43,7 +61,14 @@ export function defaultSupplyPolicies(): Record<string, SupplyPolicy> {
   return {
     anthropic: { defaultLevel: "max-20x", salesSeatsPerAccount: { "max-20x": 10 } },
     codex: { defaultLevel: "pro", salesSeatsPerAccount: { pro: 10 } },
-    antigravity: { defaultLevel: "ultra", salesSeatsPerAccount: { ultra: 10 } },
+    antigravity: {
+      defaultLevel: "ultra",
+      salesSeatsPerAccount: { ultra: 10 },
+      buckets: {
+        "antigravity-gemini": { source: "fixed", window5h: 100_000_000, weekly: 400_000_000 },
+        "antigravity-claude": { source: "fixed", window5h: 12_000_000, weekly: 40_000_000 },
+      },
+    },
   };
 }
 
@@ -62,10 +87,49 @@ export function mergeSupplyPolicies(catalog: SupplyPolicyCatalog): Record<string
         ...(base?.salesSeatsPerAccount ?? {}),
         ...(override.salesSeatsPerAccount ?? {}),
       },
+      buckets: mergeBucketSources(base?.buckets, override.buckets),
     };
   }
 
   return merged;
+}
+
+export function buildFixedEntitlements(
+  catalog: SupplyPolicyCatalog,
+  input: EntitlementInput,
+): BucketEntitlements {
+  const ratio = entitlementRatio(input);
+  const policies = mergeSupplyPolicies(catalog);
+  const bucketLimits: Record<string, number> = {};
+  const weeklyBucketLimits: Record<string, number> = {};
+
+  for (const product of input.products) {
+    const policy = policies[product];
+    if (!policy?.buckets) continue;
+    for (const [bucket, source] of Object.entries(policy.buckets)) {
+      if (!isFixedQuotaSource(source)) continue;
+      writePositive(bucketLimits, bucket, Math.floor(source.window5h * ratio));
+      writePositive(weeklyBucketLimits, bucket, Math.floor(source.weekly * ratio));
+    }
+  }
+
+  return {
+    ...(Object.keys(bucketLimits).length > 0 ? { bucketLimits } : {}),
+    ...(Object.keys(weeklyBucketLimits).length > 0 ? { weeklyBucketLimits } : {}),
+  };
+}
+
+export function entitlementRatio(input: Pick<EntitlementInput, "shareSeats" | "shareCapacity">): number {
+  const shareSeats = Math.max(1, Math.floor(Number(input.shareSeats) || 1));
+  const shareCapacity = Math.max(1, Math.floor(Number(input.shareCapacity) || 1));
+  return Math.min(1, shareSeats / shareCapacity);
+}
+
+export function writePositive(target: Record<string, number>, key: string, value: number): void {
+  const normalized = Math.floor(Number(value));
+  if (key && Number.isFinite(normalized) && normalized > 0) {
+    target[key] = normalized;
+  }
 }
 
 export function salesSeatCapacityFor(
@@ -87,4 +151,28 @@ export function salesSeatCapacityFor(
 function positiveInteger(value: unknown): number | null {
   const normalized = Math.floor(Number(value));
   return Number.isFinite(normalized) && normalized > 0 ? normalized : null;
+}
+
+function mergeBucketSources(
+  base: Record<string, unknown> | undefined,
+  override: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown> = { ...(base ?? {}) };
+  for (const [bucket, source] of Object.entries(override ?? {})) {
+    const current = merged[bucket];
+    if (isFixedQuotaSource(source) || !isFixedQuotaSource(current)) {
+      merged[bucket] = source;
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function isFixedQuotaSource(value: unknown): value is FixedQuotaSource {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return (
+    source.source === "fixed" &&
+    Number.isFinite(Number(source.window5h)) &&
+    Number.isFinite(Number(source.weekly))
+  );
 }

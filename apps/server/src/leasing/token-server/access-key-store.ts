@@ -564,17 +564,16 @@ export class AccessKeyStore {
   }
 
   /**
-   * 严格分池(QUOTA-REDESIGN §3/§7 决策C):所有「硬绑定号」的集合 —— 即被任意 active 硬绑卡
-   * (assignmentPolicy ≠ preferred-dynamic)钉住的上游号。轮换 / preferred-dynamic 的候选池
-   * 应排除这些号(绑定号只服务自己的主人)。preferred-dynamic 卡自身有 displayBinding 但属软偏好,
-   * 不计入硬绑集合。
+   * Strict pool partitioning: collect accounts held by active hard-bound cards.
+   * Soft policies (preferred-dynamic/display-bound-pool) may show a binding but
+   * do not reserve that account or participate in hard-bound fair-share.
    */
   hardBoundAccountIds(providerId: string): Set<number> {
     const out = new Set<number>();
     const consider = (rec: AccessKeyRecord) => {
       if (!rec) return;
       if (rec.status && rec.status !== 'active') return;
-      if (String((rec as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') return;
+      if (isSoftAssignmentPolicy((rec as any).assignmentPolicy)) return;
       const id = this.boundAccountIdFor(rec, providerId);
       if (id > 0) out.add(id);
     };
@@ -584,13 +583,13 @@ export class AccessKeyStore {
   }
 
   /**
-   * fair-share Σw 的输入:某号上【硬绑主人】(assignmentPolicy ≠ preferred-dynamic)的份额权重。
-   * 排除 preferred-dynamic(它们不进 fair-share 分账,不应稀释 pinned 主人的 e_i=w/D)。
+   * Fair-share Σw input for hard-bound owners on an account.
+   * Soft policies are quota-capped elsewhere and must not dilute pinned owners.
    */
   getHardBoundCardWeights(accountId: number, providerId: string): Array<{ cardId: string; weight: number }> {
     const out: Array<{ cardId: string; weight: number }> = [];
     for (const r of this.getRecordsBoundTo(accountId, providerId)) {
-      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
       const w = Math.floor(Number((r as any).weights?.[providerId] || 0) || Number((r as any).weight ?? 1));
       out.push({ cardId: r.id, weight: Number.isFinite(w) && w >= 1 ? w : 1 });
     }
@@ -603,7 +602,7 @@ export class AccessKeyStore {
    */
   isExclusiveAccount(accountId: number, providerId: string): boolean {
     for (const r of this.getRecordsBoundTo(accountId, providerId)) {
-      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
       if ((r as any).exclusive === true) return true;
     }
     return false;
@@ -616,7 +615,7 @@ export class AccessKeyStore {
   getSeatCapacityFor(accountId: number, providerId: string): number {
     let cap = 0;
     for (const r of this.getRecordsBoundTo(accountId, providerId)) {
-      if (String((r as any).assignmentPolicy || '').toLowerCase() === 'preferred-dynamic') continue;
+      if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
       const c = Math.floor(Number((r as any).salesSeatCapacity?.[providerId] || 0));
       if (Number.isFinite(c) && c > cap) cap = c;
     }
@@ -1009,4 +1008,9 @@ export class AccessKeyStore {
       exclusive: (record as any).exclusive === true,
     };
   }
+}
+
+function isSoftAssignmentPolicy(policy: unknown): boolean {
+  const normalized = String(policy || '').toLowerCase();
+  return normalized === 'preferred-dynamic' || normalized === 'display-bound-pool';
 }

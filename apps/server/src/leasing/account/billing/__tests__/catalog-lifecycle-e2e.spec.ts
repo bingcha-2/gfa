@@ -432,6 +432,43 @@ describe("E2E 绑定线:下单 → 激活 → 分配座位(写 config.bindings)�
     expect(r1.accessToken).toBe("upstream-token");
   });
 
+  it("antigravity ultra bind displays the ultra account but leases from pro runtime supply", async () => {
+    await publishCatalog({ ...CATALOG_CONFIG, shareCapacity: 8 });
+    const { token, customer } = await seedCustomerWithDevice();
+    writePools({
+      antigravity: [
+        { id: 1, email: "ag-ultra@pool.test", refreshToken: "rt-ag-ultra", enabled: true, projectId: "proj-ultra", planType: "ultra" },
+        { id: 2, email: "ag-pro@pool.test", refreshToken: "rt-ag-pro", enabled: true, projectId: "proj-pro", planType: "pro" },
+        { id: 3, email: "ag-plus@pool.test", refreshToken: "rt-ag-plus", enabled: true, projectId: "proj-plus", planType: "plus" },
+      ],
+    });
+
+    const { sub } = await purchaseAndActivate(customer.id, {
+      line: "bind",
+      items: [{ product: "antigravity", level: "ultra" }],
+      shareSeats: 1,
+      deviceLimit: 1,
+    });
+
+    const c = cfg(sub);
+    expect(c.assignmentPolicy).toBe("display-bound-pool");
+    expect(c.bindings).toEqual({ antigravity: 1 });
+    expect(c.bucketLimits).toMatchObject({
+      "antigravity-gemini": 12_500_000,
+      "antigravity-claude": 1_500_000,
+    });
+
+    const rec = store.findById(sub!.id)!;
+    expect(rec.bindings).toEqual({ antigravity: 1 });
+    expect(store.hardBoundAccountIds("antigravity").has(1)).toBe(false);
+
+    const r = await lease("antigravity", token, { clientId: "client-A" });
+    expect(r.ok).toBe(true);
+    expect(r.accountId).toBe(2);
+    expect((r as any).bound).toBe(false);
+    expect((r as any).displayBound).toBe(true);
+  });
+
   it("绑定线默认销售容量 10:2 人拼车可售 5 张、第 6 张同号订阅无座位", async () => {
     await publishCatalog();
     const customers = await Promise.all(Array.from({ length: 6 }, () => createTestCustomer()));

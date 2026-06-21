@@ -439,6 +439,105 @@ describe("LeaseService (generic core)", () => {
     expect((r as any).bound).toBe(false);
   });
 
+  it("display-bound-pool shows an antigravity ultra binding but leases from pro or premium pool accounts", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "ultra@example.com", refreshToken: "rt-1", enabled: true, planType: "ultra" },
+        { id: 2, email: "premium@example.com", refreshToken: "rt-2", enabled: true, planType: "premium" },
+        { id: 3, email: "pro@example.com", refreshToken: "rt-3", enabled: true, planType: "pro" },
+        { id: 4, email: "plus@example.com", refreshToken: "rt-4", enabled: true, planType: "plus" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        products: ["antigravity"],
+        bindings: { antigravity: 1 },
+        displayBindings: { antigravity: 1 },
+        assignmentPolicy: "display-bound-pool",
+        bucketLimits: { "antigravity-gemini": 100_000 },
+      }],
+    });
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "antigravity"),
+      { accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+
+    const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini-2.5-pro" });
+
+    expect([2, 3]).toContain(r.accountId);
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(refreshToken).not.toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    expect((r as any).bound).toBe(false);
+    expect((r as any).displayBound).toBe(true);
+    expect(["premium", "pro"]).toContain((r as any).serviceAccount.planType);
+  });
+
+  it("display-bound-pool does not fall back to the displayed ultra account when no pro or premium account exists", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "ultra@example.com", refreshToken: "rt-1", enabled: true, planType: "ultra" },
+        { id: 2, email: "plus@example.com", refreshToken: "rt-2", enabled: true, planType: "plus" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        products: ["antigravity"],
+        bindings: { antigravity: 1 },
+        displayBindings: { antigravity: 1 },
+        assignmentPolicy: "display-bound-pool",
+        bucketLimits: { "antigravity-gemini": 100_000 },
+      }],
+    });
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "antigravity"),
+      { accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+
+    await expect(
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini-2.5-pro" }),
+    ).rejects.toMatchObject({ statusCode: 503 });
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
+  it("display-bound-pool is ignored for non-antigravity providers", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, planType: "ultra" },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true, planType: "pro" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        products: ["fake"],
+        bindings: { fake: 1 },
+        assignmentPolicy: "display-bound-pool",
+        bucketLimits: { "fake-gpt": 100_000 },
+      }],
+    });
+
+    const r = await makeBoundService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(r.accountId).toBe(1);
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(refreshToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    expect((r as any).bound).toBe(true);
+  });
+
   it("preferred-dynamic uses display binding first, then falls back to a same-level account", async () => {
     refreshToken
       .mockRejectedValueOnce(new Error("bound token is unavailable"))

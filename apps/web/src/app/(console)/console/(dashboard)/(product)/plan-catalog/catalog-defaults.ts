@@ -15,6 +15,14 @@ export const PRODUCT_LABELS: Record<string, string> = {
   antigravity: "Antigravity (Gemini)",
 };
 
+export const ANTIGRAVITY_FIXED_QUOTA_DEFAULTS: Record<
+  string,
+  { window5h: number; weekly: number }
+> = {
+  "antigravity-gemini": { window5h: 100_000_000, weekly: 400_000_000 },
+  "antigravity-claude": { window5h: 12_000_000, weekly: 40_000_000 },
+};
+
 /** 每产品暴露的模型家族 → 复合桶键 "<product>-<family>"。 */
 export const FAMILIES_BY_PRODUCT: Record<string, string[]> = {
   antigravity: ["gemini", "claude"],
@@ -89,4 +97,16 @@ export const DEFAULT_CONFIG: CatalogConfig = {
   },
   durationDays: 30,
   windowMs: 18_000_000,
+  supplyPolicies: {
+    antigravity: {
+      defaultLevel: "ultra",
+      salesSeatsPerAccount: { ultra: 8 },
+      buckets: Object.fromEntries(
+        Object.entries(ANTIGRAVITY_FIXED_QUOTA_DEFAULTS).map(([bucket, quota]) => [
+          bucket,
+          { source: "fixed", ...quota },
+        ]),
+      ),
+    },
+  },
 };

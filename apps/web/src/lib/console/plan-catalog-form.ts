@@ -70,6 +70,13 @@ export interface SupplyPolicyForm {
   buckets: Record<string, unknown>;
 }
 
+interface FixedQuotaSourceForm {
+  source: "fixed";
+  window5h: string;
+  weekly: string;
+  [key: string]: unknown;
+}
+
 /** 完整表单状态(展示态)。 */
 export interface PlanCatalogForm {
   /** 产品与等级(有序)。products 与 levels 都从这里派生。 */
@@ -363,7 +370,7 @@ function supplyPoliciesToForm(
     out[product] = {
       defaultLevel: policy.defaultLevel ?? "",
       salesSeatsPerAccount,
-      buckets: { ...(policy.buckets ?? {}) },
+      buckets: mapBucketSources(policy.buckets ?? {}, quotaSourceToForm),
     };
   }
   return out;
@@ -381,8 +388,42 @@ function supplyPoliciesToConfig(
     out[product] = {
       defaultLevel: policy.defaultLevel ?? "",
       salesSeatsPerAccount,
-      buckets: { ...(policy.buckets ?? {}) },
+      buckets: mapBucketSources(policy.buckets ?? {}, quotaSourceToConfig),
     };
   }
   return out;
+}
+
+function mapBucketSources(
+  buckets: Record<string, unknown>,
+  mapper: (source: unknown) => unknown,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [bucket, source] of Object.entries(buckets)) {
+    out[bucket] = mapper(source);
+  }
+  return out;
+}
+
+function quotaSourceToForm(source: unknown): unknown {
+  if (!isFixedQuotaSource(source)) return source;
+  return {
+    ...source,
+    window5h: intToStr(Number(source.window5h)),
+    weekly: intToStr(Number(source.weekly)),
+  } satisfies FixedQuotaSourceForm;
+}
+
+function quotaSourceToConfig(source: unknown): unknown {
+  if (!isFixedQuotaSource(source)) return source;
+  return {
+    ...source,
+    window5h: toInt(String(source.window5h)),
+    weekly: toInt(String(source.weekly)),
+  };
+}
+
+function isFixedQuotaSource(value: unknown): value is FixedQuotaSourceForm {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return (value as Record<string, unknown>).source === "fixed";
 }

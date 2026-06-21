@@ -15,6 +15,7 @@ import { AdspowerService } from "./adspower.service";
 import { AntigravityAccountService } from "./antigravity-account.service";
 import { CaptchaService } from "./captcha.service";
 import { ClaudeAccountService } from "./claude-account.service";
+import { ClaudePrechargeService } from "./claude-precharge.service";
 import { ClaudeSessionPoolService } from "./claude-session-pool.service";
 import { CliProxySyncService } from "./cliproxy-sync.service";
 import { CodexService } from "./codex.service";
@@ -67,6 +68,7 @@ export class RosettaService {
   private readonly antigravitySvc: AntigravityAccountService;
   private readonly codexSvc: CodexService;
   private readonly claudeSvc: ClaudeAccountService;
+  private readonly prechargeSvc: ClaudePrechargeService;
   private readonly cliproxySyncSvc: CliProxySyncService;
   private readonly googleSvc: GoogleOAuthService;
   private readonly creditsSvc: CreditsQuotaService;
@@ -108,6 +110,7 @@ export class RosettaService {
     this.antigravitySvc = new AntigravityAccountService(this.ctx, this.accessKeySvc);
     this.codexSvc = new CodexService(this.ctx, this.accessKeySvc);
     this.claudeSvc = new ClaudeAccountService(this.ctx, this.accessKeySvc);
+    this.prechargeSvc = new ClaudePrechargeService(this.ctx, this.claudeSvc);
     this.cliproxySyncSvc = new CliProxySyncService(this.ctx);
     this.googleSvc = new GoogleOAuthService(this.ctx, (p: any) => this.antigravitySvc.addAccountChecked(p));
     this.sessionPoolSvc = new ClaudeSessionPoolService(this.ctx);
@@ -219,6 +222,16 @@ export class RosettaService {
   setClaudeAccountMailPassword(payload: any) { return this.claudeSvc.setClaudeAccountMailPassword(payload); }
   setClaudeAccountAdspowerProfile(payload: any) { return this.claudeSvc.setClaudeAccountAdspowerProfile(payload); }
   deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
+
+  // -- Claude precharge pool (org-id before top-up, OAuth after top-up) ------
+  listClaudePrechargeAccounts() { return this.prechargeSvc.listAccounts(); }
+  importClaudePrechargeAccounts(payload: any) { return this.prechargeSvc.importAccounts(payload); }
+  loginProbeClaudePrecharge(payload: any) { return this.prechargeSvc.loginProbe(payload); }
+  quickProbeClaudePrecharge(payload: any) { return this.prechargeSvc.quickProbe(payload); }
+  markTopupClaudePrecharge(payload: any) { return this.prechargeSvc.markTopup(payload); }
+  activateClaudePrecharge(payload: any) { return this.prechargeSvc.activate(payload); }
+  activateClaudePrechargeWithSessionKey(payload: any) { return this.prechargeSvc.activateWithSessionKey(payload); }
+  deleteClaudePrechargeAccount(payload: any) { return this.prechargeSvc.deleteAccount(payload); }
 
   // ── Claude Session Pool / 白号登录号池 (→ ClaudeSessionPoolService) ────
   listClaudeSessionAccounts() { return this.sessionPoolSvc.listAccounts(); }

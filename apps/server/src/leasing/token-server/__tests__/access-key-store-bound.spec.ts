@@ -87,4 +87,23 @@ describe('AccessKeyStore.getRecordsBoundTo', () => {
     const recs = store.getRecordsBoundTo(7, 'codex');
     expect(recs.filter((r) => r.id === 'dup')).toHaveLength(1);
   });
+
+  it('does not treat display-bound-pool subscriptions as hard-bound fair-share owners', () => {
+    const store = makeStore();
+    store.loadSubscriptionRecords([
+      {
+        id: 'sub-display-only',
+        customerId: 'c1',
+        status: 'active',
+        products: ['antigravity'],
+        bindings: { antigravity: 7 },
+        displayBindings: { antigravity: 7 },
+        assignmentPolicy: 'display-bound-pool',
+        weight: 1,
+      },
+    ]);
+
+    expect(store.hardBoundAccountIds('antigravity').has(7)).toBe(false);
+    expect(store.getHardBoundCardWeights(7, 'antigravity')).toEqual([]);
+  });
 });

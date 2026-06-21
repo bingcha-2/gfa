@@ -254,7 +254,7 @@ export function parseUpstream(proxyUrl: string) {
   };
 }
 
-function parseProxyToAdsPowerConfig(proxyUrl: string): any {
+export function parseProxyToAdsPowerConfig(proxyUrl: string): any {
   if (!proxyUrl) return null;
   try {
     const url = new URL(proxyUrl);
@@ -277,6 +277,131 @@ function parseProxyToAdsPowerConfig(proxyUrl: string): any {
     return config;
   } catch {
     return null;
+  }
+}
+
+export type ClaudeWebOrganization = {
+  id?: number | string;
+  uuid?: string;
+  name?: string;
+  capabilities?: string[];
+  rate_limit_tier?: string | null;
+  billing_type?: string | null;
+};
+
+export async function fetchClaudeOrganizationsFromPage(page: Page): Promise<{
+  status: number;
+  organizations: ClaudeWebOrganization[];
+  bodySnippet: string;
+}> {
+  const result = await page.evaluate(async () => {
+    const res = await fetch("https://claude.ai/api/organizations", {
+      credentials: "include",
+      headers: { accept: "application/json" },
+    });
+    const text = await res.text();
+    return { status: res.status, text };
+  });
+  let organizations: ClaudeWebOrganization[] = [];
+  try {
+    const parsed = JSON.parse(result.text);
+    organizations = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.organizations)
+        ? parsed.organizations
+        : [];
+  } catch {
+    organizations = [];
+  }
+  return {
+    status: Number(result.status || 0),
+    organizations,
+    bodySnippet: String(result.text || "").slice(0, 1000),
+  };
+}
+
+export async function readClaudeOrganizationsViaSessionKey(opts: {
+  sessionKey: string;
+  proxyUrl?: string;
+  adspowerProfileId?: string;
+  timeoutMs?: number;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  organizations?: ClaudeWebOrganization[];
+  status?: number;
+  bodySnippet?: string;
+}> {
+  let relay: RelayHandle | null = null;
+  let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  let adspowerOpts: { client: AdsPowerClient; profileId: string } | undefined;
+  const sk = String(opts.sessionKey || "").trim();
+  if (!sk) return { ok: false, error: "sessionKey 为空" };
+
+  const sessionCookie = (domain: string) => ({
+    name: "sessionKey",
+    value: sk,
+    domain,
+    path: "/",
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax" as const,
+  });
+
+  try {
+    let page: Page;
+    if (opts.adspowerProfileId) {
+      const host = process.env.ADSPOWER_HOST || "http://127.0.0.1:50325";
+      const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
+      const client = new AdsPowerClient({ baseUrl: host, apiKey });
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
+      adspowerOpts = { client, profileId: opts.adspowerProfileId };
+      browser = await chromium.connectOverCDP(openRes.debugUrl);
+      context = browser.contexts()[0];
+      if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
+      await context.clearCookies().catch(() => {});
+      page = context.pages()[0] || (await context.newPage());
+    } else {
+      if (!opts.proxyUrl) throw new Error("未提供 SOCKS5 代理 URL，且未使用指纹浏览器");
+      const upstream = parseUpstream(opts.proxyUrl);
+      relay = await startLocalSocksRelay(upstream);
+      browser = await chromium.launch({
+        headless: false,
+        proxy: { server: `socks5://127.0.0.1:${relay.port}` },
+        ignoreDefaultArgs: ["--enable-automation"],
+        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+      });
+      context = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York",
+      });
+      await context.addInitScript(stealthInit);
+      page = await context.newPage();
+    }
+
+    await context.addCookies([sessionCookie(".claude.ai"), sessionCookie(".claude.com")]);
+    await page.goto("https://claude.ai/", { waitUntil: "domcontentloaded", timeout: opts.timeoutMs || 60_000 }).catch(() => {});
+    const orgs = await fetchClaudeOrganizationsFromPage(page);
+    if (orgs.status !== 200 || !orgs.organizations.length) {
+      return {
+        ok: false,
+        status: orgs.status,
+        bodySnippet: orgs.bodySnippet,
+        error: orgs.status === 401 ? "登录态失效" : `organizations HTTP ${orgs.status}`,
+      };
+    }
+    return { ok: true, status: orgs.status, organizations: orgs.organizations, bodySnippet: orgs.bodySnippet };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) };
+  } finally {
+    try { if (context && !opts.adspowerProfileId) await context.close(); } catch {}
+    try { if (browser) await browser.close(); } catch {}
+    if (relay) relay.close();
+    if (adspowerOpts) await adspowerOpts.client.closeProfile(adspowerOpts.profileId).catch(() => {});
   }
 }
 

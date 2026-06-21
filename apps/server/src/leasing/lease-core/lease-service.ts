@@ -505,7 +505,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // A card bound for a DIFFERENT pool only is not sold for this one → rejected.
     const displayBoundAccountId = this.displayBoundAccountIdFor(auth.record);
     const isPreferredDynamic = this.isPreferredDynamic(auth.record);
-    const hardPinnedAccountId = isPreferredDynamic ? 0 : displayBoundAccountId;
+    const isDisplayBoundPool = this.isDisplayBoundPool(auth.record);
+    const hardPinnedAccountId = (isPreferredDynamic || isDisplayBoundPool) ? 0 : displayBoundAccountId;
 
     if (displayBoundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
       throw this.fail(409, "此卡未开通该服务，请联系客服");
@@ -568,7 +569,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     const candidatePool = isPreferredDynamic
       ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
-      : this.availableAccounts(payload, modelKey, hardPinnedAccountId);
+      : isDisplayBoundPool
+        ? this.displayBoundPoolAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
+        : this.availableAccounts(payload, modelKey, hardPinnedAccountId);
     // A bound card has at most one candidate (its account), so there is nothing to
     // scan past — one attempt, then the busy error. No fallback to other accounts.
     const maxAttempts = hardPinnedAccountId
@@ -585,7 +588,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
       account = isPreferredDynamic
         ? this.preferredDynamicAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
-        : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, hardPinnedAccountId);
+        : isDisplayBoundPool
+          ? this.displayBoundPoolAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
+          : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, hardPinnedAccountId);
       if (!account) break;
 
       try {
@@ -703,7 +708,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // to skip the futile "exclude account + re-lease" rotation on 429/503, while
       // STILL allowing wait-and-retry on the SAME account for transient capacity.
       bound: hardPinnedAccountId > 0,
-      displayBound: isPreferredDynamic || displayBoundAccountId > 0,
+      displayBound: isPreferredDynamic || isDisplayBoundPool || displayBoundAccountId > 0,
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
       fairShareQuota,
@@ -725,6 +730,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * account with no learned reset yet also returns 0 (fixed-period until known).
    */
   private boundAccountResetAt(record: any, modelKey: string): number {
+    if (this.isDisplayBoundPool(record)) return 0;
     const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
     if (!boundId) return 0;
     const account = this.readAccounts().find((a) => a.id === boundId);
@@ -1394,6 +1400,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return String(record?.assignmentPolicy || "").toLowerCase() === "preferred-dynamic";
   }
 
+  private isDisplayBoundPool(record: any): boolean {
+    return this.provider.id === "antigravity"
+      && String(record?.assignmentPolicy || "").toLowerCase() === "display-bound-pool";
+  }
+
   private displayBoundAccountIdFor(record: any): number {
     const display = record?.displayBindings;
     if (display && typeof display === "object") {
@@ -1447,6 +1458,47 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       .map((entry) => entry.account);
 
     return displayAccount ? [displayAccount, ...ranked] : ranked;
+  }
+
+  private displayBoundPoolAccounts(
+    payload: any,
+    modelKey: string,
+    displayBoundAccountId: number,
+    leaseIndex: ActiveLeaseIndex,
+    clientId: string,
+  ): TAccount[] {
+    const existing = Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [];
+    const excludeAccountIds = displayBoundAccountId > 0
+      ? [...existing, displayBoundAccountId]
+      : existing;
+    const candidates = this.availableAccounts({ ...payload, excludeAccountIds }, modelKey, 0)
+      .filter((account) => this.isAntigravityRuntimePoolAccount(account));
+    if (!candidates.length) return [];
+
+    const preferredAccountId = this.preferredAccountId(clientId, modelKey);
+    const now = this.now();
+    return candidates
+      .map((account) => ({
+        account,
+        score: scoreAccount(account, {
+          now,
+          preferredAccountId,
+          modelKey,
+          activeLeaseCount: (accountId, targetModel) => this.activeLeaseCountFrom(leaseIndex, accountId, targetModel),
+          accountStats: { lastUsedAt: 0 },
+          accountWeight: accountWeight(account, this.enterpriseProbe),
+          modelQuotaFraction: this.provider.quotaFractionFor
+            ? this.provider.quotaFractionFor(account, modelKey)
+            : undefined,
+        }),
+      }))
+      .sort((a, b) => a.score - b.score || a.account.id - b.account.id)
+      .map((entry) => entry.account);
+  }
+
+  private isAntigravityRuntimePoolAccount(account: TAccount): boolean {
+    const planType = String((account as any)?.planType || "").trim().toLowerCase();
+    return planType === "pro" || planType === "premium" || planType === "premiun";
   }
 
   private tighterRemainingFraction(account: TAccount, modelKey: string): number {

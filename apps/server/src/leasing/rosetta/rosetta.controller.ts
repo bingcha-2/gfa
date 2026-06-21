@@ -235,6 +235,46 @@ export class RosettaController {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
+  @Get("anthropic-precharge-accounts")
+  listClaudePrechargeAccounts() {
+    return this.rosetta.listClaudePrechargeAccounts();
+  }
+
+  @Post("anthropic-precharge-import")
+  importClaudePrechargeAccounts(@Body() body: any) {
+    return this.rosetta.importClaudePrechargeAccounts(body);
+  }
+
+  @Post("anthropic-precharge-login-probe")
+  loginProbeClaudePrecharge(@Body() body: any) {
+    return this.rosetta.loginProbeClaudePrecharge(body);
+  }
+
+  @Post("anthropic-precharge-quick-probe")
+  quickProbeClaudePrecharge(@Body() body: any) {
+    return this.rosetta.quickProbeClaudePrecharge(body);
+  }
+
+  @Post("anthropic-precharge-mark-topup")
+  markTopupClaudePrecharge(@Body() body: any) {
+    return this.rosetta.markTopupClaudePrecharge(body);
+  }
+
+  @Post("anthropic-precharge-activate")
+  activateClaudePrecharge(@Body() body: any) {
+    return this.rosetta.activateClaudePrecharge(body);
+  }
+
+  @Post("anthropic-precharge-activate-sk")
+  activateClaudePrechargeWithSessionKey(@Body() body: any) {
+    return this.rosetta.activateClaudePrechargeWithSessionKey(body);
+  }
+
+  @Post("anthropic-precharge-delete")
+  deleteClaudePrechargeAccount(@Body() body: any) {
+    return this.rosetta.deleteClaudePrechargeAccount(body);
+  }
+
   // 设置该号的出口代理(粘性住宅代理 URL);空=清除。anthropic 专用别名,保留兼容。
   @Post("anthropic-set-proxy")
   setClaudeAccountProxy(@Body() body: any) {
