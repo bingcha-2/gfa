@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { SubscriptionUsageCarousel } from './SubscriptionUsageCarousel'
-import type { AccountSubscription } from '@/types'
+import type { AccountSubscription, BoundAccountInfo } from '@/types'
 
 vi.mock('@/i18n', () => ({ useT: () => (k: string) => k, t: (k: string) => k }))
 
@@ -116,5 +116,47 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.getByText('#1234')).toBeInTheDocument()
     expect(screen.getByText('#5678')).toBeInTheDocument()
     expect(screen.queryByLabelText('next subscription')).toBeNull()
+  })
+
+  it('shows the bound account email inline beside each product, joined by product', () => {
+    const subscriptions: AccountSubscription[] = [
+      sub({ id: 'sub-codex-1234', products: ['codex'], levels: { codex: 'pro' } }),
+    ]
+    const boundAccounts: BoundAccountInfo[] = [
+      {
+        product: 'codex',
+        accountId: 42,
+        emailHint: 'codex@example.com',
+        planType: 'plus',
+        accessToken: 'tok',
+        expiresAt: Date.now() + 60_000,
+        leasedAt: Date.now(),
+      },
+    ]
+
+    render(<SubscriptionUsageCarousel subscriptions={subscriptions} boundAccounts={boundAccounts} />)
+
+    expect(screen.getByText('codex@example.com')).toBeInTheDocument()
+  })
+
+  it('joins legacy claude product to anthropic bound account', () => {
+    const subscriptions: AccountSubscription[] = [
+      sub({ id: 'sub-claude', products: ['claude'], levels: { claude: 'max' } }),
+    ]
+    const boundAccounts: BoundAccountInfo[] = [
+      {
+        product: 'anthropic',
+        accountId: 43,
+        emailHint: 'anthropic@example.com',
+        planType: 'max',
+        accessToken: 'tok',
+        expiresAt: Date.now() + 60_000,
+        leasedAt: Date.now(),
+      },
+    ]
+
+    render(<SubscriptionUsageCarousel subscriptions={subscriptions} boundAccounts={boundAccounts} />)
+
+    expect(screen.getByText('anthropic@example.com')).toBeInTheDocument()
   })
 })

@@ -1,8 +1,12 @@
-import type { AccountSubscription, ProductQuotaWindow } from '@/types'
+import type { AccountSubscription, BoundAccountInfo, ProductQuotaWindow } from '@/types'
 import { productLabel } from '@/lib/usageBars'
 import { formatResetDuration } from '@/lib/quotaDisplay'
 import { useT } from '@/i18n'
 import { NestedShareBar } from './NestedShareBar'
+
+// 后端 product 用 antigravity/codex/anthropic;旧卡可能仍带 'claude',归一到 anthropic,
+// 以便把按 product 收敛的 boundAccounts(当前实际在租的号)join 到逐订阅血条上。
+const normalizeProduct = (p: string) => (p === 'claude' ? 'anthropic' : p)
 
 function isFutureIso(iso: string | null | undefined): boolean {
   if (!iso) return false
@@ -58,7 +62,7 @@ function AccountBar({ label, percent, reset }: { label: string; percent: number 
   )
 }
 
-function ProductSection({ subId, product, level, quota }: { subId: string; product: string; level?: string; quota?: ProductQuotaWindow }) {
+function ProductSection({ subId, product, level, quota, emailHint }: { subId: string; product: string; level?: string; quota?: ProductQuotaWindow; emailHint?: string }) {
   const t = useT()
   const renderWindow = (
     win: '5h' | '7d',
@@ -95,6 +99,14 @@ function ProductSection({ subId, product, level, quota }: { subId: string; produ
             {level}
           </span>
         )}
+        {emailHint && (
+          <span
+            className="ml-auto font-mono-data text-[11px] text-[var(--text-muted)] truncate max-w-[160px]"
+            title={emailHint}
+          >
+            {emailHint}
+          </span>
+        )}
       </div>
       <div className="flex flex-col divide-y divide-[var(--border-light)]">
         {renderWindow('5h', t('dashboard.acct5h'), quota?.hourlyPercent, quota?.myHourlyFraction, quota?.hourlyResetAt)}
@@ -104,7 +116,7 @@ function ProductSection({ subId, product, level, quota }: { subId: string; produ
   )
 }
 
-function SubscriptionCard({ sub }: { sub: AccountSubscription }) {
+function SubscriptionCard({ sub, emailByProduct }: { sub: AccountSubscription; emailByProduct: Map<string, string> }) {
   const t = useT()
   const shortId = sub.id.slice(-4).toUpperCase()
   const remain = sub.remainFraction
@@ -139,20 +151,41 @@ function SubscriptionCard({ sub }: { sub: AccountSubscription }) {
       )}
 
       {sub.products.map((p) => (
-        <ProductSection key={p} subId={sub.id} product={p} level={sub.levels?.[p]} quota={sub.productQuota?.[p]} />
+        <ProductSection
+          key={p}
+          subId={sub.id}
+          product={p}
+          level={sub.levels?.[p]}
+          quota={sub.productQuota?.[p]}
+          emailHint={emailByProduct.get(normalizeProduct(p))}
+        />
       ))}
     </div>
   )
 }
 
-export function SubscriptionUsageCarousel({ subscriptions }: { subscriptions: AccountSubscription[] }) {
+export function SubscriptionUsageCarousel({
+  subscriptions,
+  boundAccounts = [],
+}: {
+  subscriptions: AccountSubscription[]
+  boundAccounts?: BoundAccountInfo[]
+}) {
   const subs = [...subscriptions].sort((a, b) => a.priority - b.priority)
   if (subs.length === 0) return null
+
+  // boundAccounts 按 product 唯一(当前实际在租的号),join 到逐订阅血条。
+  // 同 product 多订阅会落到同一个号 —— 符合「此刻在用哪个号」的语义。
+  const emailByProduct = new Map(
+    boundAccounts
+      .filter((a) => a.emailHint)
+      .map((a) => [normalizeProduct(a.product), a.emailHint] as const),
+  )
 
   return (
     <div className="flex flex-col gap-3">
       {subs.map((sub) => (
-        <SubscriptionCard key={sub.id} sub={sub} />
+        <SubscriptionCard key={sub.id} sub={sub} emailByProduct={emailByProduct} />
       ))}
     </div>
   )

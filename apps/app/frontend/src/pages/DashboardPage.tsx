@@ -5,7 +5,6 @@ import { UsageBar } from '@/components/UsageBar'
 import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
-import { BoundAccountsCard } from '@/components/BoundAccountsCard'
 import { SubscriptionUsageCarousel } from '@/components/SubscriptionUsageCarousel'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
@@ -110,7 +109,7 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
 export function DashboardPage() {
   const t = useT()
   const {
-    account,
+    account, boundAccounts,
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, entitledProducts,
     accountFractions, accountResetMs, accountResetAt, myFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
     cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
@@ -263,7 +262,7 @@ export function DashboardPage() {
             </div>
           )}
           {account?.subscriptions && account.subscriptions.length > 0 ? (
-            <SubscriptionUsageCarousel subscriptions={account.subscriptions} />
+            <SubscriptionUsageCarousel subscriptions={account.subscriptions} boundAccounts={boundAccounts} />
           ) : (() => {
             const PROVIDERS = [
               { id: 'antigravity', name: 'Antigravity' },
@@ -335,9 +334,6 @@ export function DashboardPage() {
 
       {/* ── 接管:整宽操作面板(生态自适应分列,加生态=加块)── */}
       <TokenSourceControl />
-
-      {/* ── 绑定账号信息(仅绑定卡 + 远程模式显示)── */}
-      <BoundAccountsCard />
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
