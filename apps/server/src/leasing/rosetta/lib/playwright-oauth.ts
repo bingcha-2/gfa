@@ -320,6 +320,130 @@ export async function fetchClaudeOrganizationsFromPage(page: Page): Promise<{
   };
 }
 
+export type ClaudeWebSessionDiagnostics = {
+  url: string;
+  title: string;
+  bodySnippet: string;
+  hasSessionKey: boolean;
+  sessionKeyChanged: boolean;
+  sessionKeyDomain: string;
+  loginPageHint: string;
+};
+
+export async function waitForClaudeOrganizationsFromPage(page: Page, opts: {
+  previousSessionKey?: string;
+  settleMs?: number;
+  retryDelayMs?: number;
+  maxAttempts?: number;
+} = {}): Promise<{
+  ok: boolean;
+  status: number;
+  organizations: ClaudeWebOrganization[];
+  bodySnippet: string;
+  sessionKey: string;
+  diagnostics: ClaudeWebSessionDiagnostics;
+  error?: string;
+}> {
+  const settleMs = opts.settleMs ?? 10_000;
+  const retryDelayMs = opts.retryDelayMs ?? 10_000;
+  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+
+  if (settleMs > 0) {
+    await page.waitForTimeout(settleMs);
+  }
+
+  let lastOrgs: Awaited<ReturnType<typeof fetchClaudeOrganizationsFromPage>> = {
+    status: 0,
+    organizations: [],
+    bodySnippet: "",
+  };
+  let lastDiagnostics = await readClaudeWebSessionDiagnostics(page, opts.previousSessionKey);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    lastOrgs = await fetchClaudeOrganizationsFromPage(page);
+    lastDiagnostics = await readClaudeWebSessionDiagnostics(page, opts.previousSessionKey);
+
+    if (lastOrgs.status === 200 && lastOrgs.organizations.length) {
+      return {
+        ok: true,
+        status: lastOrgs.status,
+        organizations: lastOrgs.organizations,
+        bodySnippet: lastOrgs.bodySnippet,
+        sessionKey: await currentClaudeSessionKey(page),
+        diagnostics: lastDiagnostics,
+      };
+    }
+
+    if (attempt < maxAttempts) {
+      await page.waitForTimeout(retryDelayMs);
+    }
+  }
+
+  const error = lastOrgs.status === 401
+    ? "登录态失效"
+    : `organizations HTTP ${lastOrgs.status}: ${lastOrgs.bodySnippet}`;
+  return {
+    ok: false,
+    status: lastOrgs.status,
+    organizations: [],
+    bodySnippet: lastOrgs.bodySnippet,
+    sessionKey: await currentClaudeSessionKey(page),
+    diagnostics: lastDiagnostics,
+    error: `${error}; diagnostics=${formatClaudeSessionDiagnostics(lastDiagnostics)}`,
+  };
+}
+
+async function readClaudeWebSessionDiagnostics(page: Page, previousSessionKey?: string): Promise<ClaudeWebSessionDiagnostics> {
+  const cookies = await page.context().cookies(["https://claude.ai", "https://claude.com"]).catch(() => []);
+  const sessionCookie = cookies.find((cookie) => cookie.name === "sessionKey");
+  const url = safePageUrl(page);
+  const title = await page.title().catch(() => "");
+  const bodyText = await page.textContent("body").catch(() => "");
+  const bodySnippet = String(bodyText || "").replace(/\s+/g, " ").slice(0, 300);
+  const lower = `${url} ${title} ${bodySnippet}`.toLowerCase();
+  const loginPageHint = lower.includes("enter verification code") || lower.includes("continue with email") || lower.includes("log in")
+    ? "login_or_verification_page"
+    : lower.includes("expired")
+      ? "magic_link_expired"
+      : lower.includes("max or pro") || lower.includes("pro and max")
+        ? "plan_required_page"
+        : "";
+  return {
+    url,
+    title,
+    bodySnippet,
+    hasSessionKey: Boolean(sessionCookie?.value),
+    sessionKeyChanged: Boolean(sessionCookie?.value && previousSessionKey && sessionCookie.value !== previousSessionKey),
+    sessionKeyDomain: String(sessionCookie?.domain || ""),
+    loginPageHint,
+  };
+}
+
+async function currentClaudeSessionKey(page: Page): Promise<string> {
+  const cookies = await page.context().cookies(["https://claude.ai", "https://claude.com"]).catch(() => []);
+  return cookies.find((cookie) => cookie.name === "sessionKey")?.value || "";
+}
+
+function safePageUrl(page: Page): string {
+  try {
+    return page.url();
+  } catch {
+    return "";
+  }
+}
+
+function formatClaudeSessionDiagnostics(diagnostics: ClaudeWebSessionDiagnostics): string {
+  return JSON.stringify({
+    url: diagnostics.url,
+    title: diagnostics.title,
+    hasSessionKey: diagnostics.hasSessionKey,
+    sessionKeyChanged: diagnostics.sessionKeyChanged,
+    sessionKeyDomain: diagnostics.sessionKeyDomain,
+    loginPageHint: diagnostics.loginPageHint,
+    bodySnippet: diagnostics.bodySnippet,
+  });
+}
+
 export async function readClaudeOrganizationsViaSessionKey(opts: {
   sessionKey: string;
   proxyUrl?: string;

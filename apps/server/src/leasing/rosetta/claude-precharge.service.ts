@@ -3,9 +3,9 @@ import * as path from "path";
 
 import type { RosettaContext } from "./lib/context";
 import {
-  fetchClaudeOrganizationsFromPage,
   readClaudeOrganizationsViaSessionKey,
   triggerMagicLinkViaBrowser,
+  waitForClaudeOrganizationsFromPage,
   type ClaudeWebOrganization,
 } from "./lib/playwright-oauth";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
@@ -306,14 +306,16 @@ export class ClaudePrechargeService {
       });
       if (!mail.ok || !mail.url) return { error: mail.error || "未获取到 magic link" };
       await trigger.session.page.goto(mail.url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      const orgs = await fetchClaudeOrganizationsFromPage(trigger.session.page);
-      if (orgs.status !== 200 || !orgs.organizations.length) {
-        return { error: orgs.status === 401 ? "登录态失效" : `organizations HTTP ${orgs.status}: ${orgs.bodySnippet}` };
+      const orgs = await waitForClaudeOrganizationsFromPage(trigger.session.page, {
+        previousSessionKey: account.sessionKey || "",
+        settleMs: 10_000,
+        retryDelayMs: 10_000,
+        maxAttempts: 3,
+      });
+      if (!orgs.ok || !orgs.organizations.length) {
+        return { error: orgs.error || `organizations HTTP ${orgs.status}: ${orgs.bodySnippet}` };
       }
-      const cookies = await trigger.session.page.context().cookies(["https://claude.ai", "https://claude.com"]);
-      const sessionKey = cookies.find((cookie) => cookie.name === "sessionKey")?.value || "";
-      return orgProbeFromOrganization(orgs.organizations[0], sessionKey);
+      return orgProbeFromOrganization(orgs.organizations[0], orgs.sessionKey);
     } finally {
       await trigger.session.close().catch(() => {});
     }
