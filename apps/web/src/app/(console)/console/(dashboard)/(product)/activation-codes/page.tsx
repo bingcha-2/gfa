@@ -100,7 +100,16 @@ export default function ActivationCodesPage() {
   }, []);
 
   const products = useMemo(() => catalog?.products ?? [], [catalog]);
-  const levelsFor = useCallback((p: string) => catalog?.levels?.[p] ?? [], [catalog]);
+  // 会员等级的真相源是 pricing.bind.levelPrice[product] 的键(顶层 levels 字段在发布目录里可能缺失);
+  // 回退到 catalog.levels[product] 以兼容带该字段的目录。
+  const levelsFor = useCallback(
+    (p: string) => {
+      const fromPricing = Object.keys(catalog?.pricing?.bind?.levelPrice?.[p] ?? {});
+      if (fromPricing.length > 0) return fromPricing;
+      return catalog?.levels?.[p] ?? [];
+    },
+    [catalog],
+  );
   const shareCapacity = catalog?.shareCapacity ?? 8;
   const seatOptions = useMemo(() => SEAT_OPTIONS.filter((n) => n <= shareCapacity), [shareCapacity]);
 
