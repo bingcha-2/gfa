@@ -243,12 +243,11 @@ export default function ActivationCodesPage() {
                   {products.map((product) => {
                     const checked = product in bindLevels;
                     const levels = levelsFor(product);
+                    const cbId = `ac-product-${product}`;
                     return (
                       <div key={product} className="flex items-center gap-3">
-                        <label className="flex w-40 items-center gap-2 text-sm">
-                          <Checkbox checked={checked} onCheckedChange={() => toggleProduct(product)} />
-                          <span className="capitalize">{product}</span>
-                        </label>
+                        <Checkbox id={cbId} checked={checked} onCheckedChange={() => toggleProduct(product)} />
+                        <Label htmlFor={cbId} className="w-32 cursor-pointer capitalize">{product}</Label>
                         {checked && (
                           <Select value={bindLevels[product]} onValueChange={(v) => setBindLevels((p) => ({ ...p, [product]: v }))}>
                             <SelectTrigger className="w-44">
