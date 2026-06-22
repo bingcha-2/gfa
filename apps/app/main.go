@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	goruntime "runtime"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -30,7 +32,9 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 246, G: 245, B: 242, A: 255},
-		OnStartup:        app.startup,
+		// 点 X 不退出:Windows 缩到托盘、macOS 缩到 Dock,后台继续跑(退出走托盘菜单/Cmd+Q)。
+		HideWindowOnClose: shouldHideWindowOnClose(goruntime.GOOS),
+		OnStartup:         app.startup,
 		Bind: []interface{}{
 			app,
 		},

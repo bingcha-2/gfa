@@ -89,6 +89,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 启动额度自动刷新:每 30min 拉一次上游真实余量并上报,闲置(不主动发请求)时血条/服务端也保持同步。
 	startQuotaRefreshLoop()
+
+	// 系统托盘(仅 Windows 有实现):配合 HideWindowOnClose 让点 X 缩到托盘、退出走托盘菜单。
+	startTray(ctx)
 }
 
 // GetConfig returns the loaded configuration

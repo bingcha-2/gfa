@@ -3,6 +3,7 @@ module bcai-wails
 go 1.25.0
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/refraction-networking/utls v1.8.2
