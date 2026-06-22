@@ -236,6 +236,21 @@ export default function CustomerDetailPage() {
               <div className="text-sm text-muted-foreground">
                 {c.displayName || "（无昵称）"} · 邀请码 {c.referralCode} · 返佣余额 {fmtYuan(c.creditCents)}
               </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>分享链接</span>
+                <code className="truncate max-w-[26rem] rounded bg-muted px-1.5 py-0.5">{c.referralLink}</code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(c.referralLink);
+                    toast.success("已复制分享链接");
+                  }}
+                >
+                  复制
+                </Button>
+              </div>
               <div className="text-xs text-muted-foreground">注册于 {fmtDateTime(c.createdAt)}</div>
             </div>
             <div className="flex items-center gap-2 shrink-0">

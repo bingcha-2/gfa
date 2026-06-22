@@ -9,6 +9,7 @@ import {
   BarChart2Icon,
   MessageSquareIcon,
   BellIcon,
+  GiftIcon,
   DownloadIcon,
   UserRoundIcon,
   LogOutIcon,
@@ -36,12 +37,12 @@ type NavKey =
 
 type NavItem = { id: NavKey; url: string; icon: React.ReactNode };
 
-// 邀请返佣已下线(/account/referral 重定向到首页),不再放入导航。
 // 设备与设置(改密码/退出)已并入最右侧的「我的」中心(/account/me)。
 const PRIMARY: NavItem[] = [
   { id: "overview", url: "/account", icon: <LayoutDashboardIcon className="size-4" /> },
   { id: "billing", url: "/account/billing", icon: <CreditCardIcon className="size-4" /> },
   { id: "usage", url: "/account/usage", icon: <BarChart2Icon className="size-4" /> },
+  { id: "referral", url: "/account/referral", icon: <GiftIcon className="size-4" /> },
   { id: "tickets", url: "/account/tickets", icon: <MessageSquareIcon className="size-4" /> },
   { id: "me", url: "/account/me", icon: <UserRoundIcon className="size-4" /> },
 ];
