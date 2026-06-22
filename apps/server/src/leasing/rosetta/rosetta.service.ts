@@ -244,6 +244,8 @@ export class RosettaService {
   // 客户端接管时租白号 / 注入后回报能用与否(状态由回报驱动,服务端不验证)。
   leaseClaudeSession(payload: any) { return this.sessionPoolSvc.leaseSession(payload); }
   reportClaudeSession(payload: any) { return this.sessionPoolSvc.reportSession(payload); }
+  // 客户端捕获到 claude.ai 会话轮换的新 sessionKey → 更新号池存储,避免下次租到被作废的旧 sk。
+  rotateClaudeSession(payload: any) { return this.sessionPoolSvc.rotateSessionKey(payload); }
 
   // ── 通用出口代理(御三家共用) ───────────────────────────────────────────
   // 给任意 provider 的某个号设/清粘性出口代理。客户端租到该号时随 lease 下发

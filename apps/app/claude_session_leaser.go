@@ -55,9 +55,11 @@ type sessionLeaseResp struct {
 }
 
 type ClaudeSessionLeaser struct {
-	mu      sync.Mutex
-	current *SessionLease
-	notice  string // 一次性提示(借号失败时设,GetStats 读取即清 → 前端 toast)
+	mu       sync.Mutex
+	current  *SessionLease
+	notice   string // 一次性提示(借号失败时设,GetStats 读取即清 → 前端 toast)
+	card     string // 借号授权(UserToken):租号时记下,供会话轮换上报复用
+	upstream string // 上游 base 选择:同上,供轮换上报走同一通道
 }
 
 var globalClaudeSessionLeaser = &ClaudeSessionLeaser{}
@@ -174,6 +176,9 @@ func (l *ClaudeSessionLeaser) report(card, upstream string, accountId int, r pro
 //
 // 连试 sessionMaxTries 个(每个号有各自静态出口)。
 func (l *ClaudeSessionLeaser) LeaseAndVerify(card, deviceId, upstream string) error {
+	l.mu.Lock()
+	l.card, l.upstream = card, upstream // 记下授权/通道,供后续会话轮换上报复用
+	l.mu.Unlock()
 	var lastErr error
 	var cfFallback *SessionLease // probe 被 CF 拦但号未必坏,留给真 Chromium 解挑战试
 	for i := 0; i < sessionMaxTries; i++ {
@@ -216,6 +221,54 @@ func (l *ClaudeSessionLeaser) setCurrent(lease *SessionLease) {
 	l.mu.Lock()
 	l.current = lease
 	l.mu.Unlock()
+}
+
+// OnRotatedSessionKey claude.ai 在借号会话里下发新 sessionKey(会话轮换)时调用。
+// claude.ai 的 web 会话会轮换 sessionKey 并作废旧的;旧版把轮换的新 sk 直接 strip 丢弃,
+// 导致旧 sk 失效后"第二次未登录"、号还被烧成 unusable。这里改为:
+//   ① 本地把 current 的 sk 顶替成新值 —— 后续请求继续以活的 sk 发出,本会话不掉线;
+//   ② 异步上报服务端把号池存的 sk 也更新掉 —— 下次租约(本机或他人)拿到的是活号而非死号。
+// newSk 为空、当前未借号、或与当前相同 → 忽略(天然去重,避免无谓上报)。
+// 注意:仍由调用方负责把这条 Set-Cookie strip 掉,新 sk 绝不落进 Chromium profile。
+func (l *ClaudeSessionLeaser) OnRotatedSessionKey(newSk string) {
+	if newSk == "" {
+		return
+	}
+	l.mu.Lock()
+	if l.current == nil || l.current.SessionKey == newSk {
+		l.mu.Unlock()
+		return
+	}
+	accountId, email := l.current.AccountId, l.current.Email
+	card, upstream := l.card, l.upstream
+	l.current.SessionKey = newSk
+	l.mu.Unlock()
+
+	Log("[session-leaser] ⟳ 白号 #%d (%s) sessionKey 轮换,已本地顶替", accountId, email)
+	if card == "" {
+		return // 没授权凭证就只本地顶替,不上报(借号期理论上一定有 card)
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Log("[session-leaser] 轮换上报 goroutine panic: %v", r)
+			}
+		}()
+		l.reportRotation(card, upstream, accountId, newSk)
+	}()
+}
+
+// reportRotation 把轮换后的新 sessionKey 推给服务端号池(/rotate-session),让存储的号也更新成活的。
+func (l *ClaudeSessionLeaser) reportRotation(card, upstream string, accountId int, newSk string) {
+	payload := map[string]interface{}{
+		"accountId":  accountId,
+		"sessionKey": newSk,
+	}
+	if _, status, err := postBcaiBaseWithFallback(ANTHROPIC_WEB_REMOTE_BASE, "/rotate-session", payload, card, upstream); err != nil {
+		Log("[session-leaser] 轮换上报失败(不影响本机使用): %v", err)
+	} else {
+		Log("[session-leaser] 轮换上报完成 #%d → HTTP %d", accountId, status)
+	}
 }
 
 // probeSessionKey 用 utls(绕 CF)+ 白号静态出口探 sessionKey 是否有效。

@@ -185,32 +185,61 @@ export class ClaudeSessionPoolService {
   }
 
   // ── 客户端租约:接管时拉一个白号(sessionKey + 静态出口) ────────────────
-  // 只挑 enabled + 有代理(不准裸连) + status ∈ {unverified, usable};按使用人数升序分配,
-  // 让流量摊平到多个号,降低单号被 claude.ai 风控聚类的概率。命中后 useCount+1、记 lastUsedAt。
-  leaseSession(_payload?: any) {
-    const data = readJson(this.filePath(), { accounts: [] });
+  // 候选:enabled + 有代理(不准裸连) + status ∈ {unverified, usable}。
+  // 【粘性绑定】同一用户(cardId)始终复用同一个白号 —— claude.ai 的 web 会话不耐受多人并发共享
+  // (并发会触发 sessionKey 轮换/吊销、互相把对方的 sk 作废)。一号一用户从根上避开这种打架。
+  //   ① 已绑定且该号仍可租 → 直接复用;
+  //   ② 未绑定 / 绑定的号已失效(unusable/禁用/删除)→ 按【已绑定用户数】升序挑号(把用户均摊到
+  //      各号),然后(重新)绑定;
+  //   ③ 无 cardId(理论不会,控制器已要求有效订阅)→ 退回按使用人数升序,不绑定(向后兼容)。
+  // 命中后 useCount+1、记 lastUsedAt。
+  leaseSession(payload?: any) {
+    const cardId = String(payload?.cardId || "").trim();
+    const data = readJson(this.filePath(), { accounts: [], bindings: {} });
     const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const bindings: Record<string, number> =
+      data.bindings && typeof data.bindings === "object" ? data.bindings : {};
 
     const candidates = accounts
       .filter((a: any) => a.enabled !== false)
       .filter((a: any) => Boolean(a.sessionKey))
       .filter((a: any) => Boolean(a.proxyUrl)) // 无静态出口的号绝不下发(不准裸奔)
-      .filter((a: any) => normalizeStatus(a.status) !== "unusable")
-      .sort((a: any, b: any) => {
+      .filter((a: any) => normalizeStatus(a.status) !== "unusable");
+
+    if (candidates.length === 0) {
+      return { ok: false, error: "白号池无可用账号(需 enabled + 已配静态代理 + 未被标记不可用)" };
+    }
+
+    // ① 粘性命中:已绑定且该号仍可租 → 复用。
+    let acc: any = null;
+    if (cardId) {
+      const boundId = Number(bindings[cardId] || 0);
+      if (boundId) acc = candidates.find((a: any) => Number(a.id) === boundId) || null;
+    }
+
+    // ② 未绑定 / 绑定号已失效 → 按已绑定用户数最少挑号(均摊用户),再(重新)绑定。
+    if (!acc) {
+      const boundUsers: Record<number, number> = {};
+      for (const v of Object.values(bindings)) {
+        boundUsers[Number(v)] = (boundUsers[Number(v)] || 0) + 1;
+      }
+      acc = candidates.slice().sort((a: any, b: any) => {
+        const ba = boundUsers[Number(a.id)] || 0;
+        const bb = boundUsers[Number(b.id)] || 0;
+        if (ba !== bb) return ba - bb;
         const ua = Number(a.useCount || 0);
         const ub = Number(b.useCount || 0);
         if (ua !== ub) return ua - ub;
         return Number(a.id || 0) - Number(b.id || 0);
-      });
-
-    const acc = candidates[0];
-    if (!acc) return { ok: false, error: "白号池无可用账号(需 enabled + 已配静态代理 + 未被标记不可用)" };
+      })[0];
+      if (cardId) bindings[cardId] = Number(acc.id);
+    }
 
     acc.useCount = Number(acc.useCount || 0) + 1;
     acc.lastUsedAt = nowIso();
     acc.updatedAt = nowIso();
     const leaseId = `ws-${acc.id}-${Date.now().toString(36)}`;
-    writeJson(this.filePath(), { ...data, accounts, updatedAt: nowIso() });
+    writeJson(this.filePath(), { ...data, accounts, bindings, updatedAt: nowIso() });
 
     return {
       ok: true,
@@ -255,6 +284,31 @@ export class ClaudeSessionPoolService {
       acc.status = "unusable";
       acc.lastError = error;
     }
+    acc.lastVerifiedAt = nowIso();
+    acc.updatedAt = nowIso();
+    writeJson(this.filePath(), { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: acc.email, status: normalizeStatus(acc.status) };
+  }
+
+  // ── 客户端回报会话轮换:claude.ai 在借号会话里下发了新 sessionKey ──────────
+  // claude.ai 的 web 会话会轮换 sessionKey 并作废旧的。客户端捕获到新 sk 后推给这里,把号池
+  // 存的 sk 顶替成活的(并复活为 usable —— 新 sk 来自活会话,几乎必有效),这样下次租约拿到的
+  // 是活号而非被作废的旧 sk(解决"第二次未登录"、号被烧成 unusable)。仅在号存在且 sk 确有变化时落盘。
+  rotateSessionKey(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const sessionKey = String(payload?.sessionKey || "").trim();
+    if (!sessionKey) return { ok: false, error: "sessionKey 不能为空" };
+
+    const data = readJson(this.filePath(), { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (String(acc.sessionKey || "") === sessionKey) {
+      return { ok: true, email: acc.email, unchanged: true }; // 已是最新,免写盘
+    }
+    acc.sessionKey = sessionKey;
+    acc.status = "usable"; // 轮换 sk 来自活的借号会话,直接复活可用
+    acc.lastError = "";
     acc.lastVerifiedAt = nowIso();
     acc.updatedAt = nowIso();
     writeJson(this.filePath(), { ...data, accounts, updatedAt: nowIso() });
