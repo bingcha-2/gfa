@@ -356,6 +356,20 @@ export const zhCN = {
     },
   },
 
+  share: {
+    menuTitle: '分享赚返点',
+    title: '分享赚返点',
+    desc: '好友通过你的链接下单,你得 10% 余额(仅可用于购买商品)。',
+    linkLabel: '我的邀请链接',
+    copy: '复制',
+    copied: '已复制',
+    credit: '返佣余额',
+    invited: '已邀请',
+    loading: '加载中…',
+    loadFailed: '加载失败,请稍后重试。',
+    close: '关闭',
+  },
+
   modal: {
     confirm: '确认',
     gotIt: '我知道了',

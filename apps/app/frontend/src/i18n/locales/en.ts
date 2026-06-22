@@ -355,6 +355,20 @@ export const en: DeepPartialDict = {
     },
   },
 
+  share: {
+    menuTitle: 'Share & earn',
+    title: 'Share & earn',
+    desc: 'When a friend orders via your link, you get 10% back as balance (purchases only).',
+    linkLabel: 'My invite link',
+    copy: 'Copy',
+    copied: 'Copied',
+    credit: 'Balance',
+    invited: 'Invited',
+    loading: 'Loading…',
+    loadFailed: 'Failed to load, please try again.',
+    close: 'Close',
+  },
+
   modal: {
     confirm: 'Confirm',
     gotIt: 'Got it',

@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  RefreshCw, ChevronUp, ChevronDown, Settings, MessageSquare, LogOut, MonitorSmartphone, ExternalLink, KeyRound,
+  RefreshCw, ChevronUp, ChevronDown, Settings, MessageSquare, LogOut, MonitorSmartphone, ExternalLink, KeyRound, Gift,
 } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { Modal, useModal } from '@/components/Modal'
 import { ActivateCodeModal } from '@/components/ActivateCodeModal'
+import { ShareModal } from '@/components/ShareModal'
 import * as api from '@/services/wails'
 import { formatDate, cn } from '@/lib/utils'
 import { productLabel } from '@/lib/usageBars'
@@ -34,6 +35,7 @@ export function AccountDock({
   const { modalProps, showAlert, showConfirm } = useModal()
   const [open, setOpen] = useState(false)
   const [activateOpen, setActivateOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [reordering, setReordering] = useState(false)
@@ -456,6 +458,10 @@ export function AccountDock({
                 setActivateOpen(true)
                 setOpen(false)
               })}
+              {menuRow(Gift, t('share.menuTitle'), () => {
+                setShareOpen(true)
+                setOpen(false)
+              })}
               {menuRow(MonitorSmartphone, t('account.manageDevices'), () => api.openURL(api.PORTAL_URLS.devices), { external: true })}
               {menuRow(Settings, t('nav.settings'), () => {
                 onNavigate?.('settings')
@@ -477,6 +483,7 @@ export function AccountDock({
         onClose={() => setActivateOpen(false)}
         onActivated={() => { void heartbeat() }}
       />
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
     </>
   )
 }
