@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { getDict } from "@/lib/i18n/server";
 import { AuthCard } from "@/components/account/auth/auth-card";
 import { RegisterForm } from "@/components/account/auth/register-form";
@@ -10,7 +11,10 @@ export default async function RegisterPage() {
 
   return (
     <AuthCard title={t.registerTitle} description={t.registerDesc}>
-      <RegisterForm />
+      {/* RegisterForm reads ?ref= via useSearchParams — wrap in Suspense */}
+      <Suspense>
+        <RegisterForm />
+      </Suspense>
     </AuthCard>
   );
 }

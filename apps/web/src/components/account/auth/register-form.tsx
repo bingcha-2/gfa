@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { AccountButton, AccountInput } from "@/components/account/account-ui";
@@ -10,12 +10,19 @@ import { useDict } from "@/lib/i18n/client";
 
 export function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const dict = useDict();
   const t = dict.portalApp;
+
+  // 邀请码:从邀请链接 ?ref= 自动带入(归一化为大写),用户也可手动编辑/清空
+  const normalizeReferral = (raw: string) => raw.trim().toUpperCase();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [referralCode, setReferralCode] = useState(() =>
+    normalizeReferral(searchParams.get("ref") ?? "")
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +35,7 @@ export function RegisterForm() {
         email,
         password,
         displayName || undefined,
-        undefined
+        referralCode || undefined
       );
       router.push("/account");
       router.refresh();
@@ -59,6 +66,17 @@ export function RegisterForm() {
           placeholder={t.form.displayNamePlaceholder}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
+          disabled={loading}
+        />
+
+      <AccountInput
+          label={t.form.referralCodeLabel}
+          name="referralCode"
+          type="text"
+          autoComplete="off"
+          placeholder={t.form.referralCodePlaceholder}
+          value={referralCode}
+          onChange={(e) => setReferralCode(normalizeReferral(e.target.value))}
           disabled={loading}
         />
 
