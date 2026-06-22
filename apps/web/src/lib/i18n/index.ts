@@ -1,13 +1,6 @@
 import { DEFAULT_LOCALE, type Locale } from "./config";
 import { zhCN, type Dict } from "./dictionaries/zh-CN";
-import { zhTW } from "./dictionaries/zh-TW";
 import { en } from "./dictionaries/en";
-import { ja } from "./dictionaries/ja";
-import { ko } from "./dictionaries/ko";
-import { es } from "./dictionaries/es";
-import { fr } from "./dictionaries/fr";
-import { de } from "./dictionaries/de";
-import { vi } from "./dictionaries/vi";
 
 import type { DeepPartialDict } from "./dictionaries/types";
 
@@ -38,14 +31,7 @@ function deepMerge<T>(base: T, patch: unknown): T {
 
 const RAW: Record<Locale, DeepPartialDict> = {
   "zh-CN": zhCN,
-  "zh-TW": zhTW,
   en,
-  ja,
-  ko,
-  es,
-  fr,
-  de,
-  vi,
 };
 
 /** 简单占位符插值:fmt("v{ver} 更新", { ver: "1.2" }) → "v1.2 更新"。 */
