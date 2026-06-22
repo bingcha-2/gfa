@@ -141,6 +141,26 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 		l.quotaMode = mode
 	}
 
+	// 检测服务端 5h 窗口翻滚:newStart(= 窗口起点)在同一窗口内恒定,
+	// 只有服务端开了新窗口才会前移一大截。翻滚则先清零本地高水位 —
+	// 否则下面的 opusTokensUsed 取 max(本地,服务端) 会把上个窗口的用量
+	// (如 1.63M)带进新窗口,导致 5h 后额度永不恢复。
+	if rmRaw, ok := aks["tokenWindowResetMs"].(float64); ok && rmRaw > 0 {
+		wMs := l.localQuota.WindowMs
+		if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
+			wMs = int64(v)
+		}
+		if wMs <= 0 {
+			wMs = defaultWindowMs
+		}
+		newStart := time.Now().UnixMilli() + int64(rmRaw) - wMs
+		if l.localQuota.WindowStartedAt > 0 && newStart > l.localQuota.WindowStartedAt+windowRolloverSlackMs {
+			l.localQuota.OpusTokensUsed = 0
+			l.localQuota.GeminiTokensUsed = 0
+			l.localQuota.CodexTokensUsed = 0
+		}
+	}
+
 	// 限额以服务端为准 — 包括 0（无限制 / 动态模式清零）
 	if v, ok := aks["opusTokenLimit"].(float64); ok {
 		l.localQuota.OpusTokenLimit = int64(v)

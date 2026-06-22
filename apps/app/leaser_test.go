@@ -29,6 +29,72 @@ func TestSyncFromServerDerivesModelLimitsFromTokenWindowLimit(t *testing.T) {
 	}
 }
 
+// 服务端 5h 窗口翻滚后,本地高水位用量必须清零,否则 CheckLocalQuota 用
+// max(本地,服务端) 把上个窗口的 1.63M 带进新窗口,额度永远「不恢复」。
+func TestSyncFromServerResetsUsedOnWindowRollover(t *testing.T) {
+	now := time.Now().UnixMilli()
+	wMs := defaultWindowMs
+	l := &Leaser{
+		quotaMode: "static",
+		localQuota: LocalQuota{
+			WindowStartedAt: now - 44*60_000, // 窗口仍活跃(44 分钟前开),≈256 分钟剩余
+			WindowMs:        wMs,
+			OpusTokensUsed:  1_630_000,
+			OpusTokenLimit:  1_500_000,
+		},
+	}
+
+	// 翻滚前:用量超限,应拦截
+	if ok, _, _ := l.CheckLocalQuota("claude-opus-4-6"); ok {
+		t.Fatalf("翻滚前应拦截(用量超限)")
+	}
+
+	// 服务端开了新窗口:用量很低、完整 5h 剩余
+	l.syncFromServer(map[string]interface{}{
+		"quotaMode":          "static",
+		"opusTokenLimit":     float64(1_500_000),
+		"opusTokensUsed":     float64(10_000),
+		"tokenWindowMs":      float64(wMs),
+		"tokenWindowResetMs": float64(wMs),
+	})
+
+	if ok, _, reason := l.CheckLocalQuota("claude-opus-4-6"); !ok {
+		t.Fatalf("窗口翻滚后应放行,却被拦:%s", reason)
+	}
+	if got := l.localQuota.OpusTokensUsed; got != 10_000 {
+		t.Fatalf("OpusTokensUsed = %d, want 10000(应清零后取服务端值)", got)
+	}
+}
+
+// 同一窗口内的常规同步(服务端 resetMs 倒计时)不得清零本地用量 —
+// 否则 max(本地,服务端) 合并失效,缓存 token 期间的本地累加会被抹掉 → 超用。
+func TestSyncFromServerKeepsUsedWithinSameWindow(t *testing.T) {
+	now := time.Now().UnixMilli()
+	wMs := defaultWindowMs
+	l := &Leaser{
+		quotaMode: "static",
+		localQuota: LocalQuota{
+			WindowStartedAt: now - 10*60_000, // 窗口 10 分钟前开,仍活跃
+			WindowMs:        wMs,
+			OpusTokensUsed:  900_000, // 本地累加值高于服务端(同步滞后)
+			OpusTokenLimit:  1_500_000,
+		},
+	}
+
+	// 服务端仍是同一窗口:resetMs 倒计时(= wMs - 已过 10 分钟),用量较低
+	l.syncFromServer(map[string]interface{}{
+		"quotaMode":          "static",
+		"opusTokenLimit":     float64(1_500_000),
+		"opusTokensUsed":     float64(500_000),
+		"tokenWindowMs":      float64(wMs),
+		"tokenWindowResetMs": float64(wMs - 10*60_000),
+	})
+
+	if got := l.localQuota.OpusTokensUsed; got != 900_000 {
+		t.Fatalf("OpusTokensUsed = %d, want 900000(同窗口内应保留本地高水位)", got)
+	}
+}
+
 // anthropic-only(或 codex-only)绑定卡:主 antigravity 租号被有意跳过,cachedToken
 // 永远为 nil —— serviceState 不应卡死在 waiting_first_lease(UI 永远「获取租约中…」)。
 func TestServiceStateReadyForNonAntigravityBoundCard(t *testing.T) {

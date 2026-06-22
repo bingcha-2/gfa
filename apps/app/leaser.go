@@ -19,6 +19,12 @@ var API_BASE = getEnvOrDefault("BCAI_API_BASE", buildAPIBase+"/api/app/lease/ant
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 
+// windowRolloverSlackMs:判定服务端窗口翻滚的前移阈值。同一窗口内反推的窗口
+// 起点恒定,只受客户端/服务端时钟偏差影响(通常秒级);真正翻滚会跳约 5h。
+// 取 5 分钟:远大于时钟偏差(不会在窗口内误清用量 → 防超用),又远小于任何
+// 真实窗口长度(翻滚必被检出 → 防永不恢复)。
+const windowRolloverSlackMs int64 = 5 * 60_000
+
 type TokenLease struct {
 	AccessToken    string                 `json:"accessToken"`
 	ProjectId      string                 `json:"projectId"`
