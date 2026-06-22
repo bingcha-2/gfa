@@ -4,6 +4,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CatalogPurchase } from "@/components/account/catalog-purchase";
 import type { CatalogConfig } from "@/lib/account/catalog-pricing";
 
+// 下单弹窗的余额抵扣 UI 读 useAccount;本套件不测余额(置 0 → 开关隐藏,POST 不带 useCreditCents)。
+vi.mock("@/components/account/account-provider", () => ({
+  useAccount: () => ({ customer: { creditCents: 0 } }),
+  AccountProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 const CATALOG: CatalogConfig = {
   products: ["anthropic", "codex", "antigravity"],
   levels: {

@@ -13,6 +13,13 @@ import { useState } from "react";
 import { CatalogOrderFlow } from "@/components/account/catalog-order-dialog";
 import type { Selection } from "@/lib/account/catalog-pricing";
 
+// 余额抵扣 UI 读 useAccount().customer.creditCents;用可变快照按用例设置余额(默认 0 → 开关隐藏)。
+const { creditState } = vi.hoisted(() => ({ creditState: { value: 0 } }));
+vi.mock("@/components/account/account-provider", () => ({
+  useAccount: () => ({ customer: { creditCents: creditState.value } }),
+  AccountProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 const SELECTION: Selection = {
   line: "bind",
   items: [{ product: "anthropic", level: "max-20x" }],
@@ -33,6 +40,7 @@ function createdOrder() {
     amountCents: 29900,
     baseCents: 29900,
     feeCents: 0,
+    creditAppliedCents: 0,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     payUrl: "https://pay.example/catalog",
     qrDataUri: "data:image/png;base64,CATALOGQR",
@@ -56,6 +64,7 @@ function postCalls(mockFetch: ReturnType<typeof vi.fn>) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  creditState.value = 0;
 });
 
 afterEach(() => {
@@ -88,6 +97,33 @@ describe("CatalogOrderFlow", () => {
       selection: SELECTION,
     });
     expect(JSON.parse(init.body as string).selection).not.toHaveProperty("shareUsers");
+  });
+
+  it("有余额时显示抵扣开关,勾选后带 useCreditCents 重新下单(夹断到套餐价)", async () => {
+    creditState.value = 50000; // ¥500,多于套餐价 ¥299 → 夹断到 29900
+    const mockFetch = mockBillingFetch("PENDING");
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<CatalogOrderFlow selection={SELECTION} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // 初始单不抵扣(body 无 useCreditCents)。
+    expect(postCalls(mockFetch)).toHaveLength(1);
+    expect(JSON.parse((postCalls(mockFetch)[0] as [string, RequestInit])[1].body as string))
+      .not.toHaveProperty("useCreditCents");
+
+    // 勾选「使用余额抵扣」→ 重新下单,带 useCreditCents = min(余额, 套餐价) = 29900。
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const posts = postCalls(mockFetch);
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse((posts[1] as [string, RequestInit])[1].body as string)).toEqual({
+      selection: SELECTION,
+      useCreditCents: 29900,
+    });
   });
 
   it("renders the paid success state on PAID", async () => {

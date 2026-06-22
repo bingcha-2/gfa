@@ -223,10 +223,17 @@ export async function getPlanCatalog(): Promise<PlanCatalogResponse> {
  * BillingOrderCreated shape (payUrl + qrDataUri) as the legacy plan order.
  */
 // 统一收银台:channel 可选(用户在网关侧自选 alipay/wxpay/bank)。不传则后端占位。
-export async function createCatalogOrder(selection: Selection, channel?: PayChannel) {
+export async function createCatalogOrder(
+  selection: Selection,
+  channel?: PayChannel,
+  useCreditCents?: number,
+) {
+  const body: Record<string, unknown> = { selection };
+  if (channel) body.channel = channel;
+  if (useCreditCents && useCreditCents > 0) body.useCreditCents = useCreditCents;
   return userApi<BillingOrderCreated>("billing/catalog-orders", {
     method: "POST",
-    body: channel ? { selection, channel } : { selection },
+    body,
   });
 }
 

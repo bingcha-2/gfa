@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CheckCircle2Icon, XCircleIcon, RotateCcwIcon, XIcon, MailWarningIcon } from "lucide-react";
 
 import { AccountButton, AccountSkeleton } from "./account-ui";
+import { useAccount } from "./account-provider";
 import { useOrderStatus } from "@/lib/account/use-order-status";
 import { cancelBillingOrder, createCatalogOrder, UserApiError } from "@/lib/account/user-api";
 import type { BillingOrderCreated } from "@/lib/account/user-types";
@@ -38,7 +39,13 @@ export function CatalogOrderFlow({
   const dict = useDict();
   const t = dict.portalApp.billing;
 
+  // 余额池(挂载时快照):抵扣在后端下单时即扣减,再建单(切换开关)会作废旧单并回补,
+  // 故任意时刻最多一笔有效单,可用余额恒等于此快照。下单成功后由 onPaid → refresh 更新。
+  const { customer } = useAccount();
+  const availableCredit = customer.creditCents;
+
   const [order, setOrder] = useState<BillingOrderCreated | null>(null);
+  const [creditOn, setCreditOn] = useState(false);
   const [creating, setCreating] = useState(true);
   const [createError, setCreateError] = useState<string | null>(null);
   // 邮箱未验证(后端 EMAIL_NOT_VERIFIED)→ 专门引导,而非笼统「创建失败」。
@@ -57,7 +64,7 @@ export function CatalogOrderFlow({
   const creatingRef = useRef(false);
 
   const createOrder = useCallback(
-    async () => {
+    async (useCreditCents = 0) => {
       if (creatingRef.current) return; // 正在下单 → 忽略重复触发
       creatingRef.current = true;
       requestedRef.current = selectionKey;
@@ -66,7 +73,7 @@ export function CatalogOrderFlow({
       setNeedsVerify(false);
       setOrder(null); // abandon previous order → polling stops
       try {
-        const created = await createCatalogOrder(selection);
+        const created = await createCatalogOrder(selection, undefined, useCreditCents);
         setOrder(created);
         setNow(Date.now());
       } catch (err) {
@@ -118,15 +125,30 @@ export function CatalogOrderFlow({
     return () => clearInterval(id);
   }, [order]);
 
+  // 全额余额抵扣单即时 PAID(无需轮询);普通单等轮询到 PAID。
+  const isPaid = status?.status === "PAID" || order?.paid === true;
+
   // PAID → toast + refresh + auto-close (~2s). Fires exactly once.
   useEffect(() => {
-    if (status?.status !== "PAID" || paidHandled.current) return;
+    if (!isPaid || paidHandled.current) return;
     paidHandled.current = true;
     toast.success(t.paidToast);
     onPaid?.();
     const id = setTimeout(() => onRequestClose?.(), 2000);
     return () => clearTimeout(id);
-  }, [status?.status, onPaid, onRequestClose, t.paidToast]);
+  }, [isPaid, onPaid, onRequestClose, t.paidToast]);
+
+  // 切换「使用余额抵扣」:重新下单(后端作废旧单并回补余额,故可来回切换)。
+  const toggleCredit = useCallback(
+    (next: boolean) => {
+      setCreditOn(next);
+      if (!order) return;
+      const fullPrice = order.baseCents + order.creditAppliedCents;
+      const apply = next ? Math.min(availableCredit, fullPrice) : 0;
+      void createOrder(apply);
+    },
+    [order, availableCredit, createOrder],
+  );
 
   const remainingMs = order ? new Date(order.expiresAt).getTime() - now : 0;
 
@@ -145,12 +167,14 @@ export function CatalogOrderFlow({
 
   // ── Terminal / transient views ──────────────────────────────────────────────
 
-  if (status?.status === "PAID") {
+  if (isPaid) {
+    // 全额余额抵扣单:文案点明「余额开通」,与扫码支付区分。
+    const creditCovered = order?.paid === true && status?.status !== "PAID";
     return (
       <div className="account-order-flow account-order-flow--terminal">
         <CheckCircle2Icon />
-        <div>{t.paidTitle}</div>
-        <p>{t.paidDesc}</p>
+        <div>{creditCovered ? t.creditPaidTitle : t.paidTitle}</div>
+        <p>{creditCovered ? t.creditPaidDesc : t.paidDesc}</p>
       </div>
     );
   }
@@ -238,10 +262,34 @@ export function CatalogOrderFlow({
               <strong>{formatPriceCents(order.feeCents)}</strong>
             </div>
           )}
+          {order.creditAppliedCents > 0 && (
+            <div className="account-order-flow__amount">
+              <span>{t.creditAppliedLabel}</span>
+              <strong>-{formatPriceCents(order.creditAppliedCents)}</strong>
+            </div>
+          )}
           <div className="account-order-flow__amount">
             <span>{t.amountLabel}</span>
             <strong>{formatPriceCents(order.amountCents)}</strong>
           </div>
+
+          {availableCredit > 0 && (
+            <label className="account-order-flow__credit">
+              <input
+                type="checkbox"
+                checked={creditOn}
+                disabled={creating}
+                onChange={(e) => toggleCredit(e.target.checked)}
+              />
+              <span>
+                {t.creditUseToggle}
+                <em>
+                  {" "}
+                  ({t.creditBalanceLabel} {formatPriceCents(availableCredit)})
+                </em>
+              </span>
+            </label>
+          )}
 
           <p className="account-order-flow__safenote">{t.channelFeeNote}</p>
 

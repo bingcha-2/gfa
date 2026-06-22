@@ -49,14 +49,19 @@ export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED"
 export type BillingOrderCreated = {
   outTradeNo: string;
   amountCents: number;
-  /** 套餐基准价（分）。amountCents = baseCents + feeCents。 */
+  /** 应付现金基准价（分）= 抵扣后。amountCents = baseCents + feeCents。 */
   baseCents: number;
   /** 支付通道手续费（分），由用户承担。0 表示未加价。 */
   feeCents: number;
+  /** 本单余额抵扣额（分）。套餐原价 = baseCents + creditAppliedCents。 */
+  creditAppliedCents: number;
   expiresAt: string;
-  payUrl: string;
+  /** 全额抵扣单(余额覆盖 100%):paid=true、无 payUrl/qr,已即时开通。 */
+  paid?: boolean;
+  subscriptionId?: string | null;
+  payUrl?: string;
   /** data:image/png;base64 — render directly in <img>, no QR library. */
-  qrDataUri: string;
+  qrDataUri?: string;
 };
 
 /** GET /web/billing/orders/:outTradeNo response. */
