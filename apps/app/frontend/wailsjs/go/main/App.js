@@ -30,10 +30,6 @@ export function GetAccountState() {
   return window['go']['main']['App']['GetAccountState']();
 }
 
-export function GetReferralInfo() {
-  return window['go']['main']['App']['GetReferralInfo']();
-}
-
 export function GetAnnouncement() {
   return window['go']['main']['App']['GetAnnouncement']();
 }
@@ -64,6 +60,10 @@ export function GetIDEStatus() {
 
 export function GetLogs() {
   return window['go']['main']['App']['GetLogs']();
+}
+
+export function GetReferralInfo() {
+  return window['go']['main']['App']['GetReferralInfo']();
 }
 
 export function GetStats() {

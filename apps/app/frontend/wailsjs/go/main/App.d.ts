@@ -16,8 +16,6 @@ export function DownloadUpdate():Promise<void>;
 
 export function GetAccountState():Promise<Record<string, any>>;
 
-export function GetReferralInfo():Promise<Record<string, any>>;
-
 export function GetAnnouncement():Promise<string>;
 
 export function GetAppVersion():Promise<string>;
@@ -33,6 +31,8 @@ export function GetFaqData():Promise<Record<string, any>>;
 export function GetIDEStatus():Promise<main.IDEStatus>;
 
 export function GetLogs():Promise<Array<string>>;
+
+export function GetReferralInfo():Promise<Record<string, any>>;
 
 export function GetStats():Promise<Record<string, any>>;
 
