@@ -20,6 +20,8 @@ func main() {
 	appMenu := menu.NewMenu()
 	appMenu.Append(menu.AppMenu())
 	appMenu.Append(menu.EditMenu())
+	// macOS:补一个「窗口」菜单,把 ⌘W 绑成「隐藏到后台」(与红色关闭按钮一致)。其它平台 no-op。
+	addWindowMenu(appMenu, app)
 
 	err := wails.Run(&options.App{
 		Title:     "冰茶AI",
