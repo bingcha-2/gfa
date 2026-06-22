@@ -79,16 +79,62 @@ function clamp01(n: number): number {
   return n
 }
 
+// 血条回升确认(与服务端 fair-share lastFraction 同口径):明显回升需「持续够久 + 够多次读数」
+// 才采纳,抗上游额度抖动 / 孤立高值。不传 now → 退化为纯单调(只降不升,旧行为)。
+const REBOUND_EPS = 0.02
+const REBOUND_CONFIRM_MS = 5 * 60 * 1000
+const REBOUND_MIN_CONFIRMATIONS = 2
+
+/**
+ * 窗口内血条「低水位」：真跌立即降;明显回升(超容差且持续确认)才抬 —— 否则保持低值。
+ * 没有 now(旧调用)= 纯单调(Math.min,只降不升)。传 now 启用回升:服务端值被修正抬升后,
+ * 同一窗口的血条不必等重启/窗口 reset,几分钟内自己回上去(把服务端 lastFraction 的回升逻辑搬到客户端)。
+ */
 export function monotonicQuotaValue(
   state: Record<string, number>,
   key: string | undefined,
   value: number,
+  now?: number,
 ): number {
   if (!key || !Number.isFinite(value) || value < 0) return value
-  const previous = state[key]
-  const next = previous == null ? value : Math.min(previous, value)
-  state[key] = next
-  return next
+  const lo = state[key]
+  if (lo == null) {
+    state[key] = value
+    return value
+  }
+  const pv = `${key}::rb_v`, ps = `${key}::rb_since`, pc = `${key}::rb_n`
+  const clearPending = () => {
+    delete state[pv]
+    delete state[ps]
+    delete state[pc]
+  }
+  // 真跌:立即降,清回升确认。
+  if (value < lo) {
+    state[key] = value
+    clearPending()
+    return value
+  }
+  // 明显回升(超容差)+ 有时钟:连续确认够久(≥CONFIRM_MS)且够多次(≥MIN_CONF)才采纳,取确认期内最保守(最低)高值。
+  if (now != null && value > lo + REBOUND_EPS) {
+    if (state[pv] == null) {
+      state[pv] = value
+      state[ps] = now
+      state[pc] = 1
+    } else {
+      state[pv] = Math.min(state[pv], value)
+      state[pc] = (state[pc] || 0) + 1
+    }
+    if (now - (state[ps] ?? now) >= REBOUND_CONFIRM_MS && (state[pc] || 0) >= REBOUND_MIN_CONFIRMATIONS) {
+      const accepted = state[pv]
+      state[key] = accepted
+      clearPending()
+      return accepted
+    }
+    return lo
+  }
+  // ≈低水位 或 无时钟:不回升,清确认(要求确认必须连续)。
+  clearPending()
+  return lo
 }
 
 export type NestedBarDisplay = {

@@ -40,15 +40,19 @@ export function NestedShareBar({ label, myFraction, accountFraction, shareSeats,
   const displayStateRef = useRef<Record<string, number>>({})
   const d = nestedBarDisplay({ myFraction, accountFraction, shareSeats, shareCapacity, exclusive })
   const acctKnown = d.accountRemain >= 0
+  // 传 Date.now() 启用回升确认:服务端值被修正抬升后,血条几分钟内自己回上去,不必等重启/窗口 reset。
+  const now = Date.now()
   const displayMyTotalRemain = monotonicQuotaValue(
     displayStateRef.current,
     displayKey && d.myTotalRemain >= 0 ? `${displayKey}:total` : undefined,
     d.myTotalRemain,
+    now,
   )
   const displaySeatFill = monotonicQuotaValue(
     displayStateRef.current,
     displayKey && d.seatFill >= 0 ? `${displayKey}:seat` : undefined,
     d.seatFill,
+    now,
   )
   const myKnown = displayMyTotalRemain >= 0
   // 条宽用精确百分比;文字用 formatPercent(保留小数,12.5% 不被抹成 13%)。

@@ -65,6 +65,43 @@ describe('monotonicQuotaValue', () => {
     expect(state).toEqual({})
   })
 
+  it('rebounds (rises) after a sustained higher correction once now is provided', () => {
+    const state: Record<string, number> = {}
+    const key = 'anthropic-claude:7d:7000'
+    const t0 = 1_000_000
+
+    // 记下低值 0.30(bug 期间)。
+    expect(monotonicQuotaValue(state, key, 0.30, t0)).toBeCloseTo(0.30, 6)
+    // 服务端修正到 0.50:第一次读数不立即抬(确认从此刻 t0+1000 起计)。
+    const tRise = t0 + 1000
+    expect(monotonicQuotaValue(state, key, 0.50, tRise)).toBeCloseTo(0.30, 6)
+    // 仍是 0.50,但还没到 5 分钟 → 继续压住。
+    expect(monotonicQuotaValue(state, key, 0.50, tRise + 60_000)).toBeCloseTo(0.30, 6)
+    // 自 tRise 起持续 ≥5 分钟且 ≥2 次读数 → 采纳回升到 0.50。
+    expect(monotonicQuotaValue(state, key, 0.50, tRise + 5 * 60_000 + 1)).toBeCloseTo(0.50, 6)
+  })
+
+  it('does not rebound on a transient spike (pending cleared when value falls back)', () => {
+    const state: Record<string, number> = {}
+    const key = 'anthropic-claude:7d:7000'
+    const t0 = 1_000_000
+
+    expect(monotonicQuotaValue(state, key, 0.30, t0)).toBeCloseTo(0.30, 6)
+    expect(monotonicQuotaValue(state, key, 0.50, t0 + 1000)).toBeCloseTo(0.30, 6) // 孤值,起确认
+    expect(monotonicQuotaValue(state, key, 0.30, t0 + 2000)).toBeCloseTo(0.30, 6) // 跌回 → 清确认
+    // 即便之后又高且过了 5 分钟,因为确认被打断、重新计时,这一刻还不抬。
+    expect(monotonicQuotaValue(state, key, 0.50, t0 + 5 * 60_000 + 3000)).toBeCloseTo(0.30, 6)
+  })
+
+  it('without now stays pure-monotonic (never rebounds)', () => {
+    const state: Record<string, number> = {}
+    const key = 'anthropic-claude:7d:7000'
+    expect(monotonicQuotaValue(state, key, 0.30)).toBeCloseTo(0.30, 6)
+    // 不传 now:即使值更高也永不回升。
+    expect(monotonicQuotaValue(state, key, 0.50)).toBeCloseTo(0.30, 6)
+    expect(monotonicQuotaValue(state, key, 0.99)).toBeCloseTo(0.30, 6)
+  })
+
   it('starts from the server value after a client restart loses in-memory display state', () => {
     const key = 'anthropic-claude:5h:1000'
     const beforeCrash: Record<string, number> = {}
