@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { AppSurfaceController } from "./app-surface.controller";
 import { AppAuthModule } from "./app-auth/app-auth.module";
+import { ReferralModule } from "../account/referral/referral.module";
 
 /**
  * AppSurfaceModule — desktop client surface (/api/app/*).
@@ -10,9 +11,10 @@ import { AppAuthModule } from "./app-auth/app-auth.module";
  *   - POST /api/app/login
  *   - POST /api/app/heartbeat
  *   - POST /api/app/logout
+ * ReferralModule provides ReferralService for POST /api/app/referral.
  */
 @Module({
-  imports: [AppAuthModule],
+  imports: [AppAuthModule, ReferralModule],
   controllers: [AppSurfaceController]
 })
 export class AppSurfaceModule {}

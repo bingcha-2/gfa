@@ -423,6 +423,34 @@ func (a *App) SetSubscriptionPriority(subscriptionId string, priority int) error
 	return nil
 }
 
+// GetReferralInfo 拉取当前账号的分享/邀请信息:POST /api/app/referral(复用 toC 的
+// ReferralService.getSummary)。与 SetSubscriptionPriority 同一套 customer JWT 鉴权。
+// 返回 { referralCode, referralLink, invitees[], rewards{totalCents,grantedCount}, creditCents }。
+func (a *App) GetReferralInfo() (map[string]interface{}, error) {
+	cfg := LoadConfig()
+	if cfg.UserToken == "" {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	body, status, err := doAuthPostWithBearer("/app/referral", map[string]interface{}{}, cfg.UserToken)
+	if err != nil {
+		return nil, fmt.Errorf("referral network error: %w", err)
+	}
+	if status < 200 || status >= 300 {
+		var errResp loginErrorResponse
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.Message)
+		}
+		return nil, fmt.Errorf("referral failed (HTTP %d)", status)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("referral parse error: %w", err)
+	}
+	return result, nil
+}
+
 // min returns the smaller of a, b (local helper to avoid Go 1.21 requirement).
 func min(a, b int) int {
 	if a < b {

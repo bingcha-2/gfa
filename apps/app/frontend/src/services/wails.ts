@@ -33,6 +33,7 @@ import {
   UserLogin as _UserLogin,
   UserLogout as _UserLogout,
   GetAccountState as _GetAccountState,
+  GetReferralInfo as _GetReferralInfo,
   HeartbeatCheck as _HeartbeatCheck,
   SetSubscriptionPriority as _SetSubscriptionPriority,
 } from '../../wailsjs/go/main/App'
@@ -87,6 +88,24 @@ export async function userLogout(): Promise<void> {
 
 export async function getAccountState(): Promise<AccountState> {
   return _GetAccountState() as Promise<AccountState>
+}
+
+export interface ReferralInvitee {
+  email: string
+  registeredAt: string
+  rewarded: boolean
+}
+export interface ReferralInfo {
+  referralCode: string
+  referralLink: string
+  invitees: ReferralInvitee[]
+  rewards: { totalCents: number; grantedCount: number }
+  creditCents: number
+}
+
+// 分享/邀请信息:POST /api/app/referral(后端复用 toC ReferralService)。未登录时 Go 侧 reject。
+export async function getReferralInfo(): Promise<ReferralInfo> {
+  return _GetReferralInfo() as Promise<ReferralInfo>
 }
 
 // 服务端心跳:校验会话/订阅是否仍有效。致命类(SESSION_INVALID / DEVICE_REVOKED /

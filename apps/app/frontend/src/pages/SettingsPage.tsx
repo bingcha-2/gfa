@@ -9,13 +9,35 @@ import { cn } from '@/lib/utils'
 import { PromoSection } from '@/components/PromoSection'
 import { useT, useLocaleStore, SUPPORTED_LOCALES, LOCALE_NAMES } from '@/i18n'
 import { getChangelogRecord } from '@/lib/changelog'
-import { FolderOpen, Info, Languages, LogOut, MessageSquare, ScrollText, User } from 'lucide-react'
+import { Copy, FolderOpen, Gift, Info, Languages, LogOut, MessageSquare, ScrollText, User } from 'lucide-react'
 
 export function SettingsPage() {
   const t = useT()
   const { config, appVersion, updateStatus, account, logout } = useAppStore()
   const { modalProps, showAlert, showConfirm } = useModal()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [referral, setReferral] = useState<api.ReferralInfo | null>(null)
+  const [referralCopied, setReferralCopied] = useState(false)
+
+  // 登录后拉取分享/邀请信息(失败静默 —— 返点未开或网络问题不该打断设置页)。
+  useEffect(() => {
+    if (!account?.loggedIn) {
+      setReferral(null)
+      return
+    }
+    api.getReferralInfo().then(setReferral).catch(() => setReferral(null))
+  }, [account?.loggedIn])
+
+  const copyReferral = async () => {
+    if (!referral) return
+    try {
+      await navigator.clipboard.writeText(referral.referralLink)
+      setReferralCopied(true)
+      setTimeout(() => setReferralCopied(false), 2000)
+    } catch {
+      /* clipboard 不可用时静默 */
+    }
+  }
 
   const handleLogout = async () => {
     const confirmed = await showConfirm(t('account.logoutConfirmTitle'), t('account.logoutConfirmBody'))
@@ -239,6 +261,29 @@ export function SettingsPage() {
                   {t('account.manageDevices')}
                 </Button>
               </div>
+
+              {/* 分享赚返点:邀请链接 + 复制 + 返佣余额/已邀请数 */}
+              {referral && (
+                <div className="mt-2 rounded-md border border-[var(--border)] p-2.5 flex flex-col gap-2">
+                  <div className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                    <Gift size={13} />
+                    <span className="text-[12px] font-medium">{t('account.referralTitle')}</span>
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)] leading-snug">{t('account.referralDesc')}</p>
+                  <div className="flex items-center gap-1.5">
+                    <Input readOnly value={referral.referralLink} className="h-7 text-[11px] font-mono-data" />
+                    <Button size="sm" variant="ghost" onClick={copyReferral} className="h-7 px-2 shrink-0 gap-1">
+                      <Copy size={12} />
+                      {referralCopied ? t('account.referralCopied') : t('account.referralCopy')}
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+                    <span>{t('account.referralCredit')} ¥{(referral.creditCents / 100).toFixed(2)}</span>
+                    <span>{t('account.referralInvited')} {referral.invitees.length}{t('account.referralInvitedUnit')}</span>
+                  </div>
+                </div>
+              )}
+
               <Button
                 variant="ghost"
                 onClick={handleLogout}

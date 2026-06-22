@@ -26,6 +26,10 @@ export function GetAccountState() {
   return window['go']['main']['App']['GetAccountState']();
 }
 
+export function GetReferralInfo() {
+  return window['go']['main']['App']['GetReferralInfo']();
+}
+
 export function GetAnnouncement() {
   return window['go']['main']['App']['GetAnnouncement']();
 }

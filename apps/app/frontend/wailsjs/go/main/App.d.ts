@@ -14,6 +14,8 @@ export function DownloadUpdate():Promise<void>;
 
 export function GetAccountState():Promise<Record<string, any>>;
 
+export function GetReferralInfo():Promise<Record<string, any>>;
+
 export function GetAnnouncement():Promise<string>;
 
 export function GetAppVersion():Promise<string>;
