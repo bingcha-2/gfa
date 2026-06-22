@@ -3,5 +3,6 @@ node_modules
 frontend/dist
 *.exe
 .DS_Store
-# macOS build output
+# macOS build output (无扩展名的 Go/Wails 二进制;Windows 版由上面的 *.exe 覆盖)
 bcai-wails
+pinai-wails
