@@ -73,18 +73,18 @@ export const es: DeepPartialDict = {
     h1Line1: "Conecta tus herramientas de IA",
     h1Line2Prefix: "directo a las ",
     h1Line2Accent: "cuentas oficiales",
-    sub: "BingchaAI te asigna cuentas de suscripción oficiales reales para que Antigravity, Claude Code y Codex CLI sigan hablando directo con los servidores oficiales — sin API Key, sin cambiar de herramienta, sin lidiar con el control de riesgos.",
+    sub: "BingchaAI permite que Antigravity, Claude Code y Codex CLI se conecten a los servicios oficiales como siempre, con la cuota completa de tu suscripción. Sin API Key, sin cambiar de herramienta — funciona desde el primer momento.",
     trust1: "Conexión oficial directa",
     trust2: "Sin intermediarios",
     trust3: "Tu código nunca pasa por nosotros",
     ecosystemsTitle: "Un cliente, tres ecosistemas",
     ecosystemsLead:
-      "Las principales herramientas de programación con IA funcionan desde el primer momento. Tras la toma de control las usas como siempre: las solicitudes a los modelos se enrutan automáticamente por el pool de cuentas de Bingcha.",
+      "Las principales herramientas de programación con IA funcionan desde el primer momento: toma el control y úsalas como siempre; las solicitudes a los modelos llegan a los endpoints oficiales a través de un proxy local.",
     ecosystems: [
       {
         name: "Antigravity",
         tag: "IDE · Hub",
-        desc: "El IDE de programación con IA de Google. Con el control tomado, las solicitudes a Gemini / Claude pasan por el pool de Bingcha — el editor ni lo nota.",
+        desc: "El IDE de programación con IA de Google. Tras la toma de control, las solicitudes a Gemini / Claude van directo a los endpoints oficiales sin ningún cambio en tu editor.",
       },
       {
         name: "OpenAI Codex",
@@ -98,45 +98,45 @@ export const es: DeepPartialDict = {
       },
     ],
     logoAlt: "Logo de {name}",
-    howTitle: "Tokens inyectados en local, conexión oficial directa",
+    howTitle: "Proxy local, conexión oficial directa",
     howLead:
-      "Los tokens oficiales reales se inyectan en las herramientas de tu equipo y tu código va directo a los endpoints oficiales. Bingcha solo intercambia tokens en una capa de proxy local — nunca actúa de intermediario.",
+      "Un proxy local permite que tus herramientas se conecten directo a los endpoints oficiales; tu código nunca pasa por nuestros servidores — sin intermediarios.",
     how: [
       {
-        t: "Se inicia un proxy local",
-        d: "Un proxy ligero arranca en tu equipo y toma el control de cada herramienta por la vía estándar — sin tocar código y totalmente reversible con un clic.",
+        t: "Ejecuta un proxy local",
+        d: "Un proxy ligero corre en tu equipo y toma el control de cada herramienta por la vía estándar — sin cambios de código y restaurable con un clic.",
       },
       {
-        t: "Cuentas oficiales alquiladas bajo demanda",
-        d: "En cuanto una herramienta envía una solicitud, se alquila en tiempo real un token oficial real del pool, casi sin sumar latencia.",
+        t: "Toma el control con un clic",
+        d: "Activa el interruptor de toma de control de un producto; el proxy local lo configura todo automáticamente, sin interrumpir tu IDE / CLI.",
       },
       {
-        t: "Se intercambia el token y va directo",
-        d: "El token provisional se reemplaza por uno real y la solicitud va directo a los endpoints oficiales. Tu código nunca pasa por Bingcha.",
+        t: "Conexión oficial directa",
+        d: "Las solicitudes van directo desde el proxy local a los endpoints oficiales; tu código nunca pasa por nuestros servidores.",
       },
       {
-        t: "Estadísticas en vivo, rotación automática",
-        d: "El uso se contabiliza mientras las respuestas se transmiten. Si la cuota se agota o una cuenta queda marcada, se cambia automáticamente a una cuenta de reserva.",
+        t: "Uso en tiempo real",
+        d: "El uso se contabiliza mientras las respuestas se transmiten; la cuota y el ahorro quedan claros de un vistazo, con una experiencia igual a una suscripción nativa.",
       },
     ],
     quickstartLabel: "Inicio rápido",
     quickstartSteps: ["Descarga el cliente", "Ingresa tu tarjeta de acceso", "Haz clic en Tomar el control"],
     quickstartNote: "Menos de 30 segundos — y a programar como siempre",
-    capsTitle: "Mantenemos la complejidad del pool de cuentas lejos de ti",
+    capsTitle: "Nos encargamos del trabajo pesado — tú solo escribes código",
     capsLead:
-      "Una sola cuenta se agota, queda marcada por riesgo, se satura. Asignación inteligente, salida fija y aislamiento de riesgos para que tú solo escribas código.",
+      "Gestión de cuota, conexiones estables, visibilidad del uso — deja el trabajo tedioso a BingchaAI y dedícate a programar.",
     caps: [
       {
-        t: "Asignación inteligente del pool",
-        d: "No es asignación aleatoria. Las cuentas se puntúan por afinidad, carga, nivel de plan y cuota restante por modelo — siempre recibes la mejor cuenta disponible en ese momento.",
+        t: "Programación inteligente de cuota",
+        d: "La programación pondera la carga, el nivel de plan y la cuota restante de cada modelo, para que cada solicitud use la mejor cuota disponible y esperes lo menos posible.",
       },
       {
-        t: "Cuota compartida o dedicada — tú eliges",
-        d: "Las tarjetas de pool comparten cuentas entre usuarios al mejor precio; las tarjetas vinculadas tienen cuenta dedicada con cuota más estable. Las cuentas compartidas usan un algoritmo de reparto justo para que cada quien reciba su parte — nadie puede acapararla.",
+        t: "Planes flexibles para cada necesidad",
+        d: "Elige el plan que se ajusta a tu uso y presupuesto — más económico o más estable — y cámbialo cuando quieras.",
       },
       {
-        t: "Salida fija, riesgo aislado",
-        d: "IP residenciales de salida fija opcionales mantienen la conexión estable y reducen la probabilidad de activar el control de riesgos. Si una cuenta falla, solo esa cuenta entra en cuarentena: se rota y reemplaza sin afectar a nadie más.",
+        t: "Conexiones estables",
+        d: "Un enrutamiento de red optimizado mantiene las conexiones firmes y fiables, minimizando las interrupciones de tu lado.",
       },
       {
         t: "Barras de cuota en vivo",
@@ -157,17 +157,17 @@ export const es: DeepPartialDict = {
       ["Cuentas de suscripción oficiales reales", "Sí", "Sí", "No (API Key)"],
       ["Velocidad nativa", "Sí", "Sí", "Puede estar limitada"],
       ["Cobertura multiproducto", "3 ecosistemas", "Una por producto", "Según el relay"],
-      ["Rotación automática / respaldo ante bloqueos", "Automático", "Por tu cuenta", "Por tu cuenta"],
+      ["Respaldo de fiabilidad", "Automático", "Por tu cuenta", "Por tu cuenta"],
       ["Complejidad de configuración", "Cero configuración", "Manual", "Keys + editar config"],
       ["Visibilidad de uso", "Panel", "Ninguna", "Según el relay"],
     ],
     trustTitle: "Tu código nunca pasa por nosotros",
     trustLead:
-      "El cliente de BingchaAI se ejecuta en tu propio equipo y hace exactamente una cosa: inyectar tokens de autorización en tus herramientas.",
+      "El cliente de BingchaAI se ejecuta en tu propio equipo y hace exactamente una cosa: permitir que tus herramientas se conecten directo a los servicios oficiales, sin que ningún dato pase por nosotros.",
     trustPoints: [
       {
         b: "Sin envío de API Key",
-        s: "El cliente solo inyecta tokens de autorización — ningún secreto se expone a terceros.",
+        s: "El cliente gestiona la toma de control en local y nunca expone ninguna clave a terceros.",
       },
       {
         b: "Sin cambios en la config del IDE",
@@ -206,7 +206,7 @@ export const es: DeepPartialDict = {
     guideTitle: "Primeros pasos",
     steps: [
       "Descarga BingchaAI y ejecútalo directamente (sin instalador en Windows; arrastra a Aplicaciones en macOS).",
-      "Ingresa tu tarjeta de acceso de recarga, o cambia al modo de pool local y agrega tus propias cuentas.",
+      "Ingresa tu tarjeta de acceso de recarga para empezar.",
       "Haz clic en “Tomar el control” y sigue usando Antigravity / Claude Code / Codex como siempre.",
     ],
     autoUpdateNote: "El cliente se actualiza solo — sin actualizaciones manuales después de la primera descarga.",
@@ -280,7 +280,7 @@ export const es: DeepPartialDict = {
 
   how: {
     eyebrow: "/ Cómo funciona",
-    title: "Tokens inyectados en local, conexión oficial directa",
+    title: "Proxy local, conexión oficial directa",
     sub: "Qué hace exactamente BingchaAI entre tu equipo y las API oficiales.",
     archTitle: "Arquitectura en resumen",
     archP1Pre: "BingchaAI ejecuta un ",
@@ -290,37 +290,37 @@ export const es: DeepPartialDict = {
     archP1Post: "; van directo a los endpoints oficiales de las API de Google, OpenAI y Anthropic.",
     coreNoteTitle: "Principio central",
     coreNote:
-      "BingchaAI hace una sola cosa: inyectar el token de suscripción oficial correcto en tus solicitudes. No reescribe solicitudes, no cachea respuestas, no registra código — una capa pura de inyección de tokens.",
-    lifecycleTitle: "Ciclo de vida de una solicitud",
+      "BingchaAI hace una sola cosa: que tu suscripción oficial funcione desde el primer momento en tus herramientas de IA. No reescribe solicitudes, no cachea respuestas ni registra código — tus datos siempre van directo a los servicios oficiales.",
+    lifecycleTitle: "Cómo fluye",
     flow: [
       {
-        t: "Interceptar la solicitud",
-        d: "Un proxy local (127.0.0.1) intercepta de forma transparente las solicitudes del IDE hacia los servidores oficiales. Claude Code vía variables de entorno, Codex cambiando el provider, Claude Desktop vía un proxy MITM local.",
+        t: "Toma el control con un clic",
+        d: "Activa el interruptor de toma de control de un producto en el cliente; el proxy local lo configura todo automáticamente, sin interrumpir tu IDE / CLI.",
       },
       {
-        t: "Alquilar una cuenta bajo demanda",
-        d: "El motor de alquiler toma en tiempo real un token de cuenta oficial real (con cuota y vigencia) del pool — la deduplicación de concurrencia y la caché de tokens mantienen la latencia casi en cero.",
+        t: "Proxy local",
+        d: "Un proxy local (127.0.0.1) se integra con cada herramienta por la vía estándar, sin tocar tu código ni la configuración del proyecto.",
       },
       {
-        t: "Intercambiar y conectar directo",
-        d: "El proxy reemplaza el token provisional por el real y envía la solicitud directo a api.anthropic.com / chatgpt.com — opcionalmente vía una salida residencial fija.",
+        t: "Conexión oficial directa",
+        d: "Las solicitudes van desde el proxy local directo a los endpoints oficiales de Google, OpenAI y Anthropic; tus datos nunca pasan por nuestros servidores.",
       },
       {
-        t: "Transmitir de vuelta",
-        d: "La respuesta oficial regresa al IDE sin cambios, contando el uso de tokens al vuelo. La experiencia es idéntica a una suscripción nativa.",
+        t: "Experiencia nativa",
+        d: "La respuesta oficial se transmite de vuelta a tu IDE mientras el uso se contabiliza al vuelo; la experiencia es idéntica a una suscripción nativa.",
       },
     ],
-    poolTitle: "Rotación del pool",
+    poolTitle: "Estabilidad y disponibilidad",
     poolIntro:
-      "Bingcha mantiene un pool de cuentas de suscripción oficiales reales. Tu cliente alquila una cuenta disponible de forma dinámica:",
+      "BingchaAI mantiene el servicio estable y disponible de forma continua entre bastidores, para que apenas notes ninguna interrupción:",
     pool: [
-      { t: "Renovación automática", d: "Los tokens se renuevan solos mientras son válidos y el relevo es fluido antes de expirar." },
-      { t: "Cambio al agotarse la cuota", d: "Cuando la cuenta actual se queda sin cuota, se cambia a otra cuenta con saldo disponible." },
+      { t: "Renovación sin interrupciones", d: "Las suscripciones se renuevan automáticamente al acercarse su vencimiento — sin pasos manuales." },
+      { t: "Conmutación automática", d: "Ante una interrupción temporal cambia automáticamente, para que las solicitudes no se interrumpan." },
       {
-        t: "Aislamiento de riesgos",
-        d: "Una cuenta marcada por la plataforma se declara inutilizable y sale del pool de inmediato — el resto de usuarios no se ve afectado.",
+        t: "Disponibilidad fiable",
+        d: "El mantenimiento continuo entre bastidores mantiene el servicio estable a largo plazo.",
       },
-      { t: "Reposición automática", d: "Se agregan cuentas nuevas al pool continuamente para mantener una oferta saludable." },
+      { t: "Uso transparente", d: "El cliente muestra tu uso y vencimiento en tiempo real, de un vistazo." },
     ],
     productsTitle: "Toma de control por producto",
     products: [
@@ -351,11 +351,11 @@ export const es: DeepPartialDict = {
     ],
     safetyTitle: "Modelo de seguridad",
     safetyHeadline: "Nuestras promesas de seguridad",
-    safetyLead: "El código va directo a los servidores oficiales; el proxy local solo inyecta tokens.",
+    safetyLead: "Tu código va directo a los servicios oficiales; el proxy local nunca actúa de intermediario.",
     safe: [
       ["Sin envío de API Key", "Cuota de suscripción oficial — no es relay de API."],
       ["Sin cambios en la config del IDE", "La configuración original se restaura automáticamente al salir."],
-      ["Sin recolección de código", "El proxy local solo inyecta tokens; el código va directo a los servidores oficiales."],
+      ["Sin recolección de código", "El proxy local solo gestiona la toma de control en local; tu código va directo a los servicios oficiales y nunca se almacena."],
       ["Sin intermediarios", "Los datos de las solicitudes nunca pasan por los servidores de Bingcha."],
     ],
   },

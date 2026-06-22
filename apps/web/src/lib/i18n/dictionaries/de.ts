@@ -73,18 +73,18 @@ export const de: DeepPartialDict = {
     h1Line1: "Verbinden Sie Ihre KI-Coding-Tools",
     h1Line2Prefix: "direkt mit ",
     h1Line2Accent: "offiziellen Konten",
-    sub: "BingchaAI weist Ihnen echte offizielle Abo-Konten zu, sodass Antigravity, Claude Code und Codex CLI wie gewohnt direkt mit offiziellen Servern sprechen — keine API-Schlüssel, kein Tool-Wechsel, kein Ärger mit Risikokontrollen.",
+    sub: "Mit BingchaAI verbinden sich Antigravity, Claude Code und Codex CLI wie gewohnt mit den offiziellen Diensten — mit vollem Abo-Kontingent. Keine API-Schlüssel, kein Tool-Wechsel — sofort einsatzbereit.",
     trust1: "Offizielle Direktverbindung",
     trust2: "Kein Mittelsmann",
     trust3: "Ihr Code berührt uns nie",
     ecosystemsTitle: "Ein Client, drei Ökosysteme",
     ecosystemsLead:
-      "Gängige KI-Coding-Tools funktionieren sofort. Nach der Übernahme nutzen Sie sie wie gewohnt — Modell-Anfragen laufen automatisch über den Bingcha-Konto-Pool.",
+      "Gängige KI-Coding-Tools funktionieren sofort — übernehmen und wie gewohnt weiterverwenden. Modell-Anfragen erreichen über einen lokalen Proxy die offiziellen Endpunkte.",
     ecosystems: [
       {
         name: "Antigravity",
         tag: "IDE · Hub",
-        desc: "Googles KI-Coding-IDE. Nach der Übernahme laufen Gemini- / Claude-Anfragen über den Bingcha-Pool — der Editor merkt nichts davon.",
+        desc: "Googles KI-Coding-IDE. Nach der Übernahme gehen Gemini- / Claude-Anfragen direkt an die offiziellen Endpunkte — ohne jede Änderung an Ihrem Editor.",
       },
       {
         name: "OpenAI Codex",
@@ -98,45 +98,45 @@ export const de: DeepPartialDict = {
       },
     ],
     logoAlt: "Logo von {name}",
-    howTitle: "Token lokal injiziert, offiziell verbunden",
+    howTitle: "Lokaler Proxy, offizielle Direktverbindung",
     howLead:
-      "Echte offizielle Token werden in die Tools auf Ihrem Rechner injiziert, Ihr Code geht direkt an offizielle Endpunkte. Bingcha tauscht Token nur in einer lokalen Proxy-Schicht — niemals als Mittelsmann.",
+      "Ein lokaler Proxy verbindet Ihre Tools direkt mit den offiziellen Endpunkten; Ihr Code läuft nie über unsere Server — kein Mittelsmann.",
     how: [
       {
         t: "Lokalen Proxy starten",
-        d: "Ein leichtgewichtiger Proxy startet auf Ihrem Rechner und übernimmt jedes Tool auf dem Standardweg — keine Code-Änderungen, mit einem Klick vollständig umkehrbar.",
+        d: "Ein leichtgewichtiger Proxy läuft auf Ihrem Rechner und übernimmt jedes Tool auf dem Standardweg — keine Code-Änderungen, mit einem Klick wiederherstellbar.",
       },
       {
-        t: "Offizielle Konten bei Bedarf leihen",
-        d: "Sobald ein Tool eine Anfrage sendet, wird in Echtzeit ein echtes offizielles Token aus dem Pool geliehen — fast ohne zusätzliche Latenz.",
+        t: "Mit einem Klick übernehmen",
+        d: "Legen Sie den Übernahme-Schalter für ein Produkt um; der lokale Proxy konfiguriert alles automatisch, ohne Störung Ihrer IDE / CLI.",
       },
       {
-        t: "Token tauschen, direkt verbinden",
-        d: "Das Platzhalter-Token wird durch ein echtes ersetzt und die Anfrage geht direkt an offizielle Endpunkte. Ihr Code läuft nie über Bingcha.",
+        t: "Direkt mit der offiziellen Quelle verbinden",
+        d: "Anfragen gehen vom lokalen Proxy direkt an die offiziellen Endpunkte; Ihr Code läuft nie über unsere Server.",
       },
       {
-        t: "Live-Statistik, automatischer Wechsel",
-        d: "Die Nutzung wird gezählt, während Antworten zurückströmen. Ist das Kontingent erschöpft oder wird ein Konto markiert, wechselt das System automatisch auf ein Ersatzkonto.",
+        t: "Nutzung in Echtzeit verfolgen",
+        d: "Die Nutzung wird gezählt, während Antworten zurückströmen; Kontingent und Ersparnis sind auf einen Blick klar, und das Erlebnis gleicht einem nativen Abo.",
       },
     ],
     quickstartLabel: "Schnellstart",
     quickstartSteps: ["Client herunterladen", "Zugangskarte eingeben", "Auf „Übernehmen“ klicken"],
     quickstartNote: "Unter 30 Sekunden — dann coden wie gewohnt",
-    capsTitle: "Wir halten die Konto-Pool-Komplexität von Ihnen fern",
+    capsTitle: "Die Schwerstarbeit übernehmen wir — Sie schreiben einfach Code",
     capsLead:
-      "Ein einzelnes Konto läuft leer, wird markiert, ist überlastet. Intelligente Zuteilung, fester Ausgang und Risiko-Isolation lassen Sie einfach Code schreiben.",
+      "Kontingent-Verwaltung, stabile Verbindungen, Nutzungsübersicht — überlassen Sie BingchaAI die Fleißarbeit und schreiben Sie einfach Code.",
     caps: [
       {
-        t: "Intelligente Pool-Zuteilung",
-        d: "Keine Zufallsvergabe. Konten werden nach Affinität, Auslastung, Tarifstufe und verbleibendem Kontingent pro Modell bewertet — Sie erhalten stets das aktuell beste Konto.",
+        t: "Intelligente Kontingent-Steuerung",
+        d: "Die Steuerung berücksichtigt Auslastung, Tarifstufe und das verbleibende Kontingent jedes Modells, sodass jede Anfrage das beste verfügbare Kontingent nutzt und Sie so wenig wie möglich warten.",
       },
       {
-        t: "Geteiltes oder exklusives Kontingent — Ihre Wahl",
-        d: "Pool-Karten teilen Konten zwischen Nutzern zum besten Preis; gebundene Karten erhalten ein exklusives Konto mit stabilerem Kontingent. Geteilte Konten nutzen einen Fair-Share-Algorithmus, damit jeder seinen Anteil bekommt — niemand kann alles belegen.",
+        t: "Flexible Tarife für jeden Bedarf",
+        d: "Wählen Sie den Tarif, der zu Nutzung und Budget passt — günstiger oder stabiler — und wechseln Sie jederzeit.",
       },
       {
-        t: "Fester Ausgang, isoliertes Risiko",
-        d: "Optionale feste Residential-Ausgangs-IPs halten Verbindungen stabil und lösen kaum Risikokontrollen aus. Fällt ein Konto aus, wird nur dieses isoliert — es wird automatisch ersetzt, ohne andere Nutzer zu beeinträchtigen.",
+        t: "Stabile Verbindungen",
+        d: "Optimiertes Netzwerk-Routing hält Verbindungen stetig und zuverlässig und minimiert Störungen auf Ihrer Seite.",
       },
       {
         t: "Live-Kontingent-Anzeigen",
@@ -157,17 +157,17 @@ export const de: DeepPartialDict = {
       ["Echte offizielle Abo-Konten", "Ja", "Ja", "Nein (API-Schlüssel)"],
       ["Native Geschwindigkeit", "Ja", "Ja", "Evtl. gedrosselt"],
       ["Produktabdeckung", "3 Ökosysteme", "Je ein Abo", "Je nach Relay"],
-      ["Auto-Wechsel / Sperr-Fallback", "Automatisch", "Selbst zuständig", "Selbst zuständig"],
+      ["Zuverlässigkeits-Fallback", "Automatisch", "Selbst zuständig", "Selbst zuständig"],
       ["Einrichtungsaufwand", "Null Konfiguration", "Manuell", "Keys + Konfig-Änderungen"],
       ["Nutzungsübersicht", "Dashboard", "Keine", "Je nach Relay"],
     ],
     trustTitle: "Ihr Code berührt uns nie",
     trustLead:
-      "Der BingchaAI-Client läuft auf Ihrem eigenen Rechner und tut genau eines: Autorisierungs-Token in Ihre Tools injizieren.",
+      "Der BingchaAI-Client läuft auf Ihrem eigenen Rechner und tut genau eines: Ihre Tools direkt mit den offiziellen Diensten verbinden, ohne dass Daten über uns laufen.",
     trustPoints: [
       {
         b: "Keine API-Schlüssel versendet",
-        s: "Der Client injiziert nur Autorisierungs-Token — keine Geheimnisse gelangen je an Dritte.",
+        s: "Der Client wickelt die Übernahme lokal ab und gibt niemals Schlüssel an Dritte weiter.",
       },
       {
         b: "Keine IDE-Konfig-Änderungen",
@@ -206,7 +206,7 @@ export const de: DeepPartialDict = {
     guideTitle: "Erste Schritte",
     steps: [
       "BingchaAI herunterladen und direkt starten (Windows ohne Installation; auf macOS in „Programme“ ziehen).",
-      "Zugangskarte zum Nachfüllen eingeben — oder in den lokalen Pool-Modus wechseln und eigene Konten hinzufügen.",
+      "Geben Sie Ihren Aufladekarten-Schlüssel ein, um loszulegen.",
       "Auf „Übernehmen“ klicken und Antigravity / Claude Code / Codex wie gewohnt weiterverwenden.",
     ],
     autoUpdateNote: "Der Client aktualisiert sich automatisch — nach dem ersten Download sind keine manuellen Upgrades nötig.",
@@ -280,7 +280,7 @@ export const de: DeepPartialDict = {
 
   how: {
     eyebrow: "/ Funktionsweise",
-    title: "Token lokal injiziert, offiziell verbunden",
+    title: "Lokaler Proxy, offizielle Direktverbindung",
     sub: "Was genau BingchaAI zwischen Ihrem Rechner und den offiziellen APIs tut.",
     archTitle: "Architektur im Überblick",
     archP1Pre: "BingchaAI betreibt einen ",
@@ -290,37 +290,37 @@ export const de: DeepPartialDict = {
     archP1Post: ", sondern gehen direkt an die offiziellen API-Endpunkte von Google, OpenAI und Anthropic.",
     coreNoteTitle: "Kernprinzip",
     coreNote:
-      "BingchaAI tut genau eines: das richtige offizielle Abo-Token in Ihre Anfragen injizieren. Kein Umschreiben von Anfragen, kein Antwort-Caching, kein Code-Logging — eine reine Token-Injektionsschicht.",
-    lifecycleTitle: "Lebenszyklus einer Anfrage",
+      "BingchaAI tut genau eines: Ihr offizielles Abo über KI-Tools hinweg sofort einsatzbereit machen. Es schreibt keine Anfragen um, cacht keine Antworten und protokolliert keinen Code — Ihre Daten gehen stets direkt an die offiziellen Dienste.",
+    lifecycleTitle: "So läuft es ab",
     flow: [
       {
-        t: "Anfrage abfangen",
-        d: "Ein lokaler Proxy (127.0.0.1) fängt Anfragen der IDE an offizielle Server transparent ab. Claude Code per Umgebungsvariablen, Codex per Provider-Wechsel, Claude Desktop über einen lokalen MITM-Proxy.",
+        t: "Mit einem Klick übernehmen",
+        d: "Legen Sie im Client den Übernahme-Schalter für ein Produkt um; der lokale Proxy konfiguriert alles automatisch, ohne Störung Ihrer IDE / CLI.",
       },
       {
-        t: "Konto bei Bedarf leihen",
-        d: "Die Leasing-Engine holt in Echtzeit ein echtes offizielles Konto-Token (samt Kontingent und Ablaufzeit) aus dem Pool — paralleles Deduplizieren und Token-Caching halten die Latenz nahe null.",
+        t: "Lokaler Proxy",
+        d: "Ein lokaler Proxy (127.0.0.1) bindet sich auf dem Standardweg in jedes Tool ein, ohne Ihren Code oder Ihre Projektkonfiguration anzufassen.",
       },
       {
-        t: "Tauschen und direkt senden",
-        d: "Der Proxy ersetzt das Platzhalter-Token durch das echte und sendet die Anfrage direkt an api.anthropic.com / chatgpt.com — optional über einen festen Residential-Ausgang.",
+        t: "Offizielle Direktverbindung",
+        d: "Anfragen gehen vom lokalen Proxy direkt an die offiziellen Endpunkte von Google, OpenAI und Anthropic; Ihre Daten laufen nie über unsere Server.",
       },
       {
-        t: "Zurückstreamen",
-        d: "Die offizielle Antwort streamt unverändert zurück zur IDE, die Token-Nutzung wird dabei mitgezählt. Das Erlebnis ist identisch mit einem nativen Abo.",
+        t: "Natives Erlebnis",
+        d: "Die offizielle Antwort streamt zurück zu Ihrer IDE, während die Nutzung laufend gezählt wird; das Erlebnis ist identisch mit einem nativen Abo.",
       },
     ],
-    poolTitle: "Pool-Rotation",
+    poolTitle: "Stabilität & Verfügbarkeit",
     poolIntro:
-      "Bingcha unterhält einen Pool echter offizieller Abo-Konten. Ihr Client leiht sich dynamisch ein verfügbares Konto:",
+      "BingchaAI hält den Dienst kontinuierlich im Hintergrund stabil und verfügbar, sodass Sie kaum eine Unterbrechung bemerken:",
     pool: [
-      { t: "Auto-Verlängerung", d: "Token verlängern sich, solange sie gültig sind, und übergeben vor Ablauf nahtlos." },
-      { t: "Wechsel bei leerem Kontingent", d: "Ist das aktuelle Konto erschöpft, wird auf ein anderes Konto mit Restkontingent gewechselt." },
+      { t: "Nahtlose Verlängerung", d: "Abos verlängern sich automatisch, sobald das Ablaufdatum naht — ganz ohne manuelle Schritte." },
+      { t: "Automatischer Failover", d: "Bei einem vorübergehenden Ausfall wird automatisch umgeschaltet, sodass Anfragen nicht unterbrochen werden." },
       {
-        t: "Risiko-Isolation",
-        d: "Ein von der Plattform markiertes Konto wird sofort als unbrauchbar gekennzeichnet und aus dem Pool genommen — andere Nutzer bleiben unberührt.",
+        t: "Zuverlässig verfügbar",
+        d: "Kontinuierliche Pflege im Hintergrund hält den Dienst langfristig stabil.",
       },
-      { t: "Auto-Nachschub", d: "Neue Konten werden laufend in den Pool aufgenommen, damit der Vorrat gesund bleibt." },
+      { t: "Transparente Nutzung", d: "Der Client zeigt Ihre Nutzung und das Ablaufdatum in Echtzeit, auf einen Blick." },
     ],
     productsTitle: "Übernahme pro Produkt",
     products: [
@@ -351,11 +351,11 @@ export const de: DeepPartialDict = {
     ],
     safetyTitle: "Sicherheitsmodell",
     safetyHeadline: "Unsere Sicherheitsversprechen",
-    safetyLead: "Code geht direkt an offizielle Server; der lokale Proxy injiziert nur Token.",
+    safetyLead: "Ihr Code geht direkt an die offiziellen Dienste; der lokale Proxy ist nie ein Mittelsmann.",
     safe: [
       ["Keine API-Schlüssel versendet", "Offizielles Abo-Kontingent — kein API-Relaying."],
       ["Keine IDE-Konfig-Änderungen", "Die Originalkonfiguration wird beim Beenden automatisch wiederhergestellt."],
-      ["Keine Code-Sammlung", "Der lokale Proxy injiziert nur Token; Code geht direkt an offizielle Server."],
+      ["Keine Code-Sammlung", "Der lokale Proxy wickelt die Übernahme nur lokal ab; Ihr Code geht direkt an die offiziellen Dienste und wird nie gespeichert."],
       ["Kein Mittelsmann", "Anfragedaten laufen nie über Bingcha-Server."],
     ],
   },

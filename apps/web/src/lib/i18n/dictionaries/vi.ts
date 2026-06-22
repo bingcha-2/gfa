@@ -73,18 +73,18 @@ export const vi: DeepPartialDict = {
     h1Line1: "Để công cụ lập trình AI",
     h1Line2Prefix: "kết nối thẳng ",
     h1Line2Accent: "tài khoản chính thức",
-    sub: "BingchaAI cấp cho bạn tài khoản đăng ký chính thức thật, để Antigravity, Claude Code và Codex CLI vẫn kết nối thẳng máy chủ chính thức như thường lệ — không cấu hình API Key, không đổi công cụ, không phải tự đối phó kiểm soát rủi ro.",
+    sub: "BingchaAI giúp Antigravity, Claude Code và Codex CLI kết nối tới dịch vụ chính thức như thường lệ, với đầy đủ hạn mức đăng ký. Không cần API Key, không phải đổi công cụ — tải về là dùng được ngay.",
     trust1: "Kết nối thẳng chính thức",
     trust2: "Không trung gian",
     trust3: "Mã nguồn không đi qua chúng tôi",
     ecosystemsTitle: "Một ứng dụng, ba hệ sinh thái",
     ecosystemsLead:
-      "Các công cụ lập trình AI phổ biến dùng được ngay. Sau khi tiếp quản, bạn dùng như bình thường — yêu cầu mô hình tự động đi qua kho tài khoản Bingcha.",
+      "Các công cụ lập trình AI phổ biến dùng được ngay — tiếp quản rồi cứ dùng như bình thường; yêu cầu mô hình đi tới điểm cuối chính thức thông qua proxy cục bộ.",
     ecosystems: [
       {
         name: "Antigravity",
         tag: "IDE · Hub",
-        desc: "IDE lập trình AI của Google. Sau khi tiếp quản, yêu cầu Gemini / Claude tự động đi qua kho tài khoản Bingcha — trình soạn thảo không hề hay biết.",
+        desc: "IDE lập trình AI của Google. Sau khi tiếp quản, yêu cầu Gemini / Claude đi thẳng tới điểm cuối chính thức mà không cần thay đổi gì trong trình soạn thảo của bạn.",
       },
       {
         name: "OpenAI Codex",
@@ -98,45 +98,45 @@ export const vi: DeepPartialDict = {
       },
     ],
     logoAlt: "Logo {name}",
-    howTitle: "Chèn token tại máy bạn, kết nối thẳng chính thức",
+    howTitle: "Proxy cục bộ, kết nối thẳng chính thức",
     howLead:
-      "Token chính thức thật được chèn vào công cụ ngay trên máy bạn, mã nguồn gửi thẳng tới điểm cuối chính thức. Bingcha chỉ thay token ở lớp proxy cục bộ — không bao giờ làm trung gian.",
+      "Một proxy cục bộ giúp công cụ của bạn kết nối thẳng tới điểm cuối chính thức; mã nguồn không bao giờ đi qua máy chủ của chúng tôi — không có trung gian.",
     how: [
       {
         t: "Khởi chạy proxy cục bộ",
         d: "Một proxy gọn nhẹ chạy trên máy bạn và tiếp quản từng công cụ theo cách chuẩn — không động vào mã nguồn, khôi phục được bằng một cú nhấp.",
       },
       {
-        t: "Thuê tài khoản chính thức theo nhu cầu",
-        d: "Ngay khi công cụ gửi yêu cầu, một token chính thức thật được thuê từ kho tài khoản theo thời gian thực, gần như không thêm độ trễ.",
+        t: "Tiếp quản bằng một cú nhấp",
+        d: "Gạt công tắc tiếp quản cho một sản phẩm; proxy cục bộ tự động cấu hình mọi thứ, không gây gián đoạn cho IDE / CLI của bạn.",
       },
       {
-        t: "Thay token, đi thẳng chính thức",
-        d: "Token giữ chỗ được thay bằng token thật và yêu cầu gửi thẳng tới điểm cuối chính thức — mã nguồn không đi qua Bingcha.",
+        t: "Kết nối thẳng tới chính thức",
+        d: "Yêu cầu đi thẳng từ proxy cục bộ tới điểm cuối chính thức; mã nguồn của bạn không bao giờ đi qua máy chủ của chúng tôi.",
       },
       {
-        t: "Thống kê thời gian thực, tự động đổi tài khoản",
-        d: "Lượng dùng được tính ngay khi phản hồi truyền về; khi hết hạn mức hoặc gặp kiểm soát rủi ro, hệ thống tự chuyển sang tài khoản dự phòng.",
+        t: "Theo dõi lượng dùng theo thời gian thực",
+        d: "Lượng dùng được tính ngay khi phản hồi truyền về; hạn mức và mức tiết kiệm hiện rõ trong nháy mắt, trải nghiệm y hệt gói đăng ký gốc.",
       },
     ],
     quickstartLabel: "Bắt đầu nhanh",
     quickstartSteps: ["Tải ứng dụng", "Nhập thẻ truy cập", "Nhấn Tiếp quản"],
     quickstartNote: "Chưa đến 30 giây — viết code như thường",
-    capsTitle: "Mọi phức tạp của kho tài khoản, để chúng tôi lo",
+    capsTitle: "Việc nặng để chúng tôi lo — bạn chỉ việc viết code",
     capsLead:
-      "Một tài khoản đơn lẻ sẽ cạn hạn mức, bị đánh dấu rủi ro, bị chiếm hết chỗ. Điều phối thông minh, đầu ra cố định và cách ly rủi ro để bạn chỉ việc viết code.",
+      "Quản lý hạn mức, kết nối ổn định, lượng dùng minh bạch — hãy để BingchaAI lo những việc lặt vặt, còn bạn chỉ việc viết code.",
     caps: [
       {
-        t: "Điều phối kho tài khoản thông minh",
-        d: "Không phải phát ngẫu nhiên. Tài khoản được chấm điểm tổng hợp theo độ gắn kết, mức tải, hạng gói và hạn mức còn lại của từng mô hình — mỗi lần đều chọn tài khoản tốt nhất tại thời điểm đó.",
+        t: "Điều phối hạn mức thông minh",
+        d: "Việc điều phối cân nhắc mức tải, hạng gói và hạn mức còn lại của từng mô hình, nên mỗi yêu cầu đều dùng hạn mức tốt nhất hiện có và bạn chờ ít nhất có thể.",
       },
       {
-        t: "Hạn mức dùng chung / dùng riêng — tùy bạn chọn",
-        d: "Thẻ kho chung chia sẻ tài khoản giữa nhiều người, giá tốt hơn; thẻ gắn riêng có tài khoản dành riêng, hạn mức ổn định hơn. Khi nhiều người dùng chung một tài khoản, thuật toán giới hạn công bằng bảo đảm mỗi người nhận đúng phần của mình, không ai chiếm hết.",
+        t: "Gói linh hoạt cho mọi nhu cầu",
+        d: "Chọn gói phù hợp với mức dùng và ngân sách của bạn — tiết kiệm hơn hoặc ổn định hơn — và đổi bất cứ lúc nào.",
       },
       {
-        t: "Đầu ra cố định, cách ly rủi ro",
-        d: "Tùy chọn IP đầu ra cố định dạng dân cư giúp kết nối ổn định, khó kích hoạt kiểm soát rủi ro vì IP; một tài khoản gặp sự cố thì chỉ tài khoản đó bị cách ly, hệ thống tự đổi và bổ sung tài khoản, không ảnh hưởng người dùng khác.",
+        t: "Kết nối ổn định",
+        d: "Định tuyến mạng được tối ưu giúp kết nối luôn vững vàng và đáng tin cậy, giảm thiểu gián đoạn về phía bạn.",
       },
       {
         t: "Thanh hạn mức thời gian thực",
@@ -156,14 +156,14 @@ export const vi: DeepPartialDict = {
       ["Dùng tài khoản đăng ký chính thức", "Có", "Có", "Không (API Key)"],
       ["Tốc độ nguyên bản", "Có", "Có", "Có thể bị giảm tốc"],
       ["Phủ nhiều sản phẩm", "3 hệ sinh thái", "Phải đăng ký từng cái", "Tùy bên trung chuyển"],
-      ["Tự đổi tài khoản / dự phòng khi khóa", "Tự động", "Tự lo", "Tự lo"],
+      ["Dự phòng bảo đảm độ tin cậy", "Tự động", "Tự lo", "Tự lo"],
       ["Độ phức tạp khi cấu hình", "Không cần cấu hình", "Thủ công", "Điền Key + sửa cấu hình"],
       ["Theo dõi lượng dùng", "Bảng điều khiển", "Không có", "Tùy bên trung chuyển"],
     ],
     trustTitle: "Mã nguồn của bạn không đi qua chúng tôi",
-    trustLead: "Ứng dụng BingchaAI chạy trên chính máy của bạn và chỉ làm đúng một việc: chèn token ủy quyền vào công cụ của bạn.",
+    trustLead: "Ứng dụng BingchaAI chạy trên chính máy của bạn và chỉ làm đúng một việc: giúp công cụ của bạn kết nối thẳng tới dịch vụ chính thức, không có dữ liệu nào đi qua chúng tôi.",
     trustPoints: [
-      { b: "Không gửi API Key", s: "Ứng dụng chỉ chèn token ủy quyền — không để lộ bất kỳ khóa bí mật nào cho bên thứ ba." },
+      { b: "Không gửi API Key", s: "Ứng dụng xử lý việc tiếp quản tại chỗ và không bao giờ để lộ bất kỳ khóa nào cho bên thứ ba." },
       { b: "Không sửa cấu hình IDE", s: "Trình soạn thảo, plugin và quy trình làm việc của bạn giữ nguyên, có thể tắt bằng một cú nhấp bất cứ lúc nào." },
       { b: "Không thu thập mã nguồn", s: "Dữ liệu mã nguồn gửi thẳng tới máy chủ chính thức — Bingcha không làm proxy trung gian, không lưu trữ gì." },
     ],
@@ -195,7 +195,7 @@ export const vi: DeepPartialDict = {
     guideTitle: "Hướng dẫn sử dụng",
     steps: [
       "Tải BingchaAI về là chạy được ngay (Windows không cần cài đặt; macOS kéo vào thư mục Applications).",
-      "Nhập thẻ truy cập tiếp thêm của bạn, hoặc chuyển sang chế độ kho cục bộ để thêm tài khoản riêng.",
+      "Nhập thẻ truy cập tiếp thêm của bạn để bắt đầu.",
       "Nhấn “Tiếp quản” rồi tiếp tục dùng Antigravity / Claude Code / Codex như bình thường.",
     ],
     autoUpdateNote: "Ứng dụng tự động cập nhật — sau lần tải đầu tiên không cần nâng cấp thủ công.",
@@ -269,7 +269,7 @@ export const vi: DeepPartialDict = {
 
   how: {
     eyebrow: "/ Cách hoạt động",
-    title: "Chèn token tại máy bạn, kết nối thẳng chính thức",
+    title: "Proxy cục bộ, kết nối thẳng chính thức",
     sub: "BingchaAI thực sự làm gì giữa máy của bạn và API chính thức.",
     archTitle: "Tổng quan kiến trúc",
     archP1Pre: "BingchaAI chạy một ",
@@ -279,37 +279,37 @@ export const vi: DeepPartialDict = {
     archP1Post: ", mà gửi thẳng tới điểm cuối API chính thức của Google, OpenAI và Anthropic.",
     coreNoteTitle: "Nguyên tắc cốt lõi",
     coreNote:
-      "BingchaAI chỉ làm một việc: chèn đúng token đăng ký chính thức vào yêu cầu của bạn. Không sửa nội dung yêu cầu, không cache phản hồi, không ghi lại mã nguồn — một lớp chèn token thuần túy.",
-    lifecycleTitle: "Vòng đời một yêu cầu",
+      "BingchaAI chỉ làm một việc: giúp gói đăng ký chính thức của bạn dùng được ngay trên các công cụ AI. Nó không sửa nội dung yêu cầu, không cache phản hồi, không ghi lại mã nguồn — dữ liệu của bạn luôn đi thẳng tới dịch vụ chính thức.",
+    lifecycleTitle: "Luồng hoạt động",
     flow: [
       {
-        t: "Chặn yêu cầu",
-        d: "Proxy cục bộ (127.0.0.1) chặn trong suốt các yêu cầu IDE gửi tới máy chủ chính thức. Claude Code qua biến môi trường, Codex qua chuyển provider, Claude bản desktop qua MITM cục bộ.",
+        t: "Tiếp quản bằng một cú nhấp",
+        d: "Gạt công tắc tiếp quản cho một sản phẩm trong ứng dụng; proxy cục bộ tự động cấu hình mọi thứ, không gây gián đoạn cho IDE / CLI của bạn.",
       },
       {
-        t: "Thuê tài khoản theo nhu cầu",
-        d: "Bộ máy thuê lấy một token tài khoản chính thức thật (kèm hạn mức và hạn dùng) từ kho theo thời gian thực — khử trùng lặp song song + cache token giúp gần như không thêm độ trễ.",
+        t: "Proxy cục bộ",
+        d: "Một proxy cục bộ (127.0.0.1) tích hợp với từng công cụ theo cách chuẩn, không động vào mã nguồn hay cấu hình dự án của bạn.",
       },
       {
-        t: "Thay token, đi thẳng",
-        d: "Proxy thay token giữ chỗ bằng token thật và gửi yêu cầu thẳng tới điểm cuối chính thức api.anthropic.com / chatgpt.com — tùy chọn đi qua đầu ra dân cư cố định.",
+        t: "Kết nối thẳng tới chính thức",
+        d: "Yêu cầu đi từ proxy cục bộ thẳng tới điểm cuối chính thức của Google, OpenAI và Anthropic; dữ liệu của bạn không bao giờ đi qua máy chủ của chúng tôi.",
       },
       {
-        t: "Truyền phản hồi về",
-        d: "Phản hồi chính thức truyền nguyên vẹn về IDE, vừa chuyển tiếp vừa đếm lượng token; trải nghiệm y hệt gói đăng ký gốc.",
+        t: "Trải nghiệm nguyên bản",
+        d: "Phản hồi chính thức truyền về IDE của bạn trong khi lượng dùng được tính ngay tức thì; trải nghiệm y hệt gói đăng ký gốc.",
       },
     ],
-    poolTitle: "Cơ chế xoay vòng kho tài khoản",
+    poolTitle: "Ổn định & khả dụng",
     poolIntro:
-      "Bingcha duy trì một kho tài khoản đăng ký chính thức thật; ứng dụng của bạn “thuê” linh hoạt một tài khoản khả dụng:",
+      "BingchaAI liên tục giữ cho dịch vụ ổn định và khả dụng ở phía sau hậu trường, để bạn gần như không nhận thấy bất kỳ gián đoạn nào:",
     pool: [
-      { t: "Tự động gia hạn thuê", d: "Token tự gia hạn trong thời gian hiệu lực, chuyển êm sang token mới trước khi hết hạn." },
-      { t: "Đổi khi cạn hạn mức", d: "Tài khoản hiện tại hết hạn mức, hệ thống tự chuyển sang tài khoản khác trong kho còn dư." },
+      { t: "Gia hạn liền mạch", d: "Gói đăng ký tự động gia hạn khi sắp hết hạn — không cần thao tác thủ công." },
+      { t: "Tự động chuyển dự phòng", d: "Khi có sự cố tạm thời, hệ thống tự chuyển dự phòng để yêu cầu không bị gián đoạn." },
       {
-        t: "Cách ly rủi ro",
-        d: "Tài khoản bị nền tảng đánh dấu rủi ro sẽ lập tức bị đánh dấu không khả dụng và rút khỏi kho — không ảnh hưởng người dùng khác.",
+        t: "Khả dụng đáng tin cậy",
+        d: "Việc duy trì liên tục ở phía sau giúp dịch vụ ổn định về lâu dài.",
       },
-      { t: "Tự động bổ sung", d: "Hệ thống liên tục bổ sung tài khoản mới vào kho, bảo đảm luôn đủ tài khoản khả dụng." },
+      { t: "Lượng dùng minh bạch", d: "Ứng dụng hiển thị lượng dùng và hạn dùng của bạn theo thời gian thực, rõ ràng trong nháy mắt." },
     ],
     productsTitle: "Trải nghiệm tiếp quản từng sản phẩm",
     products: [
@@ -340,11 +340,11 @@ export const vi: DeepPartialDict = {
     ],
     safetyTitle: "Mô hình bảo mật",
     safetyHeadline: "Cam kết bảo mật của chúng tôi",
-    safetyLead: "Mã nguồn đi thẳng tới máy chủ chính thức; proxy cục bộ chỉ chèn token.",
+    safetyLead: "Mã nguồn của bạn đi thẳng tới dịch vụ chính thức; proxy cục bộ không bao giờ làm trung gian.",
     safe: [
       ["Không gửi API Key", "Dùng hạn mức đăng ký chính thức — không phải trung chuyển API."],
       ["Không sửa cấu hình IDE", "Cấu hình gốc tự khôi phục khi thoát tiếp quản."],
-      ["Không thu thập mã nguồn", "Proxy cục bộ chỉ chèn token; mã nguồn đi thẳng tới chính thức."],
+      ["Không thu thập mã nguồn", "Proxy cục bộ chỉ xử lý việc tiếp quản tại chỗ; mã nguồn của bạn đi thẳng tới dịch vụ chính thức và không bao giờ bị lưu trữ."],
       ["Không làm trung gian", "Dữ liệu yêu cầu không đi qua máy chủ Bingcha."],
     ],
   },

@@ -73,18 +73,18 @@ export const en: DeepPartialDict = {
     h1Line1: "Give your AI coding tools",
     h1Line2Prefix: "a direct line to ",
     h1Line2Accent: "official accounts",
-    sub: "BingchaAI assigns you real official subscription accounts, so Antigravity, Claude Code and Codex CLI keep talking straight to official servers — no API keys, no tool switching, no risk-control headaches.",
+    sub: "BingchaAI lets Antigravity, Claude Code and Codex CLI connect to the official services just like always, with full subscription quota. No API keys, no tool switching — works out of the box.",
     trust1: "Official direct connection",
     trust2: "No middleman",
     trust3: "Your code never touches us",
     ecosystemsTitle: "One client, three ecosystems",
     ecosystemsLead:
-      "Mainstream AI coding tools work out of the box. After takeover you use them as usual — model requests are routed through the Bingcha account pool automatically.",
+      "Mainstream AI coding tools work out of the box — take over and keep using them as usual; model requests reach the official endpoints through a local proxy.",
     ecosystems: [
       {
         name: "Antigravity",
         tag: "IDE · Hub",
-        desc: "Google's AI coding IDE. Once taken over, Gemini / Claude requests route through the Bingcha pool — the editor never notices.",
+        desc: "Google's AI coding IDE. After takeover, Gemini / Claude requests go straight to the official endpoints with zero changes to your editor.",
       },
       {
         name: "OpenAI Codex",
@@ -98,45 +98,45 @@ export const en: DeepPartialDict = {
       },
     ],
     logoAlt: "{name} logo",
-    howTitle: "Tokens injected locally, connected officially",
+    howTitle: "Local proxy, official direct connection",
     howLead:
-      "Real official tokens are injected into the tools on your machine, and your code goes straight to official endpoints. Bingcha only swaps tokens in a local proxy layer — never a middleman.",
+      "A local proxy lets your tools connect straight to the official endpoints; your code never passes through our servers — no man in the middle.",
     how: [
       {
-        t: "Start a local proxy",
-        d: "A lightweight proxy starts on your machine and takes over each tool the standard way — no code changes, fully reversible in one click.",
+        t: "Run a local proxy",
+        d: "A lightweight proxy runs on your machine and takes over each tool the standard way — no code changes, one-click restore.",
       },
       {
-        t: "Lease official accounts on demand",
-        d: "The moment a tool sends a request, a real official token is leased from the pool in real time, adding almost no latency.",
+        t: "Take over in one click",
+        d: "Flip the takeover switch for a product; the local proxy configures everything automatically, with no disruption to your IDE / CLI.",
       },
       {
-        t: "Swap the token, go direct",
-        d: "The placeholder token is replaced with a real one and the request goes straight to official endpoints. Your code never passes through Bingcha.",
+        t: "Connect to official directly",
+        d: "Requests go straight from the local proxy to the official endpoints; your code never passes through our servers.",
       },
       {
-        t: "Live stats, automatic rotation",
-        d: "Usage is tallied as responses stream back. When quota runs out or an account gets flagged, it switches to a standby account automatically.",
+        t: "Track usage in real time",
+        d: "Usage is tallied as responses stream in; quota and savings are clear at a glance, and the experience matches a native subscription.",
       },
     ],
     quickstartLabel: "Quickstart",
     quickstartSteps: ["Download the client", "Enter your access card", "Click Take Over"],
     quickstartNote: "Under 30 seconds — then code as usual",
-    capsTitle: "We keep account-pool complexity away from you",
+    capsTitle: "We handle the heavy lifting — you just write code",
     capsLead:
-      "A single account runs dry, gets flagged, gets crowded. Smart scheduling, fixed egress and risk isolation let you just write code.",
+      "Quota management, stable connections, usage visibility — leave the busywork to BingchaAI and just write code.",
     caps: [
       {
-        t: "Smart pool scheduling",
-        d: "Not random assignment. Accounts are scored by affinity, load, plan tier and per-model remaining quota — you always get the best account available right now.",
+        t: "Smart quota scheduling",
+        d: "Scheduling weighs load, plan tier and each model's remaining quota, so every request uses the best available quota and you wait as little as possible.",
       },
       {
-        t: "Shared or dedicated quota — your choice",
-        d: "Pool cards share accounts between users for the best price; bound cards get a dedicated account with steadier quota. Shared accounts use a fair-share algorithm so everyone gets their slice — nobody can hog it.",
+        t: "Flexible plans for any need",
+        d: "Pick the plan that fits your usage and budget — more economical or more stable — and switch anytime.",
       },
       {
-        t: "Fixed egress, isolated risk",
-        d: "Optional residential fixed egress IPs keep connections stable and unlikely to trip risk controls. If one account fails, only that account is quarantined — it's rotated and replaced without affecting anyone else.",
+        t: "Stable connections",
+        d: "Optimized network routing keeps connections steady and reliable, minimizing disruptions on your end.",
       },
       {
         t: "Live quota health bars",
@@ -157,17 +157,17 @@ export const en: DeepPartialDict = {
       ["Real official subscription accounts", "Yes", "Yes", "No (API key)"],
       ["Native speed", "Yes", "Yes", "May be throttled"],
       ["Multi-product coverage", "3 ecosystems", "One sub each", "Depends on relay"],
-      ["Auto rotation / ban fallback", "Automatic", "On you", "On you"],
+      ["Reliability fallback", "Automatic", "On you", "On you"],
       ["Setup complexity", "Zero config", "Manual", "Keys + config edits"],
       ["Usage visibility", "Dashboard", "None", "Depends on relay"],
     ],
     trustTitle: "Your code never touches us",
     trustLead:
-      "The BingchaAI client runs on your own machine and does exactly one thing: inject authorization tokens into your tools.",
+      "The BingchaAI client runs on your own machine and does just one thing: let your tools connect to the official services directly, with no data passing through us.",
     trustPoints: [
       {
         b: "No API keys sent",
-        s: "The client only injects authorization tokens — no secrets are ever exposed to third parties.",
+        s: "The client handles takeover locally and never exposes any keys to third parties.",
       },
       {
         b: "No IDE config changes",
@@ -206,7 +206,7 @@ export const en: DeepPartialDict = {
     guideTitle: "Getting started",
     steps: [
       "Download BingchaAI and run it directly (no installer on Windows; drag into Applications on macOS).",
-      "Enter your refill access card, or switch to local-pool mode and add your own accounts.",
+      "Enter your top-up card key to get started.",
       "Click “Take Over” and keep using Antigravity / Claude Code / Codex as usual.",
     ],
     autoUpdateNote: "The client updates itself automatically — no manual upgrades after the first download.",
@@ -280,7 +280,7 @@ export const en: DeepPartialDict = {
 
   how: {
     eyebrow: "/ How It Works",
-    title: "Tokens injected locally, connected officially",
+    title: "Local proxy, official direct connection",
     sub: "What exactly BingchaAI does between your machine and the official APIs.",
     archTitle: "Architecture overview",
     archP1Pre: "BingchaAI runs a ",
@@ -290,37 +290,37 @@ export const en: DeepPartialDict = {
     archP1Post: "; they go straight to Google, OpenAI and Anthropic's official API endpoints.",
     coreNoteTitle: "Core principle",
     coreNote:
-      "BingchaAI does one thing: inject the right official subscription token into your requests. No request rewriting, no response caching, no code logging — a pure token-injection layer.",
-    lifecycleTitle: "Request lifecycle",
+      "BingchaAI does just one thing: make your official subscription work out of the box across AI tools. It doesn't rewrite requests, cache responses or log code — your data always goes straight to the official services.",
+    lifecycleTitle: "How it flows",
     flow: [
       {
-        t: "Intercept the request",
-        d: "A local proxy (127.0.0.1) transparently intercepts requests from your IDE to official servers. Claude Code via environment variables, Codex via provider switch, Claude Desktop via a local MITM proxy.",
+        t: "Take over in one click",
+        d: "Flip the takeover switch for a product in the client; the local proxy configures everything automatically, with no disruption to your IDE / CLI.",
       },
       {
-        t: "Lease an account on demand",
-        d: "The leasing engine grabs a real official account token (with quota and expiry) from the pool in real time — concurrent deduplication and token caching keep latency near zero.",
+        t: "Local proxy",
+        d: "A local proxy (127.0.0.1) integrates with each tool the standard way, without touching your code or project config.",
       },
       {
-        t: "Swap and go direct",
-        d: "The proxy replaces the placeholder token with the real one and sends the request straight to api.anthropic.com / chatgpt.com — optionally via a fixed residential egress.",
+        t: "Official direct connection",
+        d: "Requests go from the local proxy straight to Google, OpenAI and Anthropic's official endpoints; your data never passes through our servers.",
       },
       {
-        t: "Stream back",
-        d: "The official response streams back to the IDE unchanged, with token usage counted on the fly. The experience is identical to a native subscription.",
+        t: "Native experience",
+        d: "The official response streams back to your IDE while usage is tallied on the fly; the experience is identical to a native subscription.",
       },
     ],
-    poolTitle: "Pool rotation",
+    poolTitle: "Stability & availability",
     poolIntro:
-      "Bingcha maintains a pool of real official subscription accounts. Your client leases an available account dynamically:",
+      "BingchaAI continuously keeps the service stable and available behind the scenes, so you barely notice any interruption:",
     pool: [
-      { t: "Auto renewal", d: "Tokens renew themselves while valid and hand over seamlessly before expiry." },
-      { t: "Switch on empty quota", d: "When the current account runs dry, it switches to another account with quota left." },
+      { t: "Seamless renewal", d: "Subscriptions renew automatically as expiry approaches — no manual steps." },
+      { t: "Automatic failover", d: "On a temporary outage it switches over automatically, so requests aren't interrupted." },
       {
-        t: "Risk isolation",
-        d: "An account flagged by the platform is marked unusable and pulled from the pool immediately — other users are unaffected.",
+        t: "Reliably available",
+        d: "Continuous upkeep behind the scenes keeps the service stable over the long run.",
       },
-      { t: "Auto replenishment", d: "New accounts are added to the pool continuously, keeping supply healthy." },
+      { t: "Transparent usage", d: "The client shows your usage and expiry in real time, at a glance." },
     ],
     productsTitle: "Per-product takeover",
     products: [
@@ -351,11 +351,11 @@ export const en: DeepPartialDict = {
     ],
     safetyTitle: "Security model",
     safetyHeadline: "Our security promises",
-    safetyLead: "Code goes straight to official servers; the local proxy only injects tokens.",
+    safetyLead: "Your code goes straight to the official services; the local proxy is never a middleman.",
     safe: [
       ["No API keys sent", "Official subscription quota — not API relaying."],
       ["No IDE config changes", "Original configuration restored automatically on exit."],
-      ["No code collection", "The local proxy only injects tokens; code goes straight to official servers."],
+      ["No code collection", "The local proxy only handles takeover locally; your code goes straight to the official services and is never stored."],
       ["No middleman", "Request data never passes through Bingcha servers."],
     ],
   },
