@@ -553,6 +553,7 @@ enum PayChannel {
   ALIPAY
   WXPAY
   GRANT // 管理员手动授予(目录版):¥0、无支付,仅作订单→订阅审计链的来源标记
+  ACTIVATION_CODE // 激活码兑换:不走支付,amountCents 记激活当时目录算出的等值价格,作订单→订阅审计链来源
 }
 
 enum DeviceStatus {
@@ -632,6 +633,7 @@ model Subscription {
   startsAt            DateTime           @default(now())
   expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
   activatedFromOrderId String?           // PlanOrder.id that created/last extended this sub — exact order→sub link for reconcile + refund
+  activatedFromActivationCodeId String?  // set ONLY for activation-code subs: the ActivationCode.id that opened this sub (audit/provenance)
   migratedFromKey     String?            // set ONLY for card-migrated subs: the original card key (provenance). Catalog purchases leave it null.
   // 去影子:限额配置单一真相源(JSON 字符串;SQLite 无 Json,与 bucketLimits 等一致)。
   // 购买时快照展开的实际值(含显式 line),运行时直读它喂限额引擎、判号池/绑定。见 spec §4.2 / §6。
@@ -701,6 +703,37 @@ model PlanOrder {
 
   @@index([customerId])
   @@index([status])
+}
+
+enum ActivationCodeStatus {
+  UNUSED // 已生成,未激活
+  ACTIVATED // 已被用户激活并开通订阅
+  DISABLED // 管理员停用
+}
+
+/// 激活码:生成时只是「码 + selection 模板」,不绑账号、不占座位、永久有效到激活。
+/// 用户在 web account 后台兑换时,按 selection 对「当前 PUBLISHED 目录」computePurchase 现算 config,
+/// 造一笔 ACTIVATION_CODE 订单 + 开通一条新订阅(座位在那时才分配)。见激活码改造方案。
+model ActivationCode {
+  id                    String               @id @default(cuid())
+  code                  String               @unique // 展示给用户的激活码串
+  // 激活时开通什么订阅的模板(PoolSelection | BindSelection 的 JSON);激活时对最新目录算价/配置。
+  selection             String
+  status                ActivationCodeStatus @default(UNUSED)
+  // 激活追踪:
+  activatedAt           DateTime? // 用户激活时间
+  activatedByCustomerId String? // 激活的客户 id
+  subscriptionId        String? // 激活后开通的 Subscription.id
+  // 管理:
+  name                  String? // 备注名
+  batchId               String? // 批量生成分组(筛选/导出/整批停用)
+  createdById           String? // 生成此码的操作员 id
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([status])
+  @@index([batchId])
+  @@index([activatedByCustomerId])
 }
 
 /// Customer device (supports multi-device enforcement and session revocation).

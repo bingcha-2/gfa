@@ -4,29 +4,28 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { AccountButton, AccountInput, AccountPill } from "./account-ui";
-import { bindCard, UserApiError } from "@/lib/account/user-api";
-import type { BindCardResult } from "@/lib/account/user-types";
+import { activateCode, UserApiError } from "@/lib/account/user-api";
+import type { ActivateCodeResult } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useDict } from "@/lib/i18n/client";
 
-const KNOWN_CODES = [
-  "CARD_NOT_FOUND",
-  "CARD_DISABLED",
-  "CARD_EXPIRED",
-  "CARD_ALREADY_BOUND",
-] as const;
+// 后端激活码错误码 → 复用既有 billing.bindErrors 文案键(避免改动 8 套词典的结构)。
+// 座位不足等未列出的码 → fallback。
+const CODE_TO_DICT: Record<string, "CARD_NOT_FOUND" | "CARD_DISABLED" | "CARD_ALREADY_BOUND"> = {
+  CODE_NOT_FOUND: "CARD_NOT_FOUND",
+  CODE_DISABLED: "CARD_DISABLED",
+  CODE_ALREADY_USED: "CARD_ALREADY_BOUND",
+};
 
-type KnownCode = (typeof KNOWN_CODES)[number];
-
-export function BindCardForm({ onBound }: { onBound?: () => void }) {
+export function ActivationCodeForm({ onActivated }: { onActivated?: () => void }) {
   const dict = useDict();
   const t = dict.portalApp.billing;
 
-  const [cardKey, setCardKey] = useState("");
+  const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<BindCardResult | null>(null);
+  const [result, setResult] = useState<ActivateCodeResult | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,20 +34,19 @@ export function BindCardForm({ onBound }: { onBound?: () => void }) {
     setResult(null);
     setPending(true);
     try {
-      const res = await bindCard(cardKey.trim());
+      const res = await activateCode(code.trim());
       setResult(res);
-      if (!res.alreadyBound) {
+      if (!res.alreadyActivated) {
         toast.success(t.bindSuccessToast);
-        onBound?.();
+        onActivated?.();
       }
-      setCardKey("");
+      setCode("");
     } catch (err) {
-      if (
-        err instanceof UserApiError &&
-        err.code &&
-        (KNOWN_CODES as readonly string[]).includes(err.code)
-      ) {
-        setError(t.bindErrors[err.code as KnownCode]);
+      if (err instanceof UserApiError && err.code && CODE_TO_DICT[err.code]) {
+        setError(t.bindErrors[CODE_TO_DICT[err.code]]);
+      } else if (err instanceof UserApiError && err.message) {
+        // 座位不足 / 目录非法等带可读信息的 BadRequest:直接展示后端消息。
+        setError(err.message);
       } else {
         setError(t.bindErrors.fallback);
       }
@@ -66,8 +64,8 @@ export function BindCardForm({ onBound }: { onBound?: () => void }) {
           label={t.cardKeyLabel}
           className="account-input--mono"
           placeholder={t.cardKeyPlaceholder}
-          value={cardKey}
-          onChange={(e) => setCardKey(e.target.value)}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
           required
           disabled={pending}
           autoComplete="off"
@@ -76,7 +74,7 @@ export function BindCardForm({ onBound }: { onBound?: () => void }) {
 
         {error && <p className="account-field__error">{error}</p>}
 
-        <AccountButton type="submit" disabled={pending || !cardKey.trim()}>
+        <AccountButton type="submit" disabled={pending || !code.trim()}>
           {pending ? t.binding : t.bindSubmit}
         </AccountButton>
       </form>
@@ -84,7 +82,7 @@ export function BindCardForm({ onBound }: { onBound?: () => void }) {
       {result && sub && (
         <div className="account-bind-card__result">
           <div className="account-bind-card__result-title">
-            {result.alreadyBound ? t.bindAlreadyBound : t.bindSuccessTitle}
+            {result.alreadyActivated ? t.bindAlreadyBound : t.bindSuccessTitle}
           </div>
           <div className="account-bind-card__products">
             {sub.products.map((p) => (

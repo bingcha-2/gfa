@@ -43,6 +43,11 @@ export interface OrderForActivation {
 
 export interface ActivationOptions {
   durationDaysOverride?: number;
+  /**
+   * 跳过「同配置续费去重」,一律新建独立订阅。激活码激活用(每张码 = 一条独立订阅,
+   * 即便配置与已有订阅相同也不叠加续期)。付费/授予路径不传 → 保持续期叠加。
+   */
+  forceNew?: boolean;
 }
 
 @Injectable()
@@ -94,9 +99,12 @@ export class SubscriptionService {
     // 不新建。判断键 = sameConfigFingerprint(line + 排序后 products + deviceLimit +
     // 用量/levels+weight),排除 bindings(座位分配结果)与 windowMs(锁死)。绑定线续期
     // 走 syncSubscription:它对已绑产品短路复用,不重分配座位、不占新份额。
-    const actives = await this.prisma.subscription.findMany({
-      where: { customerId: order.customerId, status: "ACTIVE" },
-    });
+    // forceNew(激活码):跳过续费去重,直接新建。空数组 → 下面的 same 必为 undefined。
+    const actives = options.forceNew
+      ? []
+      : await this.prisma.subscription.findMany({
+          where: { customerId: order.customerId, status: "ACTIVE" },
+        });
     const same = actives.find((s) => sameConfigFingerprint(parseConfig(s.config), config));
     if (same) {
       const base = Math.max(now.getTime(), same.expiresAt ? same.expiresAt.getTime() : now.getTime());

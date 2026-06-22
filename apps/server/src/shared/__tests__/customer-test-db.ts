@@ -50,6 +50,7 @@ export async function cleanCustomerTables(): Promise<void> {
   const db = getCustomerPrisma();
   await db.notification.deleteMany();
   await db.device.deleteMany();
+  await db.activationCode.deleteMany();
   await db.subscription.deleteMany();
   await db.planOrder.deleteMany();
   await db.customerEmailToken.deleteMany();

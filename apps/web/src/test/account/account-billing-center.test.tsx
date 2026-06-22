@@ -96,7 +96,7 @@ describe("AccountBillingCenter", () => {
     );
 
     expect(screen.getByText("正在同步订阅与订单")).toBeInTheDocument();
-    expect(screen.getAllByText("绑定卡密").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("激活码").length).toBeGreaterThan(0);
     expect(screen.getByText("套餐目录")).toBeInTheDocument();
   });
 });

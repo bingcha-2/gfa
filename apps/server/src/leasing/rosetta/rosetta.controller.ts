@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException, ForbiddenException } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException } from "@nestjs/common";
 
 import { RosettaService } from "./rosetta.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
@@ -24,15 +24,6 @@ export class RosettaController {
   ) {}
 
   /**
-   * 卡密后台管理已停用:账户/订阅体系下不再手动发卡、改卡、绑卡、删卡、批量清理。
-   * 路由保留(返回 403 FEATURE_DISABLED)以便可逆 + 前端按钮置灰;开通服务只剩
-   * 「账户下单订阅」或「账户 bind-card 转订阅」两条路,均不经后台手动发卡。
-   */
-  private cardAdminDisabled(): never {
-    throw new ForbiddenException({ error: "FEATURE_DISABLED", message: "卡密后台管理已停用,请改用账户订阅。" });
-  }
-
-  /**
    * 用 DB 订阅占用(座位真相源)覆盖账号列表的 usedShares。底层 list 仍按文件卡
    * 口径(access-keys.json,已退役)算 usedShares,这里统一改成订阅口径,与下单
    * 选号(entitlement-sync)一致 —— 否则订阅占了座位、后台「份额用量」仍显示 0/N。
@@ -46,11 +37,6 @@ export class RosettaController {
       acc.usedShares = shares.get(Number(acc.id)) || 0;
     }
     return res;
-  }
-
-  @Get("access-keys")
-  listAccessKeys(@Query("search") search?: string) {
-    return this.rosetta.listAccessKeys({ search });
   }
 
   @Get("employees")
@@ -386,51 +372,6 @@ export class RosettaController {
   @Post("claude-session-update-key")
   updateClaudeSessionKey(@Body() body: any) {
     return this.rosetta.updateClaudeSessionKey(body);
-  }
-
-  @Post("access-key")
-  createAccessKey() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("access-key-update")
-  updateAccessKey() {
-    return this.cardAdminDisabled();
-  }
-
-  @Get("access-key-limits")
-  getAccessKeyLimits(@Query("id") id: string) {
-    return this.rosetta.getAccessKeyLimits(id);
-  }
-
-  @Post("access-key-bind")
-  bindAccessKey() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("access-key-unbind")
-  unbindAccessKey() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("access-key-set-bindings")
-  setAccessKeyBindings() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("access-key-delete")
-  deleteAccessKey() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("cleanup-expired-keys")
-  cleanupExpiredKeys() {
-    return this.cardAdminDisabled();
-  }
-
-  @Post("cleanup-unbound-keys")
-  cleanupUnboundKeys() {
-    return this.cardAdminDisabled();
   }
 
   @Post("captcha-unblock")
