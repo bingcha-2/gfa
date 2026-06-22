@@ -178,8 +178,9 @@ func TestClaudeProxyIncludesTransportDetailsForClient(t *testing.T) {
 	if !strings.Contains(message, wantMessage) {
 		t.Fatalf("client error message = %q, want friendly message %q", message, wantMessage)
 	}
-	if !strings.Contains(message, "原始错误: ") || !strings.Contains(message, "socks connect tcp <ip>->api.anthropic.com:443: EOF") {
-		t.Fatalf("client error message = %q, want sanitized transport error", message)
+	// 保留可定位的原因(EOF),但不暴露出口/住宅代理地址(IP 抹成占位符)。
+	if !strings.Contains(message, "原始错误: ") || !strings.Contains(message, "EOF") {
+		t.Fatalf("client error message = %q, want sanitized transport reason (…EOF)", message)
 	}
 	if strings.Contains(message, "173.44.178.29") {
 		t.Fatalf("client error message leaked proxy IP: %q", message)
@@ -204,6 +205,43 @@ func TestClaudeTransportAuditNoteIncludesSanitizedConnectionResetDetails(t *test
 	}
 	if strings.Contains(note, "198.18.0.1") || strings.Contains(note, "216.175.200.154") {
 		t.Fatalf("audit note leaked raw IP details: %q", note)
+	}
+}
+
+// 出口代理不一定是 IPv4——供应商常给域名 endpoint,也可能是 IPv6。这些都不能漏给客户。
+func TestSanitizeTransportErrorHidesProxyHostForms(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		egress  string
+		secret  string // 必须从输出里消失的敏感串
+		keepHas string // 必须保留的原因关键字
+	}{
+		{
+			name:    "域名形式代理",
+			raw:     `proxyconnect tcp: dial tcp: lookup gw.residential-vendor.com: no such host`,
+			egress:  "http://user:pass@gw.residential-vendor.com:8080",
+			secret:  "gw.residential-vendor.com",
+			keepHas: "no such host",
+		},
+		{
+			name:    "IPv6 形式代理(带方括号端口)",
+			raw:     `socks connect tcp [2001:db8::dead:beef]:1080->api.anthropic.com:443: i/o timeout`,
+			egress:  "socks5://[2001:db8::dead:beef]:1080",
+			secret:  "2001:db8",
+			keepHas: "i/o timeout",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := sanitizeTransportError(errors.New(c.raw), c.egress)
+			if strings.Contains(got, c.secret) {
+				t.Fatalf("sanitized = %q leaked proxy secret %q", got, c.secret)
+			}
+			if !strings.Contains(got, c.keepHas) {
+				t.Fatalf("sanitized = %q dropped reason keyword %q", got, c.keepHas)
+			}
+		})
 	}
 }
 
