@@ -1,10 +1,11 @@
 "use client";
 
-// 激活码管理(console / activation-codes)—— 选套餐(selection)+ 数量批量生成激活码;
+// 激活码管理(console / activation-codes)—— 选套餐(绑定线 selection)+ 数量批量生成激活码;
 // 列表查看状态/激活时间/激活客户/批次,可停用未激活的码、导出整批为 txt。
 // 生成不碰账号池(不占座位);座位在用户激活那一刻才分配。后端见 ActivationCodeService。
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import {
@@ -12,15 +13,47 @@ import {
   type CatalogConfig,
   type Selection,
 } from "@/lib/account/catalog-pricing";
+import { fmtYuan } from "@/lib/console/format";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 
-type Line = "bind" | "pool";
+type CodeStatus = "UNUSED" | "ACTIVATED" | "DISABLED";
 
 type CodeRow = {
   id: string;
   code: string;
-  status: "UNUSED" | "ACTIVATED" | "DISABLED";
+  status: CodeStatus;
   name: string | null;
   batchId: string | null;
   activatedAt: string | null;
@@ -29,36 +62,31 @@ type CodeRow = {
   createdAt: string;
 };
 
-const STATUS_LABEL: Record<CodeRow["status"], string> = {
-  UNUSED: "未激活",
-  ACTIVATED: "已激活",
-  DISABLED: "已停用",
+const STATUS_BADGE: Record<CodeStatus, { label: string; variant: "default" | "secondary" | "outline" }> = {
+  UNUSED: { label: "未激活", variant: "secondary" },
+  ACTIVATED: { label: "已激活", variant: "default" },
+  DISABLED: { label: "已停用", variant: "outline" },
 };
 
 export default function ActivationCodesPage() {
   const [catalog, setCatalog] = useState<CatalogConfig | null>(null);
   const [catalogErr, setCatalogErr] = useState<string | null>(null);
 
-  // ── 生成表单状态 ──
-  const [line, setLine] = useState<Line>("bind");
+  // ── 生成表单(绑定线;与「新建订阅」同结构)──
   const [bindLevels, setBindLevels] = useState<Record<string, string>>({});
   const [shareSeats, setShareSeats] = useState<number>(1);
-  const [poolProducts, setPoolProducts] = useState<string[]>([]);
-  const [usageTier, setUsageTier] = useState<string>("");
   const [deviceLimit, setDeviceLimit] = useState<number>(1);
   const [count, setCount] = useState<number>(1);
   const [name, setName] = useState<string>("");
   const [generating, setGenerating] = useState(false);
-  const [genErr, setGenErr] = useState<string | null>(null);
   const [lastGenerated, setLastGenerated] = useState<{ codes: string[]; batchId: string } | null>(null);
 
-  // ── 列表状态 ──
+  // ── 列表 ──
   const [rows, setRows] = useState<CodeRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<"" | CodeRow["status"]>("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | CodeStatus>("ALL");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [loadingList, setLoadingList] = useState(false);
   const pageSize = 20;
 
   useEffect(() => {
@@ -66,27 +94,24 @@ export default function ActivationCodesPage() {
       .then((r) => r.json())
       .then((d: { config: CatalogConfig | null }) => {
         if (d.config) setCatalog(d.config);
-        else setCatalogErr("套餐目录未发布,无法生成激活码。");
+        else setCatalogErr("套餐目录未发布,无法生成激活码。请先在「套餐配置」发布一个版本。");
       })
       .catch((e) => setCatalogErr(getErrorMessage(e)));
   }, []);
 
+  const products = useMemo(() => catalog?.products ?? [], [catalog]);
+  const levelsFor = useCallback((p: string) => catalog?.levels?.[p] ?? [], [catalog]);
   const shareCapacity = catalog?.shareCapacity ?? 8;
   const seatOptions = useMemo(() => SEAT_OPTIONS.filter((n) => n <= shareCapacity), [shareCapacity]);
-  const tierNames = useMemo(() => Object.keys(catalog?.usageTiers ?? {}), [catalog]);
 
-  // selection 与「新建订阅」同结构(PoolSelection | BindSelection)。
   const selection: Selection | null = useMemo(() => {
-    if (line === "bind") {
-      const items = Object.entries(bindLevels).map(([product, level]) => ({ product, level }));
-      if (items.length === 0) return null;
-      return { line: "bind", items, shareSeats, deviceLimit };
-    }
-    if (poolProducts.length === 0 || !usageTier) return null;
-    return { line: "pool", products: poolProducts, usageTier, deviceLimit };
-  }, [line, bindLevels, shareSeats, poolProducts, usageTier, deviceLimit]);
+    const items = Object.entries(bindLevels)
+      .filter(([, level]) => !!level)
+      .map(([product, level]) => ({ product, level }));
+    if (items.length === 0) return null;
+    return { line: "bind", items, shareSeats, deviceLimit };
+  }, [bindLevels, shareSeats, deviceLimit]);
 
-  // 价格预览(与激活时一致:对当前目录 computePurchase)。
   const priceCents = useMemo(() => {
     if (!catalog || !selection) return null;
     try {
@@ -97,11 +122,10 @@ export default function ActivationCodesPage() {
   }, [catalog, selection]);
 
   const loadList = useCallback(async () => {
-    setLoadingList(true);
     try {
       const res = await apiRequest<{ items: CodeRow[]; total: number }>("activation-codes", {
         search: {
-          status: statusFilter || undefined,
+          status: statusFilter === "ALL" ? undefined : statusFilter,
           search: search.trim() || undefined,
           page,
           pageSize,
@@ -110,9 +134,7 @@ export default function ActivationCodesPage() {
       setRows(res.items);
       setTotal(res.total);
     } catch (e) {
-      setGenErr(getErrorMessage(e));
-    } finally {
-      setLoadingList(false);
+      toast.error(getErrorMessage(e));
     }
   }, [statusFilter, search, page]);
 
@@ -120,27 +142,22 @@ export default function ActivationCodesPage() {
     void loadList();
   }, [loadList]);
 
-  function toggleBindProduct(product: string) {
+  function toggleProduct(product: string) {
     setBindLevels((prev) => {
       if (product in prev) {
         const next = { ...prev };
         delete next[product];
         return next;
       }
-      const firstLevel = catalog?.levels[product]?.[0];
+      const firstLevel = levelsFor(product)[0];
       if (!firstLevel) return prev;
       return { ...prev, [product]: firstLevel };
     });
   }
 
-  function togglePoolProduct(product: string) {
-    setPoolProducts((prev) => (prev.includes(product) ? prev.filter((p) => p !== product) : [...prev, product]));
-  }
-
   async function handleGenerate() {
     if (!selection || generating) return;
     setGenerating(true);
-    setGenErr(null);
     setLastGenerated(null);
     try {
       const res = await apiRequest<{ count: number; batchId: string; codes: string[] }>("activation-codes", {
@@ -148,9 +165,11 @@ export default function ActivationCodesPage() {
         body: { selection, count, name: name.trim() || undefined },
       });
       setLastGenerated({ codes: res.codes, batchId: res.batchId });
+      toast.success(`已生成 ${res.count} 个激活码`);
+      setPage(1);
       await loadList();
     } catch (e) {
-      setGenErr(getErrorMessage(e));
+      toast.error(getErrorMessage(e));
     } finally {
       setGenerating(false);
     }
@@ -159,306 +178,257 @@ export default function ActivationCodesPage() {
   async function handleDisable(id: string) {
     try {
       await apiRequest(`activation-codes/${id}/disable`, { method: "POST" });
+      toast.success("已停用");
       await loadList();
     } catch (e) {
-      setGenErr(getErrorMessage(e));
+      toast.error(getErrorMessage(e));
     }
+  }
+
+  function download(codes: string[], filename: string) {
+    const blob = new Blob([codes.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleExport() {
     try {
       const res = await apiRequest<{ codes: string[] }>("activation-codes/export", {
-        search: { status: statusFilter || undefined, search: search.trim() || undefined },
+        search: {
+          status: statusFilter === "ALL" ? undefined : statusFilter,
+          search: search.trim() || undefined,
+        },
       });
-      const blob = new Blob([res.codes.join("\n")], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `activation-codes-${Date.now()}.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
+      if (res.codes.length === 0) {
+        toast.info("当前筛选无可导出的激活码");
+        return;
+      }
+      download(res.codes, `activation-codes-${Date.now()}.txt`);
     } catch (e) {
-      setGenErr(getErrorMessage(e));
+      toast.error(getErrorMessage(e));
     }
-  }
-
-  function downloadGenerated() {
-    if (!lastGenerated) return;
-    const blob = new Blob([lastGenerated.codes.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `activation-codes-${lastGenerated.batchId}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="ac-page" style={{ display: "flex", flexDirection: "column", gap: 24, padding: 24 }}>
-      <header>
-        <h1 style={{ fontSize: 20, fontWeight: 600 }}>激活码管理</h1>
-        <p style={{ color: "var(--muted-foreground, #888)", fontSize: 13, marginTop: 4 }}>
+    <div className="flex flex-col gap-6 p-4 md:p-6">
+      <div>
+        <h1 className="text-xl font-semibold">激活码管理</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           选套餐 + 数量批量生成激活码。生成时不绑定账号、不占座位;用户在账户后台兑换时才开通订阅并分配账号。
         </p>
-      </header>
+      </div>
 
       {/* ── 生成 ── */}
-      <section style={{ border: "1px solid var(--border, #e5e5e5)", borderRadius: 12, padding: 20 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>生成激活码</h2>
-        {catalogErr && <p style={{ color: "#dc2626", fontSize: 13 }}>{catalogErr}</p>}
-        {!catalog && !catalogErr && <p style={{ fontSize: 13, color: "#888" }}>加载套餐目录…</p>}
+      <Card>
+        <CardHeader>
+          <CardTitle>生成激活码</CardTitle>
+          <CardDescription>选择产品与会员等级、份额,批量生成。激活时按当前套餐目录计价开通订阅。</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          {catalogErr && <p className="text-sm text-destructive">{catalogErr}</p>}
+          {!catalog && !catalogErr && <p className="text-sm text-muted-foreground">加载套餐目录…</p>}
 
-        {catalog && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", gap: 8 }}>
-              {(["bind", "pool"] as Line[]).map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  onClick={() => setLine(l)}
-                  style={pill(line === l)}
-                >
-                  {l === "bind" ? "绑定线" : "号池线"}
-                </button>
-              ))}
-            </div>
-
-            {line === "bind" ? (
-              <>
-                <Field label="产品 + 会员等级">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {(catalog.products ?? []).map((product) => {
-                      const checked = product in bindLevels;
-                      return (
-                        <div key={product} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 120 }}>
-                            <input type="checkbox" checked={checked} onChange={() => toggleBindProduct(product)} />
-                            {product}
-                          </label>
-                          {checked && (
-                            <select
-                              value={bindLevels[product]}
-                              onChange={(e) => setBindLevels((p) => ({ ...p, [product]: e.target.value }))}
-                            >
-                              {(catalog.levels[product] ?? []).map((lvl) => (
-                                <option key={lvl} value={lvl}>{lvl}</option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Field>
-                <Field label={`份额(1=拼车 … ${shareCapacity}=独享)`}>
-                  <select value={shareSeats} onChange={(e) => setShareSeats(Number(e.target.value))}>
-                    {seatOptions.map((n) => (
-                      <option key={n} value={n}>{n} 份</option>
-                    ))}
-                  </select>
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="产品">
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {(catalog.products ?? []).map((product) => (
-                      <label key={product} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <input
-                          type="checkbox"
-                          checked={poolProducts.includes(product)}
-                          onChange={() => togglePoolProduct(product)}
-                        />
-                        {product}
-                      </label>
-                    ))}
-                  </div>
-                </Field>
-                <Field label="用量档">
-                  <select value={usageTier} onChange={(e) => setUsageTier(e.target.value)}>
-                    <option value="">选择用量档</option>
-                    {tierNames.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </Field>
-              </>
-            )}
-
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <Field label="设备数">
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={deviceLimit}
-                  onChange={(e) => setDeviceLimit(Math.max(1, Number(e.target.value) || 1))}
-                  style={{ width: 80 }}
-                />
-              </Field>
-              <Field label="数量(1–200)">
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={count}
-                  onChange={(e) => setCount(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
-                  style={{ width: 80 }}
-                />
-              </Field>
-              <Field label="备注(可选)">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如:618活动" />
-              </Field>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <button
-                type="button"
-                onClick={handleGenerate}
-                disabled={!selection || generating}
-                style={primaryBtn(!selection || generating)}
-              >
-                {generating ? "生成中…" : `生成 ${count} 个`}
-              </button>
-              {priceCents != null && (
-                <span style={{ fontSize: 13, color: "#888" }}>
-                  单个等值价格:¥{(priceCents / 100).toFixed(2)}
-                </span>
-              )}
-            </div>
-            {genErr && <p style={{ color: "#dc2626", fontSize: 13 }}>{genErr}</p>}
-
-            {lastGenerated && (
-              <div style={{ border: "1px solid var(--border, #e5e5e5)", borderRadius: 8, padding: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <strong style={{ fontSize: 13 }}>
-                    已生成 {lastGenerated.codes.length} 个(批次 {lastGenerated.batchId})
-                  </strong>
-                  <button type="button" onClick={downloadGenerated} style={ghostBtn()}>下载 .txt</button>
+          {catalog && (
+            <>
+              <div className="flex flex-col gap-2">
+                <Label>产品 + 会员等级</Label>
+                {products.length === 0 && <p className="text-sm text-muted-foreground">当前目录无可售产品。</p>}
+                <div className="flex flex-col gap-2">
+                  {products.map((product) => {
+                    const checked = product in bindLevels;
+                    const levels = levelsFor(product);
+                    return (
+                      <div key={product} className="flex items-center gap-3">
+                        <label className="flex w-40 items-center gap-2 text-sm">
+                          <Checkbox checked={checked} onCheckedChange={() => toggleProduct(product)} />
+                          <span className="capitalize">{product}</span>
+                        </label>
+                        {checked && (
+                          <Select value={bindLevels[product]} onValueChange={(v) => setBindLevels((p) => ({ ...p, [product]: v }))}>
+                            <SelectTrigger className="w-44">
+                              <SelectValue placeholder="选择等级" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {levels.map((lvl) => (
+                                  <SelectItem key={lvl} value={lvl}>{lvl}</SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <textarea
-                  readOnly
-                  value={lastGenerated.codes.join("\n")}
-                  rows={Math.min(8, lastGenerated.codes.length)}
-                  style={{ width: "100%", fontFamily: "monospace", fontSize: 12 }}
-                />
               </div>
-            )}
-          </div>
-        )}
-      </section>
+
+              <div className="flex flex-wrap gap-6">
+                <div className="flex flex-col gap-2">
+                  <Label>份额(1=拼车 … {shareCapacity}=独享)</Label>
+                  <Select value={String(shareSeats)} onValueChange={(v) => setShareSeats(Number(v))}>
+                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {seatOptions.map((n) => (
+                          <SelectItem key={n} value={String(n)}>{n} 份</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="ac-devices">设备数</Label>
+                  <Input
+                    id="ac-devices"
+                    type="number"
+                    min={1}
+                    max={20}
+                    className="w-24"
+                    value={deviceLimit}
+                    onChange={(e) => setDeviceLimit(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="ac-count">数量(1–200)</Label>
+                  <Input
+                    id="ac-count"
+                    type="number"
+                    min={1}
+                    max={200}
+                    className="w-24"
+                    value={count}
+                    onChange={(e) => setCount(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+                  />
+                </div>
+                <div className="flex flex-1 flex-col gap-2">
+                  <Label htmlFor="ac-name">备注(可选)</Label>
+                  <Input id="ac-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="如:618 活动" />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <Button onClick={handleGenerate} disabled={!selection || generating}>
+                  {generating ? "生成中…" : `生成 ${count} 个`}
+                </Button>
+                {priceCents != null && (
+                  <span className="text-sm text-muted-foreground">单个等值价格:{fmtYuan(priceCents)}</span>
+                )}
+              </div>
+
+              {lastGenerated && (
+                <div className="flex flex-col gap-2 rounded-lg border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      已生成 {lastGenerated.codes.length} 个 · 批次 <code className="text-xs">{lastGenerated.batchId}</code>
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => download(lastGenerated.codes, `activation-codes-${lastGenerated.batchId}.txt`)}
+                    >
+                      下载 .txt
+                    </Button>
+                  </div>
+                  <Textarea
+                    readOnly
+                    className="font-mono text-xs"
+                    rows={Math.min(8, Math.max(2, lastGenerated.codes.length))}
+                    value={lastGenerated.codes.join("\n")}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── 列表 ── */}
-      <section style={{ border: "1px solid var(--border, #e5e5e5)", borderRadius: 12, padding: 20 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-          <h2 style={{ fontSize: 15, fontWeight: 600, marginRight: "auto" }}>激活码列表</h2>
-          <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as any); setPage(1); }}>
-            <option value="">全部状态</option>
-            <option value="UNUSED">未激活</option>
-            <option value="ACTIVATED">已激活</option>
-            <option value="DISABLED">已停用</option>
-          </select>
-          <input
-            placeholder="搜索激活码"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          />
-          <button type="button" onClick={handleExport} style={ghostBtn()}>导出当前筛选</button>
-        </div>
-
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: "left", color: "#888" }}>
-              <th style={th}>激活码</th>
-              <th style={th}>状态</th>
-              <th style={th}>激活客户</th>
-              <th style={th}>激活时间</th>
-              <th style={th}>批次</th>
-              <th style={th}>备注</th>
-              <th style={th}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} style={{ borderTop: "1px solid var(--border, #eee)" }}>
-                <td style={{ ...td, fontFamily: "monospace" }}>{r.code}</td>
-                <td style={td}>{STATUS_LABEL[r.status]}</td>
-                <td style={td}>{r.activatedByEmail ?? "—"}</td>
-                <td style={td}>{r.activatedAt ? new Date(r.activatedAt).toLocaleString() : "—"}</td>
-                <td style={td}>{r.batchId ?? "—"}</td>
-                <td style={td}>{r.name ?? "—"}</td>
-                <td style={td}>
-                  {r.status === "UNUSED" ? (
-                    <button type="button" onClick={() => handleDisable(r.id)} style={ghostBtn()}>停用</button>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && !loadingList && (
-              <tr><td style={td} colSpan={7}>暂无激活码</td></tr>
-            )}
-          </tbody>
-        </table>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, fontSize: 13 }}>
-          <span style={{ color: "#888" }}>共 {total} 个</span>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} style={ghostBtn(page <= 1)}>上一页</button>
-            <span>{page} / {totalPages}</span>
-            <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} style={ghostBtn(page >= totalPages)}>下一页</button>
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle>激活码列表</CardTitle>
+            <CardDescription>共 {total} 个</CardDescription>
           </div>
-        </div>
-      </section>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as any); setPage(1); }}>
+              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="ALL">全部状态</SelectItem>
+                  <SelectItem value="UNUSED">未激活</SelectItem>
+                  <SelectItem value="ACTIVATED">已激活</SelectItem>
+                  <SelectItem value="DISABLED">已停用</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              className="w-48"
+              placeholder="搜索激活码"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+            <Button variant="outline" onClick={handleExport}>导出当前筛选</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {rows.length === 0 ? (
+            <Empty>暂无激活码</Empty>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>激活码</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>激活客户</TableHead>
+                    <TableHead>激活时间</TableHead>
+                    <TableHead>批次</TableHead>
+                    <TableHead>备注</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r) => {
+                    const badge = STATUS_BADGE[r.status];
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                        <TableCell><Badge variant={badge.variant}>{badge.label}</Badge></TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{r.activatedByEmail ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {r.activatedAt ? new Date(r.activatedAt).toLocaleString() : "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{r.batchId ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{r.name ?? "—"}</TableCell>
+                        <TableCell className="text-right">
+                          {r.status === "UNUSED" ? (
+                            <Button size="sm" variant="ghost" onClick={() => handleDisable(r.id)}>停用</Button>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+
+              <div className="mt-4 flex items-center justify-end gap-3 text-sm">
+                <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</Button>
+                <span className="text-muted-foreground">{page} / {totalPages}</span>
+                <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-      <span style={{ color: "#888" }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-const th: React.CSSProperties = { padding: "8px 10px", fontWeight: 500 };
-const td: React.CSSProperties = { padding: "8px 10px" };
-
-function pill(active: boolean): React.CSSProperties {
-  return {
-    padding: "6px 14px",
-    borderRadius: 999,
-    border: "1px solid var(--border, #ddd)",
-    background: active ? "var(--primary, #2563eb)" : "transparent",
-    color: active ? "#fff" : "inherit",
-    cursor: "pointer",
-  };
-}
-
-function primaryBtn(disabled: boolean): React.CSSProperties {
-  return {
-    padding: "8px 18px",
-    borderRadius: 8,
-    border: "none",
-    background: disabled ? "#9ca3af" : "var(--primary, #2563eb)",
-    color: "#fff",
-    cursor: disabled ? "not-allowed" : "pointer",
-  };
-}
-
-function ghostBtn(disabled = false): React.CSSProperties {
-  return {
-    padding: "5px 12px",
-    borderRadius: 6,
-    border: "1px solid var(--border, #ddd)",
-    background: "transparent",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-    fontSize: 13,
-  };
 }
