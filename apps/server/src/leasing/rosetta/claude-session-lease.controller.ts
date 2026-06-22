@@ -26,8 +26,9 @@ export class ClaudeSessionLeaseController {
     if (!sub.ok) {
       return { ok: false, code: sub.error, error: sub.message };
     }
-    // 订阅校验(sub.ok)已是放行闸;白号选号不依赖订阅 id,故不下传。
-    return this.rosetta.leaseClaudeSession(body);
+    // 粘性绑定:把订阅 id(cardId)下传,让号池把"同一用户↔同一白号"固定下来 —— claude.ai 的
+    // web 会话不耐受多人并发共享(会互相把 sessionKey 轮换作废),一号一用户从根上避开打架。
+    return this.rosetta.leaseClaudeSession({ ...body, cardId: sub.cardId });
   }
 
   @Post("report-session")
@@ -38,6 +39,16 @@ export class ClaudeSessionLeaseController {
       return { ok: false, code: sub.error, error: sub.message };
     }
     return this.rosetta.reportClaudeSession(body);
+  }
+
+  @Post("rotate-session")
+  async rotateSession(@Headers("authorization") auth: string, @Body() body: any) {
+    // 与 report 同样要求有效订阅:防无凭证者乱推 sessionKey 覆盖好号。
+    const sub = await this.sessionResolver.resolve(extractBearer(auth), {});
+    if (!sub.ok) {
+      return { ok: false, code: sub.error, error: sub.message };
+    }
+    return this.rosetta.rotateClaudeSession(body);
   }
 }
 

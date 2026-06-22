@@ -49,6 +49,10 @@ func mitmClaudeAiHandler(transport http.RoundTripper, sessionKeyFn func() string
 			if sessionKeyFn != nil {
 				if sk := sessionKeyFn(); sk != "" {
 					mitmInjectSessionKeyCookie(req, sk)
+				} else if strings.HasPrefix(req.URL.Path, "/api/") {
+					// 诊断[假设B]:借号期 current 为空 → 透传桌面端(未登录)态。若"第二次未登录"时
+					// 大量出现此行,说明是注入没赶上(race/租约失败),而非 sk 失效。
+					Log("[mitm-diag] claude.ai API %s 未注入白号(current 空,透传桌面端登录态)", req.URL.Path)
 				}
 			}
 		},
@@ -96,6 +100,11 @@ func mitmStripSessionKeySetCookie(h http.Header) {
 			name = v[:i]
 		}
 		if strings.EqualFold(strings.TrimSpace(name), "sessionKey") {
+			// claude.ai 主动下发新 sessionKey = 会话轮换。先捕获新 sk 回填 leaser(本地顶替 + 上报号池,
+			// 防旧 sk 被作废后"第二次未登录"、号被烧),再 strip 掉 —— 新 sk 绝不落进 Chromium profile。
+			if nsk := parseSetCookieValue(v); nsk != "" {
+				GetClaudeSessionLeaser().OnRotatedSessionKey(nsk)
+			}
 			continue // 丢掉白号 sessionKey 的 Set-Cookie
 		}
 		kept = append(kept, v)
@@ -129,6 +138,19 @@ func mitmInjectSessionKeyCookie(req *http.Request, sk string) {
 	}
 	kept = append(kept, "sessionKey="+sk)
 	req.Header.Set("Cookie", strings.Join(kept, "; "))
+}
+
+// parseSetCookieValue 从一条 Set-Cookie(name=value; attr...)里取出 value 部分(去掉属性段)。
+func parseSetCookieValue(setCookie string) string {
+	i := strings.IndexByte(setCookie, '=')
+	if i < 0 {
+		return ""
+	}
+	v := setCookie[i+1:]
+	if j := strings.IndexByte(v, ';'); j >= 0 {
+		v = v[:j]
+	}
+	return strings.TrimSpace(v)
 }
 
 // isCloudflareCookie 判断 cookie 名是否属于 Cloudflare(过 CF/bot 管理用,与 claude.ai 账号身份无关)。
@@ -296,6 +318,12 @@ func mitmModifyClaudeAiResponse(resp *http.Response) error {
 	//   未借号时不动 Set-Cookie,用户自己的会话照常刷新。
 	if GetClaudeSessionLeaser().CurrentSessionKey() != "" {
 		mitmStripSessionKeySetCookie(resp.Header)
+		// 诊断[假设A/C 区分]:借号期 claude.ai 返回非 2xx → 上游认为 sk 失效(轮换/过期)。
+		// 若此行频繁伴随"第二次未登录",根因在 sk 本身(走 A);若上游全是 2xx 但 UI 仍显示未登录,
+		// 则是前端读不到 document.cookie 里的 sk(走 C)。
+		if resp.StatusCode >= 400 && !mitmIsCloudflareChallenge(resp) {
+			Log("[mitm-diag] 借号请求 %s → HTTP %d(上游可能判 sk 失效)", path, resp.StatusCode)
+		}
 	}
 
 	// ★ 顶层 HTML 文档(仅 2xx 正常页):注入「隐藏 chat」守卫脚本(chat/code UI 都来自 claude.ai 网页)。
