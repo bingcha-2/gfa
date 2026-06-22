@@ -155,6 +155,7 @@ export default function PlanOrdersPage() {
                   <TableHead>客户</TableHead>
                   <TableHead>套餐</TableHead>
                   <TableHead className="text-right">金额</TableHead>
+                  <TableHead className="text-right">余额抵扣</TableHead>
                   <TableHead>渠道</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>已激活订阅</TableHead>
@@ -169,6 +170,9 @@ export default function PlanOrdersPage() {
                     <TableCell>{o.customer?.email ?? "—"}</TableCell>
                     <TableCell>{selectionName(o.selection)}</TableCell>
                     <TableCell className="text-right">{fmtYuan(o.amountCents)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {o.creditAppliedCents > 0 ? `-${fmtYuan(o.creditAppliedCents)}` : "—"}
+                    </TableCell>
                     <TableCell>{PAY_CHANNEL_LABEL[o.payChannel] ?? o.payChannel}</TableCell>
                     <TableCell>{orderStatusBadge(o.status)}</TableCell>
                     <TableCell>

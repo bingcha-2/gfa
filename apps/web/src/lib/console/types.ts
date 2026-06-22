@@ -262,6 +262,7 @@ export type ConsolePlanOrder = {
   customerId: string;
   subscriptionId: string | null;
   amountCents: number;
+  creditAppliedCents: number;
   payChannel: string;
   outTradeNo: string;
   status: string;
