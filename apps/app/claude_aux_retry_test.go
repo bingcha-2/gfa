@@ -3,6 +3,9 @@ package main
 import (
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -27,5 +30,40 @@ func TestIsRetriableUpstreamErr(t *testing.T) {
 		if got := isRetriableUpstreamErr(c.err); got != c.want {
 			t.Errorf("%s: isRetriableUpstreamErr = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestClaudeProxyAuxIncludesTransportDetailsAfterRetries(t *testing.T) {
+	rawErr := `Post "https://api.anthropic.com/v1/messages/count_tokens": EOF`
+	attempts := 0
+	p := &ClaudeProxy{
+		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 7, LeaseId: "l1", EgressInfo: EgressInfo{ProxyURL: "http://egress.test:8080", EgressRequired: true}}, nil
+		},
+		upstreamClient: func(string) *http.Client {
+			return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				attempts++
+				return nil, errors.New(rawErr)
+			})}
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(`{"model":"claude-opus-4-8"}`))
+	rw := httptest.NewRecorder()
+
+	p.ServeHTTP(rw, req, "card-1", "dev-1", "")
+
+	if rw.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rw.Code)
+	}
+	if attempts != claudeAuxMaxAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, claudeAuxMaxAttempts)
+	}
+	message := decodeClaudeProxyErrorMessage(t, rw.Body.Bytes())
+	if !strings.Contains(message, claudeTransportFriendlyMessage) {
+		t.Fatalf("client error message = %q, want friendly message %q", message, claudeTransportFriendlyMessage)
+	}
+	if !strings.Contains(message, "原始错误: ") || !strings.Contains(message, "/v1/messages/count_tokens") || !strings.Contains(message, "EOF") {
+		t.Fatalf("client error message = %q, want raw transport error %q", message, rawErr)
 	}
 }

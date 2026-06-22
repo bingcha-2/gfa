@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,8 +37,75 @@ const claudeOAuthBeta = "oauth-2025-04-20"
 
 const claudeTransportFriendlyMessage = "冰茶AI 正在重试连接 Claude。当前请求未能通过你的出口代理建立稳定连接，通常是本机网络、VPN 节点或代理链路临时不通导致。如果持续出现，请切换 VPN 节点或检查本机网络。"
 
-func claudeTransportAuditNote(prefix string, _ error) string {
-	return prefix + claudeTransportFriendlyMessage
+// 底层网络错误里常带真实出口/住宅代理地址(IP、IPv6 或供应商域名)——那是商业机密、
+// 对客户也无意义,日志/回包前必须抹掉,只保留能定位故障的原因文字。
+//   - claudeTransportIPv4Re:点分十进制 IPv4(可带端口)。
+//   - claudeTransportIPv6Re:方括号包裹的 IPv6(可带端口,Go net 错误的常见形态)+ 裸 IPv6 兜底。
+var (
+	claudeTransportIPv4Re = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b`)
+	claudeTransportIPv6Re = regexp.MustCompile(`\[[0-9a-fA-F:]+\](?::\d+)?|\b(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F]{0,4}\b`)
+)
+
+// proxySecretHosts 从代理 URL 解析出需要从错误文本里剔除的字面量(host:port 与裸 host)。
+// 代理可能是 IP、IPv6 或供应商域名,正则猜不全,故按"我们自己知道用的是哪个代理"精确屏蔽。
+func proxySecretHosts(rawURL string) []string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	hosts := []string{u.Host} // host:port —— 先替换更长的,避免残留端口
+	if h := u.Hostname(); h != "" && h != u.Host {
+		hosts = append(hosts, h)
+	}
+	return hosts
+}
+
+// sanitizeTransportError 取底层传输错误里【可对外暴露】的原因:保留
+// "wsarecv: forcibly closed" / "i/o timeout" / "EOF" / "tls handshake" 这类能区分
+// "真网络问题" 与 "其他故障" 的关键字,但抹掉出口/代理地址。两道防线:
+//  1. 精确剔除已知代理 host(secretURLs,IP/IPv6/域名通吃);
+//  2. 正则兜底抹掉任何残留的 IPv4 / IPv6 字面量。
+//
+// err 为 nil 或抹完为空时返回空串。
+func sanitizeTransportError(err error, secretURLs ...string) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	for _, raw := range secretURLs {
+		for _, host := range proxySecretHosts(raw) {
+			msg = strings.ReplaceAll(msg, host, "<proxy>")
+		}
+	}
+	msg = claudeTransportIPv4Re.ReplaceAllString(msg, "<ip>")
+	msg = claudeTransportIPv6Re.ReplaceAllString(msg, "<ip>")
+	// 折叠 Go net 错误里的地址段:`read tcp <ip>-><ip>: reason` → `read tcp <ip>: reason`。
+	msg = strings.ReplaceAll(msg, "<ip>-><ip>", "<ip>")
+	return strings.TrimSpace(msg)
+}
+
+// claudeTransportAuditNote 生成传输失败的日志文案:友好提示 + 脱敏后的原始原因
+// (反馈:并非每次都是网络问题,需带原始错误才能定位是否真为网络故障)。
+func claudeTransportAuditNote(err error, secretURLs ...string) string {
+	note := claudeTransportFriendlyMessage
+	if reason := sanitizeTransportError(err, secretURLs...); reason != "" {
+		note += "\n原始错误: " + reason
+	}
+	return note
+}
+
+// claudeTransportClientMessage 回给客户端的提示:友好文案 + 脱敏原始原因,便于客户/支持
+// 一眼区分是本机网络问题还是上游/其他故障。
+func claudeTransportClientMessage(err error, secretURLs ...string) string {
+	msg := claudeTransportFriendlyMessage
+	if reason := sanitizeTransportError(err, secretURLs...); reason != "" {
+		msg += "\n原始错误: " + reason
+	}
+	return msg
 }
 
 // mergeAnthropicBeta 把 want 合并进逗号分隔的 anthropic-beta 头(已存在则不重复)。
@@ -279,11 +347,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502
-		audit.note = claudeTransportAuditNote("上游请求失败(Do err):", err)
+		audit.note = claudeTransportAuditNote(err, egress)
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "upstream_error", ErrorText: err.Error(),
 		}, upstreamProxy, lease)
-		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportClientMessage(err, egress))
 		return
 	}
 	defer resp.Body.Close()
@@ -411,11 +479,13 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 			break
 		}
 		if attempt < claudeAuxMaxAttempts && isRetriableUpstreamErr(doErr) {
-			audit.note = fmt.Sprintf("上游瞬时错误,重试 %d/%d: %v", attempt, claudeAuxMaxAttempts, doErr)
+			// 同样脱敏:这条 note 不含友好提示、会走普通日志分支并带元信息输出,
+			// 直接 %v 原始错误会把出口/代理地址泄露到客户可见的日志里。
+			audit.note = fmt.Sprintf("上游瞬时错误,重试 %d/%d: %s", attempt, claudeAuxMaxAttempts, sanitizeTransportError(doErr, auxEgress))
 			continue
 		}
-		audit.note = claudeTransportAuditNote("上游请求失败:", doErr)
-		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
+		audit.note = claudeTransportAuditNote(doErr, auxEgress)
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportClientMessage(doErr, auxEgress))
 		return
 	}
 	defer resp.Body.Close()

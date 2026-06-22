@@ -72,8 +72,10 @@ func (a *proxyAudit) emit() {
 	}
 	a.emitted = true
 
+	// Claude 传输失败:只输出友好提示 + 脱敏后的原始原因(a.note 已是该形态),
+	// 不带审计元信息/IP——日志对客户可见,既能定位故障又不泄露出口代理地址。
 	if a.product == "claude" && strings.Contains(a.note, claudeTransportFriendlyMessage) {
-		Log("%s", claudeTransportFriendlyMessage)
+		Log("%s", a.note)
 		return
 	}
 
