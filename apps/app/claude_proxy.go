@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,8 +37,41 @@ const claudeOAuthBeta = "oauth-2025-04-20"
 
 const claudeTransportFriendlyMessage = "冰茶AI 正在重试连接 Claude。当前请求未能通过你的出口代理建立稳定连接，通常是本机网络、VPN 节点或代理链路临时不通导致。如果持续出现，请切换 VPN 节点或检查本机网络。"
 
-func claudeTransportAuditNote(prefix string, _ error) string {
-	return prefix + claudeTransportFriendlyMessage
+// claudeTransportIPv4Re 匹配 IPv4(可带端口)。底层网络错误里常带真实出口/住宅代理 IP——
+// 那是商业机密、对客户也无意义,日志/回包前先抹掉,只保留能定位故障的原因文字。
+var claudeTransportIPv4Re = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b`)
+
+// sanitizeTransportError 取底层传输错误里【可对外暴露】的原因:抹掉 IP/端口,保留
+// "wsarecv: forcibly closed" / "i/o timeout" / "EOF" / "tls handshake" 这类能区分
+// "真网络问题" 与 "其他故障" 的关键字。err 为 nil 或抹完为空时返回空串。
+func sanitizeTransportError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := claudeTransportIPv4Re.ReplaceAllString(strings.TrimSpace(err.Error()), "<ip>")
+	// 折叠 Go net 错误里的地址段:`read tcp <ip>-><ip>: reason` → `read tcp <ip>: reason`。
+	msg = strings.ReplaceAll(msg, "<ip>-><ip>", "<ip>")
+	return strings.TrimSpace(msg)
+}
+
+// claudeTransportAuditNote 生成传输失败的日志文案:友好提示 + 脱敏后的原始原因
+// (反馈:并非每次都是网络问题,需带原始错误才能定位是否真为网络故障)。
+func claudeTransportAuditNote(err error) string {
+	note := claudeTransportFriendlyMessage
+	if reason := sanitizeTransportError(err); reason != "" {
+		note += "\n原始错误: " + reason
+	}
+	return note
+}
+
+// claudeTransportClientMessage 回给客户端的提示:友好文案 + 脱敏原始原因,便于客户/支持
+// 一眼区分是本机网络问题还是上游/其他故障。
+func claudeTransportClientMessage(err error) string {
+	msg := claudeTransportFriendlyMessage
+	if reason := sanitizeTransportError(err); reason != "" {
+		msg += "\n原始错误: " + reason
+	}
+	return msg
 }
 
 // mergeAnthropicBeta 把 want 合并进逗号分隔的 anthropic-beta 头(已存在则不重复)。
@@ -279,11 +313,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502
-		audit.note = claudeTransportAuditNote("上游请求失败(Do err):", err)
+		audit.note = claudeTransportAuditNote(err)
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "upstream_error", ErrorText: err.Error(),
 		}, upstreamProxy, lease)
-		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportClientMessage(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -414,8 +448,8 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 			audit.note = fmt.Sprintf("上游瞬时错误,重试 %d/%d: %v", attempt, claudeAuxMaxAttempts, doErr)
 			continue
 		}
-		audit.note = claudeTransportAuditNote("上游请求失败:", doErr)
-		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
+		audit.note = claudeTransportAuditNote(doErr)
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportClientMessage(doErr))
 		return
 	}
 	defer resp.Body.Close()
