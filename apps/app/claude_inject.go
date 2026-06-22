@@ -47,6 +47,19 @@ var claudeModelOverrideKeys = []string{
 	"ANTHROPIC_SMALL_FAST_MODEL",
 }
 
+// claudeFoundryKeys 是 Claude Code 用来切到 Azure AI Foundry 上游的 env 键。
+// CLAUDE_CODE_USE_FOUNDRY 的优先级高于 ANTHROPIC_BASE_URL:一旦它为真,CLI 改用
+// ANTHROPIC_FOUNDRY_RESOURCE / ANTHROPIC_FOUNDRY_BASE_URL 拼出的 Foundry endpoint,
+// 直接绕过我们注入的本地代理 → 接管失效(流量根本不进代理端口,常表现为 405/认证错)。
+// 接管时把这三个【置空】而非删除:同 ANTHROPIC_API_KEY 的道理 —— Foundry 多由用户 shell
+// /系统环境变量 export,删 settings.json 挡不住 shell;置空才能经 Object.assign 覆盖掉
+// shell 里的 CLAUDE_CODE_USE_FOUNDRY=1(空串被 CLI 视作未开启)。取消接管按备份原样还原。
+var claudeFoundryKeys = []string{
+	"CLAUDE_CODE_USE_FOUNDRY",
+	"ANTHROPIC_FOUNDRY_RESOURCE",
+	"ANTHROPIC_FOUNDRY_BASE_URL",
+}
+
 // 为什么要中和 ANTHROPIC_API_KEY:Claude Code 启动时 Object.assign(process.env,
 // settings.env),只要进程里存在非空 ANTHROPIC_API_KEY(来自用户 shell 或 settings.json
 // 自带),claude 就进入「API Usage Billing」(API-key 模式),忽略我们注入的哨兵
@@ -103,6 +116,9 @@ type claudeEnvBackup struct {
 	// 用户用 /model 切换的模型持久化在此字段,光删 env 模型键挡不住它。
 	HadModel  bool   `json:"hadModel"`
 	PrevModel string `json:"prevModel"`
+	// 接管时置空的 Foundry env 键原值;FoundryBackedUp=true 表示已捕获过(幂等保护)。
+	FoundryBackedUp bool                     `json:"foundryBackedUp"`
+	Foundry         []claudeModelBackupEntry `json:"foundry,omitempty"`
 }
 
 // claudeModelBackupEntry 记录单个模型覆盖键注入前的状态。
@@ -177,6 +193,9 @@ func InjectClaudeSettings(proxyPort int) error {
 	if captureClaudeModelBackup(bk, settings, env) {
 		changed = true
 	}
+	if captureClaudeFoundryBackup(bk, env) {
+		changed = true
+	}
 	if changed {
 		writeClaudeBackup(bk)
 	}
@@ -191,6 +210,11 @@ func InjectClaudeSettings(proxyPort int) error {
 		delete(env, key)
 	}
 	delete(settings, "model")
+	// 置空 Foundry 键(覆盖 shell/settings 里的 CLAUDE_CODE_USE_FOUNDRY=1 等),防止
+	// Foundry 抢占 endpoint 绕过本地代理。原值已备份,取消接管时 RestoreClaudeSettings 写回。
+	for _, key := range claudeFoundryKeys {
+		env[key] = ""
+	}
 	settings["env"] = env
 
 	if err := writeClaudeSettings(settings); err != nil {
@@ -286,8 +310,12 @@ func RestoreClaudeSettings() error {
 		} else {
 			delete(settings, "model")
 		}
+		// 把接管时置空的 Foundry 键还原(原本没有的保持删除)。
+		for _, f := range bk.Foundry {
+			restoreKey(f.Key, f.Prev, f.Had)
+		}
 	} else {
-		// 没有备份(异常情况):尽力移除我们写入的键 + 我们会删的模型键 / model 字段(无原值可还,只能删)。
+		// 没有备份(异常情况):尽力移除我们写入的键 + 我们会删的模型键 / model 字段 / Foundry 键(无原值可还,只能删)。
 		delete(env, claudeBaseURLKey)
 		delete(env, claudeAuthTokenKey)
 		delete(env, claudeApiKeyKey)
@@ -295,6 +323,9 @@ func RestoreClaudeSettings() error {
 			delete(env, key)
 		}
 		delete(settings, "model")
+		for _, key := range claudeFoundryKeys {
+			delete(env, key)
+		}
 	}
 
 	if len(env) == 0 {
@@ -378,6 +409,26 @@ func captureClaudeModelBackup(bk *claudeEnvBackup, settings, env map[string]inte
 		bk.PrevModel = v
 	} else if _, ok := settings["model"]; ok {
 		bk.HadModel = true
+	}
+	return true
+}
+
+// captureClaudeFoundryBackup 幂等捕获 Foundry env 键注入前原值。返回 true 表示本次有捕获
+// (需落盘)。已捕获过返回 false —— 否则会把上一轮注入置的空串 "" 误当成用户原值,还原时还错。
+func captureClaudeFoundryBackup(bk *claudeEnvBackup, env map[string]interface{}) bool {
+	if bk.FoundryBackedUp {
+		return false
+	}
+	bk.FoundryBackedUp = true
+	for _, key := range claudeFoundryKeys {
+		entry := claudeModelBackupEntry{Key: key}
+		if v, ok := env[key].(string); ok {
+			entry.Had = true
+			entry.Prev = v
+		} else if _, ok := env[key]; ok {
+			entry.Had = true // 非字符串(异常)也记为存在,还原时按原值写不回但至少不丢键语义
+		}
+		bk.Foundry = append(bk.Foundry, entry)
 	}
 	return true
 }

@@ -155,6 +155,65 @@ func TestRestoreClaudeSettingsRestoresPriorApiKey(t *testing.T) {
 	}
 }
 
+// 接管必须把 Foundry 键置「空串」(而非删除):CLAUDE_CODE_USE_FOUNDRY 优先级高于
+// ANTHROPIC_BASE_URL,留着会让 CLI 走 Foundry endpoint 绕过本地代理。空串经 Object.assign
+// 覆盖 shell 里 export 的 CLAUDE_CODE_USE_FOUNDRY=1,强制流量回到代理。
+func TestInjectClaudeSettingsNeutralizesFoundry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"env": map[string]interface{}{
+			"CLAUDE_CODE_USE_FOUNDRY":    "1",
+			"ANTHROPIC_FOUNDRY_RESOURCE": "my-resource",
+			"ANTHROPIC_FOUNDRY_BASE_URL": "https://foundry.example.com",
+		},
+	})
+
+	if err := InjectClaudeSettings(9000); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	env := claudeEnvBlock(t)
+	for _, key := range []string{"CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_BASE_URL"} {
+		v, ok := env[key]
+		if !ok {
+			t.Fatalf("%s must remain present (empty) to override shell — not deleted", key)
+		}
+		if v != "" {
+			t.Fatalf("%s should be neutralized to empty string, got %v", key, v)
+		}
+	}
+}
+
+// 取消接管必须把 Foundry 键还原成用户原值,不丢用户的 Foundry 配置。
+func TestRestoreClaudeSettingsRestoresPriorFoundry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"env": map[string]interface{}{
+			"CLAUDE_CODE_USE_FOUNDRY":    "1",
+			"ANTHROPIC_FOUNDRY_RESOURCE": "my-resource",
+		},
+	})
+
+	if err := InjectClaudeSettings(7777); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	env := claudeEnvBlock(t)
+	if got := env["CLAUDE_CODE_USE_FOUNDRY"]; got != "1" {
+		t.Fatalf("CLAUDE_CODE_USE_FOUNDRY not restored: %v", got)
+	}
+	if got := env["ANTHROPIC_FOUNDRY_RESOURCE"]; got != "my-resource" {
+		t.Fatalf("ANTHROPIC_FOUNDRY_RESOURCE not restored: %v", got)
+	}
+	// 原本没有的 BASE_URL 还原后应保持缺失,不该凭空多出一个空串键。
+	if _, ok := env["ANTHROPIC_FOUNDRY_BASE_URL"]; ok {
+		t.Fatalf("ANTHROPIC_FOUNDRY_BASE_URL should stay absent (was not set before): %v", env)
+	}
+}
+
 // 升级边界:老版本已接管(settings 里有 base/auth 注入 + 用户真实 API key),备份文件
 // 是老格式(无 API key 字段)。新版再次注入必须补记真实 key 并置空;取消时还原回来,
 // 不能丢钥。
