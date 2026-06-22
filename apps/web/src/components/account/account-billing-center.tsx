@@ -17,7 +17,7 @@ import {
 
 import { AccountButton, AccountPill, AccountSkeleton } from "./account-ui";
 import { AccountStatusBadge } from "./account-status-badge";
-import { BindCardForm } from "./bind-card-form";
+import { ActivationCodeForm } from "./activation-code-form";
 import { DataPagination } from "./data-pagination";
 import type {
   BillingOrderRecord,
@@ -286,7 +286,7 @@ export function AccountBillingCenter({
             <KeyRoundIcon />
           </div>
           <p className="account-billing-panel__desc">{b.bindDesc}</p>
-          <BindCardForm onBound={onBound} />
+          <ActivationCodeForm onActivated={onBound} />
         </section>
       </div>
 

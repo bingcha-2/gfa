@@ -262,45 +262,9 @@ export class RosettaService {
   refreshClaudeAccountQuota(payload: any) { return this.claudeSvc.refreshClaudeAccountQuota(payload); }
 
   // ── Access keys / 卡密 (→ AccessKeyService) ──────────────────────────────
-  listAccessKeys(query: { search?: string }) { return this.accessKeySvc.listAccessKeys(query); }
-  createAccessKey(payload: any) { return this.accessKeySvc.createAccessKey(payload); }
-  updateAccessKey(payload: any) { return this.accessKeySvc.updateAccessKey(payload); }
-  getAccessKeyLimits(cardId: string) { return this.accessKeySvc.getAccessKeyLimits(cardId); }
-  deleteAccessKey(payload: any) { return this.accessKeySvc.deleteAccessKey(payload); }
-  bindAccessKey(payload: any) { return this.accessKeySvc.bindAccessKey(payload); }
-  unbindAccessKey(payload: any) { return this.accessKeySvc.unbindAccessKey(payload); }
-  setAccessKeyBindings(payload: any) { return this.accessKeySvc.setAccessKeyBindings(payload); }
+  // 卡密后台发卡/改卡/绑卡/删卡/批量清理已随激活码改造删除(access-keys.json 卡退役)。
+  // 仅保留订阅座位分配与账号查询所需的方法。
   poolAccountById(product: string, accountId: number) { return this.accessKeySvc.poolAccountById(product, accountId); }
-  async cleanupExpiredKeys() {
-    const subscriptionIds = await this.loadSubscriptionIds();
-    return this.accessKeySvc.cleanupExpiredKeys(subscriptionIds);
-  }
-  async cleanupUnboundKeys() {
-    const subscriptionIds = await this.loadSubscriptionIds();
-    return this.accessKeySvc.cleanupUnboundKeys(subscriptionIds);
-  }
-  /** Load the set of active Subscription ids from Prisma (if available).
-   *  Used by cleanup methods to guard subscription shadow records. */
-  private async loadSubscriptionIds(): Promise<ReadonlySet<string>> {
-    if (!this.prisma) return new Set();
-    try {
-      const rows = await this.prisma.subscription.findMany({ select: { id: true } });
-      return new Set(rows.map((r) => r.id));
-    } catch {
-      // If the DB is unavailable (e.g. test environment without Prisma), be
-      // conservative and return an empty set — cleanup still runs but the
-      // migratedToCustomerId guard remains active.
-      return new Set();
-    }
-  }
-  // Account-system writers (subscription shadow records / bind-card migration).
-  // Delegate to the SAME AccessKeyService so access-keys.json keeps one writer.
-  upsertKeyRecord(fields: { id: string } & Record<string, unknown>, options?: { createIfMissing?: boolean }) {
-    return this.accessKeySvc.upsertKeyRecord(fields, options);
-  }
-  assignSeatForProduct(product: string, weight: number, level: string) {
-    return this.accessKeySvc.assignSeatForProduct(product, weight, level);
-  }
   /** 去影子座位分配:占用份额/人数按 DB ACTIVE 订阅 config 算好传入,不读文件(见 access-key.service)。 */
   assignSeatForProductFromShares(
     product: string,

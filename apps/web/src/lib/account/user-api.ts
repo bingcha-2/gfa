@@ -14,7 +14,7 @@ import type {
   BillingOrderCreated,
   BillingOrderRecord,
   BillingOrderState,
-  BindCardResult,
+  ActivateCodeResult,
   NotificationsPage,
   PayChannel,
   PlanCatalogResponse,
@@ -267,10 +267,10 @@ export async function setSubscriptionPriority(subscriptionId: string, priority: 
   });
 }
 
-export async function bindCard(cardKey: string) {
-  return userApi<BindCardResult>("bind-card", {
+export async function activateCode(code: string) {
+  return userApi<ActivateCodeResult>("activate-code", {
     method: "POST",
-    body: { cardKey },
+    body: { code },
   });
 }
 

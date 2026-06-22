@@ -1,8 +1,8 @@
 // 套餐配置页的展示常量 + 空 config 默认值(纯数据,无 React)。
 //
 // - PRODUCT_LABELS / FAMILIES_BY_PRODUCT:产品展示名 + 每产品的模型「桶」键
-//   (对齐 rosetta-keys/card-config-form.tsx 与后端 product-bucket.ts)。
-//   旧版用量档与统一绑定线供给策略都会复用这些 "<product>-<family>" 桶键。
+//   (与后端 product-bucket.ts 对齐)。
+//   用量档与统一绑定线供给策略都会复用这些 "<product>-<family>" 桶键。
 // - DEFAULT_CONFIG:首次(无任何发布版)进页面时的占位 config(spec §4.1 示例数值),
 //   让运营有个可改的起点,而不是空白表单。价格单位=分。
 

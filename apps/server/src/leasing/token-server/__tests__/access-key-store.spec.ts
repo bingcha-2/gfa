@@ -28,6 +28,29 @@ function makeStore(keys: any[] = []) {
   return store;
 }
 
+// ── 红线:access-keys.json 退役后,store 在文件缺失时仍干净启动 ─────────────────
+// 激活码改造删除了文件卡 + access-keys.json。活跃订阅在 boot 时由 loadSubscriptionRecords
+// 从 DB 注入到独立的内存 map(不进文件 cache)。验证「文件不存在 → 空 keys、订阅仍可解析」。
+describe('AccessKeyStore 文件缺失时的启动(access-keys.json 退役)', () => {
+  it('文件不存在 → readAll() 空 keys,不抛错', () => {
+    const missing = path.join(tmpDir, 'does-not-exist.json');
+    const store = new AccessKeyStore(missing);
+    expect(fs.existsSync(missing)).toBe(false);
+    expect(store.readAll().keys).toEqual([]);
+  });
+
+  it('文件缺失下,从 DB 注入的订阅 record 仍能按 id 解析(与文件无关)', () => {
+    const store = new AccessKeyStore(path.join(tmpDir, 'missing.json'));
+    store.loadSubscriptionRecords([
+      { id: 'sub-1', key: 'sub_abc', status: 'active', bucketLimits: { 'codex-gpt': 1000 } } as any,
+    ]);
+    const record = store.findById('sub-1');
+    expect(record?.status).toBe('active');
+    // 订阅 record 在独立内存 map,不污染文件 cache 的 keys。
+    expect(store.readAll().keys).toEqual([]);
+  });
+});
+
 // ── computeUsageDetail 口径归一 ───────────────────────────────────────────────
 
 describe('AccessKeyStore.computeUsageDetail (normalizeUsageToGross 收口)', () => {

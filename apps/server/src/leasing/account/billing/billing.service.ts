@@ -201,23 +201,48 @@ export class BillingService {
   }
 
   /**
-   * 管理员手动授予(目录版):不走支付,按目录 selection 算 config + 绑定线座位预检,落一条
-   * ¥0、status=PAID、payChannel=GRANT 的订单(保留订单→订阅审计链 + activatedFromOrderId FK)。
+   * 管理员手动授予(目录版):不走支付,落一条 ¥0、status=PAID、payChannel=GRANT 的订单。
    * 激活由调用方走与付费单同一的 SubscriptionService.activateForOrder 入口。返回该订单。
    */
   async createGrantOrder(customerId: string, selection: Selection) {
-    const published = await this.planCatalog.getPublished();
-    if (!published) throw new BadRequestException("套餐目录未发布,无法授予");
+    return this.createInternalPaidOrder(customerId, selection, { payChannel: "GRANT", charge: false });
+  }
 
+  /**
+   * 激活码兑换:不走支付,落一条 status=PAID、payChannel=ACTIVATION_CODE 的订单。与 GRANT 同口径
+   * (computePurchase 算 config + 绑定线座位预检),唯一区别是 amountCents 记「激活当时目录算出的
+   * 真实价格」(对账/营收可见),而非 ¥0。激活由调用方走 activateForOrder(同付费/授予)。返回该订单。
+   * 绑定线无座位 → assertBindSeatsAvailable 抛 BadRequest、不建单(调用方据此让激活码保持 UNUSED)。
+   */
+  async createActivationCodeOrder(customerId: string, selection: Selection) {
+    return this.createInternalPaidOrder(customerId, selection, { payChannel: "ACTIVATION_CODE", charge: true });
+  }
+
+  /**
+   * 内部已支付订单(GRANT / 激活码):按目录 selection 算 config + 绑定线座位预检,落一条
+   * status=PAID 的订单(保留订单→订阅审计链 + activatedFromOrderId FK)。charge=true 记真实价格,
+   * 否则 ¥0。校验失败(目录未发布 / selection 非法 / 绑定线无座位)抛 BadRequest、不建单。
+   */
+  private async createInternalPaidOrder(
+    customerId: string,
+    selection: Selection,
+    opts: { payChannel: "GRANT" | "ACTIVATION_CODE"; charge: boolean },
+  ) {
+    const published = await this.planCatalog.getPublished();
+    if (!published) {
+      throw new BadRequestException(opts.charge ? "套餐目录未发布,无法激活" : "套餐目录未发布,无法授予");
+    }
+
+    let priceCents = 0;
     let config: Record<string, unknown>;
     try {
-      ({ config } = computePurchase(published.config as CatalogConfig, selection));
+      ({ priceCents, config } = computePurchase(published.config as CatalogConfig, selection));
     } catch (err: any) {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
     config = this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
 
-    // 与付费下单同口径:绑定线座位预检(避免授予了拿不到号);号池线不预检。
+    // 与付费下单同口径:绑定线座位预检(避免授予/激活了拿不到号);号池线不预检。
     await this.assertBindSeatsAvailable(config);
     // resolveReferrerId 顺带校验客户存在(不存在 → NotFound)。
     const referrerId = await this.resolveReferrerId(customerId);
@@ -226,8 +251,8 @@ export class BillingService {
     return this.prisma.planOrder.create({
       data: {
         customerId,
-        amountCents: 0,
-        payChannel: "GRANT",
+        amountCents: opts.charge ? priceCents : 0,
+        payChannel: opts.payChannel,
         outTradeNo: generateOutTradeNo(),
         status: "PAID",
         paidAt: now,

@@ -44,7 +44,7 @@ import { TicketAdminModule } from "./leasing/console/ticket-admin/ticket-admin.m
 import { ReferralAdminModule } from "./leasing/console/referral-admin/referral-admin.module";
 import { SupportKnowledgeAdminModule } from "./leasing/console/support-knowledge-admin/support-knowledge-admin.module";
 import { SupportInsightsModule } from "./leasing/console/support-insights/support-insights.module";
-import { CardMigrationModule } from "./leasing/account/card-migration/card-migration.module";
+import { ActivationCodeModule } from "./leasing/activation-code/activation-code.module";
 import { BillingModule } from "./leasing/account/billing/billing.module";
 import { PortalModule } from "./leasing/account/portal/portal.module";
 import { NotificationModule } from "./leasing/account/notification/notification.module";
@@ -111,7 +111,7 @@ import { SupportAgentModule } from "./leasing/account/support-agent/support-agen
     ReferralAdminModule,
     SupportKnowledgeAdminModule,
     SupportInsightsModule,
-    CardMigrationModule,
+    ActivationCodeModule,
     BillingModule,
     PortalModule,
     NotificationModule,

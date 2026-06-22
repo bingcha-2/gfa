@@ -41,7 +41,7 @@ export type PlanCatalogResponse = {
   config: import("./catalog-pricing").CatalogConfig | null;
 };
 
-export type PayChannel = "ALIPAY" | "WXPAY" | "GRANT";
+export type PayChannel = "ALIPAY" | "WXPAY" | "GRANT" | "ACTIVATION_CODE";
 
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED" | "CANCELLED";
 
@@ -96,15 +96,15 @@ export type Subscription = {
 };
 
 /** POST /web/bind-card success response. */
-export type BindCardResult = {
+export type ActivateCodeResult = {
   ok: true;
-  alreadyBound?: true;
+  alreadyActivated?: true;
   subscription: {
     id: string;
     expiresAt: string | null;
     products: string[];
     deviceLimit: number;
-    planName: null;
+    planName?: string | null;
   };
 };
 

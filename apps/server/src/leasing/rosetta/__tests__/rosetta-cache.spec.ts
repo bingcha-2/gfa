@@ -37,36 +37,6 @@ describe("RosettaService — file cache", () => {
     return new RosettaService({ dataDir: tempDir });
   }
 
-  it("listAccessKeys returns consistent data on repeat calls", () => {
-    const service = makeService();
-
-    const first = service.listAccessKeys({});
-    const second = service.listAccessKeys({});
-
-    expect(first.keys).toHaveLength(2);
-    expect(second.keys).toHaveLength(2);
-    expect(first.keys.map((k: any) => k.id)).toEqual(second.keys.map((k: any) => k.id));
-  });
-
-  it("listAccessKeys reflects file changes", () => {
-    const service = makeService();
-
-    const first = service.listAccessKeys({});
-    expect(first.keys).toHaveLength(2);
-
-    // Add a third key
-    writeJson(path.join(tempDir, "access-keys.json"), {
-      keys: [
-        { id: "k1", key: "BCAI-KEY1", status: "active" },
-        { id: "k2", key: "BCAI-KEY2", status: "active" },
-        { id: "k3", key: "BCAI-KEY3", status: "active" },
-      ],
-    });
-
-    const second = service.listAccessKeys({});
-    expect(second.keys).toHaveLength(3);
-  });
-
   it("listAccounts returns consistent data on repeat calls", () => {
     const service = makeService();
 

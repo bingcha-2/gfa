@@ -651,6 +651,74 @@ describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => 
   });
 });
 
+// 激活码兑换内部订单:不走支付,落一条 status=PAID / payChannel=ACTIVATION_CODE 的订单,
+// 与 GRANT 的唯一区别是 amountCents 记「激活当时目录算出的真实价格」(对账/营收可见),而非 ¥0。
+// 复用 computePurchase 算 config + 绑定线座位预检(无座位 → 不建单,激活码保持 UNUSED)。
+describe("BillingService.createActivationCodeOrder(激活码兑换)", () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let catalog: any;
+  let rosetta: any;
+  let service: BillingService;
+
+  beforeEach(() => {
+    prisma = makeMockPrisma();
+    catalog = makeCatalog();
+    rosetta = makeRosetta();
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
+    prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
+    prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({ id: "code-order-1", ...data }));
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("号池激活 → 记真实价格、PAID、ACTIVATION_CODE,带 config/selection/catalogVersion;号池不预检", async () => {
+    const selection = { line: "pool", products: ["anthropic"], usageTier: "large", deviceLimit: 2 };
+
+    const order = await service.createActivationCodeOrder("cust-1", selection as any);
+
+    const data = prisma.planOrder.create.mock.calls[0][0].data;
+    // 价格 = anthropic 6900 + large 3000 + 1 台额外设备 900 = 10800 分(真实价,非 ¥0)。
+    expect(data.amountCents).toBe(10800);
+    expect(data.payChannel).toBe("ACTIVATION_CODE");
+    expect(data.status).toBe("PAID");
+    expect(data.paidAt).toBeInstanceOf(Date);
+    expect(data.catalogVersion).toBe(2);
+    expect(JSON.parse(data.selection)).toEqual(selection);
+    expect(JSON.parse(data.config)).toMatchObject({ line: "pool", products: ["anthropic"] });
+    expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled(); // 号池线不预检
+    expect(order.id).toBe("code-order-1");
+  });
+
+  it("绑定激活 → 价格按席摊算,走座位预检(与付费同口径)", async () => {
+    const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareSeats: 4, deviceLimit: 1 };
+
+    await service.createActivationCodeOrder("cust-1", selection as any);
+
+    const data = prisma.planOrder.create.mock.calls[0][0].data;
+    // 29900 × 4/8 = 14950 + share[4] −7000 = 7950 分。
+    expect(data.amountCents).toBe(7950);
+    expect(data.payChannel).toBe("ACTIVATION_CODE");
+    expect(rosetta.hasAvailableSeatFromShares).toHaveBeenCalledOnce();
+    const cfg = JSON.parse(data.config);
+    expect(cfg).toMatchObject({ line: "bind", products: ["anthropic"], levels: { anthropic: "max-20x" }, assignmentPolicy: "pinned" });
+  });
+
+  it("绑定激活无可用座位 → BadRequest,不建订单(激活码保持 UNUSED 的前提)", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
+
+    await expect(service.createActivationCodeOrder("cust-1", selection as any)).rejects.toThrow(BadRequestException);
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("目录未发布 → BadRequest(无法激活)", async () => {
+    catalog.getPublished.mockResolvedValue(null);
+    await expect(
+      service.createActivationCodeOrder("cust-1", { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
 // 取消订单:仅 PENDING 可取消;取消前查网关(已支付则激活,绝不丢钱);其余状态幂等原样返回。
 describe("BillingService.cancelOrder", () => {
   let prisma: ReturnType<typeof makeMockPrisma>;
