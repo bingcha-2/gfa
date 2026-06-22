@@ -321,6 +321,30 @@ export const es: DeepPartialDict = {
     moveUp: 'Subir',
     moveDown: 'Bajar',
     reorderFailed: 'No se pudo reordenar',
+    activateCode: 'Canjear código',
+  },
+
+  activate: {
+    title: 'Canjear código de activación',
+    desc: 'Introduce un código de activación para abrir una suscripción independiente al instante.',
+    placeholder: 'Introduce el código (p. ej. AC-XXXX-XXXX-XXXX)',
+    submit: 'Activar',
+    submitting: 'Activando…',
+    cancel: 'Cancelar',
+    close: 'Cerrar',
+    successTitle: 'Activado',
+    alreadyTitle: 'Este código ya está activado',
+    products: 'Productos',
+    expires: 'Caduca',
+    deviceLimit: 'Dispositivos',
+    deviceLimitValue: '{n}',
+    errors: {
+      CODE_NOT_FOUND: 'Código de activación no encontrado',
+      CODE_DISABLED: 'El código de activación está deshabilitado',
+      CODE_ALREADY_USED: 'El código de activación ya se ha usado',
+      CODE_REQUIRED: 'Introduce un código de activación',
+      fallback: 'Error al activar, inténtalo de nuevo',
+    },
   },
 
   modal: {

@@ -321,6 +321,30 @@ export const de: DeepPartialDict = {
     moveUp: 'Nach oben',
     moveDown: 'Nach unten',
     reorderFailed: 'Neuordnung fehlgeschlagen',
+    activateCode: 'Code einlösen',
+  },
+
+  activate: {
+    title: 'Aktivierungscode einlösen',
+    desc: 'Aktivierungscode eingeben, um sofort ein eigenständiges Abo freizuschalten.',
+    placeholder: 'Code eingeben (z. B. AC-XXXX-XXXX-XXXX)',
+    submit: 'Aktivieren',
+    submitting: 'Wird aktiviert…',
+    cancel: 'Abbrechen',
+    close: 'Schließen',
+    successTitle: 'Aktiviert',
+    alreadyTitle: 'Dieser Code ist bereits aktiviert',
+    products: 'Produkte',
+    expires: 'Läuft ab',
+    deviceLimit: 'Geräte',
+    deviceLimitValue: '{n}',
+    errors: {
+      CODE_NOT_FOUND: 'Aktivierungscode nicht gefunden',
+      CODE_DISABLED: 'Aktivierungscode ist deaktiviert',
+      CODE_ALREADY_USED: 'Aktivierungscode bereits verwendet',
+      CODE_REQUIRED: 'Bitte einen Aktivierungscode eingeben',
+      fallback: 'Aktivierung fehlgeschlagen, bitte erneut versuchen',
+    },
   },
 
   modal: {

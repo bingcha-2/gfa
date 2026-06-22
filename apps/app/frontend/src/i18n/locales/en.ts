@@ -321,6 +321,30 @@ export const en: DeepPartialDict = {
     moveUp: 'Move up',
     moveDown: 'Move down',
     reorderFailed: 'Failed to reorder',
+    activateCode: 'Redeem activation code',
+  },
+
+  activate: {
+    title: 'Redeem activation code',
+    desc: 'Enter an activation code to open a standalone subscription instantly.',
+    placeholder: 'Enter code (e.g. AC-XXXX-XXXX-XXXX)',
+    submit: 'Activate',
+    submitting: 'Activating…',
+    cancel: 'Cancel',
+    close: 'Close',
+    successTitle: 'Activated',
+    alreadyTitle: 'This code is already activated',
+    products: 'Products',
+    expires: 'Expires',
+    deviceLimit: 'Devices',
+    deviceLimitValue: '{n}',
+    errors: {
+      CODE_NOT_FOUND: 'Activation code not found',
+      CODE_DISABLED: 'Activation code is disabled',
+      CODE_ALREADY_USED: 'Activation code already used',
+      CODE_REQUIRED: 'Please enter an activation code',
+      fallback: 'Activation failed, please try again',
+    },
   },
 
   modal: {

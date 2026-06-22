@@ -321,6 +321,30 @@ export const ja: DeepPartialDict = {
     moveUp: '上へ',
     moveDown: '下へ',
     reorderFailed: '並べ替えに失敗しました',
+    activateCode: 'アクティベーションコード',
+  },
+
+  activate: {
+    title: 'アクティベーションコード',
+    desc: 'コードを入力すると、独立したサブスクリプションがすぐに有効になります。',
+    placeholder: 'コードを入力(例:AC-XXXX-XXXX-XXXX)',
+    submit: '有効化',
+    submitting: '有効化中…',
+    cancel: 'キャンセル',
+    close: '閉じる',
+    successTitle: '有効化しました',
+    alreadyTitle: 'このコードは既に有効化されています',
+    products: '利用可能な製品',
+    expires: '有効期限',
+    deviceLimit: '端末数',
+    deviceLimitValue: '{n} 台',
+    errors: {
+      CODE_NOT_FOUND: 'コードが見つかりません',
+      CODE_DISABLED: 'コードは無効化されています',
+      CODE_ALREADY_USED: 'コードは既に使用されています',
+      CODE_REQUIRED: 'コードを入力してください',
+      fallback: '有効化に失敗しました。しばらくして再試行してください',
+    },
   },
 
   modal: {

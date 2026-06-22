@@ -321,6 +321,30 @@ export const vi: DeepPartialDict = {
     moveUp: 'Lên',
     moveDown: 'Xuống',
     reorderFailed: 'Sắp xếp lại thất bại',
+    activateCode: 'Kích hoạt mã',
+  },
+
+  activate: {
+    title: 'Kích hoạt bằng mã',
+    desc: 'Nhập mã kích hoạt để mở một gói đăng ký độc lập ngay lập tức.',
+    placeholder: 'Nhập mã (ví dụ AC-XXXX-XXXX-XXXX)',
+    submit: 'Kích hoạt',
+    submitting: 'Đang kích hoạt…',
+    cancel: 'Hủy',
+    close: 'Đóng',
+    successTitle: 'Đã kích hoạt',
+    alreadyTitle: 'Mã này đã được kích hoạt',
+    products: 'Sản phẩm',
+    expires: 'Hết hạn',
+    deviceLimit: 'Thiết bị',
+    deviceLimitValue: '{n}',
+    errors: {
+      CODE_NOT_FOUND: 'Không tìm thấy mã kích hoạt',
+      CODE_DISABLED: 'Mã kích hoạt đã bị vô hiệu hóa',
+      CODE_ALREADY_USED: 'Mã kích hoạt đã được sử dụng',
+      CODE_REQUIRED: 'Vui lòng nhập mã kích hoạt',
+      fallback: 'Kích hoạt thất bại, vui lòng thử lại',
+    },
   },
 
   modal: {

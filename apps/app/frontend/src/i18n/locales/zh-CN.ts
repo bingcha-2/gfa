@@ -322,6 +322,30 @@ export const zhCN = {
     moveUp: '上移',
     moveDown: '下移',
     reorderFailed: '调整顺序失败',
+    activateCode: '激活码激活',
+  },
+
+  activate: {
+    title: '激活码激活',
+    desc: '输入激活码,立即开通一条独立订阅。',
+    placeholder: '请输入激活码(如 AC-XXXX-XXXX-XXXX)',
+    submit: '激活',
+    submitting: '激活中…',
+    cancel: '取消',
+    close: '关闭',
+    successTitle: '激活成功',
+    alreadyTitle: '该激活码已激活',
+    products: '可用产品',
+    expires: '到期时间',
+    deviceLimit: '设备数',
+    deviceLimitValue: '{n} 台',
+    errors: {
+      CODE_NOT_FOUND: '激活码不存在',
+      CODE_DISABLED: '激活码已停用',
+      CODE_ALREADY_USED: '激活码已被使用',
+      CODE_REQUIRED: '请输入激活码',
+      fallback: '激活失败,请稍后重试',
+    },
   },
 
   modal: {

@@ -423,6 +423,75 @@ func (a *App) SetSubscriptionPriority(subscriptionId string, priority int) error
 	return nil
 }
 
+// activateCodeResponse mirrors the success shape of POST /account/activate-code:
+// 服务端开通一条独立订阅后返回其摘要(见 activation-code.service.ts ActivateResult)。
+type activateCodeResponse struct {
+	Ok               bool `json:"ok"`
+	AlreadyActivated bool `json:"alreadyActivated"`
+	Subscription     struct {
+		Id          string   `json:"id"`
+		ExpiresAt   string   `json:"expiresAt"`
+		Products    []string `json:"products"`
+		DeviceLimit int      `json:"deviceLimit"`
+	} `json:"subscription"`
+}
+
+// ActivateCode 兑换激活码,开通一条独立订阅:POST /account/activate-code。
+// 与 web portal / SetSubscriptionPriority 同一套 customer JWT 鉴权 —— CustomerJwtGuard
+// 只校验 typ/customer/tokenVersion,不看 deviceId,故客户端会话 token 可直接调用该端点。
+//
+// 成功返回 {alreadyActivated, subscription:{id,expiresAt,products,deviceLimit}} 供前端展示;
+// 调用方随后心跳一次刷新本地多订阅快照,让新订阅立即出现(无需重登/等轮询)。
+// 失败时把后端的可读错误码透传回去(如 CODE_NOT_FOUND / CODE_DISABLED / CODE_ALREADY_USED
+// / 座位不足等),格式 "CODE_X: 人读消息" —— 前端按码映射文案。
+func (a *App) ActivateCode(code string) (map[string]interface{}, error) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" {
+		return nil, fmt.Errorf("CODE_REQUIRED: empty code")
+	}
+
+	cfg := LoadConfig()
+	if cfg.UserToken == "" {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	payload := map[string]interface{}{"code": trimmed}
+	body, status, err := doAuthPostWithBearer("/account/activate-code", payload, cfg.UserToken)
+	if err != nil {
+		return nil, fmt.Errorf("activate code network error: %w", err)
+	}
+	if status < 200 || status >= 300 {
+		// 透传后端可读错误码 + 消息;前端按码(CODE_NOT_FOUND 等)映射本地化文案。
+		var errResp loginErrorResponse
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.Message)
+		}
+		return nil, fmt.Errorf("activate code failed (HTTP %d)", status)
+	}
+
+	var resp activateCodeResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("activate code response parse error: %w", err)
+	}
+
+	products := resp.Subscription.Products
+	if products == nil {
+		products = []string{}
+	}
+	return map[string]interface{}{
+		"alreadyActivated": resp.AlreadyActivated,
+		"subscription": map[string]interface{}{
+			"id":          resp.Subscription.Id,
+			"expiresAt":   resp.Subscription.ExpiresAt,
+			"products":    products,
+			"deviceLimit": resp.Subscription.DeviceLimit,
+		},
+	}, nil
+}
+
 // min returns the smaller of a, b (local helper to avoid Go 1.21 requirement).
 func min(a, b int) int {
 	if a < b {
