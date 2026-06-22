@@ -137,6 +137,8 @@ export class BillingService {
     selection: Selection,
     // 统一收银台:前端不再预选渠道,默认占位 ALIPAY;真实支付方式以回调/查询 type 为准。
     channel: "ALIPAY" | "WXPAY" = "ALIPAY",
+    // 余额抵扣额(分):最高可抵到基础价 100%。服务端夹断 [0, min(余额, baseCents)] 并原子扣减。
+    useCreditCents?: number,
   ) {
     // 邮箱未验证不允许下单:付款后凭据/找回密码都依赖可达邮箱,先卡住避免「付了钱忘了密码进不去」。
     const buyer = await this.prisma.customer.findUnique({
@@ -176,28 +178,218 @@ export class BillingService {
     // 二维码会有重复扫码支付的风险。CANCELLED 语义同 EXPIRED —— 若用户仍扫了某张旧码,迟到的
     // 支付回调(handleNotify 的 CAS 接受 CANCELLED→PAID)仍能正常激活,钱不会丢。GRANT 单是
     // PAID 不在 PENDING 范围,不受影响。校验(算价/座位/客户存在)全部通过后才作废,避免误废。
-    const superseded = await this.prisma.planOrder.updateMany({
-      where: { customerId, status: "PENDING" },
-      data: { status: "CANCELLED" },
-    });
-    if (superseded.count > 0) {
-      this.logger.log(
-        `Superseded ${superseded.count} prior PENDING order(s) for customer ${customerId} before creating a new catalog order`,
-      );
+    // 作废旧单时回补其占用的余额 —— 回补在算本单抵扣之前,旧单余额可被新单复用。
+    await this.voidPendingOrdersForCustomer(customerId);
+
+    // 余额抵扣:夹断到 [0, min(余额, baseCents)] 并原子扣减(防并发重复花)。
+    const creditApplied = await this.applyCredit(customerId, useCreditCents, priceCents);
+    const payable = priceCents - creditApplied;
+    const orderData = {
+      catalogVersion: published.version,
+      selection: JSON.stringify(selection),
+      config: JSON.stringify(config),
+      creditAppliedCents: creditApplied,
+    };
+
+    // 全额抵扣:epay 收不了 ¥0 → 落一条 CREDIT 内部已支付单并立即激活(同 GRANT 口径)。
+    if (payable === 0) {
+      return this.createCreditCoveredOrder({
+        customerId,
+        referrerId,
+        appliedCents: creditApplied,
+        orderData,
+      });
     }
 
-    return this.buildPaymentAndPersist({
-      customerId,
-      referrerId,
-      baseCents: priceCents,
-      name: orderName(selection),
-      channel,
-      orderData: {
-        catalogVersion: published.version,
-        selection: JSON.stringify(selection),
-        config: JSON.stringify(config),
+    // 部分抵扣 / 不抵扣:走 epay,手续费按抵后 payable 计。下单失败要回补已扣余额。
+    try {
+      return await this.buildPaymentAndPersist({
+        customerId,
+        referrerId,
+        baseCents: payable,
+        name: orderName(selection),
+        channel,
+        orderData,
+      });
+    } catch (err) {
+      if (creditApplied > 0) {
+        await this.prisma.customer.update({
+          where: { id: customerId },
+          data: { creditCents: { increment: creditApplied } },
+        });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 夹断并原子扣减余额,返回实际抵扣额(分)。夹断到 [0, min(余额, cap)];cap=基础价(最高抵 100%)。
+   * 条件更新 `where creditCents >= applied` 防并发重复花:扣减影响行数 ≠ 1 → 抛冲突。
+   */
+  private async applyCredit(customerId: string, requested: number | undefined, cap: number): Promise<number> {
+    const want = Math.floor(Number(requested) || 0);
+    if (want <= 0 || cap <= 0) return 0;
+    const { creditCents } = await this.prisma.customer.findUniqueOrThrow({
+      where: { id: customerId },
+      select: { creditCents: true },
+    });
+    const applied = Math.min(want, creditCents, cap);
+    if (applied <= 0) return 0;
+    const dec = await this.prisma.customer.updateMany({
+      where: { id: customerId, creditCents: { gte: applied } },
+      data: { creditCents: { decrement: applied } },
+    });
+    if (dec.count !== 1) {
+      throw new ConflictException("余额不足或已被占用,请刷新后重试");
+    }
+    return applied;
+  }
+
+  /** 作废该客户所有 PENDING 单(理由见 createCatalogOrder),并回补各自抵扣的余额(同一更新清零防重复回补)。 */
+  private async voidPendingOrdersForCustomer(customerId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const pendings = await tx.planOrder.findMany({
+        where: { customerId, status: "PENDING" },
+        select: { id: true, creditAppliedCents: true },
+      });
+      if (pendings.length === 0) return;
+      const refund = pendings.reduce((sum, o) => sum + o.creditAppliedCents, 0);
+      await tx.planOrder.updateMany({
+        where: { customerId, status: "PENDING" },
+        data: { status: "CANCELLED", creditAppliedCents: 0 },
+      });
+      if (refund > 0) {
+        await tx.customer.update({
+          where: { id: customerId },
+          data: { creditCents: { increment: refund } },
+        });
+      }
+      this.logger.log(
+        `Superseded ${pendings.length} prior PENDING order(s) for customer ${customerId} (restored ${refund} credit)`,
+      );
+    });
+  }
+
+  /**
+   * 把单笔 PENDING 单转终态(EXPIRED/CANCELLED)并回补 creditAppliedCents。CAS 保证只回补一次:
+   * status 必须仍是 PENDING 才翻,且同一更新里清零 creditAppliedCents。expiry cron / cancelOrder 复用。
+   */
+  async voidPendingOrder(orderId: string, toStatus: "EXPIRED" | "CANCELLED"): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.planOrder.findUnique({
+        where: { id: orderId },
+        select: { customerId: true, status: true, creditAppliedCents: true },
+      });
+      if (!order || order.status !== "PENDING") return false;
+      const cas = await tx.planOrder.updateMany({
+        where: { id: orderId, status: "PENDING" },
+        data: { status: toStatus, creditAppliedCents: 0 },
+      });
+      if (cas.count !== 1) return false;
+      if (order.creditAppliedCents > 0) {
+        await tx.customer.update({
+          where: { id: order.customerId },
+          data: { creditCents: { increment: order.creditAppliedCents } },
+        });
+      }
+      return true;
+    });
+  }
+
+  /**
+   * 退款连带回收推广人返点:把该订单触发的 ReferralReward(GRANTED)置 REVOKED,并从推广人余额扣回。
+   * CAS(status=GRANTED 才翻)保证只回收一次,重复退款幂等。无返点单 → no-op。退款两条路径(toC
+   * refundOwnOrder / console billing-admin)都调用,杜绝「下单领返点→退款→返点留下」的套利。
+   * 注:推广人若已花掉这笔返点,扣回后余额可能为负 —— 这是诚实的账面真相(applyCredit 对负余额取 0,
+   * 即暂不可用,直到重新积累),不在此处兜底为 0。
+   */
+  async revokeReferralRewardForOrder(orderId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const reward = await tx.referralReward.findUnique({
+        where: { planOrderId: orderId },
+        select: { id: true, referrerId: true, amountCents: true, status: true },
+      });
+      if (!reward || reward.status !== "GRANTED") return;
+      const cas = await tx.referralReward.updateMany({
+        where: { id: reward.id, status: "GRANTED" },
+        data: { status: "REVOKED" },
+      });
+      if (cas.count !== 1) return;
+      await tx.customer.update({
+        where: { id: reward.referrerId },
+        data: { creditCents: { decrement: reward.amountCents } },
+      });
+      this.logger.log(
+        `[refund] revoked referral reward ${reward.id} for order ${orderId}: referrer=${reward.referrerId} -${reward.amountCents}`,
+      );
+    });
+  }
+
+  /**
+   * 全额余额抵扣单:落一条 ¥0、status=PAID、payChannel=CREDIT 的内部单(同 GRANT 口径),立即激活。
+   * amountCents=0 → 付款回调返点天然为 0(用余额买的部分不再产生新返点)。激活失败回补余额并作废。
+   */
+  private async createCreditCoveredOrder(args: {
+    customerId: string;
+    referrerId: string | null;
+    appliedCents: number;
+    orderData: Record<string, unknown>;
+  }) {
+    const { customerId, referrerId, appliedCents, orderData } = args;
+    const now = new Date();
+    const order = await this.prisma.planOrder.create({
+      data: {
+        customerId,
+        amountCents: 0,
+        payChannel: "CREDIT",
+        outTradeNo: generateOutTradeNo(),
+        status: "PAID",
+        paidAt: now,
+        expiresAt: now,
+        referrerId,
+        ...orderData,
+      } as any,
+    });
+
+    let sub: Awaited<ReturnType<SubscriptionService["activateForOrder"]>>;
+    try {
+      sub = await this.subscriptions.activateForOrder(order);
+    } catch (err) {
+      await this.prisma.$transaction([
+        this.prisma.customer.update({
+          where: { id: customerId },
+          data: { creditCents: { increment: appliedCents } },
+        }),
+        this.prisma.planOrder.update({
+          where: { id: order.id },
+          data: { status: "CANCELLED", creditAppliedCents: 0 },
+        }),
+      ]);
+      throw err;
+    }
+
+    await this.prisma.notification.create({
+      data: {
+        customerId,
+        type: "BILLING",
+        title: "套餐已开通",
+        body: "您的套餐已成功开通(余额抵扣),感谢您的订购。",
       },
     });
+    this.logger.log(`Created CREDIT PlanOrder ${order.id} (fully covered ${appliedCents} cents) for customer ${customerId}`);
+
+    return {
+      outTradeNo: order.outTradeNo,
+      amountCents: 0,
+      baseCents: appliedCents,
+      feeCents: 0,
+      creditAppliedCents: appliedCents,
+      expiresAt: order.expiresAt.toISOString(),
+      paid: true as boolean,
+      subscriptionId: sub.id as string | null,
+      payUrl: undefined as string | undefined,
+      qrDataUri: undefined as string | undefined,
+    };
   }
 
   /**
@@ -456,9 +648,12 @@ export class BillingService {
       amountCents: order.amountCents,
       baseCents,
       feeCents,
+      creditAppliedCents: (orderData.creditAppliedCents as number) ?? 0,
       expiresAt: order.expiresAt.toISOString(),
-      payUrl,
-      qrDataUri,
+      paid: false as boolean,
+      subscriptionId: null as string | null,
+      payUrl: payUrl as string | undefined,
+      qrDataUri: qrDataUri as string | undefined,
     };
   }
 
@@ -508,12 +703,9 @@ export class BillingService {
       if (synced) {
         order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } }) ?? order;
       } else {
-        // CAS:仅当仍为 PENDING 才取消 —— 并发回调若抢先翻 PAID,count===0,让位于支付。
-        const cas = await this.prisma.planOrder.updateMany({
-          where: { outTradeNo, status: "PENDING" },
-          data: { status: "CANCELLED" },
-        });
-        if (cas.count > 0) {
+        // CAS:仅当仍为 PENDING 才取消 —— 并发回调若抢先翻 PAID,让位于支付。同时回补抵扣的余额。
+        const voided = await this.voidPendingOrder(order.id, "CANCELLED");
+        if (voided) {
           this.logger.log(`Customer ${customerId} cancelled PlanOrder outTradeNo=${outTradeNo}`);
         }
         order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } }) ?? order;
@@ -582,7 +774,17 @@ export class BillingService {
     }
 
     await this.cancelRefundedSubscription(order);
-    this.logger.log(`Customer ${customerId} refunded PlanOrder outTradeNo=${outTradeNo} (${refundCents} cents)`);
+    // 退款连带回补本单抵扣的余额(现金只退 96.4%,但余额是站内额度,全额还回)。
+    // 仅 CAS 赢家(cas.count===1)到这,故不会重复回补。
+    if (order.creditAppliedCents > 0) {
+      await this.prisma.customer.update({
+        where: { id: order.customerId },
+        data: { creditCents: { increment: order.creditAppliedCents } },
+      });
+    }
+    // 回收该单触发的推广人返点(防套利)。
+    await this.revokeReferralRewardForOrder(order.id);
+    this.logger.log(`Customer ${customerId} refunded PlanOrder outTradeNo=${outTradeNo} (${refundCents} cents, restored ${order.creditAppliedCents} credit)`);
     return { ok: true, alreadyRefunded: false, refundedCents: refundCents };
   }
 

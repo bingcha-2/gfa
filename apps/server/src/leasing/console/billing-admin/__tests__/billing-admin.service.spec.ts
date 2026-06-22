@@ -22,7 +22,10 @@ const prisma = getCustomerPrisma();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let entitlementSync: { syncSubscription: ReturnType<typeof vi.fn>; expireShadowRecord: ReturnType<typeof vi.fn> };
-let billing: { refundEpayOrder: ReturnType<typeof vi.fn> };
+let billing: {
+  refundEpayOrder: ReturnType<typeof vi.fn>;
+  revokeReferralRewardForOrder: ReturnType<typeof vi.fn>;
+};
 let service: BillingAdminService;
 
 let seq = 0;
@@ -79,7 +82,10 @@ beforeEach(async () => {
     {} as any,
   );
   // 网关退款默认成功(code=0 → ok);各用例可改 mock 模拟失败/已退款。
-  billing = { refundEpayOrder: vi.fn().mockResolvedValue({ ok: true }) };
+  billing = {
+    refundEpayOrder: vi.fn().mockResolvedValue({ ok: true }),
+    revokeReferralRewardForOrder: vi.fn().mockResolvedValue(undefined),
+  };
   service = new BillingAdminService(prisma as any, subscriptionService, billing as any, entitlementSync as any);
 });
 

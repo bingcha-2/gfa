@@ -222,6 +222,7 @@ export type ConsoleOrderLite = {
   subscriptionId: string | null;
   outTradeNo: string;
   amountCents: number;
+  creditAppliedCents: number;
   payChannel: string;
   status: string;
   selection: string | null;
@@ -245,6 +246,7 @@ export type ConsoleCustomerDetail = {
   emailVerified: boolean;
   displayName: string | null;
   referralCode: string;
+  referralLink: string;
   creditCents: number;
   invitedById: string | null;
   createdAt: string;

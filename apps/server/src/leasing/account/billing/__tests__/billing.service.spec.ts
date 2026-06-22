@@ -264,7 +264,13 @@ describe("BillingService.refundOwnOrder", () => {
         findUnique: vi.fn().mockResolvedValue(opts.sub ?? null),
         findFirst: vi.fn().mockResolvedValue(null),
       },
+      // revokeReferralRewardForOrder:默认无返点(findUnique→null)→ no-op。
+      customer: { update: vi.fn() },
+      referralReward: { findUnique: vi.fn().mockResolvedValue(null), updateMany: vi.fn() },
     } as any;
+    prisma.$transaction = vi.fn(async (fn: any) =>
+      typeof fn === "function" ? fn(prisma) : Promise.all(fn),
+    );
     const subscriptions = { cancelSubscription: vi.fn().mockResolvedValue({}) } as any;
     const service = new BillingService(prisma, {} as any, {} as any, {} as any, subscriptions);
     vi.spyOn(service, "refundEpayOrder").mockResolvedValue({ ok: opts.refundOk ?? true });

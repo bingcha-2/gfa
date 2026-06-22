@@ -554,6 +554,7 @@ enum PayChannel {
   WXPAY
   GRANT // 管理员手动授予(目录版):¥0、无支付,仅作订单→订阅审计链的来源标记
   ACTIVATION_CODE // 激活码兑换:不走支付,amountCents 记激活当时目录算出的等值价格,作订单→订阅审计链来源
+  CREDIT // 余额全额抵扣:¥0 现金、无支付,creditAppliedCents 记抵扣额,作订单→订阅审计链来源
 }
 
 enum DeviceStatus {
@@ -691,6 +692,7 @@ model PlanOrder {
   notifyRaw      String?
   paidAt         DateTime?
   referrerId     String?        // Customer id of inviter at purchase time
+  creditAppliedCents Int        @default(0) // 余额抵扣额(分):下单时从 Customer.creditCents 扣下,失败/退款时按此回补
   // Catalog purchase snapshot:
   catalogVersion Int?           // PUBLISHED PlanCatalog version priced against (price lock / 溯源)
   selection      String?        // JSON of the customer's selection (audit / re-pricing)

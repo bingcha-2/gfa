@@ -18,6 +18,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { BillingService } from "../billing.service";
 import { EpayCallbackService } from "../epay-callback.service";
+import { OrderExpiryService } from "../order-expiry.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
@@ -537,5 +538,163 @@ describe("BillingService.listSubscriptions — DB integration", () => {
     // 目录订阅用 products 拼接作展示名(只有迁移卡密订阅才 planName=null → 前端回退「迁移卡密订阅」)。
     expect(sub.planName).toBe("antigravity");
     expect(sub.migratedFromCard).toBe(false);
+  });
+});
+
+// ─── 余额抵扣 (credit redemption) ─────────────────────────────────────────────
+describe("BillingService.createCatalogOrder — 余额抵扣 (credit redemption)", () => {
+  let seq = 0;
+  async function buyer(creditCents = 0) {
+    seq += 1;
+    return prisma.customer.create({
+      data: {
+        email: `credit-${seq}-${Date.now()}@test.local`,
+        passwordHash: "$2b$10$test",
+        referralCode: `CR${seq}${Date.now()}`,
+        emailVerified: true,
+        creditCents,
+      },
+    });
+  }
+  function order(customerId: string, useCreditCents: number) {
+    return billingService.createCatalogOrder(
+      customerId,
+      { line: "pool", products: ["antigravity"], usageTier: "small", deviceLimit: 1 } as any,
+      "ALIPAY",
+      useCreditCents,
+    );
+  }
+  const balanceOf = async (id: string) =>
+    (await prisma.customer.findUniqueOrThrow({ where: { id }, select: { creditCents: true } })).creditCents;
+
+  it("部分抵扣:applied=useCredit,payable=base-applied,余额扣减", async () => {
+    const c = await buyer(300);
+    const r = await order(c.id, 300);
+    expect(r.creditAppliedCents).toBe(300);
+    expect(r.amountCents).toBe(690); // 990 - 300, fee 0
+    expect(r.payUrl).toBeTruthy();
+    expect(await balanceOf(c.id)).toBe(0);
+    const stored = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: r.outTradeNo } });
+    expect(stored.status).toBe("PENDING");
+    expect(stored.creditAppliedCents).toBe(300);
+  });
+
+  it("夹断到余额:useCredit 超过余额时只抵扣余额", async () => {
+    const c = await buyer(200);
+    const r = await order(c.id, 999);
+    expect(r.creditAppliedCents).toBe(200);
+    expect(r.amountCents).toBe(790);
+    expect(await balanceOf(c.id)).toBe(0);
+  });
+
+  it("夹断到 0:负数 useCredit 不抵扣", async () => {
+    const c = await buyer(500);
+    const r = await order(c.id, -100);
+    expect(r.creditAppliedCents).toBe(0);
+    expect(r.amountCents).toBe(990);
+    expect(await balanceOf(c.id)).toBe(500);
+    expect(r.payUrl).toBeTruthy();
+  });
+
+  it("全额抵扣(100%):payable=0 → 走 CREDIT 内部单,立即激活,无 payUrl", async () => {
+    const c = await buyer(2000);
+    const r = await order(c.id, 5000); // 夹断到 base=990
+    expect(r.creditAppliedCents).toBe(990);
+    expect(r.amountCents).toBe(0);
+    expect(r.paid).toBe(true);
+    expect(r.payUrl).toBeUndefined();
+    expect(r.subscriptionId).toBeTruthy();
+    expect(await balanceOf(c.id)).toBe(1010); // 2000 - 990
+    const stored = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: r.outTradeNo } });
+    expect(stored.status).toBe("PAID");
+    expect(stored.payChannel).toBe("CREDIT");
+    expect(stored.creditAppliedCents).toBe(990);
+    const subs = await prisma.subscription.findMany({ where: { customerId: c.id, status: "ACTIVE" } });
+    expect(subs).toHaveLength(1);
+  });
+
+  it("取消未支付单 → 回补余额,creditAppliedCents 清零", async () => {
+    const c = await buyer(300);
+    const r = await order(c.id, 300);
+    expect(await balanceOf(c.id)).toBe(0);
+    await billingService.cancelOrder(c.id, r.outTradeNo);
+    expect(await balanceOf(c.id)).toBe(300);
+    const stored = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: r.outTradeNo } });
+    expect(stored.status).toBe("CANCELLED");
+    expect(stored.creditAppliedCents).toBe(0);
+  });
+
+  it("新单作废旧 PENDING 单 → 旧单余额先回补,可被新单复用", async () => {
+    const c = await buyer(300);
+    const a = await order(c.id, 300);
+    expect(await balanceOf(c.id)).toBe(0);
+    const b = await order(c.id, 300); // 作废 a、回补 300、b 再抵扣 300
+    expect(b.creditAppliedCents).toBe(300);
+    expect(await balanceOf(c.id)).toBe(0);
+    const oldA = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: a.outTradeNo } });
+    expect(oldA.status).toBe("CANCELLED");
+    expect(oldA.creditAppliedCents).toBe(0);
+  });
+
+  it("超时过期 → 回补余额(cron)", async () => {
+    const c = await buyer(300);
+    const r = await order(c.id, 300);
+    await prisma.planOrder.update({
+      where: { outTradeNo: r.outTradeNo },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+    const expiry = new OrderExpiryService(prisma as any, billingService);
+    await expiry.expirePendingOrders();
+    expect(await balanceOf(c.id)).toBe(300);
+    const stored = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: r.outTradeNo } });
+    expect(stored.status).toBe("EXPIRED");
+    expect(stored.creditAppliedCents).toBe(0);
+  });
+
+  it("返点不变量:部分抵扣单付款,返点按实付(payable)而非原价", async () => {
+    const referrer = await createTestCustomer();
+    const invitee = await prisma.customer.create({
+      data: {
+        email: `inv-${Date.now()}@test.local`,
+        passwordHash: "$2b$10$test",
+        referralCode: `INV${Date.now()}`,
+        invitedById: referrer.id,
+        emailVerified: true,
+        creditCents: 300,
+      },
+    });
+    const r = await order(invitee.id, 300); // payable 690
+    const body = buildBody(r.outTradeNo, "6.90");
+    await callbackService.handleNotify(body);
+    const refRow = await prisma.customer.findUniqueOrThrow({ where: { id: referrer.id }, select: { creditCents: true } });
+    expect(refRow.creditCents).toBe(69); // floor(690 * 10%) — 不是 floor(990 * 10%)=99
+  });
+
+  it("退款回收推广人返点:ReferralReward → REVOKED,推广人余额扣回,幂等", async () => {
+    const referrer = await createTestCustomer();
+    const invitee = await prisma.customer.create({
+      data: {
+        email: `inv2-${Date.now()}@test.local`,
+        passwordHash: "$2b$10$test",
+        referralCode: `INV2${Date.now()}`,
+        invitedById: referrer.id,
+        emailVerified: true,
+      },
+    });
+    // 全价单(不抵扣)付款 → 返点 floor(990*10%)=99。
+    const r = await order(invitee.id, 0);
+    await callbackService.handleNotify(buildBody(r.outTradeNo, "9.90"));
+    expect(await balanceOf(referrer.id)).toBe(99);
+
+    const ord = await prisma.planOrder.findUniqueOrThrow({ where: { outTradeNo: r.outTradeNo } });
+    await billingService.revokeReferralRewardForOrder(ord.id);
+
+    expect(await balanceOf(referrer.id)).toBe(0);
+    const reward = await prisma.referralReward.findUniqueOrThrow({ where: { planOrderId: ord.id } });
+    expect(reward.status).toBe("REVOKED");
+
+    // 幂等:再调一次不重复扣回。
+    await billingService.revokeReferralRewardForOrder(ord.id);
+    expect(await balanceOf(referrer.id)).toBe(0);
   });
 });

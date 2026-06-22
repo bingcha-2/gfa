@@ -36,7 +36,7 @@ export class BillingController {
     @CurrentCustomer() customer: CustomerUser,
     @Body() dto: CreateCatalogOrderDto,
   ) {
-    return this.billingService.createCatalogOrder(customer.customerId, dto.selection, dto.channel);
+    return this.billingService.createCatalogOrder(customer.customerId, dto.selection, dto.channel, dto.useCreditCents);
   }
 
   /** GET /api/account/billing/orders?page=&pageSize= */

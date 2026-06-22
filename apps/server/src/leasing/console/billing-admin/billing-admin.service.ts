@@ -305,6 +305,16 @@ export class BillingAdminService {
     // operator cancels the leftover subscription via the revoke endpoint.
     const cancelledSubscriptionId = await this.cancelOrderSubscription(order);
 
+    // 退款回补本单抵扣的余额(现金按渠道退,余额是站内额度 → 全额还回)。CAS 赢家才到这,不会重复回补。
+    if (order.creditAppliedCents > 0) {
+      await this.prisma.customer.update({
+        where: { id: order.customerId },
+        data: { creditCents: { increment: order.creditAppliedCents } },
+      });
+    }
+    // 回收该单触发的推广人返点(防套利);与 toC refundOwnOrder 同一口径。
+    await this.billing.revokeReferralRewardForOrder(order.id);
+
     await this.prisma.notification.create({
       data: {
         customerId: order.customerId,

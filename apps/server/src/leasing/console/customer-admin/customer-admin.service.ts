@@ -164,6 +164,7 @@ export class CustomerAdminService {
             subscriptionId: true,
             outTradeNo: true,
             amountCents: true,
+            creditAppliedCents: true,
             payChannel: true,
             status: true,
             selection: true,
@@ -188,7 +189,12 @@ export class CustomerAdminService {
       },
     });
     if (!customer) throw new NotFoundException(`Customer "${id}" not found`);
-    return customer;
+    // 分享链接:与 toC 返佣页同口径(WEB_BASE_URL + 注册页带邀请码),便于客服直接复制发给客户。
+    const webBase = process.env.WEB_BASE_URL ?? "http://localhost:3000";
+    return {
+      ...customer,
+      referralLink: `${webBase}/account/register?ref=${customer.referralCode}`,
+    };
   }
 
   /**

@@ -52,11 +52,9 @@ export class OrderExpiryService {
           this.logger.log(`[order-expiry] order ${outTradeNo} was paid on zhunfu — activated instead of expiring`);
           continue;
         }
-        await this.prisma.planOrder.updateMany({
-          where: { id, status: "PENDING" },
-          data: { status: "EXPIRED" },
-        });
-        expiredCount++;
+        // voidPendingOrder:CAS PENDING→EXPIRED 并回补本单抵扣的余额(只回补一次)。
+        const voided = await this.billing.voidPendingOrder(id, "EXPIRED");
+        if (voided) expiredCount++;
       }
 
       if (expiredCount > 0) {

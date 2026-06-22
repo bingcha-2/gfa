@@ -40,19 +40,32 @@ const CATALOG_CONFIG = {
 };
 
 function makeMockPrisma(overrides: Record<string, any> = {}) {
-  return {
-    customer: { findUnique: vi.fn() },
-    // 不再复用旧单:新建前用 updateMany 把该客户所有 PENDING 单作废(默认 count:0 = 无旧单)。
-    // findUnique 供 getOrder / cancelOrder 用。
+  const prisma: any = {
+    // findUniqueOrThrow/updateMany/update 供余额抵扣(applyCredit / void* / 退款回补)用。
+    customer: {
+      findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ creditCents: 0 }),
+      update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    // 不再复用旧单:新建前在事务里作废该客户所有 PENDING 单并回补余额(findMany 默认无旧单)。
+    // findUnique 供 getOrder / cancelOrder / voidPendingOrder 用。
     planOrder: {
       create: vi.fn(),
+      update: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     // 绑定线下单前座位预检要读 DB ACTIVE 订阅的 config 算占用份额(默认无订阅)。
     subscription: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides,
-  } as any;
+  };
+  // $transaction:回调式 → 用同一 mock 当 tx;数组式 → Promise.all。
+  prisma.$transaction = vi.fn(async (arg: any) =>
+    typeof arg === "function" ? arg(prisma) : Promise.all(arg),
+  );
+  return prisma as any;
 }
 
 function makeCatalog(published: any = { version: 2, config: CATALOG_CONFIG }) {
@@ -583,15 +596,19 @@ describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => 
     vi.restoreAllMocks();
   });
 
-  it("新建前作废该客户所有 PENDING 旧单(updateMany: PENDING→CANCELLED),并新建一笔全新单", async () => {
-    prisma.planOrder.updateMany.mockResolvedValue({ count: 2 });
+  it("新建前作废该客户所有 PENDING 旧单(PENDING→CANCELLED + 清零 creditAppliedCents),并新建一笔全新单", async () => {
+    // 事务里先 findMany 出旧 PENDING 单(各自 creditAppliedCents),再 updateMany 作废。
+    prisma.planOrder.findMany.mockResolvedValueOnce([
+      { id: "old-1", creditAppliedCents: 0 },
+      { id: "old-2", creditAppliedCents: 0 },
+    ]);
 
     const result = await service.createCatalogOrder("cust-1", selection as any, "ALIPAY");
 
-    // 作废:仅按 customer + PENDING 过滤,翻成 CANCELLED(GRANT 单是 PAID 不在范围)。
+    // 作废:仅按 customer + PENDING 过滤,翻成 CANCELLED 并清零抵扣额(GRANT 单是 PAID 不在范围)。
     expect(prisma.planOrder.updateMany).toHaveBeenCalledWith({
       where: { customerId: "cust-1", status: "PENDING" },
-      data: { status: "CANCELLED" },
+      data: { status: "CANCELLED", creditAppliedCents: 0 },
     });
     // 始终新建(不复用任何旧单)。
     expect(prisma.planOrder.create).toHaveBeenCalledOnce();
@@ -731,20 +748,22 @@ describe("BillingService.cancelOrder", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it("PENDING 且网关未支付 → CAS 置 CANCELLED,返回 CANCELLED", async () => {
-    const pending = { id: "o1", customerId: "cust-1", outTradeNo: "gfa-1", status: "PENDING", paidAt: null, subscriptionId: null };
+  it("PENDING 且网关未支付 → CAS 置 CANCELLED(回补余额),返回 CANCELLED", async () => {
+    const pending = { id: "o1", customerId: "cust-1", outTradeNo: "gfa-1", status: "PENDING", paidAt: null, subscriptionId: null, creditAppliedCents: 0 };
     prisma.planOrder.findUnique
-      .mockResolvedValueOnce(pending) // 首次读取
-      .mockResolvedValueOnce({ ...pending, status: "CANCELLED" }); // CAS 后回读
+      .mockResolvedValueOnce(pending) // 首次读取(归属校验)
+      .mockResolvedValueOnce(pending) // voidPendingOrder 事务里按 id 复读
+      .mockResolvedValueOnce({ ...pending, status: "CANCELLED" }); // 作废后回读
     prisma.planOrder.updateMany.mockResolvedValue({ count: 1 });
     const syncSpy = vi.spyOn(service, "queryAndSyncEpayOrder").mockResolvedValue(false);
 
     const res = await service.cancelOrder("cust-1", "gfa-1");
 
     expect(syncSpy).toHaveBeenCalledWith("gfa-1"); // 取消前兜底查一次网关
+    // voidPendingOrder:CAS by id,翻 CANCELLED 并清零抵扣额。
     expect(prisma.planOrder.updateMany).toHaveBeenCalledWith({
-      where: { outTradeNo: "gfa-1", status: "PENDING" },
-      data: { status: "CANCELLED" },
+      where: { id: "o1", status: "PENDING" },
+      data: { status: "CANCELLED", creditAppliedCents: 0 },
     });
     expect(res.status).toBe("CANCELLED");
   });

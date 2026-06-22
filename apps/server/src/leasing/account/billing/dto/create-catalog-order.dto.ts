@@ -1,4 +1,4 @@
-import { IsIn, IsObject, IsOptional } from "class-validator";
+import { IsIn, IsInt, IsObject, IsOptional, Min } from "class-validator";
 
 import type { Selection } from "../../../plan-catalog/pricing";
 
@@ -17,4 +17,10 @@ export class CreateCatalogOrderDto {
   @IsOptional()
   @IsIn(["ALIPAY", "WXPAY"])
   channel?: "ALIPAY" | "WXPAY";
+
+  // 余额抵扣额(分,选填)。服务端会夹断到 [0, min(余额, 基础价)] 并原子扣减,前端传值仅作意向。
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  useCreditCents?: number;
 }
