@@ -321,6 +321,30 @@ export const ko: DeepPartialDict = {
     moveUp: '위로',
     moveDown: '아래로',
     reorderFailed: '순서 변경 실패',
+    activateCode: '활성화 코드',
+  },
+
+  activate: {
+    title: '활성화 코드',
+    desc: '활성화 코드를 입력하면 독립 구독이 즉시 개통됩니다.',
+    placeholder: '코드 입력 (예: AC-XXXX-XXXX-XXXX)',
+    submit: '활성화',
+    submitting: '활성화 중…',
+    cancel: '취소',
+    close: '닫기',
+    successTitle: '활성화됨',
+    alreadyTitle: '이미 활성화된 코드입니다',
+    products: '사용 가능 제품',
+    expires: '만료일',
+    deviceLimit: '기기 수',
+    deviceLimitValue: '{n}대',
+    errors: {
+      CODE_NOT_FOUND: '코드를 찾을 수 없습니다',
+      CODE_DISABLED: '비활성화된 코드입니다',
+      CODE_ALREADY_USED: '이미 사용된 코드입니다',
+      CODE_REQUIRED: '활성화 코드를 입력하세요',
+      fallback: '활성화 실패, 잠시 후 다시 시도하세요',
+    },
   },
 
   modal: {

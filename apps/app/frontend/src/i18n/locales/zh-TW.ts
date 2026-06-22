@@ -321,6 +321,30 @@ export const zhTW: DeepPartialDict = {
     moveUp: '上移',
     moveDown: '下移',
     reorderFailed: '調整順序失敗',
+    activateCode: '啟用碼啟用',
+  },
+
+  activate: {
+    title: '啟用碼啟用',
+    desc: '輸入啟用碼,立即開通一條獨立訂閱。',
+    placeholder: '請輸入啟用碼(如 AC-XXXX-XXXX-XXXX)',
+    submit: '啟用',
+    submitting: '啟用中…',
+    cancel: '取消',
+    close: '關閉',
+    successTitle: '啟用成功',
+    alreadyTitle: '此啟用碼已啟用',
+    products: '可用產品',
+    expires: '到期時間',
+    deviceLimit: '裝置數',
+    deviceLimitValue: '{n} 台',
+    errors: {
+      CODE_NOT_FOUND: '啟用碼不存在',
+      CODE_DISABLED: '啟用碼已停用',
+      CODE_ALREADY_USED: '啟用碼已被使用',
+      CODE_REQUIRED: '請輸入啟用碼',
+      fallback: '啟用失敗,請稍後重試',
+    },
   },
 
   modal: {

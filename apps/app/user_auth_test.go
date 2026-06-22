@@ -832,3 +832,129 @@ func TestLegacyConfigLoadsAccountCard(t *testing.T) {
 		t.Errorf("UserToken should be empty for legacy config, got %q", cfg.UserToken)
 	}
 }
+
+// ── ActivateCode: redeem an activation code → open a standalone subscription ──
+
+// newActivateCodeServer answers POST /account/activate-code with the given
+// status + response body, and asserts the bearer token + JSON code field.
+func newActivateCodeServer(t *testing.T, resp interface{}, statusCode int, wantToken string, capture *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/account/activate-code" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+wantToken {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer "+wantToken)
+		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if capture != nil {
+			if c, ok := body["code"].(string); ok {
+				*capture = c
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+// TestActivateCode_Success: a valid code → server opens a subscription; the
+// method trims the code, posts it with the bearer token, and returns the
+// subscription summary for the UI.
+func TestActivateCode_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-ac")
+
+	resp := map[string]interface{}{
+		"ok":               true,
+		"alreadyActivated": false,
+		"subscription": map[string]interface{}{
+			"id":          "sub-ac-1",
+			"expiresAt":   "2027-03-04T05:06:07Z",
+			"products":    []interface{}{"codex", "anthropic"},
+			"deviceLimit": 2,
+		},
+	}
+	var sentCode string
+	srv := newActivateCodeServer(t, resp, http.StatusCreated, "tok-ac", &sentCode)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	result, err := app.ActivateCode("  AC-ABCD-EFGH-JKMN  ")
+	if err != nil {
+		t.Fatalf("ActivateCode: %v", err)
+	}
+	if sentCode != "AC-ABCD-EFGH-JKMN" {
+		t.Errorf("code sent to server = %q, want trimmed %q", sentCode, "AC-ABCD-EFGH-JKMN")
+	}
+	if already, _ := result["alreadyActivated"].(bool); already {
+		t.Errorf("alreadyActivated = true, want false")
+	}
+	sub, ok := result["subscription"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("subscription missing/not a map: %#v", result["subscription"])
+	}
+	if sub["id"] != "sub-ac-1" {
+		t.Errorf("subscription id = %v, want sub-ac-1", sub["id"])
+	}
+	if dl, _ := sub["deviceLimit"].(int); dl != 2 {
+		t.Errorf("deviceLimit = %v, want 2", sub["deviceLimit"])
+	}
+	prods, _ := sub["products"].([]string)
+	if len(prods) != 2 || prods[0] != "codex" {
+		t.Errorf("products = %#v, want [codex anthropic]", sub["products"])
+	}
+}
+
+// TestActivateCode_ErrorCodePropagated: a 404 CODE_NOT_FOUND must surface as an
+// error whose message carries the backend code so the UI can map localized text.
+func TestActivateCode_ErrorCodePropagated(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-ac2")
+
+	resp := map[string]string{"error": "CODE_NOT_FOUND", "message": "激活码不存在"}
+	srv := newActivateCodeServer(t, resp, http.StatusNotFound, "tok-ac2", nil)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	_, err := app.ActivateCode("AC-NOPE")
+	if err == nil || !strings.Contains(err.Error(), "CODE_NOT_FOUND") {
+		t.Fatalf("want CODE_NOT_FOUND error, got %v", err)
+	}
+}
+
+// TestActivateCode_EmptyCode: a blank code never hits the network.
+func TestActivateCode_EmptyCode(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-ac3")
+
+	app := &App{}
+	if _, err := app.ActivateCode("   "); err == nil {
+		t.Fatal("expected error for empty code")
+	}
+}
+
+// TestActivateCode_NotLoggedIn: no session token → refuse before any request.
+func TestActivateCode_NotLoggedIn(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+
+	app := &App{}
+	if _, err := app.ActivateCode("AC-ABCD"); err == nil {
+		t.Fatal("expected not-logged-in error")
+	}
+}

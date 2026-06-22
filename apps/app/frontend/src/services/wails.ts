@@ -36,6 +36,7 @@ import {
   GetReferralInfo as _GetReferralInfo,
   HeartbeatCheck as _HeartbeatCheck,
   SetSubscriptionPriority as _SetSubscriptionPriority,
+  ActivateCode as _ActivateCode,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal / Site URLs =====
@@ -118,6 +119,23 @@ export async function heartbeatCheck(): Promise<Record<string, unknown>> {
 // 调整订阅接力优先级(↑↓);成功后调用方应 heartbeat() 刷新本地多订阅快照。
 export async function setSubscriptionPriority(subscriptionId: string, priority: number): Promise<void> {
   await _SetSubscriptionPriority(subscriptionId, priority)
+}
+
+// 激活码兑换结果:开通的(独立)订阅摘要,供成功态展示。
+export interface ActivateCodeResult {
+  alreadyActivated: boolean
+  subscription: {
+    id: string
+    expiresAt: string
+    products: string[]
+    deviceLimit: number
+  }
+}
+
+// 兑换激活码 → 开通一条独立订阅。成功后调用方应 heartbeat() 刷新本地多订阅快照,
+// 让新订阅立即出现。失败时 Go 侧把后端可读错误码透传为 "CODE_X: 消息",调用方按码映射文案。
+export async function activateCode(code: string): Promise<ActivateCodeResult> {
+  return _ActivateCode(code) as Promise<ActivateCodeResult>
 }
 
 // ===== Stats =====

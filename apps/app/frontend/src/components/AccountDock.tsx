@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  RefreshCw, ChevronUp, ChevronDown, Settings, MessageSquare, LogOut, MonitorSmartphone, ExternalLink,
+  RefreshCw, ChevronUp, ChevronDown, Settings, MessageSquare, LogOut, MonitorSmartphone, ExternalLink, KeyRound,
 } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { Modal, useModal } from '@/components/Modal'
+import { ActivateCodeModal } from '@/components/ActivateCodeModal'
 import * as api from '@/services/wails'
 import { formatDate, cn } from '@/lib/utils'
 import { productLabel } from '@/lib/usageBars'
@@ -32,6 +33,7 @@ export function AccountDock({
   const { account, logout, heartbeat, fetchStats, cardUnusable } = useAppStore()
   const { modalProps, showAlert, showConfirm } = useModal()
   const [open, setOpen] = useState(false)
+  const [activateOpen, setActivateOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [reordering, setReordering] = useState(false)
@@ -448,8 +450,12 @@ export function AccountDock({
               )}
             </div>
 
-            {/* 账户菜单:管理设备 / 设置 / 意见反馈 ── 设置与反馈从左导航收纳到此 */}
+            {/* 账户菜单:激活码 / 管理设备 / 设置 / 意见反馈 ── 设置与反馈从左导航收纳到此 */}
             <div className="border-t border-[var(--border-light)] py-1.5">
+              {menuRow(KeyRound, t('account.activateCode'), () => {
+                setActivateOpen(true)
+                setOpen(false)
+              })}
               {menuRow(MonitorSmartphone, t('account.manageDevices'), () => api.openURL(api.PORTAL_URLS.devices), { external: true })}
               {menuRow(Settings, t('nav.settings'), () => {
                 onNavigate?.('settings')
@@ -466,6 +472,11 @@ export function AccountDock({
       )}
 
       <Modal {...modalProps} />
+      <ActivateCodeModal
+        open={activateOpen}
+        onClose={() => setActivateOpen(false)}
+        onActivated={() => { void heartbeat() }}
+      />
     </>
   )
 }
