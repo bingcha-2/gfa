@@ -427,38 +427,65 @@ jobs:
 
           mkdir -p "$UPDATES"
 
-          cat > "${UPDATES}/latest-wails.json" << EOF
-          {
-            "version": "${VERSION}",
-            "url": "${DL}/${{ env.APP_NAME }}-${VERSION}.exe",
-            "sha256": "${{ steps.meta.outputs.win_hash }}",
-            "size": ${{ steps.meta.outputs.win_size }},
-            "installerUrl": "${DL}/${{ env.APP_NAME }}-${VERSION}-setup.exe",
-            "installerSha256": "${{ steps.meta.outputs.win_installer_hash }}",
-            "installerSize": ${{ steps.meta.outputs.win_installer_size }},
-            "changelog": "${CHANGELOG}",
-            "minVersion": "${VERSION}",
-            "macOS": {
-              "arm64": {
-                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
-                "sha256": "${{ steps.meta.outputs.mac_arm_hash }}",
-                "size": ${{ steps.meta.outputs.mac_arm_size }}
+          export VERSION CHANGELOG DL UPDATES
+          export WIN_HASH="${{ steps.meta.outputs.win_hash }}"
+          export WIN_SIZE="${{ steps.meta.outputs.win_size }}"
+          export WIN_INSTALLER_HASH="${{ steps.meta.outputs.win_installer_hash }}"
+          export WIN_INSTALLER_SIZE="${{ steps.meta.outputs.win_installer_size }}"
+          export MAC_ARM_HASH="${{ steps.meta.outputs.mac_arm_hash }}"
+          export MAC_ARM_SIZE="${{ steps.meta.outputs.mac_arm_size }}"
+          export MAC_AMD_HASH="${{ steps.meta.outputs.mac_amd_hash }}"
+          export MAC_AMD_SIZE="${{ steps.meta.outputs.mac_amd_size }}"
+          export LINUX_HASH="${{ steps.meta.outputs.linux_hash }}"
+          export LINUX_SIZE="${{ steps.meta.outputs.linux_size }}"
+
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const env = process.env;
+          const size = (name) => {
+            const value = Number(env[name]);
+            if (!Number.isFinite(value)) throw new Error(`Invalid ${name}: ${env[name]}`);
+            return value;
+          };
+
+          const manifest = {
+            version: env.VERSION,
+            url: `${env.DL}/${env.APP_NAME}-${env.VERSION}.exe`,
+            sha256: env.WIN_HASH,
+            size: size("WIN_SIZE"),
+            installerUrl: `${env.DL}/${env.APP_NAME}-${env.VERSION}-setup.exe`,
+            installerSha256: env.WIN_INSTALLER_HASH,
+            installerSize: size("WIN_INSTALLER_SIZE"),
+            changelog: env.CHANGELOG || "",
+            minVersion: env.VERSION,
+            macOS: {
+              arm64: {
+                url: `${env.DL}/${env.APP_NAME}-${env.VERSION}-arm64.dmg`,
+                sha256: env.MAC_ARM_HASH,
+                size: size("MAC_ARM_SIZE"),
               },
-              "amd64": {
-                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
-                "sha256": "${{ steps.meta.outputs.mac_amd_hash }}",
-                "size": ${{ steps.meta.outputs.mac_amd_size }}
-              }
+              amd64: {
+                url: `${env.DL}/${env.APP_NAME}-${env.VERSION}-amd64.dmg`,
+                sha256: env.MAC_AMD_HASH,
+                size: size("MAC_AMD_SIZE"),
+              },
             },
-            "linux": {
-              "amd64": {
-                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
-                "sha256": "${{ steps.meta.outputs.linux_hash }}",
-                "size": ${{ steps.meta.outputs.linux_size }}
-              }
-            }
-          }
-          EOF
+            linux: {
+              amd64: {
+                url: `${env.DL}/${env.APP_NAME}-${env.VERSION}-linux-amd64.tar.gz`,
+                sha256: env.LINUX_HASH,
+                size: size("LINUX_SIZE"),
+              },
+            },
+          };
+
+          fs.writeFileSync(
+            path.join(env.UPDATES, "latest-wails.json"),
+            `${JSON.stringify(manifest, null, 2)}\n`,
+          );
+          NODE
 
           echo "✅ latest-wails.json generated:"
           cat "${UPDATES}/latest-wails.json"

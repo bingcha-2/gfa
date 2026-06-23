@@ -6,9 +6,7 @@
   "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.0/BingchaAI-12.0.0-setup.exe",
   "installerSha256": "7BCCE5914AAA60EC56605E96E3BF37A960F71BC4D20B2A30E441E5F45E2A74B9",
   "installerSize": 11511540,
-  "changelog": "-优化了客户端连接的稳定性与兼容性
--修复了若干已知问题
--更新了版本号",
+  "changelog": "-优化了客户端连接的稳定性与兼容性\n-修复了若干已知问题\n-更新了版本号",
   "minVersion": "12.0.0",
   "macOS": {
     "arm64": {
