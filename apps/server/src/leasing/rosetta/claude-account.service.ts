@@ -1110,10 +1110,13 @@ export class ClaudeAccountService {
       // 排查 —— 平时不打,免得把姓名/uuid 等 PII 每次刷新都灌进日志。
       const planDegraded = !snap.planType || snap.planType === "max";
       console.log(
-        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} plan=${snap.planType || "?"} usage=${JSON.stringify(snap.raw)} profileHttp=${snap.profileHttpStatus ?? "?"}${planDegraded ? ` profile=${JSON.stringify(snap.profileRaw)}` : ""}${snap.error ? ` error=${snap.error}` : ""}`,
+        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} plan=${snap.planType || "?"} acctUuid=${snap.accountUuid || "?"} usage=${JSON.stringify(snap.raw)} profileHttp=${snap.profileHttpStatus ?? "?"}${planDegraded ? ` profile=${JSON.stringify(snap.profileRaw)}` : ""}${snap.error ? ` error=${snap.error}` : ""}`,
       );
       // 套餐(来自 /api/oauth/profile):有就更新,对齐 codex 的行为。
       if (snap.planType) acc.planType = snap.planType;
+      // 母号真实 Anthropic account uuid(profile.account.uuid):存下,lease 时下发给客户端,
+      // 用于把 metadata.user_id.account_uuid 改写成它(每母号恒定 + 匹配 token)。
+      if (snap.accountUuid) (acc as any).anthropicAccountUuid = snap.accountUuid;
       const cq = snap.claudeQuota;
       if (!cq) {
         // token 已刷新并落盘;额度未解析到 → 仍算成功,回带原始返回便于排查。

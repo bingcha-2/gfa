@@ -294,7 +294,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	audit.accountID = lease.AccountId
 	audit.token = lease.AccessToken
 	if lease.AccountId > 0 {
-		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), "")
 	}
 
 	targetURL, err := p.targetURL(r)

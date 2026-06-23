@@ -72,7 +72,34 @@ function extractRateLimitTier(data: any): string {
 }
 // Claude Code sends `claude-code/<version>`; the endpoint is lenient but we
 // mirror the shape. Overridable if Anthropic ever gates on a specific version.
-const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.1.162";
+// UA 必须对齐真 Claude Code 的格式(claude-cli/<ver> (external, cli)),否则带着母号 token
+// 发一个"不像 Claude Code"的请求 = 反代信号,还可能拿不全数据。可经 env 覆盖。
+const CLAUDE_CODE_UA =
+  process.env.BCAI_CLAUDE_USER_AGENT || "claude-cli/2.1.181 (external, cli)";
+
+/**
+ * /api/oauth/profile 与 /api/oauth/usage 探测共用的"仿真请求头":尽量贴近真 Claude Code 发往
+ * Anthropic 的头(oauth beta + anthropic-version + x-app + x-stainless-* 全套),让带着母号 token
+ * 的额度探测看起来就是 Claude Code 自己在拉额度,而不是一个裸 OAuth 请求(后者更像代理/反代)。
+ */
+function claudeProbeHeaders(accessToken: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    accept: "application/json",
+    "content-type": "application/json",
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": CLAUDE_OAUTH_BETA,
+    "anthropic-dangerous-direct-browser-access": "true",
+    "user-agent": CLAUDE_CODE_UA,
+    "x-app": "cli",
+    "x-stainless-arch": "x64",
+    "x-stainless-lang": "js",
+    "x-stainless-os": "Windows",
+    "x-stainless-package-version": "0.94.0",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v24.3.0",
+  };
+}
 
 export interface ClaudeQuotaWindow {
   /** Remaining 0–100, or -1 = window absent this probe (UNKNOWN → don't persist). */
@@ -98,6 +125,9 @@ export interface ClaudeQuotaSnapshot {
   // so we log the real body to find out instead of guessing. Best-effort.
   profileRaw?: unknown;
   profileHttpStatus?: number;
+  // Anthropic 账户 uuid(profile.account.uuid)= Claude Code 写进 metadata.user_id 的 account_uuid。
+  // 存到母号后,可下发让客户端把 user_id.account_uuid 改写成它(每母号恒定 + 匹配 token)。"" = 未取到。
+  accountUuid?: string;
 }
 
 interface RawRateLimit {
@@ -145,20 +175,15 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
 async function fetchClaudePlanType(
   accessToken: string,
   proxyUrl?: string,
-): Promise<{ planType: string; raw: unknown; httpStatus: number }> {
+): Promise<{ planType: string; accountUuid: string; raw: unknown; httpStatus: number }> {
   try {
     const res = await proxyRequiredFetch(proxyUrl, CLAUDE_PROFILE_URL, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "user-agent": CLAUDE_CODE_UA,
-      },
+      headers: claudeProbeHeaders(accessToken),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { planType: "", raw: body.slice(0, 300), httpStatus: res.status };
+      return { planType: "", accountUuid: "", raw: body.slice(0, 300), httpStatus: res.status };
     }
     const data: any = await res.json();
     // Fine-grained tier first (distinguishes Max 5x vs 20x); coarse org_type as fallback.
@@ -170,10 +195,23 @@ async function fetchClaudePlanType(
       const orgType = String(data?.organization?.organization_type || "").trim();
       planType = ORG_TYPE_TO_PLAN[orgType] || "";
     }
-    return { planType, raw: data, httpStatus: res.status };
+    return { planType, accountUuid: extractAccountUuid(data), raw: data, httpStatus: res.status };
   } catch {
-    return { planType: "", raw: null, httpStatus: 0 };
+    return { planType: "", accountUuid: "", raw: null, httpStatus: 0 };
   }
+}
+
+// 尽力从 profile 抽 Anthropic 账户 uuid。【未在真实报文上核实过字段位置】—— 多路径探测,取不到就 "".
+// 候选:account.uuid / account.account_uuid / 顶层 account_uuid / organization.uuid。拿到后必须先和
+// RequestLog 里客户真实发的 account_uuid 比对确认,再用于改写。
+function extractAccountUuid(data: any): string {
+  const cand =
+    data?.account?.uuid ||
+    data?.account?.account_uuid ||
+    data?.account_uuid ||
+    data?.organization?.uuid ||
+    "";
+  return String(cand || "").trim();
 }
 
 /**
@@ -196,6 +234,7 @@ export async function fetchClaudeQuotaUpstream(
   // 5x/20x) upstream, which the hand-written specs can't prove.
   snap.profileRaw = profile.raw;
   snap.profileHttpStatus = profile.httpStatus;
+  snap.accountUuid = profile.accountUuid; // 待核实:与客户端 metadata.user_id.account_uuid 比对后再用
   return snap;
 }
 
@@ -229,13 +268,7 @@ async function fetchUsageSnapshotOnce(accessToken: string, proxyUrl?: string): P
   try {
     resp = await proxyRequiredFetch(proxyUrl, CLAUDE_USAGE_URL, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "anthropic-beta": CLAUDE_OAUTH_BETA,
-        "user-agent": CLAUDE_CODE_UA,
-      },
+      headers: claudeProbeHeaders(accessToken),
     });
   } catch (err: any) {
     return { raw: null, httpStatus: 0, error: String(err?.message || err) };

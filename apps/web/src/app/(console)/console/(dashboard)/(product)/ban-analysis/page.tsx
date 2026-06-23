@@ -211,6 +211,19 @@ function shortId(s: string, n = 6): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
+/** 从 user_id 抠 device_id 用于展示。Claude Code 现行格式是 JSON
+ *  {"device_id","account_uuid","session_id"};非 JSON(裸 hash)原样返回。 */
+function deviceIdOf(userId: string): string {
+  const s = String(userId || "");
+  if (s[0] === "{") {
+    try {
+      const o = JSON.parse(s);
+      if (o?.device_id) return String(o.device_id);
+    } catch { /* 原样 */ }
+  }
+  return s;
+}
+
 function fmtTime(iso: string) {
   try {
     return new Date(iso).toLocaleString("zh-CN", { hour12: false });
@@ -579,7 +592,7 @@ export default function BanAnalysisPage() {
                 <TableHead>产品</TableHead>
                 <TableHead>母号</TableHead>
                 <TableHead>客户</TableHead>
-                <TableHead>user_id 原始→改写</TableHead>
+                <TableHead>device 原始→改写</TableHead>
                 <TableHead>接管面</TableHead>
                 <TableHead>来源 IP</TableHead>
                 <TableHead>出口 IP</TableHead>
@@ -600,8 +613,8 @@ export default function BanAnalysisPage() {
                     <TableCell>{PRODUCT_LABEL[r.provider] ?? r.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{r.accountEmail || "—"}</TableCell>
                     <TableCell className="font-mono text-xs" title={r.customerEmail ? r.customerId : undefined}>{r.customerEmail || r.customerId || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs whitespace-nowrap" title={`原始 ${r.userId || "—"} → 改写后 ${r.canonicalUserId || "—"}`}>
-                      {shortId(r.userId)} <span className="text-muted-foreground">→</span> {shortId(r.canonicalUserId)}
+                    <TableCell className="font-mono text-xs whitespace-nowrap" title={`原始 user_id: ${r.userId || "—"}\n改写后 device_id: ${r.canonicalUserId || "—"}(account_uuid / session_id 保留原值)`}>
+                      {shortId(deviceIdOf(r.userId))} <span className="text-muted-foreground">→</span> {shortId(r.canonicalUserId)}
                     </TableCell>
                     <TableCell>{r.surface ? <Badge variant="secondary">{r.surface}</Badge> : "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.sourceIp || "—"}</TableCell>

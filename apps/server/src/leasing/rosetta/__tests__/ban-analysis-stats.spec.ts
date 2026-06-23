@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TokenUsageStatsService, deriveAccountHealth, summarizeSubStatus, canonicalUserId } from "../token-usage-stats.service";
+import { TokenUsageStatsService, deriveAccountHealth, summarizeSubStatus, canonicalUserId, userDeviceIdentity } from "../token-usage-stats.service";
 
 function makeService(prisma: any) {
   return new TokenUsageStatsService(prisma as any);
@@ -291,6 +291,41 @@ describe("getBanComparison — 已封 vs 健康 定因对比", () => {
     expect(dt.healthyAvg).toBeCloseTo(0);
     // 降序:差异最大的排前面
     expect(res.metrics[0].ratio).toBeGreaterThanOrEqual(res.metrics[1].ratio);
+  });
+});
+
+describe("userDeviceIdentity — 按 device_id 数人,不数 session", () => {
+  it("JSON 格式取 device_id;同一设备多 session → 同一身份", () => {
+    const a = userDeviceIdentity('{"device_id":"DEV1","account_uuid":"","session_id":"s-aaa"}');
+    const b = userDeviceIdentity('{"device_id":"DEV1","account_uuid":"","session_id":"s-bbb"}');
+    expect(a).toBe("DEV1");
+    expect(a).toBe(b); // 不同 session 同一设备 → 同一人
+  });
+  it("device_id 空时回退 account_uuid;非 JSON 原样;空→空", () => {
+    expect(userDeviceIdentity('{"device_id":"","account_uuid":"ACC9","session_id":"x"}')).toBe("ACC9");
+    expect(userDeviceIdentity("plain-hash-abc")).toBe("plain-hash-abc");
+    expect(userDeviceIdentity("")).toBe("");
+    expect(userDeviceIdentity("{bad json")).toBe("{bad json");
+  });
+});
+
+describe("getAccountBanAnalysis — distinctUsers 按 device_id 去重(不被 session 膨胀)", () => {
+  it("同一设备开 3 个 session → distinctUsers=1", async () => {
+    const rows = [
+      { accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", bucket: "anthropic-claude", requests: 3, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0 },
+    ];
+    const uid = (s: string) => `{"device_id":"DEV1","account_uuid":"","session_id":"${s}"}`;
+    const logRows = [
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: uid("s1"), sessionId: "s1", at: new Date("2026-06-23T00:00:05Z") },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: uid("s2"), sessionId: "s2", at: new Date("2026-06-23T00:00:20Z") },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: uid("s3"), sessionId: "s3", at: new Date("2026-06-23T00:00:40Z") },
+    ];
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue(rows) },
+      requestLog: { findMany: vi.fn().mockResolvedValue(logRows) },
+    };
+    const res = await makeService(prisma).getAccountBanAnalysis({ days: 7 });
+    expect(res.accounts[0].distinctUsers).toBe(1); // 一台设备,而非 3 个 session
   });
 });
 

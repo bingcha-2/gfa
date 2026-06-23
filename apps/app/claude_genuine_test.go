@@ -163,7 +163,7 @@ func TestCanonicalUserID_DifferentAccounts(t *testing.T) {
 
 func TestRewriteMetadataUserID_ReplacesExisting(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4","metadata":{"user_id":"real-hash-abc"},"messages":[]}`)
-	out := rewriteMetadataUserID(body, "canonical-xyz")
+	out := rewriteMetadataUserID(body, "canonical-xyz", "")
 	var parsed map[string]json.RawMessage
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestRewriteMetadataUserID_ReplacesExisting(t *testing.T) {
 
 func TestRewriteMetadataUserID_NoMetadata_Unchanged(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4","messages":[]}`)
-	out := rewriteMetadataUserID(body, "canonical-xyz")
+	out := rewriteMetadataUserID(body, "canonical-xyz", "")
 	if string(out) != string(body) {
 		t.Fatalf("body without metadata should be unchanged, got %s", out)
 	}
@@ -191,7 +191,7 @@ func TestRewriteMetadataUserID_NoMetadata_Unchanged(t *testing.T) {
 
 func TestRewriteMetadataUserID_MetadataWithoutUserID_Unchanged(t *testing.T) {
 	body := []byte(`{"metadata":{"other":"val"},"messages":[]}`)
-	out := rewriteMetadataUserID(body, "canonical-xyz")
+	out := rewriteMetadataUserID(body, "canonical-xyz", "")
 	var parsed map[string]json.RawMessage
 	json.Unmarshal(out, &parsed)
 	var meta map[string]string
@@ -201,12 +201,96 @@ func TestRewriteMetadataUserID_MetadataWithoutUserID_Unchanged(t *testing.T) {
 	}
 }
 
+func TestRewriteMetadataUserID_PreservesJSONStructure(t *testing.T) {
+	// Claude Code 现行格式:只换 device_id,保留 account_uuid / session_id。
+	uid := `{"device_id":"REALDEV","account_uuid":"acc-1","session_id":"sess-keep"}`
+	body, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{"user_id": uid},
+		"messages": []any{},
+	})
+	out := rewriteMetadataUserID(body, "CANON", "")
+
+	var p struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil {
+		t.Fatal(err)
+	}
+	var inner struct {
+		DeviceID    string `json:"device_id"`
+		AccountUUID string `json:"account_uuid"`
+		SessionID   string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(p.Metadata.UserID), &inner); err != nil {
+		t.Fatalf("inner user_id must stay valid JSON, got %q", p.Metadata.UserID)
+	}
+	if inner.DeviceID != "CANON" {
+		t.Fatalf("device_id should be canonical, got %q", inner.DeviceID)
+	}
+	if inner.AccountUUID != "acc-1" {
+		t.Fatalf("account_uuid should be preserved, got %q", inner.AccountUUID)
+	}
+	if inner.SessionID != "sess-keep" {
+		t.Fatalf("session_id should be preserved, got %q", inner.SessionID)
+	}
+}
+
+func TestRewriteMetadataUserID_RewritesAccountUuidWhenProvided(t *testing.T) {
+	// 服务端下发母号真 uuid 时:device_id→canonical、account_uuid→真 uuid、session_id 保留。
+	uid := `{"device_id":"REALDEV","account_uuid":"client-stale-uuid","session_id":"sess-keep"}`
+	body, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{"user_id": uid},
+	})
+	out := rewriteMetadataUserID(body, "CANON-DEV", "REAL-ACCT-UUID")
+
+	var p struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	json.Unmarshal(out, &p)
+	var inner struct {
+		DeviceID    string `json:"device_id"`
+		AccountUUID string `json:"account_uuid"`
+		SessionID   string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(p.Metadata.UserID), &inner); err != nil {
+		t.Fatalf("inner not valid JSON: %q", p.Metadata.UserID)
+	}
+	if inner.DeviceID != "CANON-DEV" {
+		t.Fatalf("device_id should be canonical, got %q", inner.DeviceID)
+	}
+	if inner.AccountUUID != "REAL-ACCT-UUID" {
+		t.Fatalf("account_uuid should be母号真 uuid, got %q", inner.AccountUUID)
+	}
+	if inner.SessionID != "sess-keep" {
+		t.Fatalf("session_id should be preserved, got %q", inner.SessionID)
+	}
+}
+
+func TestRewriteMetadataUserID_PlainHashStillReplacedWhole(t *testing.T) {
+	// 老格式(裸 hash,非 JSON)→ 整段替换成 canonical(回退旧行为)。
+	body := []byte(`{"metadata":{"user_id":"real-hash-abc"},"messages":[]}`)
+	out := rewriteMetadataUserID(body, "canonical-xyz", "")
+	var p struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	json.Unmarshal(out, &p)
+	if p.Metadata.UserID != "canonical-xyz" {
+		t.Fatalf("plain hash should be wholly replaced, got %q", p.Metadata.UserID)
+	}
+}
+
 func TestRewriteMetadataUserID_EmptyBody(t *testing.T) {
-	out := rewriteMetadataUserID(nil, "canonical")
+	out := rewriteMetadataUserID(nil, "canonical", "")
 	if out != nil {
 		t.Fatal("nil body should return nil")
 	}
-	out = rewriteMetadataUserID([]byte{}, "canonical")
+	out = rewriteMetadataUserID([]byte{}, "canonical", "")
 	if len(out) != 0 {
 		t.Fatal("empty body should return empty")
 	}
@@ -214,7 +298,7 @@ func TestRewriteMetadataUserID_EmptyBody(t *testing.T) {
 
 func TestRewriteMetadataUserID_InvalidJSON(t *testing.T) {
 	body := []byte("not json at all")
-	out := rewriteMetadataUserID(body, "canonical")
+	out := rewriteMetadataUserID(body, "canonical", "")
 	if string(out) != string(body) {
 		t.Fatal("invalid JSON should pass through unchanged")
 	}

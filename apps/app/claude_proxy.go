@@ -351,7 +351,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 真实 userId 已在上方提取(reportUserID),服务端 ban analysis 用真值;上游拿改写值。
 	// accountID=0 是异常兜底,跳过改写避免所有无号请求碰撞到同一个 hash。
 	if lease.AccountId > 0 {
-		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), lease.AccountUuid)
 	}
 
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
@@ -496,7 +496,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	audit.accountID = lease.AccountId
 	audit.token = lease.AccessToken
 	if lease.AccountId > 0 {
-		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), lease.AccountUuid)
 	}
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
 	if r.URL.RawQuery != "" {

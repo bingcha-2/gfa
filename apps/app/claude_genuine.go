@@ -83,9 +83,19 @@ func canonicalUserID(accountID int) string {
 	return hex.EncodeToString(h[:])
 }
 
-// rewriteMetadataUserID 如果请求体里有 metadata.user_id,就地替换成 canonicalID;
-// 没有 metadata 或 user_id 则原样返回(不注入新字段,避免干扰不带此字段的客户端)。
-func rewriteMetadataUserID(body []byte, canonicalID string) []byte {
+// rewriteMetadataUserID 改写请求体里的 metadata.user_id,让上游把这个订阅号看成「一个用户」。
+//
+// Claude Code 现行 user_id 是一段 JSON:{"device_id","account_uuid","session_id"}。
+//   - device_id 每台安装唯一、且【不与 OAuth token 绑定】→ 多客户共用一个母号 = 多个 device_id
+//     打同一上游号 = 共享铁证;伪造它不会"对不上 token",安全 → 归一成按母号固定的 canonical。
+//   - account_uuid 是 Anthropic 账户 uuid,【很可能与 token 绑定】→ 伪造成 hash 会对不上、反而露馅;
+//     实测它每母号也非恒定(母号真账户 + 部分客户残留旧账户 + 空,混在一起)。故【透传不动】:
+//     真要关这个弱泄露,得由服务端下发母号真实 account_uuid 再改写(既恒定又匹配 token),非此处。
+//   - session_id 透传(留着才像正常多会话,不塌成"一个 session 干所有"那种更像 bot 的样子)。
+//   - 保留 JSON 结构,否则上游看到的 user_id 不是 Claude Code 格式,反而暴露是代理。
+// 老格式(user_id 是裸 hash / 非 JSON)→ 整段替换成 canonicalID(回退旧行为)。
+// 没有 metadata 或 user_id 则原样返回。
+func rewriteMetadataUserID(body []byte, canonicalID, realAccountUUID string) []byte {
 	if len(body) == 0 || canonicalID == "" {
 		return body
 	}
@@ -101,11 +111,11 @@ func rewriteMetadataUserID(body []byte, canonicalID string) []byte {
 	if json.Unmarshal(metaRaw, &meta) != nil {
 		return body
 	}
-	if _, has := meta["user_id"]; !has {
+	uidRaw, has := meta["user_id"]
+	if !has {
 		return body
 	}
-	uidJSON, _ := json.Marshal(canonicalID)
-	meta["user_id"] = uidJSON
+	meta["user_id"] = rewriteUserIDValue(uidRaw, canonicalID, realAccountUUID)
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return body
@@ -114,6 +124,39 @@ func rewriteMetadataUserID(body []byte, canonicalID string) []byte {
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return body
+	}
+	return out
+}
+
+// rewriteUserIDValue 改写单个 user_id 值(uidRaw 是它的 JSON 编码)。JSON 格式:device_id 换成
+// canonicalID;account_uuid 换成母号真实 uuid(realAccountUUID 非空时,既统一又匹配 token);
+// session_id 保留。其余情况整段替换成 canonicalID。返回新值的 JSON 编码。
+func rewriteUserIDValue(uidRaw json.RawMessage, canonicalID, realAccountUUID string) json.RawMessage {
+	flat, _ := json.Marshal(canonicalID) // 兜底:裸 hash / 非 JSON
+	var uidStr string
+	if json.Unmarshal(uidRaw, &uidStr) != nil {
+		return flat // user_id 不是字符串 → 整段替换
+	}
+	// 结构固定、字段顺序对齐 Claude Code(device_id, account_uuid, session_id)。
+	var inner struct {
+		DeviceID    string `json:"device_id"`
+		AccountUUID string `json:"account_uuid"`
+		SessionID   string `json:"session_id"`
+	}
+	if json.Unmarshal([]byte(uidStr), &inner) != nil || inner.DeviceID == "" {
+		return flat // 非 JSON 或没有 device_id → 整段替换
+	}
+	inner.DeviceID = canonicalID
+	if realAccountUUID != "" {
+		inner.AccountUUID = realAccountUUID // 服务端下发的母号真 uuid → 每母号恒定 + 匹配 token
+	}
+	newInner, err := json.Marshal(inner)
+	if err != nil {
+		return flat
+	}
+	out, err := json.Marshal(string(newInner))
+	if err != nil {
+		return flat
 	}
 	return out
 }

@@ -100,6 +100,10 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   leaseResponseExtras(account: ClaudeAccount): Record<string, unknown> {
     const a = account as Record<string, unknown>;
     const extras: Record<string, unknown> = {};
+    // 母号真实 Anthropic account uuid(刷新额度时从 profile.account.uuid 落库)。下发给客户端,
+    // 客户端把 metadata.user_id.account_uuid 改写成它 → 每母号恒定 + 匹配 token。空则不下发。
+    const acctUuid = String(a.anthropicAccountUuid || "").trim();
+    if (acctUuid) extras.accountUuid = acctUuid;
     // 出口代理(accountProxyUrl)与 egressRequired 由 LeaseService 通用下发,这里不再重复。
     const hourly = typeof a.claudeHourlyPercent === "number" ? a.claudeHourlyPercent : null;
     const weekly = typeof a.claudeWeeklyPercent === "number" ? a.claudeWeeklyPercent : null;

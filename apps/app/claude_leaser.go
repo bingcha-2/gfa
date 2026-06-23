@@ -23,6 +23,7 @@ type ClaudeQuotaWindow struct {
 type ClaudeTokenLease struct {
 	AccessToken string `json:"accessToken"`
 	AccountId   int    `json:"accountId"`
+	AccountUuid string `json:"accountUuid"` // 母号真实 Anthropic account uuid → 改写 metadata.user_id.account_uuid
 	LeaseId     string `json:"leaseId"`
 	EmailHint   string `json:"emailHint"`
 	PlanType    string `json:"planType"` // 账号会员等级(max/pro/...),供前端展示
@@ -42,6 +43,7 @@ type claudeLeaseTokenResp struct {
 	Error        string          `json:"error"`
 	AccessToken  string          `json:"accessToken"`
 	AccountId    json.RawMessage `json:"accountId"`
+	AccountUuid  string          `json:"accountUuid"`
 	LeaseId      string          `json:"leaseId"`
 	EmailHint    string          `json:"emailHint"`
 	PlanType     string          `json:"planType"`
@@ -183,6 +185,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	lease := &ClaudeTokenLease{
 		AccessToken: leaseResp.AccessToken,
 		AccountId:   parseAccountId(leaseResp.AccountId),
+		AccountUuid: leaseResp.AccountUuid,
 		LeaseId:     leaseResp.LeaseId,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,

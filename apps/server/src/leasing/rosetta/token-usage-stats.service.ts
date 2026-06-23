@@ -99,6 +99,23 @@ export function canonicalUserId(accountId: number): string {
   return createHash("sha256").update("gfa-uid-" + accountId).digest("hex");
 }
 
+/**
+ * 从 metadata.user_id 抠出"稳定的人/设备身份"用于数 distinct 用户。
+ * Claude Code 现行格式:user_id 是 JSON {"device_id","account_uuid","session_id"} —— session_id
+ * 每会话都变,直接数原始串 = 数 session 不是数人。取 device_id(回退 account_uuid)作身份;
+ * 不是 JSON 的(老格式/裸 hash)原样返回。
+ */
+export function userDeviceIdentity(userId: string): string {
+  const s = String(userId || "").trim();
+  if (!s || s[0] !== "{") return s;
+  try {
+    const o = JSON.parse(s);
+    const id = o?.device_id || o?.account_uuid;
+    if (id) return String(id);
+  } catch { /* 非法 JSON → 原样 */ }
+  return s;
+}
+
 /** 往"分钟 → distinct session 集合"里记一条。 */
 function addSessionToMinute(m: Map<number, Set<string>>, min: number, sessionId: string): void {
   let set = m.get(min);
@@ -366,7 +383,7 @@ export class TokenUsageStatsService {
       const min = Math.floor(new Date(r.at).getTime() / 60000);
       if (r.sourceIp) s.sources.add(r.sourceIp);
       if (r.exitIp) s.exits.add(r.exitIp);
-      if (r.userId) s.users.add(r.userId);
+      if (r.userId) s.users.add(userDeviceIdentity(r.userId)); // 按 device_id 去重,不数 session
       if (r.surface === "desktop") s.desktop += 1;
       else if (r.surface === "cli") s.cli += 1;
       else if (r.surface === "ide") s.ide += 1;
@@ -616,7 +633,7 @@ export class TokenUsageStatsService {
       totalTokens += r.totalTokens;
       if (r.sourceIp) ips.add(r.sourceIp);
       if (r.deviceId) devices.add(r.deviceId);
-      if (r.userId) users.add(r.userId);
+      if (r.userId) users.add(userDeviceIdentity(r.userId)); // 按 device_id 去重,不数 session
       const m = Math.floor(new Date(r.at).getTime() / 60000);
       minutes.set(m, (minutes.get(m) || 0) + 1);
     }
