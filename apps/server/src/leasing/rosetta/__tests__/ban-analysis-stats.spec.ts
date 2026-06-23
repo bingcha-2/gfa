@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TokenUsageStatsService, deriveAccountHealth, summarizeSubStatus } from "../token-usage-stats.service";
+import { TokenUsageStatsService, deriveAccountHealth, summarizeSubStatus, canonicalUserId } from "../token-usage-stats.service";
 
 function makeService(prisma: any) {
   return new TokenUsageStatsService(prisma as any);
@@ -178,6 +178,31 @@ describe("getAccountBanAnalysis — 客户标记订阅已取消", () => {
   });
 });
 
+describe("getAccountBanAnalysis — 峰值 session/分(母号级 + 客户级)", () => {
+  it("某 60s 桶内 distinct session-id 的最大数(同 session 多次请求只算 1)", async () => {
+    const rows = [
+      { accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", bucket: "anthropic-claude", requests: 5, failedRequests: 0, reverseProxyHits: 0, totalTokens: 10 },
+    ];
+    const t = "2026-06-23T00:00:";
+    // 同一分钟 3 个不同 session(s1/s2/s3),其中 s1 出现两次 → 该分钟 distinct=3
+    const logRows = [
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", sessionId: "s1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", at: new Date(`${t}05Z`) },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", sessionId: "s1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", at: new Date(`${t}10Z`) },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", sessionId: "s2", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", at: new Date(`${t}20Z`) },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", sessionId: "s3", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", at: new Date(`${t}50Z`) },
+      // 下一分钟只有 1 个 session
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "cust1", sessionId: "s4", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", at: new Date("2026-06-23T00:01:10Z") },
+    ];
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue(rows) },
+      requestLog: { findMany: vi.fn().mockResolvedValue(logRows) },
+    };
+    const res = await makeService(prisma).getAccountBanAnalysis({ days: 7 });
+    expect(res.accounts[0].peakSessionsPerMin).toBe(3);              // 母号级峰值
+    expect(res.accounts[0].customers[0].peakSessionsPerMin).toBe(3); // 客户级峰值
+  });
+});
+
 describe("getBanAnalysis — TTL 缓存(避免每次全量扫 RequestLog)", () => {
   it("TTL 内只扫一次 RequestLog,过期后重扫", async () => {
     let clock = 1_000_000;
@@ -266,6 +291,44 @@ describe("getBanComparison — 已封 vs 健康 定因对比", () => {
     expect(dt.healthyAvg).toBeCloseTo(0);
     // 降序:差异最大的排前面
     expect(res.metrics[0].ratio).toBeGreaterThanOrEqual(res.metrics[1].ratio);
+  });
+});
+
+describe("canonicalUserId — 改写后 user_id(与 Go 端一致)", () => {
+  it("确定性 + 64 字符 hex;accountId<=0 返回空", () => {
+    const a = canonicalUserId(42);
+    expect(a).toBe(canonicalUserId(42));
+    expect(a).toHaveLength(64);
+    expect(canonicalUserId(1)).not.toBe(canonicalUserId(2));
+    expect(canonicalUserId(0)).toBe("");
+    expect(canonicalUserId(-1)).toBe("");
+  });
+});
+
+describe("getBanComparison — RequestLog 类指标只对有上报母号求均值", () => {
+  it("没上报的母号(distinctUsers=0)不进 RequestLog 类指标分母", async () => {
+    // 3 个健康母号,只有 a@x 有 RequestLog 上报(2 个 user);b@x、c@x 没上报。
+    const cardRows = [
+      { accountEmail: "a@x.com", accessKeyId: "k1", bucket: "anthropic-claude", requests: 10, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0 },
+      { accountEmail: "b@x.com", accessKeyId: "k2", bucket: "anthropic-claude", requests: 10, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0 },
+      { accountEmail: "c@x.com", accessKeyId: "k3", bucket: "anthropic-claude", requests: 10, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0 },
+    ];
+    const logRows = [
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u1", sessionId: "s1", at: new Date("2026-06-23T00:00:05Z") },
+      { provider: "anthropic", accountEmail: "a@x.com", accessKeyId: "k1", customerId: "c1", surface: "cli", sourceIp: "1.1.1.1", exitIp: "", userId: "u2", sessionId: "s1", at: new Date("2026-06-23T00:00:40Z") },
+    ];
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue(cardRows) },
+      accountBanEvent: { findMany: vi.fn().mockResolvedValue([]) },
+      requestLog: { findMany: vi.fn().mockResolvedValue(logRows) },
+    };
+    const res = await makeService(prisma).getBanComparison({ days: 7 });
+    const users = res.metrics.find((m) => m.key === "distinctUsers")!;
+    // 只对有上报的 a@x 求均值 → 2(而非被 b/c 的 0 稀释成 2/3)
+    expect(users.healthyAvg).toBe(2);
+    // CardUsageHourly 类指标(请求数)仍对全部 3 个母号求均值 → 10
+    const reqs = res.metrics.find((m) => m.key === "requests")!;
+    expect(reqs.healthyAvg).toBe(10);
   });
 });
 

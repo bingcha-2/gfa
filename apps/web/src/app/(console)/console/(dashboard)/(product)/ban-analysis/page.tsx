@@ -16,7 +16,7 @@ import { formatTokens } from "@/lib/format";
 
 // ── API shapes(对齐 token-usage-stats.service.getBanAnalysis)─────────────────
 type SubStatus = "ACTIVE" | "EXPIRED" | "CANCELLED" | "";
-type CustomerRisk = { customerId: string; customerEmail: string; requests: number; reverseProxyHits: number; reverseProxyRate: number; distinctCards: number; peakReqPerMin: number; distinctSourceIps: number; cliReqs: number; desktopReqs: number; ideReqs: number; subStatus: SubStatus };
+type CustomerRisk = { customerId: string; customerEmail: string; requests: number; reverseProxyHits: number; reverseProxyRate: number; distinctCards: number; peakReqPerMin: number; peakSessionsPerMin: number; distinctSourceIps: number; cliReqs: number; desktopReqs: number; ideReqs: number; subStatus: SubStatus };
 type AccountHealthTone = "ok" | "amber" | "destructive" | "muted";
 type AccountHealth = { label: string; tone: AccountHealthTone; reason: string };
 type AccountRisk = {
@@ -31,6 +31,7 @@ type AccountRisk = {
   distinctCustomers: number;
   totalTokens: number;
   peakReqPerMin: number;
+  peakSessionsPerMin: number;
   distinctSourceIps: number;
   distinctUsers: number;
   status?: AccountHealth;
@@ -83,6 +84,8 @@ type RequestLogRow = {
   accessKeyId: string;
   customerId: string;
   customerEmail: string;
+  userId: string;
+  canonicalUserId: string;
   deviceId: string;
   modelKey: string;
   status: number;
@@ -124,6 +127,14 @@ function RpmBadge({ rpm }: { rpm: number }) {
   if (rpm >= 30) return <Badge variant="destructive">{rpm}</Badge>;
   if (rpm >= 10) return <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400">{rpm}</Badge>;
   if (rpm > 0) return <span className="tabular-nums">{rpm}</span>;
+  return <span className="text-muted-foreground">—</span>;
+}
+
+function SessionsBadge({ n }: { n: number }) {
+  // 一个真人一分钟撑死开两三个 Claude Code 会话。多了 = 多人共用/脚本批量开 session。
+  if (n >= 10) return <Badge variant="destructive">{n}</Badge>;
+  if (n >= 4) return <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400">{n}</Badge>;
+  if (n > 0) return <span className="tabular-nums">{n}</span>;
   return <span className="text-muted-foreground">—</span>;
 }
 
@@ -192,6 +203,12 @@ function prettyHeaders(s: string): string {
   } catch {
     return s;
   }
+}
+
+/** 长 hash 只显示前几位(完整值靠 title 悬停看)。空 → —。 */
+function shortId(s: string, n = 6): string {
+  if (!s) return "—";
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 function fmtTime(iso: string) {
@@ -445,6 +462,7 @@ export default function BanAnalysisPage() {
                 <TableHead className="text-right">反代率·命中</TableHead>
                 <TableHead className="text-right">用户</TableHead>
                 <TableHead className="text-right">峰值/分</TableHead>
+                <TableHead className="text-right">session/分</TableHead>
                 <TableHead className="text-right">来源IP</TableHead>
                 <TableHead className="text-right">扇出卡</TableHead>
                 <TableHead className="text-right">扇出客户</TableHead>
@@ -453,7 +471,7 @@ export default function BanAnalysisPage() {
             </TableHeader>
             <TableBody>
               {riskAccounts.length === 0 && (
-                <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground">无数据</TableCell></TableRow>
+                <TableRow><TableCell colSpan={14} className="text-center text-muted-foreground">无数据</TableCell></TableRow>
               )}
               {riskAccounts.map((a) => {
                 const key = `${a.product} ${a.accountEmail}`;
@@ -469,6 +487,7 @@ export default function BanAnalysisPage() {
                       <TableCell className="text-right"><RateBadge rate={a.reverseProxyRate} hits={a.reverseProxyHits} /></TableCell>
                       <TableCell className="text-right"><UsersBadge n={a.distinctUsers} /></TableCell>
                       <TableCell className="text-right"><RpmBadge rpm={a.peakReqPerMin} /></TableCell>
+                      <TableCell className="text-right"><SessionsBadge n={a.peakSessionsPerMin} /></TableCell>
                       <TableCell className="text-right tabular-nums">{a.distinctSourceIps || "—"}</TableCell>
                       <TableCell className="text-right tabular-nums">{a.distinctCards}</TableCell>
                       <TableCell className="text-right"><CustomersBadge n={a.distinctCustomers} /></TableCell>
@@ -476,7 +495,7 @@ export default function BanAnalysisPage() {
                     </TableRow>
                     {openAcct === key && (
                       <TableRow key={`${key}-cards`}>
-                        <TableCell colSpan={13} className="bg-muted/30">
+                        <TableCell colSpan={14} className="bg-muted/30">
                           <Table>
                             <TableHeader>
                               <TableRow>
@@ -485,6 +504,7 @@ export default function BanAnalysisPage() {
                                 <TableHead className="text-right">反代率·命中</TableHead>
                                 <TableHead className="text-right">持卡数</TableHead>
                                 <TableHead className="text-right">峰值/分</TableHead>
+                                <TableHead className="text-right">session/分</TableHead>
                                 <TableHead className="text-right">来源IP</TableHead>
                                 <TableHead>接管面</TableHead>
                               </TableRow>
@@ -499,6 +519,7 @@ export default function BanAnalysisPage() {
                                   <TableCell className="text-right"><RateBadge rate={c.reverseProxyRate} hits={c.reverseProxyHits} /></TableCell>
                                   <TableCell className="text-right tabular-nums">{c.distinctCards}</TableCell>
                                   <TableCell className="text-right"><RpmBadge rpm={c.peakReqPerMin} /></TableCell>
+                                  <TableCell className="text-right"><SessionsBadge n={c.peakSessionsPerMin} /></TableCell>
                                   <TableCell className="text-right tabular-nums">{c.distinctSourceIps || "—"}</TableCell>
                                   <TableCell><SurfaceCell cli={c.cliReqs} desktop={c.desktopReqs} ide={c.ideReqs} /></TableCell>
                                 </TableRow>
@@ -558,6 +579,7 @@ export default function BanAnalysisPage() {
                 <TableHead>产品</TableHead>
                 <TableHead>母号</TableHead>
                 <TableHead>客户</TableHead>
+                <TableHead>user_id 原始→改写</TableHead>
                 <TableHead>接管面</TableHead>
                 <TableHead>来源 IP</TableHead>
                 <TableHead>出口 IP</TableHead>
@@ -568,7 +590,7 @@ export default function BanAnalysisPage() {
             </TableHeader>
             <TableBody>
               {logs.length === 0 && (
-                <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground">点「查询」加载请求明细</TableCell></TableRow>
+                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground">点「查询」加载请求明细</TableCell></TableRow>
               )}
               {logs.map((r) => (
                 <Fragment key={r.id}>
@@ -578,6 +600,9 @@ export default function BanAnalysisPage() {
                     <TableCell>{PRODUCT_LABEL[r.provider] ?? r.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{r.accountEmail || "—"}</TableCell>
                     <TableCell className="font-mono text-xs" title={r.customerEmail ? r.customerId : undefined}>{r.customerEmail || r.customerId || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-nowrap" title={`原始 ${r.userId || "—"} → 改写后 ${r.canonicalUserId || "—"}`}>
+                      {shortId(r.userId)} <span className="text-muted-foreground">→</span> {shortId(r.canonicalUserId)}
+                    </TableCell>
                     <TableCell>{r.surface ? <Badge variant="secondary">{r.surface}</Badge> : "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.sourceIp || "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.exitIp || "—"}</TableCell>
@@ -587,7 +612,7 @@ export default function BanAnalysisPage() {
                   </TableRow>
                   {openLog === r.id && (
                     <TableRow>
-                      <TableCell colSpan={11} className="bg-muted/30">
+                      <TableCell colSpan={12} className="bg-muted/30">
                         <div className="text-xs text-muted-foreground">设备:<span className="font-mono">{r.deviceId || "—"}</span> · tokens:{r.totalTokens}</div>
                         <pre className="mt-2 max-h-48 overflow-auto rounded bg-background p-2 font-mono text-xs">{prettyHeaders(r.headers)}</pre>
                       </TableCell>

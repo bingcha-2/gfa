@@ -319,6 +319,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 过滤后的请求头(去凭证头、跳超大值),随上报落 per-request 热表。
 	reportHeaders := filterReportHeaders(r.Header)
 	reportUserID := extractMetadataUserID(body) // metadata.user_id → 服务端数真实用户
+	reportSessionID := strings.TrimSpace(r.Header.Get("X-Claude-Code-Session-Id")) // 每会话 id → 数 session/分
 
 	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
 	// (见 quota_enforcement.go)。无份额数据(号池/静态卡)→ 自然放行。
@@ -409,6 +410,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		details.Surface = surfaceTag
 		details.Headers = reportHeaders
 		details.UserId = reportUserID
+		details.SessionId = reportSessionID
 		if copyErr != nil {
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"

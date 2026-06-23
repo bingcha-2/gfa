@@ -579,6 +579,7 @@ model RequestLog {
   customerId   String   @default("")          // 客户
   deviceId     String   @default("")          // 设备
   userId       String   @default("")          // Claude Code metadata.user_id(每用户稳定 hash)→ 数真实用户
+  sessionId    String   @default("")          // X-Claude-Code-Session-Id(每会话 id)→ 数 session/分
   modelKey     String   @default("")
   status       Int      @default(0)
   totalTokens  Int      @default(0)

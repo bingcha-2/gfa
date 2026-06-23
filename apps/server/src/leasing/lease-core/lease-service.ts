@@ -104,6 +104,7 @@ export type RequestLogRecorder = {
     customerId?: string;
     deviceId?: string;
     userId?: string;
+    sessionId?: string;
     modelKey?: string;
     status?: number;
     totalTokens?: number;
@@ -1179,6 +1180,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const deviceId = String(lease?.clientId || payload?.clientId || "");
       const surface = String(payload?.surface || "");
       const userId = String(payload?.userId || "");
+      const sessionId = String(payload?.sessionId || "");
       const headers = typeof payload?.headers === "string" ? payload.headers : payload?.headers ? JSON.stringify(payload.headers) : "";
       const reverseProxy = Boolean(payload?.clientFlag);
 
@@ -1191,7 +1193,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
       this.requestLogRecorder?.record({
         provider: this.provider.id, accountId, accountEmail, accessKeyId: cardId,
-        customerId: auth.record?.customerId as string | undefined, deviceId, userId,
+        customerId: auth.record?.customerId as string | undefined, deviceId, userId, sessionId,
         modelKey, status, totalTokens: tokens, reverseProxy, surface, sourceIp, exitIp, headers,
       });
     }

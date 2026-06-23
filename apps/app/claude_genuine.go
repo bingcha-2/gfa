@@ -20,19 +20,36 @@ import (
 // 这是最硬、最低误伤的硬指纹;能被肯花功夫的高仿反代照抄绕过,那一层得靠并发/节奏统计。
 const claudeCodeSystemSignature = "You are Claude Code, Anthropic's official CLI for Claude"
 
-// detectClaudeCodeClient 检查请求体 + 头,判断是否真 Claude Code。
-// genuine=false 时返回一个简短、无 PII 的 flag 说明哪儿对不上,供后台按卡聚合定位反代。
-// 判定只看 system 指纹(决定性);UA 等头信息仅作为 flag 里的排查线索,不参与判定。
+// detectClaudeCodeClient 检查请求体 + 头,判断是否真 Claude Code。分层:
+//
+//	第一层(命中任一 = 正版,覆盖 CLI / VSCode / JetBrains / Agent SDK):
+//	  - system 第一块带 CLI 开场白(老的硬指纹,只覆盖 CLI);
+//	  - 带 X-Claude-Code-Session-Id 头(Claude Code 专属,转卖裸 API/外壳不会生成);
+//	  - anthropic-beta 含 claude-code(产品级 beta 标记,同上)。
+//	第二层(无任何正版强标记 → 反代嫌疑):返回简短、无 PII 的 flag 说明哪儿对不上,
+//	  并区分"外来客户端"(foreign_ua)便于后台分辨"非 CLI 正版" vs "真转卖"。
+//
+// 注:头可伪造、system 可照抄,这层只抓懒/外来客户端(占转卖大头);高仿照搬的靠
+// 统计层(一个母号下多 user_id / 多 IP / 高并发 / 多 session)兜底。
 func detectClaudeCodeClient(body []byte, h http.Header) (genuine bool, flag string) {
 	if bodyHasClaudeCodeSystem(body) {
 		return true, ""
 	}
+	if strings.TrimSpace(h.Get("X-Claude-Code-Session-Id")) != "" {
+		return true, ""
+	}
+	if strings.Contains(strings.ToLower(h.Get("Anthropic-Beta")), "claude-code") {
+		return true, ""
+	}
 	reasons := []string{"no_cc_system_prompt"}
 	ua := strings.ToLower(strings.TrimSpace(h.Get("User-Agent")))
-	if !strings.HasPrefix(ua, "claude-cli/") {
-		reasons = append(reasons, "ua_not_cli")
+	if ua == "" {
+		reasons = append(reasons, "no_ua")
+	} else if !strings.HasPrefix(ua, "claude-cli/") {
+		// 长着别的客户端的脸(Cline/Roo/python-requests/axios/openai-* 等)= 反代正向标记。
+		reasons = append(reasons, "foreign_ua")
 	}
-	// x-app: cli 与 x-stainless-* 是真 CLI 的附带头;缺失再加一条线索(仍只是线索)。
+	// x-app: cli 是真 CLI 的附带头;缺失再加一条线索。
 	if !strings.EqualFold(strings.TrimSpace(h.Get("x-app")), "cli") {
 		reasons = append(reasons, "no_x_app_cli")
 	}

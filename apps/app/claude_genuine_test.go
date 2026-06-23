@@ -49,8 +49,57 @@ func TestDetectClaudeCodeClient_ForeignSystem(t *testing.T) {
 	if genuine {
 		t.Fatal("foreign system prompt must be non-genuine")
 	}
-	// no CC system + no claude-cli UA + no x-app:cli → all three triage reasons
-	if flag != "no_cc_system_prompt,ua_not_cli,no_x_app_cli" {
+	// no CC system + no UA + no x-app:cli → all three triage reasons
+	if flag != "no_cc_system_prompt,no_ua,no_x_app_cli" {
+		t.Fatalf("unexpected flag: %q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_GenuineViaSessionIdHeader(t *testing.T) {
+	// 非 CLI 正版面(VSCode/Agent SDK):system 非 CLI 开场白,但带 Claude Code 专属 session-id 头。
+	body := []byte(`{"system":[{"type":"text","text":"Custom agent instructions."}],"messages":[]}`)
+	h := http.Header{}
+	h.Set("X-Claude-Code-Session-Id", "29d35cc5-2993-42fd-8a29-79f96ecc3116")
+	genuine, flag := detectClaudeCodeClient(body, h)
+	if !genuine {
+		t.Fatalf("X-Claude-Code-Session-Id should make it genuine, got flag=%q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_GenuineViaClaudeCodeBeta(t *testing.T) {
+	body := []byte(`{"system":"Custom","messages":[]}`)
+	h := http.Header{}
+	h.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14")
+	genuine, _ := detectClaudeCodeClient(body, h)
+	if !genuine {
+		t.Fatal("anthropic-beta containing claude-code should be genuine")
+	}
+}
+
+func TestDetectClaudeCodeClient_RealVscodeAgentSdk(t *testing.T) {
+	// 真实误判样本:VSCode 扩展 + Agent SDK,非 CLI system,但头部全是正版特征。
+	body := []byte(`{"system":[{"type":"text","text":"You are an interactive agent."}],"messages":[]}`)
+	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/2.1.186 (external, claude-vscode, agent-sdk/0.3.186)")
+	h.Set("X-App", "cli")
+	h.Set("Anthropic-Beta", "claude-code-20250219,context-management-2025-06-27")
+	h.Set("X-Claude-Code-Session-Id", "29d35cc5-2993-42fd-8a29-79f96ecc3116")
+	genuine, flag := detectClaudeCodeClient(body, h)
+	if !genuine {
+		t.Fatalf("genuine VSCode/agent-sdk request must not be flagged, got flag=%q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_ForeignUA(t *testing.T) {
+	// 外来客户端(Cline 等):无正版强标记 + 外来 UA → foreign_ua 正向标记。
+	body := []byte(`{"system":"You are a helpful assistant.","messages":[]}`)
+	h := http.Header{}
+	h.Set("User-Agent", "Cline/1.0.0")
+	genuine, flag := detectClaudeCodeClient(body, h)
+	if genuine {
+		t.Fatal("foreign client must be non-genuine")
+	}
+	if flag != "no_cc_system_prompt,foreign_ua,no_x_app_cli" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }

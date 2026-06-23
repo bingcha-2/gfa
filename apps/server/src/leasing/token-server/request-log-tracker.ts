@@ -27,6 +27,7 @@ export interface RequestLogEvent {
   customerId?: string;
   deviceId?: string;
   userId?: string;
+  sessionId?: string;
   modelKey?: string;
   status?: number;
   totalTokens?: number;
@@ -63,6 +64,7 @@ export class RequestLogTracker {
       customerId: e.customerId || "",
       deviceId: e.deviceId || "",
       userId: e.userId || "",
+      sessionId: e.sessionId || "",
       modelKey: e.modelKey || "",
       status: Number(e.status || 0),
       totalTokens: Number(e.totalTokens || 0),

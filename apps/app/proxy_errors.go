@@ -461,6 +461,8 @@ type ReportDetails struct {
 	Headers string
 	// Claude Code metadata.user_id(每用户稳定 hash)→ 服务端按母号数 distinct = 真实用户数。
 	UserId string
+	// X-Claude-Code-Session-Id(Claude Code 每会话 id)→ 服务端按母号/客户统计"每分钟开多少 session"。
+	SessionId string
 
 	// Claude 5h/周额度窗口:从上游 anthropic-ratelimit-unified-* 响应头解析(仅 200 带),
 	// 随用量上报回服务端 applyQuotaSnapshot → 客户端血条。HasClaudeWindows=false 时不带。

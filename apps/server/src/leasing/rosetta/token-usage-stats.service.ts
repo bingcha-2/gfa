@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 
@@ -70,16 +72,38 @@ function hourlyAccountScope(opts: { accountEmail?: string }): Record<string, unk
 }
 
 /** 每个客户(买家)的 RequestLog 派生统计:不同来源 IP + 按分钟分桶(算峰值 req/min)
- *  + 接管面计数(cli / desktop / ide)。surface 由客户端上报,老客户端为空 → 全 0。 */
-type CustomerLogStat = { sources: Set<string>; minutes: Map<number, number>; cli: number; desktop: number; ide: number };
-/** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min),
- *  外加该母号下每个客户的同口径明细(点开母号看哪个买家在突发/多 IP)。 */
-type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; cli: number; desktop: number; ide: number; total: number; minutes: Map<number, number>; customers: Map<string, CustomerLogStat> };
+ *  + 接管面计数(cli / desktop / ide)+ 每分钟 distinct session 集合(算峰值 session/min)。 */
+type CustomerLogStat = { sources: Set<string>; minutes: Map<number, number>; cli: number; desktop: number; ide: number; sessionMinutes: Map<number, Set<string>> };
+/** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min)、
+ *  每分钟 distinct session(算峰值 session/min),外加该母号下每个客户的同口径明细。 */
+type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; cli: number; desktop: number; ide: number; total: number; minutes: Map<number, number>; sessionMinutes: Map<number, Set<string>>; customers: Map<string, CustomerLogStat> };
 type RequestLogStats = Map<string, AccountLogStat>;
 
 /** 峰值 req/min:在窗口内某 60s 分桶里的最大请求数。无数据 → 0。 */
 function peakReqPerMin(s?: { minutes: Map<number, number> }): number {
   return s && s.minutes.size ? Math.max(...s.minutes.values()) : 0;
+}
+
+/** 峰值 session/min:某 60s 分桶里 distinct session-id 的最大数。无数据 → 0。 */
+function peakSessionsPerMin(s?: { sessionMinutes: Map<number, Set<string>> }): number {
+  if (!s || s.sessionMinutes.size === 0) return 0;
+  let max = 0;
+  for (const set of s.sessionMinutes.values()) if (set.size > max) max = set.size;
+  return max;
+}
+
+/** 转发给上游的改写后 user_id:SHA256("gfa-uid-{accountId}") hex,与 Go 端 canonicalUserID 一致。
+ *  同一母号恒定 → 上游只看到"一个号 = 一个用户"。accountId<=0(异常)不改写 → 返回 ""。 */
+export function canonicalUserId(accountId: number): string {
+  if (!accountId || accountId <= 0) return "";
+  return createHash("sha256").update("gfa-uid-" + accountId).digest("hex");
+}
+
+/** 往"分钟 → distinct session 集合"里记一条。 */
+function addSessionToMinute(m: Map<number, Set<string>>, min: number, sessionId: string): void {
+  let set = m.get(min);
+  if (!set) { set = new Set(); m.set(min, set); }
+  set.add(sessionId);
 }
 
 /**
@@ -327,7 +351,7 @@ export class TokenUsageStatsService {
     const cap = TokenUsageStatsService.REQUEST_LOG_SCAN_CAP;
     const logs = await this.prisma.requestLog.findMany({
       where: { at: { gte: since }, provider: { in: ["codex", "anthropic"] } },
-      select: { provider: true, accountEmail: true, accessKeyId: true, customerId: true, surface: true, sourceIp: true, exitIp: true, userId: true, at: true },
+      select: { provider: true, accountEmail: true, accessKeyId: true, customerId: true, surface: true, sourceIp: true, exitIp: true, userId: true, sessionId: true, at: true },
       orderBy: { at: "desc" }, // 命中上限时保留最近的行(走 @@index([at]) 倒序,无需 filesort)
       take: cap,
     });
@@ -338,7 +362,7 @@ export class TokenUsageStatsService {
     for (const r of logs) {
       const key = `${r.provider} ${r.accountEmail}`;
       let s = m.get(key);
-      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), cli: 0, desktop: 0, ide: 0, total: 0, minutes: new Map(), customers: new Map() }; m.set(key, s); }
+      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), cli: 0, desktop: 0, ide: 0, total: 0, minutes: new Map(), sessionMinutes: new Map(), customers: new Map() }; m.set(key, s); }
       const min = Math.floor(new Date(r.at).getTime() / 60000);
       if (r.sourceIp) s.sources.add(r.sourceIp);
       if (r.exitIp) s.exits.add(r.exitIp);
@@ -348,16 +372,18 @@ export class TokenUsageStatsService {
       else if (r.surface === "ide") s.ide += 1;
       s.total += 1;
       s.minutes.set(min, (s.minutes.get(min) || 0) + 1);
+      if (r.sessionId) addSessionToMinute(s.sessionMinutes, min, r.sessionId);
       // 同一次扫描里顺手按客户聚合(点开母号看哪个买家在突发/多来源 IP)。custKey 与上面一致。
       const custKey = r.customerId || r.accessKeyId;
       if (custKey) {
         let c = s.customers.get(custKey);
-        if (!c) { c = { sources: new Set(), minutes: new Map(), cli: 0, desktop: 0, ide: 0 }; s.customers.set(custKey, c); }
+        if (!c) { c = { sources: new Set(), minutes: new Map(), cli: 0, desktop: 0, ide: 0, sessionMinutes: new Map() }; s.customers.set(custKey, c); }
         if (r.sourceIp) c.sources.add(r.sourceIp);
         c.minutes.set(min, (c.minutes.get(min) || 0) + 1);
         if (r.surface === "desktop") c.desktop += 1;
         else if (r.surface === "cli") c.cli += 1;
         else if (r.surface === "ide") c.ide += 1;
+        if (r.sessionId) addSessionToMinute(c.sessionMinutes, min, r.sessionId);
       }
     }
     return m;
@@ -447,6 +473,7 @@ export class TokenUsageStatsService {
               reverseProxyRate: ratio(cu.reverseProxyHits, cu.requests),
               distinctCards: cu.cardIds.size,
               peakReqPerMin: peakReqPerMin(cl),
+              peakSessionsPerMin: peakSessionsPerMin(cl),
               distinctSourceIps: cl?.sources.size ?? 0,
               // 接管面计数(来自 RequestLog;老客户端不报 surface 时全 0)。
               cliReqs: cl?.cli ?? 0,
@@ -467,8 +494,9 @@ export class TokenUsageStatsService {
         distinctCards: a.cardIds.size,
         distinctCustomers: a.customers.size,
         totalTokens: a.totalTokens,
-        // 峰值 req/min + 不同来源 IP + 真实用户数(distinct metadata.user_id)—— 判"不像一个人"。
+        // 峰值 req/min + 峰值 session/min + 不同来源 IP + 真实用户数 —— 判"不像一个人"。
         peakReqPerMin: peakReqPerMin(logStat),
+        peakSessionsPerMin: peakSessionsPerMin(logStat),
         distinctSourceIps: logStat?.sources.size ?? 0,
         distinctUsers: logStat?.users.size ?? 0,
         customers,
@@ -625,8 +653,13 @@ export class TokenUsageStatsService {
 
     const logs = await this.prisma.requestLog.findMany({ where, orderBy: { at: "desc" }, take: limit });
     // 富集客户邮箱:逐请求展示买家邮箱而非不可读的 customerId(行数 ≤500,id 集合小)。
+    // 并附改写后 user_id(canonicalUserId),与 userId(原始)对照看"上游看到的 vs 真实的"。
     const emailById = await this.customerEmailById([...new Set(logs.map((l: any) => String(l.customerId || "")).filter(Boolean))]);
-    const enriched = logs.map((l: any) => ({ ...l, customerEmail: emailById.get(l.customerId) ?? "" }));
+    const enriched = logs.map((l: any) => ({
+      ...l,
+      customerEmail: emailById.get(l.customerId) ?? "",
+      canonicalUserId: canonicalUserId(Number(l.accountId || 0)),
+    }));
     return { hours, logs: enriched };
   }
 
@@ -658,6 +691,9 @@ export class TokenUsageStatsService {
       const l = byAcct.get(`${a.product} ${a.accountEmail}`);
       return {
         banned: bannedSet.has(`${a.product} ${a.accountEmail}`),
+        // 有没有 RequestLog 遥测(上报了的客户端才有)。RequestLog 类指标只在这些母号里求均值,
+        // 否则被一堆"老客户端没上报 → 0"的母号稀释(用户/IP/峰值/session/桌面占比全偏低)。
+        hasLog: l ? l.total > 0 : false,
         reverseProxyRate: a.reverseProxyRate,
         distinctCards: a.distinctCards,
         distinctCustomers: a.distinctCustomers,
@@ -670,6 +706,7 @@ export class TokenUsageStatsService {
         // 分母只取"已上报 surface 的请求"(cli+desktop+ide),否则被老客户端的空 surface 稀释。
         desktopRatio: (() => { const surfaced = l ? l.cli + l.desktop + l.ide : 0; return surfaced ? (l!.desktop / surfaced) : 0; })(),
         peakReqPerMin: peakReqPerMin(l),
+        peakSessionsPerMin: peakSessionsPerMin(l),
       };
     });
     const banned = rows.filter((r) => r.banned);
@@ -677,23 +714,29 @@ export class TokenUsageStatsService {
     const avg = (arr: typeof rows, sel: (r: (typeof rows)[number]) => number) =>
       arr.length ? arr.reduce((s, x) => s + sel(x), 0) / arr.length : 0;
 
-    const defs: { key: string; label: string; pct?: boolean; sel: (r: (typeof rows)[number]) => number }[] = [
+    // log:true = 该指标来自 RequestLog(客户端上报),均值只在"有上报的母号"里求,避免被 0 稀释。
+    // 其余来自 CardUsageHourly,所有母号都有,正常全量求均值。
+    const defs: { key: string; label: string; pct?: boolean; log?: boolean; sel: (r: (typeof rows)[number]) => number }[] = [
       { key: "reverseProxyRate", label: "反代率", pct: true, sel: (r) => r.reverseProxyRate },
-      { key: "distinctUsers", label: "真实用户数", sel: (r) => r.distinctUsers },
-      { key: "peakReqPerMin", label: "峰值 req/min", sel: (r) => r.peakReqPerMin },
-      { key: "distinctSourceIps", label: "不同来源 IP 数", sel: (r) => r.distinctSourceIps },
+      { key: "distinctUsers", label: "真实用户数", log: true, sel: (r) => r.distinctUsers },
+      { key: "peakReqPerMin", label: "峰值 req/min", log: true, sel: (r) => r.peakReqPerMin },
+      { key: "peakSessionsPerMin", label: "峰值 session/min", log: true, sel: (r) => r.peakSessionsPerMin },
+      { key: "distinctSourceIps", label: "不同来源 IP 数", log: true, sel: (r) => r.distinctSourceIps },
       { key: "distinctCards", label: "扇出卡数", sel: (r) => r.distinctCards },
       { key: "distinctCustomers", label: "扇出客户数", sel: (r) => r.distinctCustomers },
-      { key: "distinctExitIps", label: "出口 IP 数(应=1)", sel: (r) => r.distinctExitIps },
-      { key: "desktopRatio", label: "桌面端占比(已报接管面中)", pct: true, sel: (r) => r.desktopRatio },
+      { key: "distinctExitIps", label: "出口 IP 数(应=1)", log: true, sel: (r) => r.distinctExitIps },
+      { key: "desktopRatio", label: "桌面端占比(已报接管面中)", pct: true, log: true, sel: (r) => r.desktopRatio },
       { key: "failRate", label: "失败率", pct: true, sel: (r) => r.failRate },
       { key: "totalTokens", label: "Token 量", sel: (r) => r.totalTokens },
       { key: "requests", label: "请求数", sel: (r) => r.requests },
     ];
     const metrics = defs
       .map((d) => {
-        const bannedAvg = avg(banned, d.sel);
-        const healthyAvg = avg(healthy, d.sel);
+        // RequestLog 类指标只在"有上报的母号"里求均值。
+        const b = d.log ? banned.filter((r) => r.hasLog) : banned;
+        const h = d.log ? healthy.filter((r) => r.hasLog) : healthy;
+        const bannedAvg = avg(b, d.sel);
+        const healthyAvg = avg(h, d.sel);
         // 差异倍数(已封/健康)。健康为 0 时:已封>0 给一个大值(999)标"突出",否则 1。
         const ratio = healthyAvg > 0 ? bannedAvg / healthyAvg : bannedAvg > 0 ? 999 : 1;
         return { key: d.key, label: d.label, pct: Boolean(d.pct), bannedAvg, healthyAvg, ratio };
