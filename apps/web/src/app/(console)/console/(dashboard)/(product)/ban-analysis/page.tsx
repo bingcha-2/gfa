@@ -86,6 +86,7 @@ type RequestLogRow = {
   customerEmail: string;
   userId: string;
   canonicalUserId: string;
+  rewrittenAccountUuid: string;
   deviceId: string;
   modelKey: string;
   status: number;
@@ -211,17 +212,35 @@ function shortId(s: string, n = 6): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-/** 从 user_id 抠 device_id 用于展示。Claude Code 现行格式是 JSON
- *  {"device_id","account_uuid","session_id"};非 JSON(裸 hash)原样返回。 */
-function deviceIdOf(userId: string): string {
+/** 从 user_id(Claude Code 现行 JSON {"device_id","account_uuid","session_id"})抠某字段;非 JSON 返回 ""。 */
+function jsonField(userId: string, key: string): string {
   const s = String(userId || "");
   if (s[0] === "{") {
     try {
       const o = JSON.parse(s);
-      if (o?.device_id) return String(o.device_id);
-    } catch { /* 原样 */ }
+      if (o?.[key]) return String(o[key]);
+    } catch { /* 非法 JSON */ }
   }
-  return s;
+  return "";
+}
+/** device_id:JSON 取 device_id,非 JSON(裸 hash)原样返回。 */
+function deviceIdOf(userId: string): string {
+  return jsonField(userId, "device_id") || String(userId || "");
+}
+
+/** 点击复制完整值的单元。short 为展示用短串,full 为复制的完整值。 */
+function Copyable({ full, short }: { full: string; short?: string }) {
+  if (!full) return <span className="text-muted-foreground">—</span>;
+  return (
+    <button
+      type="button"
+      className="cursor-pointer font-mono hover:underline"
+      title={`点击复制：${full}`}
+      onClick={() => { void navigator.clipboard?.writeText(full).then(() => toast.success("已复制")).catch(() => {}); }}
+    >
+      {short ?? shortId(full)}
+    </button>
+  );
 }
 
 function fmtTime(iso: string) {
@@ -613,8 +632,10 @@ export default function BanAnalysisPage() {
                     <TableCell>{PRODUCT_LABEL[r.provider] ?? r.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{r.accountEmail || "—"}</TableCell>
                     <TableCell className="font-mono text-xs" title={r.customerEmail ? r.customerId : undefined}>{r.customerEmail || r.customerId || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs whitespace-nowrap" title={`原始 user_id: ${r.userId || "—"}\n改写后 device_id: ${r.canonicalUserId || "—"}(account_uuid / session_id 保留原值)`}>
-                      {shortId(deviceIdOf(r.userId))} <span className="text-muted-foreground">→</span> {shortId(r.canonicalUserId)}
+                    <TableCell className="text-xs whitespace-nowrap" title="点开看完整 device_id / account_uuid 改写对照(可点击复制)">
+                      {r.userId
+                        ? <><Copyable full={deviceIdOf(r.userId)} /> <span className="text-muted-foreground">→</span> <Copyable full={r.canonicalUserId} /></>
+                        : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>{r.surface ? <Badge variant="secondary">{r.surface}</Badge> : "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.sourceIp || "—"}</TableCell>
@@ -627,6 +648,17 @@ export default function BanAnalysisPage() {
                     <TableRow>
                       <TableCell colSpan={12} className="bg-muted/30">
                         <div className="text-xs text-muted-foreground">设备:<span className="font-mono">{r.deviceId || "—"}</span> · tokens:{r.totalTokens}</div>
+                        {/* 身份改写对照(发往上游):device_id/account_uuid 被改、session_id 保留。值可点击复制。 */}
+                        {r.userId ? (
+                          <div className="mt-2 space-y-0.5 text-xs">
+                            <div className="text-muted-foreground">身份改写(发往上游 metadata.user_id):</div>
+                            <div>device_id:<Copyable full={deviceIdOf(r.userId)} /> <span className="text-muted-foreground">→</span> <Copyable full={r.canonicalUserId} /></div>
+                            <div>account_uuid:<Copyable full={jsonField(r.userId, "account_uuid")} /> <span className="text-muted-foreground">→</span> {r.rewrittenAccountUuid ? <Copyable full={r.rewrittenAccountUuid} /> : <span className="text-muted-foreground">不变(母号未刷额度,无真值)</span>}</div>
+                            <div>session_id:<Copyable full={jsonField(r.userId, "session_id")} /> <span className="text-muted-foreground">(保留)</span></div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-xs text-muted-foreground">无 metadata.user_id —— 不改写</div>
+                        )}
                         <pre className="mt-2 max-h-48 overflow-auto rounded bg-background p-2 font-mono text-xs">{prettyHeaders(r.headers)}</pre>
                       </TableCell>
                     </TableRow>

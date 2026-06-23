@@ -1346,7 +1346,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return { ok: true, reloaded: true };
   }
 
-  private readAccounts(): TAccount[] {
+  protected readAccounts(): TAccount[] {
     try {
       const stat = fs.statSync(this.accountsFilePath);
       if (this._cachedAccounts && stat.mtimeMs === this._cachedMtimeMs) {

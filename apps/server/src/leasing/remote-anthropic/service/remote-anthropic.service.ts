@@ -91,4 +91,14 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
   async refreshModelCatalog(): Promise<void> {
     await this.refreshModels();
   }
+
+  /** accountId → 母号真实 Anthropic account uuid(anthropicAccountUuid,刷额度时落库)。
+   *  供请求明细展示"account_uuid 改写后真值"。未落库的母号不在 Map 里。 */
+  accountUuidById(): Map<number, string> {
+    const m = new Map<number, string>();
+    for (const a of this.readAccounts() as Array<{ id: number; anthropicAccountUuid?: string }>) {
+      if (a?.id && a.anthropicAccountUuid) m.set(a.id, String(a.anthropicAccountUuid));
+    }
+    return m;
+  }
 }

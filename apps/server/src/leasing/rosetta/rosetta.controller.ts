@@ -520,7 +520,7 @@ export class RosettaController {
 
   /** per-request 热表浏览(近 ≤72h):按 母号/卡/surface/反代 过滤。 */
   @Get("request-logs")
-  getRequestLogs(
+  async getRequestLogs(
     @Query("accountEmail") accountEmail?: string,
     @Query("accessKeyId") accessKeyId?: string,
     @Query("surface") surface?: string,
@@ -528,12 +528,17 @@ export class RosettaController {
     @Query("hours") hours?: string,
     @Query("limit") limit?: string,
   ) {
-    return this.tokenUsageStats.getRequestLogs({
+    const res = await this.tokenUsageStats.getRequestLogs({
       accountEmail, accessKeyId, surface,
       reverseProxyOnly: reverseProxy === "1" || reverseProxy === "true",
       hours: hours ? Number(hours) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
+    // 富集 account_uuid 改写后真值(母号 anthropicAccountUuid,按 accountId 查)。未刷过额度的母号没有。
+    let uuidById = new Map<number, string>();
+    try { uuidById = this.remoteAnthropic.accountUuidById(); } catch { /* best-effort */ }
+    res.logs = (res.logs as any[]).map((l) => ({ ...l, rewrittenAccountUuid: uuidById.get(Number(l.accountId)) ?? "" }));
+    return res;
   }
 
   @Get("cliproxy-status")
