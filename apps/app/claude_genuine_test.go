@@ -33,12 +33,13 @@ func TestDetectClaudeCodeClient_GenuineSystemString(t *testing.T) {
 }
 
 func TestDetectClaudeCodeClient_MissingSystem(t *testing.T) {
+	// ccHeaders 只有 claude-cli UA + x-app(无 claude-code beta、无 session-id)→ 指纹不全 → 标记。
 	body := []byte(`{"model":"claude-opus-4","messages":[{"role":"user","content":"hi"}]}`)
 	genuine, flag := detectClaudeCodeClient(body, ccHeaders())
 	if genuine {
 		t.Fatal("missing system must be flagged as non-genuine")
 	}
-	if flag != "no_cc_system_prompt" {
+	if flag != "no_cc_system_prompt,no_cc_beta,no_session_id" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }
@@ -49,35 +50,49 @@ func TestDetectClaudeCodeClient_ForeignSystem(t *testing.T) {
 	if genuine {
 		t.Fatal("foreign system prompt must be non-genuine")
 	}
-	// no CC system + no UA + no x-app:cli → all three triage reasons
-	if flag != "no_cc_system_prompt,no_ua,no_x_app_cli" {
+	// no CC system + no UA + no beta + no session-id
+	if flag != "no_cc_system_prompt,no_ua,no_cc_beta,no_session_id" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }
 
-func TestDetectClaudeCodeClient_GenuineViaSessionIdHeader(t *testing.T) {
-	// 非 CLI 正版面(VSCode/Agent SDK):system 非 CLI 开场白,但带 Claude Code 专属 session-id 头。
+func TestDetectClaudeCodeClient_GenuineViaFullFingerprint(t *testing.T) {
+	// 非 CLI 正版面(VSCode/Agent SDK):整套指纹同时出现(claude-cli UA + claude-code beta + session-id)→ 正版。
 	body := []byte(`{"system":[{"type":"text","text":"Custom agent instructions."}],"messages":[]}`)
 	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/2.1.186 (external, claude-vscode, agent-sdk/0.3.186)")
+	h.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14")
 	h.Set("X-Claude-Code-Session-Id", "29d35cc5-2993-42fd-8a29-79f96ecc3116")
 	genuine, flag := detectClaudeCodeClient(body, h)
 	if !genuine {
-		t.Fatalf("X-Claude-Code-Session-Id should make it genuine, got flag=%q", flag)
+		t.Fatalf("full genuine fingerprint should pass, got flag=%q", flag)
 	}
 }
 
-func TestDetectClaudeCodeClient_GenuineViaClaudeCodeBeta(t *testing.T) {
+func TestDetectClaudeCodeClient_SingleHeaderNotEnough(t *testing.T) {
+	// 单带一个头(无论 session-id 还是 claude-code beta)都【不够】—— 防反代随手塞一个头蒙混。
 	body := []byte(`{"system":"Custom","messages":[]}`)
-	h := http.Header{}
-	h.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14")
-	genuine, _ := detectClaudeCodeClient(body, h)
-	if !genuine {
-		t.Fatal("anthropic-beta containing claude-code should be genuine")
+	onlySession := http.Header{}
+	onlySession.Set("X-Claude-Code-Session-Id", "29d35cc5-2993-42fd-8a29-79f96ecc3116")
+	if g, _ := detectClaudeCodeClient(body, onlySession); g {
+		t.Fatal("session-id alone must NOT be genuine")
+	}
+	onlyBeta := http.Header{}
+	onlyBeta.Set("Anthropic-Beta", "claude-code-20250219")
+	if g, _ := detectClaudeCodeClient(body, onlyBeta); g {
+		t.Fatal("claude-code beta alone must NOT be genuine")
+	}
+	// claude-cli UA + beta 但缺 session-id 也不够
+	twoOfThree := http.Header{}
+	twoOfThree.Set("User-Agent", "claude-cli/2.1.186")
+	twoOfThree.Set("Anthropic-Beta", "claude-code-20250219")
+	if g, _ := detectClaudeCodeClient(body, twoOfThree); g {
+		t.Fatal("2 of 3 fingerprint signals must NOT be genuine")
 	}
 }
 
 func TestDetectClaudeCodeClient_RealVscodeAgentSdk(t *testing.T) {
-	// 真实误判样本:VSCode 扩展 + Agent SDK,非 CLI system,但头部全是正版特征。
+	// 真实误判样本:VSCode 扩展 + Agent SDK,非 CLI system,但整套指纹齐全 → 不该被标。
 	body := []byte(`{"system":[{"type":"text","text":"You are an interactive agent."}],"messages":[]}`)
 	h := http.Header{}
 	h.Set("User-Agent", "claude-cli/2.1.186 (external, claude-vscode, agent-sdk/0.3.186)")
@@ -99,7 +114,7 @@ func TestDetectClaudeCodeClient_ForeignUA(t *testing.T) {
 	if genuine {
 		t.Fatal("foreign client must be non-genuine")
 	}
-	if flag != "no_cc_system_prompt,foreign_ua,no_x_app_cli" {
+	if flag != "no_cc_system_prompt,foreign_ua,no_cc_beta,no_session_id" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }

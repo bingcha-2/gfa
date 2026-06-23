@@ -20,38 +20,40 @@ import (
 // 这是最硬、最低误伤的硬指纹;能被肯花功夫的高仿反代照抄绕过,那一层得靠并发/节奏统计。
 const claudeCodeSystemSignature = "You are Claude Code, Anthropic's official CLI for Claude"
 
-// detectClaudeCodeClient 检查请求体 + 头,判断是否真 Claude Code。分层:
+// detectClaudeCodeClient 检查请求体 + 头,判断是否真 Claude Code。正版需命中以下之一:
 //
-//	第一层(命中任一 = 正版,覆盖 CLI / VSCode / JetBrains / Agent SDK):
-//	  - system 第一块带 CLI 开场白(老的硬指纹,只覆盖 CLI);
-//	  - 带 X-Claude-Code-Session-Id 头(Claude Code 专属,转卖裸 API/外壳不会生成);
-//	  - anthropic-beta 含 claude-code(产品级 beta 标记,同上)。
-//	第二层(无任何正版强标记 → 反代嫌疑):返回简短、无 PII 的 flag 说明哪儿对不上,
-//	  并区分"外来客户端"(foreign_ua)便于后台分辨"非 CLI 正版" vs "真转卖"。
+//	(A) system 第一块带 CLI 开场白 —— body 里的硬指纹,最难伪造;
+//	(B) 整套客户端指纹【同时】出现:claude-cli/ UA + anthropic-beta:claude-code +
+//	    X-Claude-Code-Session-Id。单带一个头不算 —— 那太容易塞;要的是"非 CLI 正版面
+//	    (VSCode/JetBrains/Agent SDK)不被误杀,又不给随手塞一个头的反代放行"。
 //
-// 注:头可伪造、system 可照抄,这层只抓懒/外来客户端(占转卖大头);高仿照搬的靠
-// 统计层(一个母号下多 user_id / 多 IP / 高并发 / 多 session)兜底。
+// 注:能照搬整套指纹的高仿照样能骗过这层(头/system 都可复制)—— 那一层靠统计兜底
+// (一个母号下多 user_id / 多来源 IP / 高并发 / 每分钟多 session)。这层只过滤掉
+// 懒的、外来的客户端(Cline/Roo/裸 API/OpenAI 壳),它们占转卖的大头。
 func detectClaudeCodeClient(body []byte, h http.Header) (genuine bool, flag string) {
 	if bodyHasClaudeCodeSystem(body) {
 		return true, ""
 	}
-	if strings.TrimSpace(h.Get("X-Claude-Code-Session-Id")) != "" {
-		return true, ""
-	}
-	if strings.Contains(strings.ToLower(h.Get("Anthropic-Beta")), "claude-code") {
-		return true, ""
-	}
-	reasons := []string{"no_cc_system_prompt"}
 	ua := strings.ToLower(strings.TrimSpace(h.Get("User-Agent")))
+	hasCliUA := strings.HasPrefix(ua, "claude-cli/")
+	hasCCBeta := strings.Contains(strings.ToLower(h.Get("Anthropic-Beta")), "claude-code")
+	hasSession := strings.TrimSpace(h.Get("X-Claude-Code-Session-Id")) != ""
+	if hasCliUA && hasCCBeta && hasSession {
+		return true, ""
+	}
+	// 反代嫌疑:返回简短、无 PII 的 flag 说明缺了哪几样,后台据此分辨"非 CLI 正版" vs "真转卖"。
+	reasons := []string{"no_cc_system_prompt"}
 	if ua == "" {
 		reasons = append(reasons, "no_ua")
-	} else if !strings.HasPrefix(ua, "claude-cli/") {
+	} else if !hasCliUA {
 		// 长着别的客户端的脸(Cline/Roo/python-requests/axios/openai-* 等)= 反代正向标记。
 		reasons = append(reasons, "foreign_ua")
 	}
-	// x-app: cli 是真 CLI 的附带头;缺失再加一条线索。
-	if !strings.EqualFold(strings.TrimSpace(h.Get("x-app")), "cli") {
-		reasons = append(reasons, "no_x_app_cli")
+	if !hasCCBeta {
+		reasons = append(reasons, "no_cc_beta")
+	}
+	if !hasSession {
+		reasons = append(reasons, "no_session_id")
 	}
 	return false, strings.Join(reasons, ",")
 }
