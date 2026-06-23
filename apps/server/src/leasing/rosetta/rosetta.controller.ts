@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException } from "@nestjs/common";
 
 import { RosettaService } from "./rosetta.service";
-import { TokenUsageStatsService } from "./token-usage-stats.service";
+import { TokenUsageStatsService, deriveAccountHealth, type AccountStatusInput } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
@@ -463,10 +463,38 @@ export class RosettaController {
     return this.tokenUsageStats.getUsageTrend({ days: Number(days) || 7 });
   }
 
-  /** 封号分析页:母号风险榜(反代率/扇出/失败率/量)+ 封号事件流(codex+claude)。 */
+  /** 封号分析页:母号风险榜(反代率/扇出/失败率/量)+ 封号事件流(codex+claude)。
+   *  顺便把母号在池中的运行状态(启用/配额/Token 失效)按 email join 进风险榜。 */
   @Get("ban-analysis")
-  getBanAnalysis(@Query("days") days?: string) {
-    return this.tokenUsageStats.getBanAnalysis({ days: Number(days) || 7 });
+  async getBanAnalysis(@Query("days") days?: string) {
+    const analysis = await this.tokenUsageStats.getBanAnalysis({ days: Number(days) || 3 });
+    const statusMap = this.buildAccountStatusMap();
+    return {
+      ...analysis,
+      accounts: analysis.accounts.map((a) => ({
+        ...a,
+        status: deriveAccountHealth(statusMap.get(`${a.product} ${a.accountEmail}`) ?? { found: false }),
+      })),
+    };
+  }
+
+  /** 从两家 LeaseService 取池内母号运行状态,键 `${product} ${email}`。 */
+  private buildAccountStatusMap(): Map<string, AccountStatusInput> {
+    const map = new Map<string, AccountStatusInput>();
+    const collect = (product: "anthropic" | "codex", svc: { getStatus(): any }) => {
+      let accounts: any[] = [];
+      try { accounts = svc.getStatus()?.quota?.accounts ?? []; } catch { accounts = []; }
+      for (const acc of accounts) {
+        if (!acc?.email) continue;
+        map.set(`${product} ${acc.email}`, {
+          found: true, enabled: acc.enabled !== false,
+          quotaStatus: acc.quotaStatus, quotaStatusReason: acc.quotaStatusReason,
+        });
+      }
+    };
+    collect("anthropic", this.remoteAnthropic);
+    collect("codex", this.remoteCodex);
+    return map;
   }
 
   /** 单条封号事件的"封号前请求时间线"(下钻)。 */

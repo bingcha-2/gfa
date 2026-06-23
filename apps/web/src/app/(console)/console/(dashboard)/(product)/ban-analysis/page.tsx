@@ -15,7 +15,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { formatTokens } from "@/lib/format";
 
 // ── API shapes(对齐 token-usage-stats.service.getBanAnalysis)─────────────────
-type CardRisk = { accessKeyId: string; requests: number; reverseProxyHits: number; reverseProxyRate: number };
+type SubStatus = "ACTIVE" | "EXPIRED" | "CANCELLED" | "";
+type CustomerRisk = { customerId: string; requests: number; reverseProxyHits: number; reverseProxyRate: number; distinctCards: number; peakReqPerMin: number; distinctSourceIps: number; subStatus: SubStatus };
+type AccountHealthTone = "ok" | "amber" | "destructive" | "muted";
+type AccountHealth = { label: string; tone: AccountHealthTone; reason: string };
 type AccountRisk = {
   product: string;
   accountEmail: string;
@@ -25,11 +28,13 @@ type AccountRisk = {
   reverseProxyHits: number;
   reverseProxyRate: number;
   distinctCards: number;
+  distinctCustomers: number;
   totalTokens: number;
   peakReqPerMin: number;
   distinctSourceIps: number;
   distinctUsers: number;
-  cards: CardRisk[];
+  status?: AccountHealth;
+  customers: CustomerRisk[];
 };
 type BanEvent = {
   id: string;
@@ -76,6 +81,7 @@ type RequestLogRow = {
   provider: string;
   accountEmail: string;
   accessKeyId: string;
+  customerId: string;
   deviceId: string;
   modelKey: string;
   status: number;
@@ -88,7 +94,7 @@ type RequestLogRow = {
 };
 const SURFACE_OPTIONS = ["", "cli", "desktop", "ide"] as const;
 
-const DAY_OPTIONS = ["7", "14", "30"] as const;
+const DAY_OPTIONS = ["3", "7", "14", "30"] as const;
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const PRODUCT_LABEL: Record<string, string> = { codex: "Codex", anthropic: "Claude" };
 
@@ -128,6 +134,31 @@ function UsersBadge({ n }: { n: number }) {
   return <span className="text-muted-foreground">—</span>;
 }
 
+function CustomersBadge({ n }: { n: number }) {
+  // 扇出客户 = 几个真实买家在共用这个母号。>1 即共享,越多越像转卖。
+  if (n >= 5) return <Badge variant="destructive">{n}</Badge>;
+  if (n >= 2) return <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400">{n}</Badge>;
+  if (n > 0) return <span className="tabular-nums">{n}</span>;
+  return <span className="text-muted-foreground">—</span>;
+}
+
+function SubStatusBadge({ s }: { s: SubStatus }) {
+  // 订阅已取消/过期却仍在这个母号下发请求 = 泄漏/盗用信号。ACTIVE/无订阅不标。
+  if (s === "CANCELLED") return <Badge variant="destructive">订阅已取消</Badge>;
+  if (s === "EXPIRED") return <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400">已过期</Badge>;
+  return null;
+}
+
+function StatusBadge({ status }: { status?: AccountHealth }) {
+  if (!status) return <span className="text-muted-foreground">—</span>;
+  const title = status.reason || undefined;
+  if (status.tone === "ok") return <span className="text-muted-foreground" title={title}>{status.label}</span>;
+  if (status.tone === "muted") return <Badge variant="outline" title={title}>{status.label}</Badge>;
+  if (status.tone === "amber")
+    return <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400" title={title}>{status.label}</Badge>;
+  return <Badge variant="destructive" title={title}>{status.label}</Badge>;
+}
+
 function fmtMetric(v: number, pct: boolean): string {
   if (pct) return `${(v * 100).toFixed(1)}%`;
   if (v >= 1000) return formatTokens(Math.round(v));
@@ -160,12 +191,13 @@ function fmtTime(iso: string) {
 }
 
 export default function BanAnalysisPage() {
-  const [days, setDays] = useState<string>("7");
+  const [days, setDays] = useState<string>("3");
   const [data, setData] = useState<BanAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [openEvent, setOpenEvent] = useState<string | null>(null);
   const [eventCtx, setEventCtx] = useState<Record<string, BanEventCtx>>({});
   const [openAcct, setOpenAcct] = useState<string | null>(null);
+  const [acctProduct, setAcctProduct] = useState<string>(""); // 风险榜产品筛选:""=全部
 
   // 请求明细(per-request 热表)
   const [logs, setLogs] = useState<RequestLogRow[]>([]);
@@ -225,6 +257,10 @@ export default function BanAnalysisPage() {
   const highRiskCount = useMemo(
     () => (data?.accounts ?? []).filter((a) => a.reverseProxyHits > 0 && a.reverseProxyRate >= 0.3).length,
     [data],
+  );
+  const riskAccounts = useMemo(
+    () => (data?.accounts ?? []).filter((a) => !acctProduct || a.product === acctProduct),
+    [data, acctProduct],
   );
 
   return (
@@ -366,8 +402,23 @@ export default function BanAnalysisPage() {
       {/* Account risk */}
       <Card>
         <CardHeader>
-          <CardTitle>母号风险榜</CardTitle>
-          <CardDescription>按反代命中降序。反代率高 = 这个母号很可能被反代/转卖。点开看是哪张卡。</CardDescription>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle>母号风险榜</CardTitle>
+              <CardDescription>按反代命中降序。反代率高 = 这个母号很可能被反代/转卖;扇出客户多 = 被多个买家共用。点开看是哪张卡。</CardDescription>
+            </div>
+            <ToggleGroup
+              multiple={false}
+              value={[acctProduct]}
+              onValueChange={(value) => setAcctProduct(value[0] ?? "")}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="">全部</ToggleGroupItem>
+              <ToggleGroupItem value="anthropic">Claude</ToggleGroupItem>
+              <ToggleGroupItem value="codex">Codex</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -376,6 +427,7 @@ export default function BanAnalysisPage() {
                 <TableHead className="w-8" />
                 <TableHead>产品</TableHead>
                 <TableHead>母号</TableHead>
+                <TableHead>状态</TableHead>
                 <TableHead className="text-right">请求</TableHead>
                 <TableHead className="text-right">失败率</TableHead>
                 <TableHead className="text-right">反代率·命中</TableHead>
@@ -383,14 +435,15 @@ export default function BanAnalysisPage() {
                 <TableHead className="text-right">峰值/分</TableHead>
                 <TableHead className="text-right">来源IP</TableHead>
                 <TableHead className="text-right">扇出卡</TableHead>
+                <TableHead className="text-right">扇出客户</TableHead>
                 <TableHead className="text-right">Token</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(data?.accounts ?? []).length === 0 && (
-                <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground">无数据</TableCell></TableRow>
+              {riskAccounts.length === 0 && (
+                <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground">无数据</TableCell></TableRow>
               )}
-              {(data?.accounts ?? []).map((a) => {
+              {riskAccounts.map((a) => {
                 const key = `${a.product} ${a.accountEmail}`;
                 return (
                   <Fragment key={key}>
@@ -398,6 +451,7 @@ export default function BanAnalysisPage() {
                       <TableCell><ChevronRightIcon className={`size-4 transition-transform ${openAcct === key ? "rotate-90" : ""}`} /></TableCell>
                       <TableCell>{PRODUCT_LABEL[a.product] ?? a.product}</TableCell>
                       <TableCell className="font-mono text-xs">{a.accountEmail}</TableCell>
+                      <TableCell><StatusBadge status={a.status} /></TableCell>
                       <TableCell className="text-right tabular-nums">{a.requests}</TableCell>
                       <TableCell className="text-right tabular-nums">{pct(a.failRate)}</TableCell>
                       <TableCell className="text-right"><RateBadge rate={a.reverseProxyRate} hits={a.reverseProxyHits} /></TableCell>
@@ -405,25 +459,34 @@ export default function BanAnalysisPage() {
                       <TableCell className="text-right"><RpmBadge rpm={a.peakReqPerMin} /></TableCell>
                       <TableCell className="text-right tabular-nums">{a.distinctSourceIps || "—"}</TableCell>
                       <TableCell className="text-right tabular-nums">{a.distinctCards}</TableCell>
+                      <TableCell className="text-right"><CustomersBadge n={a.distinctCustomers} /></TableCell>
                       <TableCell className="text-right tabular-nums">{formatTokens(a.totalTokens)}</TableCell>
                     </TableRow>
                     {openAcct === key && (
                       <TableRow key={`${key}-cards`}>
-                        <TableCell colSpan={11} className="bg-muted/30">
+                        <TableCell colSpan={13} className="bg-muted/30">
                           <Table>
                             <TableHeader>
                               <TableRow>
-                                <TableHead>卡</TableHead>
+                                <TableHead>客户</TableHead>
                                 <TableHead className="text-right">请求</TableHead>
                                 <TableHead className="text-right">反代率·命中</TableHead>
+                                <TableHead className="text-right">持卡数</TableHead>
+                                <TableHead className="text-right">峰值/分</TableHead>
+                                <TableHead className="text-right">来源IP</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {a.cards.map((c) => (
-                                <TableRow key={c.accessKeyId}>
-                                  <TableCell className="font-mono text-xs">{c.accessKeyId}</TableCell>
+                              {a.customers.map((c) => (
+                                <TableRow key={c.customerId}>
+                                  <TableCell className="font-mono text-xs">
+                                    <span className="inline-flex items-center gap-1.5">{c.customerId}<SubStatusBadge s={c.subStatus} /></span>
+                                  </TableCell>
                                   <TableCell className="text-right tabular-nums">{c.requests}</TableCell>
                                   <TableCell className="text-right"><RateBadge rate={c.reverseProxyRate} hits={c.reverseProxyHits} /></TableCell>
+                                  <TableCell className="text-right tabular-nums">{c.distinctCards}</TableCell>
+                                  <TableCell className="text-right"><RpmBadge rpm={c.peakReqPerMin} /></TableCell>
+                                  <TableCell className="text-right tabular-nums">{c.distinctSourceIps || "—"}</TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -480,7 +543,7 @@ export default function BanAnalysisPage() {
                 <TableHead>时间</TableHead>
                 <TableHead>产品</TableHead>
                 <TableHead>母号</TableHead>
-                <TableHead>卡</TableHead>
+                <TableHead>客户</TableHead>
                 <TableHead>接管面</TableHead>
                 <TableHead>来源 IP</TableHead>
                 <TableHead>出口 IP</TableHead>
@@ -500,7 +563,7 @@ export default function BanAnalysisPage() {
                     <TableCell className="whitespace-nowrap text-xs">{fmtTime(r.at)}</TableCell>
                     <TableCell>{PRODUCT_LABEL[r.provider] ?? r.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{r.accountEmail || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.accessKeyId || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.customerId || "—"}</TableCell>
                     <TableCell>{r.surface ? <Badge variant="secondary">{r.surface}</Badge> : "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.sourceIp || "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.exitIp || "—"}</TableCell>

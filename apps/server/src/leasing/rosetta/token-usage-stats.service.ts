@@ -4,6 +4,48 @@ import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { beijingDayKey, beijingDayKeysSince, beijingDayStart, beijingHourOfDay } from "../../shared/common/beijing-time";
 import { productOfBucket } from "../lease-core/product-bucket";
+import { isPermanentDeathReason } from "../token-server/token-billing";
+
+/** 母号在池中的运行状态(来自 LeaseService.getStatus().quota.accounts)。 */
+export interface AccountStatusInput {
+  found?: boolean;        // 是否仍在账号池里(false = 已删/不在册)
+  enabled?: boolean;
+  quotaStatus?: string;   // ok / cooling / exhausted / error
+  quotaStatusReason?: string;
+}
+export type AccountHealthTone = "ok" | "amber" | "destructive" | "muted";
+export interface AccountHealth { label: string; tone: AccountHealthTone; reason: string }
+
+/**
+ * 把母号运行状态压成一个给风险榜显示的小标签 + 配色。优先级:不在池 < 禁用 <
+ * Token 失效 / 永久死亡 < 配额异常/用尽/冷却 < 正常。invalid_grant = refresh token
+ * 失效(过期/被吊销),单独标「Token失效」。
+ */
+/** 订阅状态汇总:一个买家在某母号下可能持多张卡(多订阅),状态可能混杂。
+ *  优先级 CANCELLED > EXPIRED > ACTIVE > ""(无订阅/文件卡)—— 取最该告警的那个。
+ *  目的:抓"订阅已取消却仍在发请求"的买家。 */
+export function summarizeSubStatus(statuses: Array<string | undefined>): "ACTIVE" | "EXPIRED" | "CANCELLED" | "" {
+  const set = new Set(statuses.filter(Boolean));
+  if (set.has("CANCELLED")) return "CANCELLED";
+  if (set.has("EXPIRED") && !set.has("ACTIVE")) return "EXPIRED";
+  if (set.has("ACTIVE")) return "ACTIVE";
+  return "";
+}
+
+export function deriveAccountHealth(s: AccountStatusInput): AccountHealth {
+  const reason = String(s.quotaStatusReason || "");
+  if (!s.found) return { label: "不在池", tone: "muted", reason };
+  if (s.enabled === false) return { label: "已禁用", tone: "muted", reason };
+  if (/invalid_grant|revoked|token.*(dead|not found)/i.test(reason)) {
+    return { label: "Token失效", tone: "destructive", reason };
+  }
+  if (isPermanentDeathReason(reason)) return { label: "已死", tone: "destructive", reason };
+  const q = String(s.quotaStatus || "ok");
+  if (q === "error") return { label: "异常", tone: "amber", reason };
+  if (q === "exhausted") return { label: "已用尽", tone: "amber", reason };
+  if (q === "cooling") return { label: "冷却中", tone: "amber", reason };
+  return { label: "正常", tone: "ok", reason };
+}
 
 /** Product a usage row's bucket belongs to. Composite `<product>-<family>` →
  *  product; legacy bare buckets (gemini/opus/codex) map to their old provider. */
@@ -26,12 +68,15 @@ function hourlyAccountScope(opts: { accountEmail?: string }): Record<string, unk
   return email ? { accountEmail: email } : {};
 }
 
-/** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min)。 */
-type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; desktop: number; total: number; minutes: Map<number, number> };
+/** 每个客户(买家)的 RequestLog 派生统计:不同来源 IP + 按分钟分桶(算峰值 req/min)。 */
+type CustomerLogStat = { sources: Set<string>; minutes: Map<number, number> };
+/** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min),
+ *  外加该母号下每个客户的同口径明细(点开母号看哪个买家在突发/多 IP)。 */
+type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; desktop: number; total: number; minutes: Map<number, number>; customers: Map<string, CustomerLogStat> };
 type RequestLogStats = Map<string, AccountLogStat>;
 
-/** 峰值 req/min:该母号在窗口内某 60s 分桶里的最大请求数。无数据 → 0。 */
-function peakReqPerMin(s?: AccountLogStat): number {
+/** 峰值 req/min:在窗口内某 60s 分桶里的最大请求数。无数据 → 0。 */
+function peakReqPerMin(s?: { minutes: Map<number, number> }): number {
   return s && s.minutes.size ? Math.max(...s.minutes.values()) : 0;
 }
 
@@ -266,27 +311,47 @@ export class TokenUsageStatsService {
 
   // ── 母号封号分析:按母号(account)聚合用量/反代/扇出 ────────────────────
 
+  // RequestLog 是逐请求热表(保留 5 天,行数上限 300 万)。把整窗口全捞进内存会 OOM /
+  // 阻塞事件循环 → 拖停服务。这里硬封顶扫描行数,并按 at 倒序只取最近 N 条:低量时即全量
+  // (精确),高量时退化为"最近 N 条请求"的近似(峰值/IP/用户仍足够指示),且绝不爆内存。
+  static readonly REQUEST_LOG_SCAN_CAP = 200_000;
+
   /**
-   * 一次扫描 RequestLog(≤72h 热表),按 母号(provider+email)聚合:不同来源/出口 IP、
-   * 桌面占比、按分钟分桶(算峰值 req/min)。风险榜 / 事件流 / 对比共用,避免多次全表扫描。
+   * 一次扫描 RequestLog(封顶 REQUEST_LOG_SCAN_CAP 行),按 母号(provider+email)聚合:
+   * 不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min)+ 每客户同口径。
+   * 风险榜 / 事件流 / 对比共用,避免多次全表扫描。
    */
   private async requestLogStatsByAccount(since: Date): Promise<RequestLogStats> {
+    const cap = TokenUsageStatsService.REQUEST_LOG_SCAN_CAP;
     const logs = await this.prisma.requestLog.findMany({
       where: { at: { gte: since }, provider: { in: ["codex", "anthropic"] } },
-      select: { provider: true, accountEmail: true, surface: true, sourceIp: true, exitIp: true, userId: true, at: true },
+      select: { provider: true, accountEmail: true, accessKeyId: true, customerId: true, surface: true, sourceIp: true, exitIp: true, userId: true, at: true },
+      orderBy: { at: "desc" }, // 命中上限时保留最近的行(走 @@index([at]) 倒序,无需 filesort)
+      take: cap,
     });
+    if (logs.length >= cap) {
+      this.logger.warn(`requestLogStatsByAccount hit scan cap (${cap}); 峰值/IP/用户 仅按最近 ${cap} 条请求计算`);
+    }
     const m: RequestLogStats = new Map();
     for (const r of logs) {
       const key = `${r.provider} ${r.accountEmail}`;
       let s = m.get(key);
-      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), desktop: 0, total: 0, minutes: new Map() }; m.set(key, s); }
+      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), desktop: 0, total: 0, minutes: new Map(), customers: new Map() }; m.set(key, s); }
+      const min = Math.floor(new Date(r.at).getTime() / 60000);
       if (r.sourceIp) s.sources.add(r.sourceIp);
       if (r.exitIp) s.exits.add(r.exitIp);
       if (r.userId) s.users.add(r.userId);
       if (r.surface === "desktop") s.desktop += 1;
       s.total += 1;
-      const min = Math.floor(new Date(r.at).getTime() / 60000);
       s.minutes.set(min, (s.minutes.get(min) || 0) + 1);
+      // 同一次扫描里顺手按客户聚合(点开母号看哪个买家在突发/多来源 IP)。custKey 与上面一致。
+      const custKey = r.customerId || r.accessKeyId;
+      if (custKey) {
+        let c = s.customers.get(custKey);
+        if (!c) { c = { sources: new Set(), minutes: new Map() }; s.customers.set(custKey, c); }
+        if (r.sourceIp) c.sources.add(r.sourceIp);
+        c.minutes.set(min, (c.minutes.get(min) || 0) + 1);
+      }
     }
     return m;
   }
@@ -301,7 +366,7 @@ export class TokenUsageStatsService {
    *   - reverseProxyHits / reverseProxyRate     —— 非真客户端占比(反代)
    *   - distinctCards                            —— 共享扇出(几张卡在用这个母号)
    *   - totalTokens                              —— 饱和度
-   * Plus a per-card breakdown so you can see WHICH card drives the reverse-proxy.
+   * Plus a per-customer breakdown so you can see WHICH buyer shares/drives this account.
    * Keyed by (product, accountEmail); sorted by reverseProxyHits desc.
    */
   async getAccountBanAnalysis(opts: { days?: number; logStats?: RequestLogStats } = {}) {
@@ -315,40 +380,67 @@ export class TokenUsageStatsService {
         OR: [{ bucket: { startsWith: "anthropic" } }, { bucket: { startsWith: "codex" } }],
       },
       select: {
-        accountEmail: true, accessKeyId: true, bucket: true,
+        accountEmail: true, accessKeyId: true, customerId: true, bucket: true,
         requests: true, failedRequests: true, reverseProxyHits: true, totalTokens: true,
       },
     });
 
-    type Card = { accessKeyId: string; requests: number; reverseProxyHits: number };
+    type CustomerAgg = { customerId: string; requests: number; reverseProxyHits: number; cardIds: Set<string> };
     type Acct = {
       product: string; accountEmail: string; requests: number; failedRequests: number;
-      reverseProxyHits: number; totalTokens: number; cards: Map<string, Card>;
+      reverseProxyHits: number; totalTokens: number; cardIds: Set<string>; customers: Map<string, CustomerAgg>;
     };
     const byAccount = new Map<string, Acct>();
     for (const r of rows) {
       const product = bucketProduct(r.bucket);
       if (product !== "codex" && product !== "anthropic") continue; // 只看 codex/claude
-      const email = r.accountEmail || "(unknown)";
+      const email = r.accountEmail; if (!r.accountEmail) continue;
       const key = `${product} ${email}`;
       let a = byAccount.get(key);
       if (!a) {
-        a = { product, accountEmail: email, requests: 0, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0, cards: new Map() };
+        a = { product, accountEmail: email, requests: 0, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0, cardIds: new Set(), customers: new Map() };
         byAccount.set(key, a);
       }
       a.requests += r.requests;
       a.failedRequests += r.failedRequests;
       a.reverseProxyHits += r.reverseProxyHits;
       a.totalTokens += r.totalTokens;
-      let c = a.cards.get(r.accessKeyId);
-      if (!c) { c = { accessKeyId: r.accessKeyId, requests: 0, reverseProxyHits: 0 }; a.cards.set(r.accessKeyId, c); }
-      c.requests += r.requests;
-      c.reverseProxyHits += r.reverseProxyHits;
+      a.cardIds.add(r.accessKeyId);
+      const custKey = r.customerId || r.accessKeyId;
+      let cu = a.customers.get(custKey);
+      if (!cu) { cu = { customerId: custKey, requests: 0, reverseProxyHits: 0, cardIds: new Set() }; a.customers.set(custKey, cu); }
+      cu.requests += r.requests;
+      cu.reverseProxyHits += r.reverseProxyHits;
+      cu.cardIds.add(r.accessKeyId);
     }
+
+    // 订阅状态:订阅卡的 accessKeyId 就是 Subscription.id(影子记录 id = 订阅 id)。
+    // 据此把每张卡映射到 ACTIVE/EXPIRED/CANCELLED —— 标出"订阅已取消却还在发请求"的泄漏/盗用。
+    // 文件卡(card_ 前缀,无订阅)不在表里 → 无状态。整个 getBanAnalysis 已缓存,此查询开销摊薄。
+    const allCardIds = [...new Set([...byAccount.values()].flatMap((a) => [...a.cardIds]))];
+    const subStatusById = await this.subscriptionStatusByCardId(allCardIds);
 
     const ratio = (hit: number, total: number) => (total > 0 ? hit / total : 0);
     const accounts = [...byAccount.values()]
-      .map((a) => ({
+      .map((a) => {
+        const logStat = logStats.get(`${a.product} ${a.accountEmail}`);
+        // 下钻:每个客户(买家)一行,带其请求/反代/持卡数,以及从 RequestLog 派生的峰值/来源IP。
+        const customers = [...a.customers.values()]
+          .map((cu) => {
+            const cl = logStat?.customers.get(cu.customerId);
+            return {
+              customerId: cu.customerId,
+              requests: cu.requests,
+              reverseProxyHits: cu.reverseProxyHits,
+              reverseProxyRate: ratio(cu.reverseProxyHits, cu.requests),
+              distinctCards: cu.cardIds.size,
+              peakReqPerMin: peakReqPerMin(cl),
+              distinctSourceIps: cl?.sources.size ?? 0,
+              subStatus: summarizeSubStatus([...cu.cardIds].map((id) => subStatusById.get(id))),
+            };
+          })
+          .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests);
+        return {
         product: a.product,
         accountEmail: a.accountEmail,
         requests: a.requests,
@@ -356,19 +448,35 @@ export class TokenUsageStatsService {
         failRate: ratio(a.failedRequests, a.requests),
         reverseProxyHits: a.reverseProxyHits,
         reverseProxyRate: ratio(a.reverseProxyHits, a.requests),
-        distinctCards: a.cards.size,
+        distinctCards: a.cardIds.size,
+        distinctCustomers: a.customers.size,
         totalTokens: a.totalTokens,
         // 峰值 req/min + 不同来源 IP + 真实用户数(distinct metadata.user_id)—— 判"不像一个人"。
-        peakReqPerMin: peakReqPerMin(logStats.get(`${a.product} ${a.accountEmail}`)),
-        distinctSourceIps: logStats.get(`${a.product} ${a.accountEmail}`)?.sources.size ?? 0,
-        distinctUsers: logStats.get(`${a.product} ${a.accountEmail}`)?.users.size ?? 0,
-        cards: [...a.cards.values()]
-          .map((c) => ({ ...c, reverseProxyRate: ratio(c.reverseProxyHits, c.requests) }))
-          .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests),
-      }))
+        peakReqPerMin: peakReqPerMin(logStat),
+        distinctSourceIps: logStat?.sources.size ?? 0,
+        distinctUsers: logStat?.users.size ?? 0,
+        customers,
+        };
+      })
       .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests);
 
     return { days, accounts };
+  }
+
+  /** 订阅卡 accessKeyId(=Subscription.id)→ 状态。文件卡不在表里,返回的 Map 不含其键。 */
+  private async subscriptionStatusByCardId(cardIds: string[]): Promise<Map<string, string>> {
+    const m = new Map<string, string>();
+    if (cardIds.length === 0 || typeof this.prisma?.subscription?.findMany !== "function") return m;
+    try {
+      const subs = await this.prisma.subscription.findMany({
+        where: { id: { in: cardIds } },
+        select: { id: true, status: true },
+      });
+      for (const s of subs) m.set(s.id, String(s.status || ""));
+    } catch (err) {
+      this.logger.error(`subscriptionStatusByCardId failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return m;
   }
 
   /**
@@ -517,6 +625,7 @@ export class TokenUsageStatsService {
         banned: bannedSet.has(`${a.product} ${a.accountEmail}`),
         reverseProxyRate: a.reverseProxyRate,
         distinctCards: a.distinctCards,
+        distinctCustomers: a.distinctCustomers,
         failRate: a.failRate,
         totalTokens: a.totalTokens,
         requests: a.requests,
@@ -538,6 +647,7 @@ export class TokenUsageStatsService {
       { key: "peakReqPerMin", label: "峰值 req/min", sel: (r) => r.peakReqPerMin },
       { key: "distinctSourceIps", label: "不同来源 IP 数", sel: (r) => r.distinctSourceIps },
       { key: "distinctCards", label: "扇出卡数", sel: (r) => r.distinctCards },
+      { key: "distinctCustomers", label: "扇出客户数", sel: (r) => r.distinctCustomers },
       { key: "distinctExitIps", label: "出口 IP 数(应=1)", sel: (r) => r.distinctExitIps },
       { key: "desktopRatio", label: "桌面端占比", pct: true, sel: (r) => r.desktopRatio },
       { key: "failRate", label: "失败率", pct: true, sel: (r) => r.failRate },
@@ -557,9 +667,30 @@ export class TokenUsageStatsService {
     return { days, bannedCount: banned.length, healthyCount: healthy.length, metrics };
   }
 
-  /** 封号分析页一次取齐:定因对比 + 母号风险榜 + 封号事件流。RequestLog 只扫一次,三处共用。 */
-  async getBanAnalysis(opts: { days?: number } = {}) {
+  // 看板缓存:getBanAnalysis 的重活是全量扫 RequestLog(逐请求,几万行)。这是取证看板,
+  // 不需要实时 → 按 days 缓存结果 ~90s,冷算一次后秒回。母号运行状态(启用/Token失效)是
+  // 内存里的,留在控制器每次实时 join,所以"重的缓存、状态仍新鲜"。
+  static readonly BAN_ANALYSIS_TTL_MS = 90_000;
+  private readonly banAnalysisCache = new Map<number, { at: number; data: Awaited<ReturnType<TokenUsageStatsService["computeBanAnalysis"]>> }>();
+
+  /** 封号分析页一次取齐:定因对比 + 母号风险榜 + 封号事件流(带 TTL 缓存)。 */
+  async getBanAnalysis(opts: { days?: number } = {}): Promise<Awaited<ReturnType<TokenUsageStatsService["computeBanAnalysis"]>>> {
     const days = Math.max(1, Math.min(30, opts.days || 7));
+    const cached = this.banAnalysisCache.get(days);
+    const now = this.nowMs();
+    if (cached && now - cached.at < TokenUsageStatsService.BAN_ANALYSIS_TTL_MS) return cached.data;
+    const data = await this.computeBanAnalysis(days);
+    this.banAnalysisCache.set(days, { at: now, data });
+    return data;
+  }
+
+  /** 注入点:测试可覆盖时钟。默认用真实时间。 */
+  protected nowMs(): number {
+    return Date.now();
+  }
+
+  /** RequestLog 只扫一次,三处共用。 */
+  private async computeBanAnalysis(days: number) {
     const logStats = await this.requestLogStatsByAccount(beijingDayStart(days));
     const [risk, events] = await Promise.all([
       this.getAccountBanAnalysis({ days, logStats }),
