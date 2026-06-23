@@ -190,7 +190,12 @@ func isCodexGenerationRequest(path string) bool {
 	}
 }
 
-func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string) {
+func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string, surface ...string) {
+	// 接管面(codex 只有本地直连代理入口 → cli;无桌面 MITM)。
+	surfaceTag := "cli"
+	if len(surface) > 0 {
+		surfaceTag = surface[0]
+	}
 	// WebSocket 升级:新版 Codex 桌面版的对话走 ws,交给 ws 中间人(换号池 token + 双向桥接)。
 	if isCodexWebSocketUpgrade(r) {
 		p.serveCodexWebSocket(w, r, card, deviceId, upstreamProxy)
@@ -244,6 +249,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
+	reportHeaders := filterReportHeaders(r.Header) // 过滤后的请求头(去凭证头、跳超大值)→ per-request 热表
+	reportUserID := extractMetadataUserID(body)    // metadata.user_id → 服务端数真实用户
 	body = normalizeCodexRequestBody(r.URL.Path, body)
 	// 换号池 token 转发前剔除非法 reasoning.encrypted_content:上一个账号的签名对新
 	// 账号无效,留着会让 chatgpt.com 直接报签名错误(换号场景的莫名 4xx 主因)。
@@ -286,6 +293,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	}
 	audit.accountID = lease.AccountId
 	audit.token = lease.AccessToken
+	if lease.AccountId > 0 {
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+	}
 
 	targetURL, err := p.targetURL(r)
 	if err != nil {
@@ -364,6 +374,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
 		audit.respBody = tee.captured()
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
+		details.Surface = surfaceTag
+		details.Headers = reportHeaders
+		details.UserId = reportUserID
 		audit.inTokens, audit.outTokens = input, output
 		if copyErr != nil {
 			details.StatusCode = 502
@@ -397,6 +410,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
+	details.Surface = surfaceTag
+	details.Headers = reportHeaders
+	details.UserId = reportUserID
 	audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)

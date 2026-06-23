@@ -251,6 +251,16 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	// 接管面 + 过滤后请求头:随上报落 per-request 热表(封号定因)。仅有值时带上。
+	if details.Surface != "" {
+		payload["surface"] = details.Surface
+	}
+	if details.Headers != "" {
+		payload["headers"] = details.Headers
+	}
+	if details.UserId != "" {
+		payload["userId"] = details.UserId
+	}
 	// Attach the cached account-quota snapshot (one-shot) so the server can
 	// quota-aware codex account selection — mirrors the antigravity flow.
 	if snap := l.ConsumeCodexQuotaSnapshot(); snap != nil {

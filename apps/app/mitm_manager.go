@@ -82,7 +82,8 @@ func (m *mitmManager) buildHandler() http.Handler {
 		card, deviceId, upstream := m.card, m.deviceId, m.upstream
 		m.mu.Unlock()
 		// 复用现有 Claude 代理：租号池 token → 换 Authorization → 出口闸 → SSE 计费。
-		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream)
+		// MITM 接管入口 = Claude 桌面端 → surface=desktop。
+		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream, "desktop")
 	})
 	// 资格端点：mock 开(默认)时转发真请求再把订阅改写成 pro(保留真身份)，关掉则纯透传。
 	// 运行时读 m.mockLogin。entitlement handler 内含 401/403 → canned 假 pro 的零账号兜底。

@@ -463,6 +463,36 @@ export class RosettaController {
     return this.tokenUsageStats.getUsageTrend({ days: Number(days) || 7 });
   }
 
+  /** 封号分析页:母号风险榜(反代率/扇出/失败率/量)+ 封号事件流(codex+claude)。 */
+  @Get("ban-analysis")
+  getBanAnalysis(@Query("days") days?: string) {
+    return this.tokenUsageStats.getBanAnalysis({ days: Number(days) || 7 });
+  }
+
+  /** 单条封号事件的"封号前请求时间线"(下钻)。 */
+  @Get("ban-event-requests")
+  getBanEventRequests(@Query("id") id?: string) {
+    return this.tokenUsageStats.getBanEventRequests(String(id || ""));
+  }
+
+  /** per-request 热表浏览(近 ≤72h):按 母号/卡/surface/反代 过滤。 */
+  @Get("request-logs")
+  getRequestLogs(
+    @Query("accountEmail") accountEmail?: string,
+    @Query("accessKeyId") accessKeyId?: string,
+    @Query("surface") surface?: string,
+    @Query("reverseProxy") reverseProxy?: string,
+    @Query("hours") hours?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.tokenUsageStats.getRequestLogs({
+      accountEmail, accessKeyId, surface,
+      reverseProxyOnly: reverseProxy === "1" || reverseProxy === "true",
+      hours: hours ? Number(hours) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   @Get("cliproxy-status")
   getCliProxyStatus() {
     return this.rosetta.getCliProxyStatus();

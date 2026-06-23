@@ -231,12 +231,13 @@ func (p *LocalHTTPProxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Claude Code(注入 ANTHROPIC_BASE_URL)的生成请求落在 /v1/messages —— 与 codex
 	// 的 /v1/responses /v1/chat/completions 不重叠,放在 codex 判断前优先匹配。
 	if isClaudeAPIRequest(path) {
-		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream)
+		// 本地直连代理入口 = 用户把 Claude Code CLI/IDE 指到这里 → surface=cli。
+		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream, "cli")
 		return
 	}
 
 	if isCodexAPIRequest(path) {
-		GetCodexProxy().ServeHTTP(w, r, card, deviceId, upstream)
+		GetCodexProxy().ServeHTTP(w, r, card, deviceId, upstream, "cli")
 		return
 	}
 

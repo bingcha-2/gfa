@@ -3,6 +3,8 @@ import { Inject, Module, OnModuleInit } from "@nestjs/common";
 import { TokenServerController } from "./token-server.controller";
 import { TokenServerService } from "./token-server.service";
 import { TokenUsageTracker } from "./token-usage-tracker";
+import { BanEventTracker } from "./ban-event-tracker";
+import { RequestLogTracker } from "./request-log-tracker";
 import { AccountQuotaSnapshotTracker } from "./account-quota-snapshot-tracker";
 import { AccessKeyStore } from "./access-key-store";
 import { SessionTokenResolver } from "./session-token-resolver";
@@ -31,6 +33,21 @@ const accountQuotaSnapshotTrackerProvider = {
   inject: [PrismaService],
 };
 
+// 封号事件记录器。共享一份(内存环按 provider+accountId 隔离)。只被 codex/anthropic
+// 模块注入(antigravity 不接 → 不记封号),见各自 module 的 BAN_EVENT_TRACKER inject。
+const banEventTrackerProvider = {
+  provide: "BAN_EVENT_TRACKER",
+  useFactory: (prisma: PrismaService) => new BanEventTracker(prisma),
+  inject: [PrismaService],
+};
+
+// per-request 热表写入器(72h)。同样只被 codex/anthropic 模块注入。
+const requestLogTrackerProvider = {
+  provide: "REQUEST_LOG_TRACKER",
+  useFactory: (prisma: PrismaService) => new RequestLogTracker(prisma),
+  inject: [PrismaService],
+};
+
 const tokenServerProvider = {
   provide: TokenServerService,
   useFactory: (
@@ -47,8 +64,8 @@ const tokenServerProvider = {
   // (verifies customer session JWTs on the lease hot path).
   imports: [CustomerAuthModule],
   controllers: [TokenServerController],
-  providers: [tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
-  exports: [TokenServerService, "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
+  providers: [tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, banEventTrackerProvider, requestLogTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
+  exports: [TokenServerService, "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
 })
 export class TokenServerModule implements OnModuleInit {
   constructor(
