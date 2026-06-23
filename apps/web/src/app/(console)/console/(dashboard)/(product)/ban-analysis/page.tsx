@@ -16,7 +16,7 @@ import { formatTokens } from "@/lib/format";
 
 // ── API shapes(对齐 token-usage-stats.service.getBanAnalysis)─────────────────
 type SubStatus = "ACTIVE" | "EXPIRED" | "CANCELLED" | "";
-type CustomerRisk = { customerId: string; requests: number; reverseProxyHits: number; reverseProxyRate: number; distinctCards: number; peakReqPerMin: number; distinctSourceIps: number; subStatus: SubStatus };
+type CustomerRisk = { customerId: string; customerEmail: string; requests: number; reverseProxyHits: number; reverseProxyRate: number; distinctCards: number; peakReqPerMin: number; distinctSourceIps: number; cliReqs: number; desktopReqs: number; ideReqs: number; subStatus: SubStatus };
 type AccountHealthTone = "ok" | "amber" | "destructive" | "muted";
 type AccountHealth = { label: string; tone: AccountHealthTone; reason: string };
 type AccountRisk = {
@@ -82,6 +82,7 @@ type RequestLogRow = {
   accountEmail: string;
   accessKeyId: string;
   customerId: string;
+  customerEmail: string;
   deviceId: string;
   modelKey: string;
   status: number;
@@ -142,6 +143,17 @@ function CustomersBadge({ n }: { n: number }) {
   return <span className="text-muted-foreground">—</span>;
 }
 
+function SurfaceCell({ cli, desktop, ide }: { cli: number; desktop: number; ide: number }) {
+  // 接管面分布(来自 RequestLog)。老客户端不报 surface 时全 0 → 显示「—」。
+  const total = cli + desktop + ide;
+  if (total === 0) return <span className="text-muted-foreground">—</span>;
+  const parts: string[] = [];
+  if (cli) parts.push(`cli ${Math.round((cli / total) * 100)}%`);
+  if (desktop) parts.push(`桌面 ${Math.round((desktop / total) * 100)}%`);
+  if (ide) parts.push(`ide ${Math.round((ide / total) * 100)}%`);
+  return <span className="text-xs tabular-nums">{parts.join(" · ")}</span>;
+}
+
 function SubStatusBadge({ s }: { s: SubStatus }) {
   // 订阅已取消/过期却仍在这个母号下发请求 = 泄漏/盗用信号。ACTIVE/无订阅不标。
   if (s === "CANCELLED") return <Badge variant="destructive">订阅已取消</Badge>;
@@ -150,7 +162,7 @@ function SubStatusBadge({ s }: { s: SubStatus }) {
 }
 
 function StatusBadge({ status }: { status?: AccountHealth }) {
-  if (!status) return <span className="text-muted-foreground">—</span>;
+  if (!status || !status.label) return <span className="text-muted-foreground">—</span>;
   const title = status.reason || undefined;
   if (status.tone === "ok") return <span className="text-muted-foreground" title={title}>{status.label}</span>;
   if (status.tone === "muted") return <Badge variant="outline" title={title}>{status.label}</Badge>;
@@ -474,19 +486,21 @@ export default function BanAnalysisPage() {
                                 <TableHead className="text-right">持卡数</TableHead>
                                 <TableHead className="text-right">峰值/分</TableHead>
                                 <TableHead className="text-right">来源IP</TableHead>
+                                <TableHead>接管面</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {a.customers.map((c) => (
                                 <TableRow key={c.customerId}>
                                   <TableCell className="font-mono text-xs">
-                                    <span className="inline-flex items-center gap-1.5">{c.customerId}<SubStatusBadge s={c.subStatus} /></span>
+                                    <span className="inline-flex items-center gap-1.5" title={c.customerEmail ? c.customerId : undefined}>{c.customerEmail || c.customerId}<SubStatusBadge s={c.subStatus} /></span>
                                   </TableCell>
                                   <TableCell className="text-right tabular-nums">{c.requests}</TableCell>
                                   <TableCell className="text-right"><RateBadge rate={c.reverseProxyRate} hits={c.reverseProxyHits} /></TableCell>
                                   <TableCell className="text-right tabular-nums">{c.distinctCards}</TableCell>
                                   <TableCell className="text-right"><RpmBadge rpm={c.peakReqPerMin} /></TableCell>
                                   <TableCell className="text-right tabular-nums">{c.distinctSourceIps || "—"}</TableCell>
+                                  <TableCell><SurfaceCell cli={c.cliReqs} desktop={c.desktopReqs} ide={c.ideReqs} /></TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -563,7 +577,7 @@ export default function BanAnalysisPage() {
                     <TableCell className="whitespace-nowrap text-xs">{fmtTime(r.at)}</TableCell>
                     <TableCell>{PRODUCT_LABEL[r.provider] ?? r.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{r.accountEmail || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.customerId || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs" title={r.customerEmail ? r.customerId : undefined}>{r.customerEmail || r.customerId || "—"}</TableCell>
                     <TableCell>{r.surface ? <Badge variant="secondary">{r.surface}</Badge> : "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.sourceIp || "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{r.exitIp || "—"}</TableCell>

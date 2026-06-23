@@ -34,7 +34,8 @@ export function summarizeSubStatus(statuses: Array<string | undefined>): "ACTIVE
 
 export function deriveAccountHealth(s: AccountStatusInput): AccountHealth {
   const reason = String(s.quotaStatusReason || "");
-  if (!s.found) return { label: "不在池", tone: "muted", reason };
+  // 不在池(母号已删/不在册):不展示标签(只关心在池母号的真实状态)。
+  if (!s.found) return { label: "", tone: "muted", reason };
   if (s.enabled === false) return { label: "已禁用", tone: "muted", reason };
   if (/invalid_grant|revoked|token.*(dead|not found)/i.test(reason)) {
     return { label: "Token失效", tone: "destructive", reason };
@@ -68,11 +69,12 @@ function hourlyAccountScope(opts: { accountEmail?: string }): Record<string, unk
   return email ? { accountEmail: email } : {};
 }
 
-/** 每个客户(买家)的 RequestLog 派生统计:不同来源 IP + 按分钟分桶(算峰值 req/min)。 */
-type CustomerLogStat = { sources: Set<string>; minutes: Map<number, number> };
+/** 每个客户(买家)的 RequestLog 派生统计:不同来源 IP + 按分钟分桶(算峰值 req/min)
+ *  + 接管面计数(cli / desktop / ide)。surface 由客户端上报,老客户端为空 → 全 0。 */
+type CustomerLogStat = { sources: Set<string>; minutes: Map<number, number>; cli: number; desktop: number; ide: number };
 /** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min),
  *  外加该母号下每个客户的同口径明细(点开母号看哪个买家在突发/多 IP)。 */
-type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; desktop: number; total: number; minutes: Map<number, number>; customers: Map<string, CustomerLogStat> };
+type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; cli: number; desktop: number; ide: number; total: number; minutes: Map<number, number>; customers: Map<string, CustomerLogStat> };
 type RequestLogStats = Map<string, AccountLogStat>;
 
 /** 峰值 req/min:在窗口内某 60s 分桶里的最大请求数。无数据 → 0。 */
@@ -336,21 +338,26 @@ export class TokenUsageStatsService {
     for (const r of logs) {
       const key = `${r.provider} ${r.accountEmail}`;
       let s = m.get(key);
-      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), desktop: 0, total: 0, minutes: new Map(), customers: new Map() }; m.set(key, s); }
+      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), cli: 0, desktop: 0, ide: 0, total: 0, minutes: new Map(), customers: new Map() }; m.set(key, s); }
       const min = Math.floor(new Date(r.at).getTime() / 60000);
       if (r.sourceIp) s.sources.add(r.sourceIp);
       if (r.exitIp) s.exits.add(r.exitIp);
       if (r.userId) s.users.add(r.userId);
       if (r.surface === "desktop") s.desktop += 1;
+      else if (r.surface === "cli") s.cli += 1;
+      else if (r.surface === "ide") s.ide += 1;
       s.total += 1;
       s.minutes.set(min, (s.minutes.get(min) || 0) + 1);
       // 同一次扫描里顺手按客户聚合(点开母号看哪个买家在突发/多来源 IP)。custKey 与上面一致。
       const custKey = r.customerId || r.accessKeyId;
       if (custKey) {
         let c = s.customers.get(custKey);
-        if (!c) { c = { sources: new Set(), minutes: new Map() }; s.customers.set(custKey, c); }
+        if (!c) { c = { sources: new Set(), minutes: new Map(), cli: 0, desktop: 0, ide: 0 }; s.customers.set(custKey, c); }
         if (r.sourceIp) c.sources.add(r.sourceIp);
         c.minutes.set(min, (c.minutes.get(min) || 0) + 1);
+        if (r.surface === "desktop") c.desktop += 1;
+        else if (r.surface === "cli") c.cli += 1;
+        else if (r.surface === "ide") c.ide += 1;
       }
     }
     return m;
@@ -420,6 +427,10 @@ export class TokenUsageStatsService {
     const allCardIds = [...new Set([...byAccount.values()].flatMap((a) => [...a.cardIds]))];
     const subStatusById = await this.subscriptionStatusByCardId(allCardIds);
 
+    // 客户 id → 邮箱(展示用,代替不可读的 cuid)。文件卡的 custKey 是 accessKeyId,不在 Customer 表 → 无邮箱。
+    const allCustKeys = [...new Set([...byAccount.values()].flatMap((a) => [...a.customers.keys()]))];
+    const emailByCustomerId = await this.customerEmailById(allCustKeys);
+
     const ratio = (hit: number, total: number) => (total > 0 ? hit / total : 0);
     const accounts = [...byAccount.values()]
       .map((a) => {
@@ -430,12 +441,17 @@ export class TokenUsageStatsService {
             const cl = logStat?.customers.get(cu.customerId);
             return {
               customerId: cu.customerId,
+              customerEmail: emailByCustomerId.get(cu.customerId) ?? "",
               requests: cu.requests,
               reverseProxyHits: cu.reverseProxyHits,
               reverseProxyRate: ratio(cu.reverseProxyHits, cu.requests),
               distinctCards: cu.cardIds.size,
               peakReqPerMin: peakReqPerMin(cl),
               distinctSourceIps: cl?.sources.size ?? 0,
+              // 接管面计数(来自 RequestLog;老客户端不报 surface 时全 0)。
+              cliReqs: cl?.cli ?? 0,
+              desktopReqs: cl?.desktop ?? 0,
+              ideReqs: cl?.ide ?? 0,
               subStatus: summarizeSubStatus([...cu.cardIds].map((id) => subStatusById.get(id))),
             };
           })
@@ -461,6 +477,22 @@ export class TokenUsageStatsService {
       .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests);
 
     return { days, accounts };
+  }
+
+  /** 客户 id → 邮箱(展示用)。文件卡的 custKey 不是 customerId → 不在表里,Map 不含其键。 */
+  private async customerEmailById(customerIds: string[]): Promise<Map<string, string>> {
+    const m = new Map<string, string>();
+    if (customerIds.length === 0 || typeof this.prisma?.customer?.findMany !== "function") return m;
+    try {
+      const rows = await this.prisma.customer.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true, email: true },
+      });
+      for (const c of rows) if (c.email) m.set(c.id, String(c.email));
+    } catch (err) {
+      this.logger.error(`customerEmailById failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return m;
   }
 
   /** 订阅卡 accessKeyId(=Subscription.id)→ 状态。文件卡不在表里,返回的 Map 不含其键。 */
@@ -592,7 +624,10 @@ export class TokenUsageStatsService {
     if (opts.reverseProxyOnly) where.reverseProxy = true;
 
     const logs = await this.prisma.requestLog.findMany({ where, orderBy: { at: "desc" }, take: limit });
-    return { hours, logs };
+    // 富集客户邮箱:逐请求展示买家邮箱而非不可读的 customerId(行数 ≤500,id 集合小)。
+    const emailById = await this.customerEmailById([...new Set(logs.map((l: any) => String(l.customerId || "")).filter(Boolean))]);
+    const enriched = logs.map((l: any) => ({ ...l, customerEmail: emailById.get(l.customerId) ?? "" }));
+    return { hours, logs: enriched };
   }
 
   /**
@@ -632,7 +667,8 @@ export class TokenUsageStatsService {
         distinctSourceIps: l ? l.sources.size : 0,
         distinctExitIps: l ? l.exits.size : 0,
         distinctUsers: l ? l.users.size : 0,
-        desktopRatio: l && l.total ? l.desktop / l.total : 0,
+        // 分母只取"已上报 surface 的请求"(cli+desktop+ide),否则被老客户端的空 surface 稀释。
+        desktopRatio: (() => { const surfaced = l ? l.cli + l.desktop + l.ide : 0; return surfaced ? (l!.desktop / surfaced) : 0; })(),
         peakReqPerMin: peakReqPerMin(l),
       };
     });
@@ -649,7 +685,7 @@ export class TokenUsageStatsService {
       { key: "distinctCards", label: "扇出卡数", sel: (r) => r.distinctCards },
       { key: "distinctCustomers", label: "扇出客户数", sel: (r) => r.distinctCustomers },
       { key: "distinctExitIps", label: "出口 IP 数(应=1)", sel: (r) => r.distinctExitIps },
-      { key: "desktopRatio", label: "桌面端占比", pct: true, sel: (r) => r.desktopRatio },
+      { key: "desktopRatio", label: "桌面端占比(已报接管面中)", pct: true, sel: (r) => r.desktopRatio },
       { key: "failRate", label: "失败率", pct: true, sel: (r) => r.failRate },
       { key: "totalTokens", label: "Token 量", sel: (r) => r.totalTokens },
       { key: "requests", label: "请求数", sel: (r) => r.requests },
