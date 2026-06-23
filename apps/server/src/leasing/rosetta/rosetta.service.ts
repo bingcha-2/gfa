@@ -14,7 +14,7 @@ import { AccessKeyService } from "./access-key.service";
 import { AdspowerService } from "./adspower.service";
 import { AntigravityAccountService } from "./antigravity-account.service";
 import { CaptchaService } from "./captcha.service";
-import { ClaudeAccountService } from "./claude-account.service";
+import { ClaudeAccountService, type ClaudeManualLoginRunner } from "./claude-account.service";
 import { ClaudePrechargeService } from "./claude-precharge.service";
 import { ClaudeSessionPoolService } from "./claude-session-pool.service";
 import { CliProxySyncService } from "./cliproxy-sync.service";
@@ -38,6 +38,7 @@ type RosettaServiceOptions = {
    *  window usage. When set, the admin list reads usage from it instead of the
    *  (event-free) JSON file. */
   accessKeyStore?: AccessKeyStore;
+  claudeManualLoginRunner?: ClaudeManualLoginRunner;
 };
 
 const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
@@ -109,7 +110,7 @@ export class RosettaService {
     this.captchaSvc = new CaptchaService({ dataDir: this.dataDir, automation: this.automation, logger: this.logger });
     this.antigravitySvc = new AntigravityAccountService(this.ctx, this.accessKeySvc);
     this.codexSvc = new CodexService(this.ctx, this.accessKeySvc);
-    this.claudeSvc = new ClaudeAccountService(this.ctx, this.accessKeySvc);
+    this.claudeSvc = new ClaudeAccountService(this.ctx, this.accessKeySvc, options.claudeManualLoginRunner);
     this.prechargeSvc = new ClaudePrechargeService(this.ctx, this.claudeSvc);
     this.cliproxySyncSvc = new CliProxySyncService(this.ctx);
     this.googleSvc = new GoogleOAuthService(this.ctx, (p: any) => this.antigravitySvc.addAccountChecked(p));
@@ -216,6 +217,8 @@ export class RosettaService {
   followClaudeMagicLink(loginId: string, url: string) { return this.claudeSvc.followMagicLink(loginId, url); }
   startAutoClaudeOAuth(payload: any) { return this.claudeSvc.startAutoClaudeOAuth(payload); }
   getAutoClaudeOAuthStatus(taskId: string) { return this.claudeSvc.getAutoOAuthStatus(taskId); }
+  startManualClaudeLogin(payload: any) { return this.claudeSvc.startManualClaudeLogin(payload); }
+  getManualClaudeLoginStatus(taskId: string) { return this.claudeSvc.getManualClaudeLoginStatus(taskId); }
   toggleClaudeAccount(payload: any) { return this.claudeSvc.toggleClaudeAccount(payload); }
   toggleClaudeAccountPool(payload: any) { return this.claudeSvc.toggleClaudeAccountPool(payload); }
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }
@@ -229,6 +232,7 @@ export class RosettaService {
   loginProbeClaudePrecharge(payload: any) { return this.prechargeSvc.loginProbe(payload); }
   quickProbeClaudePrecharge(payload: any) { return this.prechargeSvc.quickProbe(payload); }
   markTopupClaudePrecharge(payload: any) { return this.prechargeSvc.markTopup(payload); }
+  manualLoginClaudePrecharge(payload: any) { return this.prechargeSvc.manualLogin(payload); }
   activateClaudePrecharge(payload: any) { return this.prechargeSvc.activate(payload); }
   activateClaudePrechargeWithSessionKey(payload: any) { return this.prechargeSvc.activateWithSessionKey(payload); }
   deleteClaudePrechargeAccount(payload: any) { return this.prechargeSvc.deleteAccount(payload); }

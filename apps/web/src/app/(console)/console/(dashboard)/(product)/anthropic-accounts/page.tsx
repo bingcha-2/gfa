@@ -90,6 +90,16 @@ type ClaudePrechargeAccount = {
   updatedAt: string;
 };
 
+type ManualLoginKind = "account" | "precharge";
+
+type ManualLoginTarget = {
+  id: number;
+  email: string;
+  proxyUrl?: string;
+  adspowerProfileId?: string;
+  hasMailPassword?: boolean;
+};
+
 function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
 }
@@ -140,6 +150,21 @@ function formatDateTime(value: string) {
   if (!value) return "—";
   const t = Date.parse(value);
   return Number.isFinite(t) ? new Date(t).toLocaleString() : value;
+}
+
+function manualLoginKey(kind: ManualLoginKind, id: number) {
+  return `${kind}:${id}`;
+}
+
+function manualLoginBlockReason(account: ManualLoginTarget) {
+  if (!account.hasMailPassword) return "缺邮箱密码";
+  if (!account.proxyUrl?.trim()) return "缺出口代理";
+  if (!account.adspowerProfileId?.trim()) return "缺 AdsPower Profile";
+  return "";
+}
+
+function manualLoginTitle(reason: string) {
+  return reason ? `人工登录不可用：${reason}` : "登录探活并获取组织 ID（浏览器保持打开）";
 }
 
 export default function ClaudeAccountsPage() {
@@ -200,6 +225,7 @@ export default function ClaudeAccountsPage() {
   const [prechargeProfileId, setPrechargeProfileId] = useState("k1bvbavq");
   const [prechargeImporting, setPrechargeImporting] = useState(false);
   const [prechargeBusyId, setPrechargeBusyId] = useState<number | null>(null);
+  const [manualLoginBusyKey, setManualLoginBusyKey] = useState<string | null>(null);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -246,6 +272,46 @@ export default function ClaudeAccountsPage() {
     const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
+  }
+
+  async function pollManualClaudeLogin(taskId: string, email: string) {
+    for (let i = 0; i < 150; i += 1) {
+      const res = await fetch(consoleApiPath(`rosetta/anthropic-manual-login-status?taskId=${encodeURIComponent(taskId)}`), { cache: "no-store" });
+      const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (data.status === "ready_for_manual") {
+        toast.success(`${email} 登录探活完成${data.orgId ? `，组织 ID: ${data.orgId}` : ""}，浏览器保持打开`);
+        return;
+      }
+      if (data.status === "error") throw new Error(data.error || "人工登录失败");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    toast.info(`${email} 人工登录仍在进行，请查看 AdsPower 浏览器`);
+  }
+
+  async function startManualClaudeLogin(kind: ManualLoginKind, account: ManualLoginTarget) {
+    const reason = manualLoginBlockReason(account);
+    if (reason) {
+      toast.error(reason);
+      return;
+    }
+    const key = manualLoginKey(kind, account.id);
+    setManualLoginBusyKey(key);
+    try {
+      const path = kind === "precharge" ? "anthropic-precharge-manual-login" : "anthropic-manual-login";
+      const data = await postPrecharge(path, { accountId: account.id });
+      if (data.taskId) {
+        toast.info(`${account.email} 已开始登录探活，等待组织 ID`);
+        await pollManualClaudeLogin(String(data.taskId), data.email || account.email);
+      } else {
+        toast.success(`${data.email || account.email} 登录探活完成${data.orgId ? `，组织 ID: ${data.orgId}` : ""}，浏览器保持打开`);
+      }
+      if (kind === "precharge") await fetchPrechargeAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "人工登录失败");
+    } finally {
+      setManualLoginBusyKey(null);
+    }
   }
 
   async function handlePrechargeImport() {
@@ -947,6 +1013,9 @@ export default function ClaudeAccountsPage() {
                 <TableBody>
                   {prechargeAccounts.map((account) => {
                     const busy = prechargeBusyId === account.id;
+                    const manualReason = manualLoginBlockReason(account);
+                    const manualKey = manualLoginKey("precharge", account.id);
+                    const manualBusy = manualLoginBusyKey === manualKey;
                     return (
                       <TableRow key={account.id}>
                         <TableCell className="font-medium">#{account.id}</TableCell>
@@ -1002,6 +1071,16 @@ export default function ClaudeAccountsPage() {
                               onClick={() => runPrechargeAction(account, "anthropic-precharge-login-probe", "{email} 已获取组织 ID")}
                             >
                               {busy ? <Spinner size={14} /> : <ActivityIcon className="size-4" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`人工登录 ${account.email}`}
+                              title={manualLoginTitle(manualReason)}
+                              disabled={busy || !!manualLoginBusyKey || Boolean(manualReason)}
+                              onClick={() => startManualClaudeLogin("precharge", account)}
+                            >
+                              {manualBusy ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4 text-blue-600" />}
                             </Button>
                             <Button
                               variant="ghost"
@@ -1310,7 +1389,11 @@ export default function ClaudeAccountsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {accounts.map((a) => (
+                {accounts.map((a) => {
+                  const manualReason = manualLoginBlockReason(a);
+                  const manualKey = manualLoginKey("account", a.id);
+                  const manualBusy = manualLoginBusyKey === manualKey;
+                  return (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">#{a.id}</TableCell>
                     <TableCell>
@@ -1423,6 +1506,16 @@ export default function ClaudeAccountsPage() {
                             onClick={() => startEditPw(a)}>
                             <KeyRoundIcon className={`size-4 ${a.hasMailPassword ? "text-green-600" : "text-muted-foreground"}`} />
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`人工登录 ${a.email}`}
+                            title={manualLoginTitle(manualReason)}
+                            disabled={busyId === a.id || !!manualLoginBusyKey || Boolean(manualReason)}
+                            onClick={() => startManualClaudeLogin("account", a)}
+                          >
+                            {manualBusy ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4 text-blue-600" />}
+                          </Button>
                           <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}
                             onClick={() => handleRefresh(a)}>
                             {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
@@ -1438,7 +1531,8 @@ export default function ClaudeAccountsPage() {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

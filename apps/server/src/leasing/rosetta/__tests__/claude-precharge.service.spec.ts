@@ -24,8 +24,10 @@ class TestPrechargeService extends ClaudePrechargeService {
   };
 
   quickResult: ClaudePrechargeOrgProbeResult = this.loginResult;
+  loginOptions: any[] = [];
 
-  protected override async loginAndReadOrganization(): Promise<ClaudePrechargeOrgProbeResult> {
+  protected override async loginAndReadOrganization(_account?: any, options?: any): Promise<ClaudePrechargeOrgProbeResult> {
+    this.loginOptions.push(options || {});
     return this.loginResult;
   }
 
@@ -36,13 +38,17 @@ class TestPrechargeService extends ClaudePrechargeService {
 
 describe("ClaudePrechargeService", () => {
   let dataDir: string;
-  let claudeSvc: { startAutoClaudeOAuth: ReturnType<typeof vi.fn> };
+  let claudeSvc: {
+    startAutoClaudeOAuth: ReturnType<typeof vi.fn>;
+    startManualClaudeLoginWithCredentials: ReturnType<typeof vi.fn>;
+  };
   let svc: TestPrechargeService;
 
   beforeEach(() => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-claude-precharge-"));
     claudeSvc = {
       startAutoClaudeOAuth: vi.fn(() => ({ ok: true, taskId: "task-1" })),
+      startManualClaudeLoginWithCredentials: vi.fn(() => ({ ok: true, taskId: "manual-1" })),
     };
     svc = new TestPrechargeService({ dataDir } as any, claudeSvc as any);
   });
@@ -99,6 +105,7 @@ describe("ClaudePrechargeService", () => {
       status: "ORG_READY",
       lastError: "",
     });
+    expect(svc.loginOptions[0]?.keepBrowserOpen).toBeFalsy();
   });
 
   it("quick probe uses the saved sessionKey and marks failed sessions for relogin", async () => {
@@ -163,5 +170,52 @@ describe("ClaudePrechargeService", () => {
       adspowerProfileId: "k1bvbavq",
       sessionKey: "sk-ant-sid02-old",
     });
+  });
+
+  it("runs precharge manual login as login probe and leaves the browser open", async () => {
+    writeJson(path.join(dataDir, "anthropic-precharge-accounts.json"), {
+      accounts: [
+        {
+          id: 1,
+          email: "user@example.com",
+          mailPassword: "pw123",
+          proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+          adspowerProfileId: "profile-1",
+          status: "AWAITING_TOPUP",
+        },
+      ],
+    });
+
+    const result = await svc.manualLogin({ accountId: 1 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      accountId: 1,
+      email: "user@example.com",
+      orgId: "org-1",
+      status: "ORG_READY",
+    });
+    expect(svc.loginOptions[0]).toMatchObject({ keepBrowserOpen: true });
+    expect(claudeSvc.startManualClaudeLoginWithCredentials).not.toHaveBeenCalled();
+    expect(svc.listAccounts().accounts[0]).toMatchObject({
+      status: "ORG_READY",
+      orgId: "org-1",
+      lastError: "",
+    });
+  });
+
+  it("rejects precharge manual login when the strict AdsPower environment is incomplete", async () => {
+    writeJson(path.join(dataDir, "anthropic-precharge-accounts.json"), {
+      accounts: [
+        { id: 1, email: "no-proxy@example.com", mailPassword: "pw123", adspowerProfileId: "profile-1" },
+        { id: 2, email: "no-profile@example.com", mailPassword: "pw123", proxyUrl: "socks5://127.0.0.1:1080" },
+        { id: 3, email: "no-password@example.com", proxyUrl: "socks5://127.0.0.1:1080", adspowerProfileId: "profile-3" },
+      ],
+    });
+
+    await expect(svc.manualLogin({ accountId: 1 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("代理") });
+    await expect(svc.manualLogin({ accountId: 2 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("AdsPower") });
+    await expect(svc.manualLogin({ accountId: 3 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("密码") });
+    expect(claudeSvc.startManualClaudeLoginWithCredentials).not.toHaveBeenCalled();
   });
 });

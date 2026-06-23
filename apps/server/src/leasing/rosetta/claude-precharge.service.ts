@@ -7,6 +7,7 @@ import {
   triggerMagicLinkViaBrowser,
   waitForClaudeOrganizationsFromPage,
   type ClaudeWebOrganization,
+  type PlaywrightOAuthSession,
 } from "./lib/playwright-oauth";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { nowIso, readJson, toSocks5ProxyUrl, writeJson } from "./lib/store";
@@ -28,7 +29,13 @@ export type ClaudePrechargeOrgProbeResult = {
   rateLimitTier?: string;
   billingType?: string;
   sessionKey?: string;
+  currentUrl?: string;
+  session?: PlaywrightOAuthSession;
   error?: string;
+};
+
+type ProbeOptions = {
+  keepBrowserOpen?: boolean;
 };
 
 type StoredPrechargeAccount = {
@@ -58,9 +65,12 @@ type PrechargeStore = {
 
 type ClaudeOAuthStarter = {
   startAutoClaudeOAuth(payload: any): any;
+  startManualClaudeLoginWithCredentials(payload: any): any;
 };
 
 export class ClaudePrechargeService {
+  private readonly manualProbeSessions = new Map<number, PlaywrightOAuthSession>();
+
   constructor(
     private readonly ctx: RosettaContext,
     private readonly claudeSvc: ClaudeOAuthStarter,
@@ -175,6 +185,10 @@ export class ClaudePrechargeService {
     return { ok: true, id: found.account.id, email: found.account.email, status: "TOPUP_DONE" };
   }
 
+  async manualLogin(payload: any) {
+    return this.probe(payload, "login", { keepBrowserOpen: true });
+  }
+
   activate(payload: any) {
     const found = this.findAccount(Number(payload?.accountId));
     const account = found.account;
@@ -225,7 +239,7 @@ export class ClaudePrechargeService {
     return { ...result, accountId: account.id, email: account.email, status: "OAUTH_STARTED" };
   }
 
-  private async probe(payload: any, mode: "login" | "quick") {
+  private async probe(payload: any, mode: "login" | "quick", options: ProbeOptions = {}) {
     const found = this.findAccount(Number(payload?.accountId));
     const account = found.account;
     if (!account) return { ok: false, error: "账号不存在" };
@@ -235,8 +249,11 @@ export class ClaudePrechargeService {
     if (mode === "quick" && !account.sessionKey) return this.markProbeError(found, "NEEDS_RELOGIN", "sessionKey 为空");
 
     const result = mode === "login"
-      ? await this.loginAndReadOrganization(account)
+      ? await this.loginAndReadOrganization(account, { keepBrowserOpen: options.keepBrowserOpen })
       : await this.readOrganizationWithSessionKey(account);
+    if (options.keepBrowserOpen && result.session) {
+      this.holdManualProbeSession(account.id, result.session);
+    }
     if (!result.orgId) {
       return this.markProbeError(found, mode === "quick" ? "NEEDS_RELOGIN" : "PROBE_FAILED", result.error || "未获取到组织 ID");
     }
@@ -255,11 +272,21 @@ export class ClaudePrechargeService {
     return {
       ok: true,
       id: account.id,
+      accountId: account.id,
       email: account.email,
       orgId: account.orgId,
       orgName: account.orgName,
       status: account.status,
+      currentUrl: result.currentUrl,
     };
+  }
+
+  private holdManualProbeSession(accountId: number, session: PlaywrightOAuthSession) {
+    const existing = this.manualProbeSessions.get(accountId);
+    if (existing && existing !== session) {
+      void existing.close().catch(() => {});
+    }
+    this.manualProbeSessions.set(accountId, session);
   }
 
   private markProbeError(
@@ -284,7 +311,10 @@ export class ClaudePrechargeService {
     };
   }
 
-  protected async loginAndReadOrganization(account: StoredPrechargeAccount): Promise<ClaudePrechargeOrgProbeResult> {
+  protected async loginAndReadOrganization(
+    account: StoredPrechargeAccount,
+    options: ProbeOptions = {},
+  ): Promise<ClaudePrechargeOrgProbeResult> {
     const authorizeUrl = buildClaudeAuthorizeUrl();
     const triggerStart = Date.now();
     const trigger = await triggerMagicLinkViaBrowser({
@@ -304,7 +334,13 @@ export class ClaudePrechargeService {
         waitMs: 90_000,
         proxyUrl: account.proxyUrl,
       });
-      if (!mail.ok || !mail.url) return { error: mail.error || "未获取到 magic link" };
+      if (!mail.ok || !mail.url) {
+        return {
+          error: mail.error || "未获取到 magic link",
+          currentUrl: trigger.session.page.url(),
+          session: options.keepBrowserOpen ? trigger.session : undefined,
+        };
+      }
       await trigger.session.page.goto(mail.url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch(() => {});
       const orgs = await waitForClaudeOrganizationsFromPage(trigger.session.page, {
         previousSessionKey: account.sessionKey || "",
@@ -313,11 +349,19 @@ export class ClaudePrechargeService {
         maxAttempts: 3,
       });
       if (!orgs.ok || !orgs.organizations.length) {
-        return { error: orgs.error || `organizations HTTP ${orgs.status}: ${orgs.bodySnippet}` };
+        return {
+          error: orgs.error || `organizations HTTP ${orgs.status}: ${orgs.bodySnippet}`,
+          currentUrl: trigger.session.page.url(),
+          session: options.keepBrowserOpen ? trigger.session : undefined,
+        };
       }
-      return orgProbeFromOrganization(orgs.organizations[0], orgs.sessionKey);
+      return {
+        ...orgProbeFromOrganization(orgs.organizations[0], orgs.sessionKey),
+        currentUrl: trigger.session.page.url(),
+        session: options.keepBrowserOpen ? trigger.session : undefined,
+      };
     } finally {
-      await trigger.session.close().catch(() => {});
+      if (!options.keepBrowserOpen) await trigger.session.close().catch(() => {});
     }
   }
 

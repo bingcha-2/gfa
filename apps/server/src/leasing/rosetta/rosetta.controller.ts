@@ -221,6 +221,16 @@ export class RosettaController {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
+  @Post("anthropic-manual-login")
+  startManualClaudeLogin(@Body() body: any) {
+    return this.rosetta.startManualClaudeLogin(body);
+  }
+
+  @Get("anthropic-manual-login-status")
+  getManualClaudeLoginStatus(@Query("taskId") taskId?: string) {
+    return this.rosetta.getManualClaudeLoginStatus(String(taskId || ""));
+  }
+
   @Get("anthropic-precharge-accounts")
   listClaudePrechargeAccounts() {
     return this.rosetta.listClaudePrechargeAccounts();
@@ -244,6 +254,11 @@ export class RosettaController {
   @Post("anthropic-precharge-mark-topup")
   markTopupClaudePrecharge(@Body() body: any) {
     return this.rosetta.markTopupClaudePrecharge(body);
+  }
+
+  @Post("anthropic-precharge-manual-login")
+  manualLoginClaudePrecharge(@Body() body: any) {
+    return this.rosetta.manualLoginClaudePrecharge(body);
   }
 
   @Post("anthropic-precharge-activate")

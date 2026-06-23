@@ -266,6 +266,75 @@ describe("RosettaService", () => {
     expect(acc.shareCapacity).toBeGreaterThan(0);
   });
 
+  it("starts manual Claude login from the official anthropic account pool", async () => {
+    const manualRunner = vi.fn(async () => ({
+      ok: true,
+      currentUrl: "https://claude.ai/",
+      orgId: "org-manual",
+      orgName: "Manual Org",
+      sessionKey: "sk-ant-sid02-manual",
+    }));
+    const svc = new RosettaService({ dataDir: tempDir, claudeManualLoginRunner: manualRunner });
+    writeJson(path.join(tempDir, "anthropic-accounts.json"), {
+      accounts: [
+        {
+          id: 1,
+          email: "manual@example.com",
+          mailPassword: "mail-pw",
+          proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+          adspowerProfileId: "profile-1",
+          refreshToken: "refresh-token",
+          accessToken: "access-token",
+        },
+      ],
+    });
+
+    const started = svc.startManualClaudeLogin({ accountId: 1 });
+
+    expect(started).toMatchObject({ ok: true, accountId: 1, email: "manual@example.com" });
+    await vi.waitFor(() => expect(manualRunner).toHaveBeenCalled());
+    expect(manualRunner).toHaveBeenCalledWith({
+      email: "manual@example.com",
+      password: "mail-pw",
+      proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+      adspowerProfileId: "profile-1",
+      recoveryEmail: "",
+      totpSecret: "",
+    });
+    await vi.waitFor(() =>
+      expect(svc.getManualClaudeLoginStatus(started.taskId)).toMatchObject({
+        ok: true,
+        status: "ready_for_manual",
+        currentUrl: "https://claude.ai/",
+        orgId: "org-manual",
+        orgName: "Manual Org",
+      }),
+    );
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8")).accounts[0];
+    expect(stored).toMatchObject({
+      refreshToken: "refresh-token",
+      accessToken: "access-token",
+    });
+  });
+
+  it("rejects official manual Claude login unless password, proxy, and AdsPower profile are configured", () => {
+    const manualRunner = vi.fn();
+    const svc = new RosettaService({ dataDir: tempDir, claudeManualLoginRunner: manualRunner });
+    writeJson(path.join(tempDir, "anthropic-accounts.json"), {
+      accounts: [
+        { id: 1, email: "no-pw@example.com", proxyUrl: "socks5://127.0.0.1:1080", adspowerProfileId: "profile-1" },
+        { id: 2, email: "no-proxy@example.com", mailPassword: "pw", adspowerProfileId: "profile-2" },
+        { id: 3, email: "no-profile@example.com", mailPassword: "pw", proxyUrl: "socks5://127.0.0.1:1080" },
+      ],
+    });
+
+    expect(svc.startManualClaudeLogin({ accountId: 1 })).toMatchObject({ ok: false, error: expect.stringContaining("密码") });
+    expect(svc.startManualClaudeLogin({ accountId: 2 })).toMatchObject({ ok: false, error: expect.stringContaining("代理") });
+    expect(svc.startManualClaudeLogin({ accountId: 3 })).toMatchObject({ ok: false, error: expect.stringContaining("AdsPower") });
+    expect(manualRunner).not.toHaveBeenCalled();
+  });
+
   it("imports a codex account from pasted text and keeps only supported fields", () => {
     const svc = new RosettaService({ dataDir: tempDir });
     const result = svc.importCodexAccountFromText({

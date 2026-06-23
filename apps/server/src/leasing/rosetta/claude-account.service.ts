@@ -19,7 +19,13 @@ import type { RosettaContext } from "./lib/context";
 import { fetchAnthropicMagicLink } from "./lib/imap-magic-link";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
-import { loginViaSessionKey, triggerMagicLinkViaBrowser, type PlaywrightOAuthSession } from "./lib/playwright-oauth";
+import {
+  loginViaSessionKey,
+  triggerMagicLinkViaBrowser,
+  waitForClaudeOrganizationsFromPage,
+  type ClaudeWebOrganization,
+  type PlaywrightOAuthSession,
+} from "./lib/playwright-oauth";
 import { nowIso, readJson, setAccountProxyInPool, toSocks5ProxyUrl, writeJson } from "./lib/store";
 
 // Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
@@ -73,11 +79,154 @@ type CodexOAuthPending = {
   mailPassword?: string;
 };
 
+export type ClaudeManualLoginRunnerOptions = {
+  email: string;
+  password: string;
+  proxyUrl: string;
+  adspowerProfileId: string;
+  recoveryEmail?: string;
+  totpSecret?: string;
+};
+
+export type ClaudeManualLoginRunnerResult = {
+  ok: boolean;
+  currentUrl?: string;
+  orgId?: string;
+  orgName?: string;
+  sessionKey?: string;
+  session?: PlaywrightOAuthSession;
+  error?: string;
+};
+
+export type ClaudeManualLoginRunner = (
+  opts: ClaudeManualLoginRunnerOptions,
+) => Promise<ClaudeManualLoginRunnerResult>;
+
+type ClaudeManualLoginTask = {
+  taskId: string;
+  source: string;
+  accountId: number;
+  email: string;
+  adspowerProfileId: string;
+  phase: string;
+  status: "running" | "ready_for_manual" | "error";
+  currentUrl?: string;
+  orgId?: string;
+  orgName?: string;
+  sessionKey?: string;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+};
+
+function createClaudeOAuthAuthorizeSession() {
+  const codeVerifier = base64Url(crypto.randomBytes(32));
+  const state = base64Url(crypto.randomBytes(32));
+  const params = new URLSearchParams({
+    code: "true",
+    response_type: "code",
+    client_id: CLAUDE_OAUTH_CLIENT_ID,
+    redirect_uri: CLAUDE_OAUTH_REDIRECT_URI,
+    scope: CLAUDE_OAUTH_SCOPES,
+    code_challenge: codeChallenge(codeVerifier),
+    code_challenge_method: "S256",
+    state,
+  });
+  return {
+    codeVerifier,
+    state,
+    authUrl: `${CLAUDE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+  };
+}
+
+function manualLoginProbeFromOrganization(org: ClaudeWebOrganization, sessionKey: string) {
+  return {
+    orgId: String(org.uuid || org.id || ""),
+    orgName: String(org.name || ""),
+    sessionKey,
+  };
+}
+
+export async function runClaudeManualLogin(
+  opts: ClaudeManualLoginRunnerOptions,
+): Promise<ClaudeManualLoginRunnerResult> {
+  const triggerStart = Date.now();
+  const trigger = await triggerMagicLinkViaBrowser({
+    authorizeUrl: createClaudeOAuthAuthorizeSession().authUrl,
+    email: opts.email,
+    password: opts.password,
+    proxyUrl: opts.proxyUrl,
+    adspowerProfileId: opts.adspowerProfileId,
+    recoveryEmail: opts.recoveryEmail,
+    totpSecret: opts.totpSecret,
+  });
+  if (!trigger.ok || !trigger.session) {
+    return { ok: false, error: trigger.error || "浏览器登录触发失败" };
+  }
+
+  const session = trigger.session;
+  try {
+    const domain = opts.email.split("@")[1]?.toLowerCase() || "";
+    if (domain !== "gmail.com") {
+      const mail = await fetchAnthropicMagicLinkViaWeb({
+        email: opts.email,
+        password: opts.password,
+        sinceMs: triggerStart - 30_000,
+        waitMs: 90_000,
+        proxyUrl: opts.proxyUrl,
+      });
+      if (!mail.ok || !mail.url) {
+        return {
+          ok: false,
+          currentUrl: session.page.url(),
+          session,
+          error: mail.error || "未获取到 Claude magic link",
+        };
+      }
+      await session.page.goto(mail.url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch(() => {});
+    }
+
+    const orgs = await waitForClaudeOrganizationsFromPage(session.page, {
+      settleMs: 10_000,
+      retryDelayMs: 10_000,
+      maxAttempts: 3,
+    });
+    if (!orgs.ok || !orgs.organizations.length) {
+      return {
+        ok: false,
+        currentUrl: session.page.url(),
+        session,
+        error: orgs.error || `organizations HTTP ${orgs.status}: ${orgs.bodySnippet}`,
+      };
+    }
+
+    return {
+      ok: true,
+      currentUrl: session.page.url(),
+      ...manualLoginProbeFromOrganization(orgs.organizations[0], orgs.sessionKey),
+      session,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      currentUrl: session.page.url(),
+      session,
+      error: `人工登录失败: ${err?.message || err}`,
+    };
+  }
+}
+
 export class ClaudeAccountService {
   private claudeOAuthPending: CodexOAuthPending | null = null;
   private playwrightSession: PlaywrightOAuthSession | null = null;
+  private readonly manualLoginTasks = new Map<string, ClaudeManualLoginTask>();
+  private readonly manualLoginSessions = new Map<string, PlaywrightOAuthSession>();
 
-  constructor(private readonly ctx: RosettaContext, private readonly accessKey: AccessKeyService) {}
+  constructor(
+    private readonly ctx: RosettaContext,
+    private readonly accessKey: AccessKeyService,
+    private readonly manualLoginRunner: ClaudeManualLoginRunner = runClaudeManualLogin,
+  ) {}
 
   // the "claude" MODEL — account-level single quota window stored under the
   // "claude" model key (kept on the product rename). Method names keep the
@@ -180,6 +329,126 @@ export class ClaudeAccountService {
     return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
   }
 
+  startManualClaudeLogin(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+
+    return this.startManualClaudeLoginWithCredentials({
+      source: "account",
+      accountId,
+      email: String(account.email || ""),
+      password: String(account.mailPassword || ""),
+      proxyUrl: String(account.proxyUrl || ""),
+      adspowerProfileId: String(account.adspowerProfileId || ""),
+      recoveryEmail: String(account.recoveryEmail || ""),
+      totpSecret: String(account.totpSecret || ""),
+    });
+  }
+
+  startManualClaudeLoginWithCredentials(payload: {
+    source?: string;
+    accountId?: number;
+    email: string;
+    password: string;
+    proxyUrl: string;
+    adspowerProfileId: string;
+    recoveryEmail?: string;
+    totpSecret?: string;
+  }) {
+    const source = String(payload.source || "account");
+    const accountId = Number(payload.accountId || 0);
+    const email = String(payload.email || "").trim();
+    const password = String(payload.password || "").trim();
+    const proxyUrl = String(payload.proxyUrl || "").trim();
+    const adspowerProfileId = String(payload.adspowerProfileId || "").trim();
+    const recoveryEmail = String(payload.recoveryEmail || "").trim();
+    const totpSecret = String(payload.totpSecret || "").trim();
+
+    if (!email) return { ok: false, error: "email 必填" };
+    if (!password) return { ok: false, error: "邮箱密码为空，无法人工登录" };
+    if (!proxyUrl) return { ok: false, error: "出口代理为空，禁止原始 IP 登录 Anthropic" };
+    if (!adspowerProfileId) return { ok: false, error: "AdsPower profile 为空，无法使用配置好的环境登录" };
+
+    const taskId = base64Url(crypto.randomBytes(12));
+    const task: ClaudeManualLoginTask = {
+      taskId,
+      source,
+      accountId,
+      email,
+      adspowerProfileId,
+      phase: "starting",
+      status: "running",
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.manualLoginTasks.set(taskId, task);
+
+    this.runManualClaudeLoginTask(taskId, {
+      email,
+      password,
+      proxyUrl,
+      adspowerProfileId,
+      recoveryEmail,
+      totpSecret,
+    }).catch((err) => {
+      const current = this.manualLoginTasks.get(taskId);
+      if (current) {
+        current.status = "error";
+        current.phase = "error";
+        current.error = String(err?.message || err);
+        current.updatedAt = Date.now();
+      }
+    });
+
+    return { ok: true, taskId, accountId, email, status: task.status, phase: task.phase };
+  }
+
+  getManualClaudeLoginStatus(taskId: string) {
+    const task = this.manualLoginTasks.get(String(taskId || ""));
+    if (!task) return { ok: false, error: "任务不存在" };
+    return { ok: true, ...task };
+  }
+
+  private async runManualClaudeLoginTask(
+    taskId: string,
+    opts: ClaudeManualLoginRunnerOptions,
+  ) {
+    const task = this.manualLoginTasks.get(taskId);
+    if (!task) return;
+    task.phase = `opening AdsPower profile: ${opts.adspowerProfileId}`;
+    task.updatedAt = Date.now();
+
+    const result = await this.manualLoginRunner(opts);
+    const current = this.manualLoginTasks.get(taskId);
+    if (!current) {
+      if (result.session) await result.session.close().catch(() => {});
+      return;
+    }
+
+    if (result.session) this.manualLoginSessions.set(taskId, result.session);
+    current.currentUrl = result.currentUrl || current.currentUrl;
+
+    if (!result.ok) {
+      current.status = "error";
+      current.phase = "error";
+      current.error = result.error || "人工登录失败";
+      current.updatedAt = Date.now();
+      return;
+    }
+
+    current.status = "ready_for_manual";
+    current.phase = "ready_for_manual";
+    current.currentUrl = result.currentUrl || "https://claude.ai/";
+    current.orgId = result.orgId || "";
+    current.orgName = result.orgName || "";
+    current.sessionKey = result.sessionKey || "";
+    current.updatedAt = Date.now();
+  }
+
   // ── Claude OAuth(手动粘贴回调,对照 codex 同名流程)────────────────────────
   // 不起本地回调 server:用户在浏览器登录 Claude 订阅号授权后,把回调页展示的
   // code(形如 "code#state")或整段回调 URL 粘回后台,这里换 token 并入库。
@@ -191,20 +460,8 @@ export class ClaudeAccountService {
     }
     this.claudeOAuthPending = null;
 
-    const codeVerifier = base64Url(crypto.randomBytes(32));
-    const state = base64Url(crypto.randomBytes(32));
     const loginId = base64Url(crypto.randomBytes(18));
-    const params = new URLSearchParams({
-      code: "true",
-      response_type: "code",
-      client_id: CLAUDE_OAUTH_CLIENT_ID,
-      redirect_uri: CLAUDE_OAUTH_REDIRECT_URI,
-      scope: CLAUDE_OAUTH_SCOPES,
-      code_challenge: codeChallenge(codeVerifier),
-      code_challenge_method: "S256",
-      state,
-    });
-    const authUrl = `${CLAUDE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`;
+    const { codeVerifier, state, authUrl } = createClaudeOAuthAuthorizeSession();
 
     // 通过代理请求 authorize URL，探测服务端是否能直接拿到重定向/页面
     let probeInfo: { status: number; location?: string; bodySnippet?: string } | undefined;
@@ -485,7 +742,7 @@ export class ClaudeAccountService {
       }
     }
 
-    const web = await fetchAnthropicMagicLinkViaWeb({ email, password, sinceMs, waitMs });
+    const web = await fetchAnthropicMagicLinkViaWeb({ email, password, sinceMs, waitMs, proxyUrl });
     if (web.ok || resolvedMethod === "web") return web;
 
     // method=auto: fall back to IMAP if web scraping failed
