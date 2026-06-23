@@ -309,3 +309,33 @@ func TestParseClaudeUnifiedWindowsNoneIsNotOk(t *testing.T) {
 		t.Errorf("both should be -1 (unknown), got hourly=%v weekly=%v", hp, wp)
 	}
 }
+
+func TestEnsureOAuthBeta_ClientAlreadyHasOAuth(t *testing.T) {
+	// 客户端带了新版 oauth flag → 原样保留,不追加硬编码旧值
+	got := ensureOAuthBeta("prompt-caching-2025-04-11,oauth-2025-09-01", "oauth-2025-04-20")
+	if strings.Contains(got, "oauth-2025-04-20") {
+		t.Fatalf("should NOT inject fallback when client already has oauth flag, got %q", got)
+	}
+	if !strings.Contains(got, "oauth-2025-09-01") {
+		t.Fatalf("should preserve client's oauth flag, got %q", got)
+	}
+}
+
+func TestEnsureOAuthBeta_NoOAuthFlag(t *testing.T) {
+	// 客户端没带任何 oauth flag → 用兜底值补
+	got := ensureOAuthBeta("prompt-caching-2025-04-11", "oauth-2025-04-20")
+	if !strings.Contains(got, "oauth-2025-04-20") {
+		t.Fatalf("should inject fallback when no oauth flag, got %q", got)
+	}
+	if !strings.Contains(got, "prompt-caching-2025-04-11") {
+		t.Fatalf("should preserve existing flags, got %q", got)
+	}
+}
+
+func TestEnsureOAuthBeta_Empty(t *testing.T) {
+	// 完全空 → 用兜底值
+	got := ensureOAuthBeta("", "oauth-2025-04-20")
+	if got != "oauth-2025-04-20" {
+		t.Fatalf("expected fallback, got %q", got)
+	}
+}

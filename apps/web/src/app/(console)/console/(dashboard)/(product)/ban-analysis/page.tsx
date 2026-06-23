@@ -439,7 +439,7 @@ export default function BanAnalysisPage() {
         </CardContent>
       </Card>
 
-      {/* Request logs (per-request 热表,近 72h) */}
+      {/* Request logs (per-request 热表,近 5 天) */}
       <Card>
         <CardHeader>
           <CardTitle>请求明细 <span className="text-sm font-normal text-muted-foreground">近 5 天 · per-request</span></CardTitle>

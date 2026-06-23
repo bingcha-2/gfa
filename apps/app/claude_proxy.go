@@ -122,6 +122,18 @@ func mergeAnthropicBeta(existing, want string) string {
 	return existing + "," + want
 }
 
+// ensureOAuthBeta 保证 anthropic-beta 里有 oauth flag:
+//   - 客户端已带含 "oauth" 的 flag → 原样保留(信任客户端,它随 SDK 同步更新);
+//   - 完全没带 → 用 fallback 硬编码兜底。
+func ensureOAuthBeta(existing, fallback string) string {
+	for _, part := range strings.Split(existing, ",") {
+		if strings.HasPrefix(strings.TrimSpace(part), "oauth-") {
+			return strings.TrimSpace(existing)
+		}
+	}
+	return mergeAnthropicBeta(existing, fallback)
+}
+
 // isClaudeAPIRequest 判断是否是注入给 Claude Code 的 Anthropic 路由请求。
 func isClaudeAPIRequest(path string) bool {
 	return path == "/v1/messages" || strings.HasPrefix(path, "/v1/messages/")
@@ -334,6 +346,13 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	audit.accountID = lease.AccountId
 	audit.token = lease.AccessToken
 
+	// 改写 metadata.user_id → per-account 确定性哈希:上游只看到「一个号 = 一个用户」。
+	// 真实 userId 已在上方提取(reportUserID),服务端 ban analysis 用真值;上游拿改写值。
+	// accountID=0 是异常兜底,跳过改写避免所有无号请求碰撞到同一个 hash。
+	if lease.AccountId > 0 {
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+	}
+
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
@@ -474,6 +493,9 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	}
 	audit.accountID = lease.AccountId
 	audit.token = lease.AccessToken
+	if lease.AccountId > 0 {
+		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId))
+	}
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
@@ -557,10 +579,10 @@ func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL str
 	if dst.Get("anthropic-version") == "" {
 		dst.Set("anthropic-version", "2023-06-01")
 	}
-	// api.anthropic.com 只在带 anthropic-beta: oauth-2025-04-20 时才接受订阅号 OAuth
-	// (sk-ant-oat…)token。自定义 base_url 模式下 Claude Code 可能不带,这里强制补齐
-	// (合并保留已有的其它 beta flag),否则上游 401。值对照 Claude Code 2.x 实测常量。
-	dst.Set("anthropic-beta", mergeAnthropicBeta(dst.Get("anthropic-beta"), claudeOAuthBeta))
+	// api.anthropic.com 只在带 oauth beta flag 时才接受订阅号 OAuth (sk-ant-oat…) token。
+	// 优先信任客户端自带的 oauth flag(真 Claude Code 随版本同步更新,比硬编码准);
+	// 仅当客户端完全没带 oauth flag 时才用硬编码常量兜底(base_url 模式可能省略)。
+	dst.Set("anthropic-beta", ensureOAuthBeta(dst.Get("anthropic-beta"), claudeOAuthBeta))
 	if u, err := url.Parse(targetURL); err == nil {
 		dst.Set("Host", u.Host)
 	}

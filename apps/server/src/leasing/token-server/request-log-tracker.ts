@@ -3,9 +3,9 @@
  *
  * 全量逐请求落 RequestLog,但:
  *   - 写:缓冲 + 每 ~5s 批量 createMany(热路径不阻塞,对齐 TokenUsageTracker);
- *   - 清:每 ~1h 删 72h 之前的行(短保留控量)。
+ *   - 清:每 ~1h 删 5 天之前的行(短保留控量)。
  *
- * 行数 = 请求量 × 72h,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
+ * 行数 = 请求量 × 5 天,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
  * headers 是客户端过滤后的 JSON(去凭证头、跳超大值),这里再兜底截断,绝不存 body。
  */
 

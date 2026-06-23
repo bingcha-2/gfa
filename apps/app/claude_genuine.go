@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -51,6 +54,49 @@ func extractMetadataUserID(body []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(payload.Metadata.UserID)
+}
+
+// canonicalUserID 把 accountID 映射成固定 64 字符 hex(对齐 Claude Code 原生格式:
+// crypto.randomBytes(32).toString("hex")),作为转发给上游的 metadata.user_id。
+// 同一个订阅号永远输出同一个值 → 上游只看到「一个号 = 一个用户」。
+func canonicalUserID(accountID int) string {
+	h := sha256.Sum256([]byte("gfa-uid-" + strconv.Itoa(accountID)))
+	return hex.EncodeToString(h[:])
+}
+
+// rewriteMetadataUserID 如果请求体里有 metadata.user_id,就地替换成 canonicalID;
+// 没有 metadata 或 user_id 则原样返回(不注入新字段,避免干扰不带此字段的客户端)。
+func rewriteMetadataUserID(body []byte, canonicalID string) []byte {
+	if len(body) == 0 || canonicalID == "" {
+		return body
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(body, &payload) != nil {
+		return body
+	}
+	metaRaw, ok := payload["metadata"]
+	if !ok {
+		return body
+	}
+	var meta map[string]json.RawMessage
+	if json.Unmarshal(metaRaw, &meta) != nil {
+		return body
+	}
+	if _, has := meta["user_id"]; !has {
+		return body
+	}
+	uidJSON, _ := json.Marshal(canonicalID)
+	meta["user_id"] = uidJSON
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return body
+	}
+	payload["metadata"] = metaJSON
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // bodyHasClaudeCodeSystem 解析请求体的 system 字段,判断其中是否含 Claude Code 开场白。
