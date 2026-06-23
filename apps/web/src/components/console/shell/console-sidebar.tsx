@@ -154,6 +154,7 @@ export function ConsoleSidebar({ ...props }: React.ComponentProps<typeof Sidebar
       label: "共享",
       items: [
         { id: "usage-stats", title: "用量与剩余", url: `/${prefix}/usage-stats`, icon: <ActivityIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
+        { id: "ban-analysis", title: "封号分析", url: `/${prefix}/ban-analysis`, icon: <ShieldAlertIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
         { id: "activation-codes", title: "激活码管理", url: `/${prefix}/activation-codes`, icon: <KeyIcon />, permKey: "codes", roleGuard: () => isAdminOrOps },
         { id: "plan-catalog", title: "套餐配置", url: `/${prefix}/plan-catalog`, icon: <PackageIcon />, permKey: "plans", roleGuard: () => isAdminOrOps },
       ],

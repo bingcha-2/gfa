@@ -26,6 +26,15 @@ function hourlyAccountScope(opts: { accountEmail?: string }): Record<string, unk
   return email ? { accountEmail: email } : {};
 }
 
+/** RequestLog 派生的每母号统计:不同来源/出口 IP、桌面占比、按分钟分桶(算峰值 req/min)。 */
+type AccountLogStat = { sources: Set<string>; exits: Set<string>; users: Set<string>; desktop: number; total: number; minutes: Map<number, number> };
+type RequestLogStats = Map<string, AccountLogStat>;
+
+/** 峰值 req/min:该母号在窗口内某 60s 分桶里的最大请求数。无数据 → 0。 */
+function peakReqPerMin(s?: AccountLogStat): number {
+  return s && s.minutes.size ? Math.max(...s.minutes.values()) : 0;
+}
+
 /**
  * Query + maintenance side of the per-card token usage log (CardTokenUsage).
  * The write side lives in token-server/token-usage-tracker.ts. Mirrors
@@ -253,6 +262,311 @@ export class TokenUsageStatsService {
     }
 
     return { days, byHour, totalRequests };
+  }
+
+  // ── 母号封号分析:按母号(account)聚合用量/反代/扇出 ────────────────────
+
+  /**
+   * 一次扫描 RequestLog(≤72h 热表),按 母号(provider+email)聚合:不同来源/出口 IP、
+   * 桌面占比、按分钟分桶(算峰值 req/min)。风险榜 / 事件流 / 对比共用,避免多次全表扫描。
+   */
+  private async requestLogStatsByAccount(since: Date): Promise<RequestLogStats> {
+    const logs = await this.prisma.requestLog.findMany({
+      where: { at: { gte: since }, provider: { in: ["codex", "anthropic"] } },
+      select: { provider: true, accountEmail: true, surface: true, sourceIp: true, exitIp: true, userId: true, at: true },
+    });
+    const m: RequestLogStats = new Map();
+    for (const r of logs) {
+      const key = `${r.provider} ${r.accountEmail}`;
+      let s = m.get(key);
+      if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), desktop: 0, total: 0, minutes: new Map() }; m.set(key, s); }
+      if (r.sourceIp) s.sources.add(r.sourceIp);
+      if (r.exitIp) s.exits.add(r.exitIp);
+      if (r.userId) s.users.add(r.userId);
+      if (r.surface === "desktop") s.desktop += 1;
+      s.total += 1;
+      const min = Math.floor(new Date(r.at).getTime() / 60000);
+      s.minutes.set(min, (s.minutes.get(min) || 0) + 1);
+    }
+    return m;
+  }
+
+  /**
+   * Per-母号 risk dashboard (codex + anthropic), aggregated from CardUsageHourly
+   * over the last N days — the data the 封号分析 console page reads.
+   *
+   * For each account it surfaces the signals that distinguish "a human subscriber"
+   * from "a resold/reverse-proxied API":
+   *   - requests / failedRequests / failRate   —— 量与错误率
+   *   - reverseProxyHits / reverseProxyRate     —— 非真客户端占比(反代)
+   *   - distinctCards                            —— 共享扇出(几张卡在用这个母号)
+   *   - totalTokens                              —— 饱和度
+   * Plus a per-card breakdown so you can see WHICH card drives the reverse-proxy.
+   * Keyed by (product, accountEmail); sorted by reverseProxyHits desc.
+   */
+  async getAccountBanAnalysis(opts: { days?: number; logStats?: RequestLogStats } = {}) {
+    const days = Math.max(1, Math.min(30, opts.days || 7));
+    const since = beijingDayStart(days);
+    const logStats = opts.logStats ?? (await this.requestLogStatsByAccount(since));
+
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: {
+        hourStart: { gte: since },
+        OR: [{ bucket: { startsWith: "anthropic" } }, { bucket: { startsWith: "codex" } }],
+      },
+      select: {
+        accountEmail: true, accessKeyId: true, bucket: true,
+        requests: true, failedRequests: true, reverseProxyHits: true, totalTokens: true,
+      },
+    });
+
+    type Card = { accessKeyId: string; requests: number; reverseProxyHits: number };
+    type Acct = {
+      product: string; accountEmail: string; requests: number; failedRequests: number;
+      reverseProxyHits: number; totalTokens: number; cards: Map<string, Card>;
+    };
+    const byAccount = new Map<string, Acct>();
+    for (const r of rows) {
+      const product = bucketProduct(r.bucket);
+      if (product !== "codex" && product !== "anthropic") continue; // 只看 codex/claude
+      const email = r.accountEmail || "(unknown)";
+      const key = `${product} ${email}`;
+      let a = byAccount.get(key);
+      if (!a) {
+        a = { product, accountEmail: email, requests: 0, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0, cards: new Map() };
+        byAccount.set(key, a);
+      }
+      a.requests += r.requests;
+      a.failedRequests += r.failedRequests;
+      a.reverseProxyHits += r.reverseProxyHits;
+      a.totalTokens += r.totalTokens;
+      let c = a.cards.get(r.accessKeyId);
+      if (!c) { c = { accessKeyId: r.accessKeyId, requests: 0, reverseProxyHits: 0 }; a.cards.set(r.accessKeyId, c); }
+      c.requests += r.requests;
+      c.reverseProxyHits += r.reverseProxyHits;
+    }
+
+    const ratio = (hit: number, total: number) => (total > 0 ? hit / total : 0);
+    const accounts = [...byAccount.values()]
+      .map((a) => ({
+        product: a.product,
+        accountEmail: a.accountEmail,
+        requests: a.requests,
+        failedRequests: a.failedRequests,
+        failRate: ratio(a.failedRequests, a.requests),
+        reverseProxyHits: a.reverseProxyHits,
+        reverseProxyRate: ratio(a.reverseProxyHits, a.requests),
+        distinctCards: a.cards.size,
+        totalTokens: a.totalTokens,
+        // 峰值 req/min + 不同来源 IP + 真实用户数(distinct metadata.user_id)—— 判"不像一个人"。
+        peakReqPerMin: peakReqPerMin(logStats.get(`${a.product} ${a.accountEmail}`)),
+        distinctSourceIps: logStats.get(`${a.product} ${a.accountEmail}`)?.sources.size ?? 0,
+        distinctUsers: logStats.get(`${a.product} ${a.accountEmail}`)?.users.size ?? 0,
+        cards: [...a.cards.values()]
+          .map((c) => ({ ...c, reverseProxyRate: ratio(c.reverseProxyHits, c.requests) }))
+          .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests),
+      }))
+      .sort((x, y) => y.reverseProxyHits - x.reverseProxyHits || y.requests - x.requests);
+
+    return { days, accounts };
+  }
+
+  /**
+   * 封号事件流(codex + anthropic):每次母号被永久封禁一行,最近 N 天、倒序。
+   * 列表只带"封号前请求条数"(requestCount),时间线明细按需经 getBanEventRequests 拉。
+   */
+  async getBanEvents(opts: { days?: number; limit?: number } = {}) {
+    const days = Math.max(1, Math.min(30, opts.days || 7));
+    const limit = Math.max(1, Math.min(500, opts.limit || 200));
+    const since = beijingDayStart(days);
+
+    const rows = await this.prisma.accountBanEvent.findMany({
+      where: { createdAt: { gte: since }, provider: { in: ["codex", "anthropic"] } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      include: { requests: { select: { at: true } } }, // 封号前时间线的时间戳 → 算封号前峰值 req/min
+    });
+    const events = rows.map((e: any) => {
+      // 封号前峰值 req/min:把这次封号 dump 的请求按分钟分桶取最大 —— 断气前的突发强度。
+      const minutes = new Map<number, number>();
+      for (const r of e.requests as { at: Date }[]) {
+        const min = Math.floor(new Date(r.at).getTime() / 60000);
+        minutes.set(min, (minutes.get(min) || 0) + 1);
+      }
+      const peakReqPerMin = minutes.size ? Math.max(...minutes.values()) : 0;
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        provider: e.provider,
+        accountId: e.accountId,
+        accountEmail: e.accountEmail,
+        reason: e.reason,
+        upstreamStatus: e.upstreamStatus,
+        upstreamBody: e.upstreamBody,
+        modelKey: e.modelKey,
+        deathStrikes: e.deathStrikes,
+        requestCount: (e.requests as unknown[]).length,
+        peakReqPerMin,
+      };
+    });
+    return { days, events };
+  }
+
+  /**
+   * 单条封号事件下钻:封号前请求时间线(BanEventRequest)+ 该母号【封号前 3 天】的聚合
+   * (从 RequestLog 取 [封号时刻-72h, 封号时刻]):请求数、反代率、不同来源 IP / 设备数
+   * (≈ 多少端/会话在用)、峰值 req/min、token 量。供页面"封之前 3 天计算"。
+   */
+  async getBanEventRequests(banEventId: string) {
+    const id = String(banEventId || "").trim();
+    if (!id) return { banEventId: id, requests: [], window3d: null };
+
+    const event = await this.prisma.accountBanEvent.findUnique({
+      where: { id },
+      select: { provider: true, accountEmail: true, createdAt: true },
+    });
+    const requests = await this.prisma.banEventRequest.findMany({
+      where: { banEventId: id },
+      orderBy: { seq: "asc" },
+    });
+    if (!event) return { banEventId: id, requests, window3d: null };
+
+    const banAt = new Date(event.createdAt);
+    const since = new Date(banAt.getTime() - 72 * 60 * 60 * 1000);
+    const logs = await this.prisma.requestLog.findMany({
+      where: { provider: event.provider, accountEmail: event.accountEmail, at: { gte: since, lte: banAt } },
+      select: { reverseProxy: true, sourceIp: true, deviceId: true, userId: true, totalTokens: true, at: true },
+    });
+    const ips = new Set<string>();
+    const devices = new Set<string>();
+    const users = new Set<string>();
+    const minutes = new Map<number, number>();
+    let reverseProxyHits = 0;
+    let totalTokens = 0;
+    for (const r of logs) {
+      if (r.reverseProxy) reverseProxyHits += 1;
+      totalTokens += r.totalTokens;
+      if (r.sourceIp) ips.add(r.sourceIp);
+      if (r.deviceId) devices.add(r.deviceId);
+      if (r.userId) users.add(r.userId);
+      const m = Math.floor(new Date(r.at).getTime() / 60000);
+      minutes.set(m, (minutes.get(m) || 0) + 1);
+    }
+    const window3d = {
+      requests: logs.length,
+      reverseProxyHits,
+      reverseProxyRate: logs.length ? reverseProxyHits / logs.length : 0,
+      distinctSourceIps: ips.size,
+      distinctDevices: devices.size,
+      distinctUsers: users.size,
+      peakReqPerMin: minutes.size ? Math.max(...minutes.values()) : 0,
+      totalTokens,
+    };
+    return { banEventId: id, requests, window3d };
+  }
+
+  /**
+   * per-request 热表浏览(近 ≤72h):按 母号/卡/surface/是否反代 过滤,倒序。
+   * 行来自 RequestLog(短保留),含来源 IP / 出口 IP / surface / 过滤后的请求头。
+   */
+  async getRequestLogs(opts: {
+    accountEmail?: string; accessKeyId?: string; surface?: string;
+    reverseProxyOnly?: boolean; hours?: number; limit?: number;
+  } = {}) {
+    const hours = Math.max(1, Math.min(120, opts.hours || 120)); // ≤5 天(对齐 RequestLog 保留期)
+    const limit = Math.max(1, Math.min(500, opts.limit || 200));
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const where: any = { at: { gte: since }, provider: { in: ["codex", "anthropic"] } };
+    if (opts.accountEmail) where.accountEmail = opts.accountEmail.trim();
+    if (opts.accessKeyId) where.accessKeyId = opts.accessKeyId.trim();
+    if (opts.surface) where.surface = opts.surface.trim();
+    if (opts.reverseProxyOnly) where.reverseProxy = true;
+
+    const logs = await this.prisma.requestLog.findMany({ where, orderBy: { at: "desc" }, take: limit });
+    return { hours, logs };
+  }
+
+  /**
+   * 定因对比:把母号分成「已封/曾封」vs「健康」两组,在每个信号上算两组均值 + 差异倍数,
+   * 按差异降序 —— 置顶的就是封号主因候选。这才是"抽象分析",而非罗列。
+   *
+   * 信号来源:风险面(反代率/扇出/失败率/量,来自 CardUsageHourly)+ RequestLog 派生
+   * (不同来源 IP / 出口 IP 数、桌面端占比、峰值 req/min<按分钟分桶取最大>)。
+   * 已封集合来自 AccountBanEvent(provider+email)。
+   */
+  async getBanComparison(opts: {
+    days?: number;
+    accounts?: Awaited<ReturnType<TokenUsageStatsService["getAccountBanAnalysis"]>>["accounts"];
+    logStats?: RequestLogStats;
+  } = {}) {
+    const days = Math.max(1, Math.min(30, opts.days || 7));
+    const since = beijingDayStart(days);
+    const byAcct = opts.logStats ?? (await this.requestLogStatsByAccount(since));
+    const accounts = opts.accounts ?? (await this.getAccountBanAnalysis({ days, logStats: byAcct })).accounts;
+
+    const banRows = await this.prisma.accountBanEvent.findMany({
+      where: { createdAt: { gte: since }, provider: { in: ["codex", "anthropic"] } },
+      select: { provider: true, accountEmail: true },
+    });
+    const bannedSet = new Set(banRows.map((b: any) => `${b.provider} ${b.accountEmail}`));
+
+    const rows = accounts.map((a) => {
+      const l = byAcct.get(`${a.product} ${a.accountEmail}`);
+      return {
+        banned: bannedSet.has(`${a.product} ${a.accountEmail}`),
+        reverseProxyRate: a.reverseProxyRate,
+        distinctCards: a.distinctCards,
+        failRate: a.failRate,
+        totalTokens: a.totalTokens,
+        requests: a.requests,
+        distinctSourceIps: l ? l.sources.size : 0,
+        distinctExitIps: l ? l.exits.size : 0,
+        distinctUsers: l ? l.users.size : 0,
+        desktopRatio: l && l.total ? l.desktop / l.total : 0,
+        peakReqPerMin: peakReqPerMin(l),
+      };
+    });
+    const banned = rows.filter((r) => r.banned);
+    const healthy = rows.filter((r) => !r.banned);
+    const avg = (arr: typeof rows, sel: (r: (typeof rows)[number]) => number) =>
+      arr.length ? arr.reduce((s, x) => s + sel(x), 0) / arr.length : 0;
+
+    const defs: { key: string; label: string; pct?: boolean; sel: (r: (typeof rows)[number]) => number }[] = [
+      { key: "reverseProxyRate", label: "反代率", pct: true, sel: (r) => r.reverseProxyRate },
+      { key: "distinctUsers", label: "真实用户数", sel: (r) => r.distinctUsers },
+      { key: "peakReqPerMin", label: "峰值 req/min", sel: (r) => r.peakReqPerMin },
+      { key: "distinctSourceIps", label: "不同来源 IP 数", sel: (r) => r.distinctSourceIps },
+      { key: "distinctCards", label: "扇出卡数", sel: (r) => r.distinctCards },
+      { key: "distinctExitIps", label: "出口 IP 数(应=1)", sel: (r) => r.distinctExitIps },
+      { key: "desktopRatio", label: "桌面端占比", pct: true, sel: (r) => r.desktopRatio },
+      { key: "failRate", label: "失败率", pct: true, sel: (r) => r.failRate },
+      { key: "totalTokens", label: "Token 量", sel: (r) => r.totalTokens },
+      { key: "requests", label: "请求数", sel: (r) => r.requests },
+    ];
+    const metrics = defs
+      .map((d) => {
+        const bannedAvg = avg(banned, d.sel);
+        const healthyAvg = avg(healthy, d.sel);
+        // 差异倍数(已封/健康)。健康为 0 时:已封>0 给一个大值(999)标"突出",否则 1。
+        const ratio = healthyAvg > 0 ? bannedAvg / healthyAvg : bannedAvg > 0 ? 999 : 1;
+        return { key: d.key, label: d.label, pct: Boolean(d.pct), bannedAvg, healthyAvg, ratio };
+      })
+      .sort((x, y) => y.ratio - x.ratio);
+
+    return { days, bannedCount: banned.length, healthyCount: healthy.length, metrics };
+  }
+
+  /** 封号分析页一次取齐:定因对比 + 母号风险榜 + 封号事件流。RequestLog 只扫一次,三处共用。 */
+  async getBanAnalysis(opts: { days?: number } = {}) {
+    const days = Math.max(1, Math.min(30, opts.days || 7));
+    const logStats = await this.requestLogStatsByAccount(beijingDayStart(days));
+    const [risk, events] = await Promise.all([
+      this.getAccountBanAnalysis({ days, logStats }),
+      this.getBanEvents({ days }),
+    ]);
+    const comparison = await this.getBanComparison({ days: risk.days, accounts: risk.accounts, logStats });
+    return { days: risk.days, comparison, accounts: risk.accounts, banEvents: events.events };
   }
 
   // ── Cleanup ─────────────────────────────────────────────────────────────

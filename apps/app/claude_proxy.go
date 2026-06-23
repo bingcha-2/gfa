@@ -137,8 +137,9 @@ type claudeLeaseFunc func(card, deviceId string, force bool, options map[string]
 type claudeReportFunc func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *ClaudeTokenLease)
 
 type ClaudeProxy struct {
-	totalRequests int64
-	totalErrors   int64
+	totalRequests     int64
+	totalErrors       int64
+	nonGenuineClients int64 // 累计命中反代检测(非真 Claude Code 客户端)的生成请求数
 
 	// 可注入(测试);为 nil 时回落到全局 ClaudeLeaser。
 	leaseToken    claudeLeaseFunc
@@ -253,7 +254,12 @@ func claudeEgressBlocked(egress string) bool {
 	return strings.TrimSpace(egress) == ""
 }
 
-func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string) {
+func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string, surface ...string) {
+	// 接管面(cli/desktop/ide):由调用入口直接传入(http_proxy→cli、mitm→desktop),不猜 UA。
+	surfaceTag := ""
+	if len(surface) > 0 {
+		surfaceTag = surface[0]
+	}
 	reqID := atomic.AddInt64(&p.totalRequests, 1)
 
 	// 非生成的辅助请求(count_tokens 等)→ 注入 token 透传,不计量。
@@ -288,6 +294,19 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		modelKey = "claude-opus-4-20250514"
 	}
 	audit.model = modelKey
+
+	// 反代检测(flag 模式):真 Claude Code 每次都带固定 system 前缀;缺失 = 这张卡很可能
+	// 被反代/换了别的客户端再分发 —— 正是把共享订阅号用成「转卖 API」、招致上游 403 的主因。
+	// 【客户端静默】:命中只随上报回服务端 + 内存计数,本地日志【绝不打印】(审计日志对客户
+	// 可见,打出来等于提醒正在反代的人去规避)。判定/展示全部放服务端。
+	clientFlag := ""
+	if genuine, flag := detectClaudeCodeClient(body, r.Header); !genuine {
+		clientFlag = flag
+		atomic.AddInt64(&p.nonGenuineClients, 1)
+	}
+	// 过滤后的请求头(去凭证头、跳超大值),随上报落 per-request 热表。
+	reportHeaders := filterReportHeaders(r.Header)
+	reportUserID := extractMetadataUserID(body) // metadata.user_id → 服务端数真实用户
 
 	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
 	// (见 quota_enforcement.go)。无份额数据(号池/静态卡)→ 自然放行。
@@ -367,6 +386,10 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		usage, copyErr := copyStreamingClaudeResponse(tee, resp.Body)
 		audit.respBody = tee.captured()
 		details := claudeReportDetailsFromUsage(resp.StatusCode, modelKey, usage)
+		details.ClientFlag = clientFlag
+		details.Surface = surfaceTag
+		details.Headers = reportHeaders
+		details.UserId = reportUserID
 		if copyErr != nil {
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
@@ -408,6 +431,10 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	_, _ = w.Write(respBody)
 
 	details := claudeReportDetailsFromBody(resp.StatusCode, modelKey, respBody)
+	details.ClientFlag = clientFlag
+	details.Surface = surfaceTag
+	details.Headers = reportHeaders
+	details.UserId = reportUserID
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		fillClaudeWindows(&details, resp.Header)
 		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens

@@ -260,6 +260,21 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	// 反代嫌疑(非真 Claude Code 客户端):仅在命中时带上,供服务端按卡聚合定位反代。
+	// 服务端可暂不消费(未知字段安全忽略),不影响计费/账号健康。
+	if details.ClientFlag != "" {
+		payload["clientFlag"] = details.ClientFlag
+	}
+	// 接管面 + 过滤后请求头:随上报落 per-request 热表(封号定因)。仅在有值时带上。
+	if details.Surface != "" {
+		payload["surface"] = details.Surface
+	}
+	if details.Headers != "" {
+		payload["headers"] = details.Headers
+	}
+	if details.UserId != "" {
+		payload["userId"] = details.UserId
+	}
 	// 带上从上游响应头解析的 5h/周额度,服务端 applyQuotaSnapshot 落库 → 血条+刷新时间。
 	// 字段名对齐服务端 claude.provider.applyQuotaSnapshot(quota.claudeQuota.*)。
 	if details.HasClaudeWindows {

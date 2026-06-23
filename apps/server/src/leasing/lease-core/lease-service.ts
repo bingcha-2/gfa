@@ -48,6 +48,7 @@ export type TokenUsageTracker = {
     cacheCreationTokens?: number;
     rawTotalTokens?: number;
     totalTokens?: number;
+    reverseProxy?: boolean;
   }) => void;
 };
 
@@ -65,6 +66,55 @@ export type AccountQuotaSnapshotRecorder = {
   }) => void;
 };
 
+/** 封号事件记录器(BanEventTracker 的最小接口)。observeRequest 每请求一次喂内存环;
+ *  recordBan 在母号被永久封禁时落库(事件 + 封号前请求时间线)。仅 codex/anthropic 注入。 */
+export type BanEventRecorder = {
+  observeRequest: (e: {
+    provider: string;
+    accountId: number;
+    accessKeyId?: string;
+    customerId?: string;
+    modelKey?: string;
+    status?: number;
+    totalTokens?: number;
+    reverseProxy?: boolean;
+    surface?: string;
+    sourceIp?: string;
+    exitIp?: string;
+  }) => void;
+  recordBan: (e: {
+    provider: string;
+    accountId: number;
+    accountEmail?: string;
+    reason?: string;
+    upstreamStatus?: number;
+    upstreamBody?: string;
+    modelKey?: string;
+    deathStrikes?: number;
+  }) => void;
+};
+
+/** per-request 热表写入器(RequestLogTracker 的最小接口)。仅 codex/anthropic 注入。 */
+export type RequestLogRecorder = {
+  record: (e: {
+    provider: string;
+    accountId?: number;
+    accountEmail?: string;
+    accessKeyId?: string;
+    customerId?: string;
+    deviceId?: string;
+    userId?: string;
+    modelKey?: string;
+    status?: number;
+    totalTokens?: number;
+    reverseProxy?: boolean;
+    surface?: string;
+    sourceIp?: string;
+    exitIp?: string;
+    headers?: string;
+  }) => void;
+};
+
 export type LeaseHttpErrorClass = new (statusCode: number, message: string, body?: unknown) => Error;
 
 export type LeaseServiceOptions = {
@@ -77,6 +127,10 @@ export type LeaseServiceOptions = {
   leaseTtlMs?: number;
   affinityTtlMs?: number;
   tokenUsageTracker?: TokenUsageTracker;
+  /** 封号事件记录器(仅 codex/anthropic 注入;antigravity 不传 → no-op)。 */
+  banEventRecorder?: BanEventRecorder;
+  /** per-request 热表写入器(仅 codex/anthropic 注入)。 */
+  requestLogRecorder?: RequestLogRecorder;
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
   /** Fair-share tracker for bound-card dynamic quota. */
   fairShareTracker?: FairShareTracker;
@@ -168,6 +222,24 @@ export class LeaseServiceHttpError extends Error {
  * lifecycle, debounced account persistence). Provider supplies only the pieces
  * that differ between upstreams.
  */
+/** 用户来源 IP:走 Caddy 反代,优先取 X-Forwarded-For 首段;否则回落连接 IP。 */
+function clientIpFromReq(req: any): string {
+  const xff = req?.headers?.["x-forwarded-for"];
+  const first = Array.isArray(xff) ? xff[0] : typeof xff === "string" ? xff.split(",")[0] : "";
+  return String(first || req?.ip || "").trim();
+}
+
+/** 出口代理端点 host(账号 proxyUrl 的 hostname)。无/解析失败 → ""。 */
+function proxyHostOf(proxyUrl: unknown): string {
+  const s = String(proxyUrl || "").trim();
+  if (!s) return "";
+  try {
+    return new URL(s).hostname || "";
+  } catch {
+    return "";
+  }
+}
+
 export class LeaseService<TAccount extends { id: number; email: string; refreshToken: string }> {
   protected readonly provider: Provider<TAccount>;
   private readonly accountsFilePath: string;
@@ -178,6 +250,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
+  private readonly banEventRecorder: BanEventRecorder | null;
+  private readonly requestLogRecorder: RequestLogRecorder | null;
   private readonly accountQuotaSnapshotTracker: AccountQuotaSnapshotRecorder | null;
   readonly fairShareTracker: FairShareTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
@@ -226,6 +300,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.tokenUsageTracker = options.tokenUsageTracker || null;
+    this.banEventRecorder = options.banEventRecorder || null;
+    this.requestLogRecorder = options.requestLogRecorder || null;
     this.accountQuotaSnapshotTracker = options.accountQuotaSnapshotTracker || null;
     this.fairShareTracker = options.fairShareTracker || null;
     this.errorClass = options.errorClass || LeaseServiceHttpError;
@@ -1080,6 +1156,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           cacheCreationTokens: detail.cacheCreationTokens,
           rawTotalTokens: detail.rawTotalTokens,
           totalTokens: detail.totalTokens,
+          // 反代嫌疑(客户端 detectClaudeCodeClient 命中:非真 Claude Code 客户端)。
+          // 随小时聚合落 CardUsageHourly.reverseProxyHits → 后台可查"哪张卡在反代"。
+          reverseProxy: Boolean(payload?.clientFlag),
         });
       }
     }
@@ -1089,6 +1168,33 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const tokens = Number(payload?.totalTokens || 0);
     const inputTokens = Number(payload?.inputTokens || 0);
     const outputTokens = Number(payload?.outputTokens || 0);
+
+    // per-request 富集:server 取来源 IP(XFF)+ 出口代理 host;surface/headers 由客户端上报。
+    // 喂两处:封号内存环(observeRequest,健康号不落库)+ 热表(record,72h 短保留)。
+    if (this.banEventRecorder || this.requestLogRecorder) {
+      const logAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
+      const accountEmail = (logAccount as { email?: string } | undefined)?.email || "";
+      const exitIp = proxyHostOf((logAccount as { proxyUrl?: string } | undefined)?.proxyUrl);
+      const sourceIp = clientIpFromReq(req);
+      const deviceId = String(lease?.clientId || payload?.clientId || "");
+      const surface = String(payload?.surface || "");
+      const userId = String(payload?.userId || "");
+      const headers = typeof payload?.headers === "string" ? payload.headers : payload?.headers ? JSON.stringify(payload.headers) : "";
+      const reverseProxy = Boolean(payload?.clientFlag);
+
+      if (accountId && this.banEventRecorder) {
+        this.banEventRecorder.observeRequest({
+          provider: this.provider.id, accountId, accessKeyId: cardId,
+          customerId: auth.record?.customerId as string | undefined,
+          modelKey, status, totalTokens: tokens, reverseProxy, surface, sourceIp, exitIp,
+        });
+      }
+      this.requestLogRecorder?.record({
+        provider: this.provider.id, accountId, accountEmail, accessKeyId: cardId,
+        customerId: auth.record?.customerId as string | undefined, deviceId, userId,
+        modelKey, status, totalTokens: tokens, reverseProxy, surface, sourceIp, exitIp, headers,
+      });
+    }
 
     const accStats = accountId ? this.ensureAccountStats(accountId) : null;
     if (accStats) {
@@ -1122,6 +1228,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           // 账号/项目级永久死亡(service_disabled / 封号 / 地区不支持):reason 细分 +
           // 计数升级,别再当 60s/30s 瞬时(详见 markAccountPermanentDeath)。
           this.markAccountPermanentDeath(accountId, reportedReason);
+          // 封号定因:落库本次封号 + 该母号封号前的请求时间线(内存环 dump)。仅 codex/anthropic。
+          if (this.banEventRecorder) {
+            const banAccount = this.readAccounts().find((a) => a.id === accountId);
+            this.banEventRecorder.recordBan({
+              provider: this.provider.id,
+              accountId,
+              accountEmail: (banAccount as { email?: string } | undefined)?.email,
+              reason: reportedReason,
+              upstreamStatus: status,
+              upstreamBody: String(payload?.errorText || ""),
+              modelKey,
+              deathStrikes: this.accountRuntime.get(accountId)?.deathStrikes ?? 0,
+            });
+          }
         } else if (status === 403 && reportedReason.includes("verification")) {
           // 验证挑战:号被 Google 风控,【要人去验证】才能用,不是 60s 能自愈的瞬时错误。
           // 标成"需验证/不可用"状态(控制台红点 + "需验证"标签)+ 持久化,30min 后自动复检;

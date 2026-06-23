@@ -451,6 +451,17 @@ type ReportDetails struct {
 	BillableTotalTokens int64 // 折扣后的计费总量
 	ErrorText           string
 
+	// 反代检测命中原因(非真 Claude Code 客户端);空=未命中。随用量上报回服务端,
+	// 供后台按卡聚合定位「哪张卡被反代/换了客户端」。仅遥测,不影响计费/账号健康。
+	ClientFlag string
+
+	// 接管面(cli / desktop / ide):客户端按接管入口直接知道,不靠猜 UA。随上报回服务端
+	// 落 per-request 热表。Headers 为过滤后的请求头 JSON(去凭证头、跳超大值,绝不含 body)。
+	Surface string
+	Headers string
+	// Claude Code metadata.user_id(每用户稳定 hash)→ 服务端按母号数 distinct = 真实用户数。
+	UserId string
+
 	// Claude 5h/周额度窗口:从上游 anthropic-ratelimit-unified-* 响应头解析(仅 200 带),
 	// 随用量上报回服务端 applyQuotaSnapshot → 客户端血条。HasClaudeWindows=false 时不带。
 	HasClaudeWindows      bool

@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import { LeaseService, type TokenUsageTracker, type AccountQuotaSnapshotRecorder } from "../../lease-core/lease-service";
+import { LeaseService, type TokenUsageTracker, type AccountQuotaSnapshotRecorder, type BanEventRecorder, type RequestLogRecorder } from "../../lease-core/lease-service";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { CodexAccount } from "../auth/codex-token-provider";
@@ -20,6 +20,8 @@ type ServiceOptions = {
   leaseTtlMs?: number;
   tokenUsageTracker?: TokenUsageTracker;
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  banEventRecorder?: BanEventRecorder;
+  requestLogRecorder?: RequestLogRecorder;
   /** PrismaService — persists FairShareWindow (omit in unit tests). */
   prisma?: any;
 };
@@ -72,6 +74,8 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
         accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
+        banEventRecorder: options.banEventRecorder,
+        requestLogRecorder: options.requestLogRecorder,
         fairShareTracker,
         mode: "remote-codex-server",
         noAccountMessage: "No available Codex accounts",

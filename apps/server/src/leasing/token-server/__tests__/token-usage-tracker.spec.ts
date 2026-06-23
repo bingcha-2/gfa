@@ -78,6 +78,43 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
     tracker.destroy();
   });
 
+  it("反代命中 reverseProxyHits:仅命中的请求累加,genuine 不计", async () => {
+    const prisma = makePrisma();
+    const tracker = new TokenUsageTracker(prisma);
+    const base = {
+      accessKeyId: "sub-1", customerId: "c", accountEmail: "a@x.com",
+      modelKey: "claude", bucket: "anthropic-claude", status: 200,
+      inputTokens: 1, outputTokens: 1, cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 2, totalTokens: 2,
+      timestamp: at,
+    } as any;
+    (tracker as any).queue.push(
+      { ...base, reverseProxy: true },
+      { ...base, reverseProxy: false }, // genuine
+      { ...base, reverseProxy: true },
+    );
+    await tracker.flush();
+
+    const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
+    expect(arg.create).toMatchObject({ requests: 3, reverseProxyHits: 2 });
+    expect(arg.update.reverseProxyHits).toEqual({ increment: 2 });
+    tracker.destroy();
+  });
+
+  it("record(reverseProxy) 透传进队列,flush 落到 upsert", async () => {
+    const prisma = makePrisma();
+    const tracker = new TokenUsageTracker(prisma);
+    tracker.record({
+      accessKeyId: "sub-9", modelKey: "claude", bucket: "anthropic-claude",
+      status: 200, inputTokens: 5, outputTokens: 5, totalTokens: 10,
+      reverseProxy: true,
+    });
+    expect(tracker.getQueueForTesting()[0]).toMatchObject({ reverseProxy: true });
+    await tracker.flush();
+    const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
+    expect(arg.create.reverseProxyHits).toBe(1);
+    tracker.destroy();
+  });
+
   it("不同小时桶 → 分别 upsert", async () => {
     const prisma = makePrisma();
     const tracker = new TokenUsageTracker(prisma);

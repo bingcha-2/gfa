@@ -474,6 +474,7 @@ model CardUsageHourly {
   cacheCreationTokens Int    @default(0)          // 缓存写(cache_creation);仅 claude 非零,历史行=0
   rawTotalTokens    Int      @default(0)
   totalTokens       Int      @default(0)          // 计费 token(扣缓存折扣后)
+  reverseProxyHits  Int      @default(0)          // 命中反代检测(非真 Claude Code 客户端)的请求数;查"哪张卡在反代"
   updatedAt         DateTime @updatedAt
 
   @@unique([hourStart, accessKeyId, accountEmail, customerId, modelKey, bucket])
@@ -520,6 +521,77 @@ model FairShareWindow {
 
   @@id([provider, accountId, bucket, cardId])
   @@index([provider, accountId, bucket])
+}
+
+/// 封号事件档案(P0 定因靶子)。每次某母号被上游永久封禁(403 service_disabled /
+/// 封号 / 401 invalid_grant 等)记一行,带当时上游 status/文案 + 触发模型 + 死亡计数。
+/// 仅 codex / anthropic 落库(antigravity 不接)。行数 = 封号次数(罕见),自带 90 天保留。
+model AccountBanEvent {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  provider       String                      // codex | anthropic
+  accountId      Int
+  accountEmail   String   @default("")
+  reason         String   @default("")        // service_disabled / banned / invalid_grant …
+  upstreamStatus Int      @default(0)         // 403 / 401 / 400 …
+  upstreamBody   String   @default("")        // 上游错误正文(截断)
+  modelKey       String   @default("")
+  deathStrikes   Int      @default(0)         // 第几次判死(升级到永久封的计数)
+
+  requests BanEventRequest[]
+
+  @@index([provider, createdAt])
+  @@index([accountEmail])
+}
+
+/// 封号前请求时间线:每个母号在内存里维护"最近 N 条"环形缓冲(健康号不落库),
+/// 只有该号触发封号时一次性 dump 进来。行数 = 封号次数 × N,有界。只存元数据,不存 body。
+model BanEventRequest {
+  id           String   @id @default(cuid())
+  banEventId   String
+  seq          Int                            // 环内顺序(0=最旧)
+  at           DateTime
+  accessKeyId  String   @default("")          // 哪张卡
+  customerId   String   @default("")          // 哪个客户
+  modelKey     String   @default("")
+  status       Int      @default(0)
+  totalTokens  Int      @default(0)
+  reverseProxy Boolean  @default(false)       // 该请求命中反代检测(非真客户端)
+  surface      String   @default("")          // cli / desktop / ide(来自客户端接管入口)
+  sourceIp     String   @default("")          // 用户来源 IP(服务端从 XFF 取)
+  exitIp       String   @default("")          // 出口/住宅代理端点(账号 proxyUrl host)
+
+  banEvent AccountBanEvent @relation(fields: [banEventId], references: [id], onDelete: Cascade)
+
+  @@index([banEventId])
+}
+
+/// per-request 热表(全量明细,短保留 72h,RequestLogTracker 批量写 + 定时清理)。
+/// 行数 = 请求量 × 72h,靠 TTL 清理控量;封号相关的永久副本另存于 BanEventRequest。
+/// 仅 codex/anthropic 写入。headers 为过滤后的 JSON(去凭证头、跳超大值),不含 body。
+model RequestLog {
+  id           String   @id @default(cuid())
+  at           DateTime @default(now())
+  provider     String                         // codex | anthropic
+  accountId    Int      @default(0)
+  accountEmail String   @default("")
+  accessKeyId  String   @default("")          // 卡
+  customerId   String   @default("")          // 客户
+  deviceId     String   @default("")          // 设备
+  userId       String   @default("")          // Claude Code metadata.user_id(每用户稳定 hash)→ 数真实用户
+  modelKey     String   @default("")
+  status       Int      @default(0)
+  totalTokens  Int      @default(0)
+  reverseProxy Boolean  @default(false)
+  surface      String   @default("")          // cli / desktop / ide
+  sourceIp     String   @default("")          // 用户来源 IP
+  exitIp       String   @default("")          // 出口代理端点
+  headers      String   @default("")          // 过滤后的请求头 JSON
+
+  @@index([at])
+  @@index([accountEmail, at])
+  @@index([accessKeyId, at])
+  @@index([provider, at])
 }
 
 // ─── Customer Account System ────────────────────────────────────────────────

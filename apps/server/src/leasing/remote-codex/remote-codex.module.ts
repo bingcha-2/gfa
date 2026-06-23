@@ -8,9 +8,9 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 
 const remoteCodexProvider = {
   provide: RemoteCodexService,
-  useFactory: (tokenUsageTracker: TokenUsageTracker, accountQuotaSnapshotTracker: any, accessKeyStore: any, prisma: PrismaService) =>
-    new RemoteCodexService({ tokenUsageTracker, accountQuotaSnapshotTracker, accessKeyStore, prisma }),
-  inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService],
+  useFactory: (tokenUsageTracker: TokenUsageTracker, accountQuotaSnapshotTracker: any, banEventRecorder: any, requestLogRecorder: any, accessKeyStore: any, prisma: PrismaService) =>
+    new RemoteCodexService({ tokenUsageTracker, accountQuotaSnapshotTracker, banEventRecorder, requestLogRecorder, accessKeyStore, prisma }),
+  inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService],
 };
 
 @Module({
