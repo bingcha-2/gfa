@@ -290,6 +290,14 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	if err := InjectCodexSettings(proxyPort); err != nil {
 		return "", err
 	}
+	// 未登录的 Codex 会卡在登录页、进不到能用自定义 provider 的主界面。仅当本机完全未登录时
+	// 注入伪登录态(签名乱码、exp 远的假 token,真号池 token 由代理转发时替换),让它直接可用;
+	// 已登录则不动,保留用户真账号。失败不致命:config 已生效,已登录用户不受影响。
+	if !codexHasExistingLogin() {
+		if err := InjectFakeCodexAuth(); err != nil {
+			Log("[codex] 注入伪登录态失败(不致命,未登录用户可能仍需手动登录): %v", err)
+		}
+	}
 	// 接管即租号:清掉任何遗留的「中转(relay)」配置,确保生成请求走 bcai 号池租号,
 	// 而不是被旧的中转配置劫持到外部中转站(如 litellm)。热生效,无需重启代理。
 	if cleared, err := ensureCodexRentalMode(); err != nil {
@@ -311,6 +319,11 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 func (codexTarget) Restore() (string, error) {
 	if err := RestoreCodexSettings(); err != nil {
 		return "", err
+	}
+	// 还原伪登录态:有备份(我们注入过)则精确写回原 auth.json 或删除;无备份(已登录用户接管时
+	// 没注入)则 no-op,真账号原样不动。
+	if err := RestoreFakeCodexAuth(); err != nil {
+		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
 	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
 	if !codexGUIInstalled() {
