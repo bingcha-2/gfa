@@ -339,3 +339,30 @@ func TestEnsureOAuthBeta_Empty(t *testing.T) {
 		t.Fatalf("expected fallback, got %q", got)
 	}
 }
+
+func TestApplyClaudeUpstreamHeaders_EmptyBetaUsesFullFallback(t *testing.T) {
+	// base_url 模式:客户端没带 anthropic-beta → 补整套兜底(对照真 desktop),非裸 oauth flag。
+	dst := http.Header{}
+	applyClaudeUpstreamHeaders(dst, http.Header{}, "oat", "https://api.anthropic.com/v1/messages")
+	if got := dst.Get("Anthropic-Beta"); got != claudeFallbackBeta {
+		t.Fatalf("空 beta 应补整套兜底\n want %s\n got  %s", claudeFallbackBeta, got)
+	}
+	if got := dst.Get("Anthropic-Version"); got != "2023-06-01" {
+		t.Fatalf("anthropic-version 应补 2023-06-01, got %q", got)
+	}
+}
+
+func TestApplyClaudeUpstreamHeaders_ExistingBetaJustEnsuresOAuth(t *testing.T) {
+	// 客户端已带自己的 beta(无 oauth)→ 只补 oauth flag,不强加整套兜底。
+	src := http.Header{}
+	src.Set("Anthropic-Beta", "claude-code-20250219,context-management-2025-06-27")
+	dst := http.Header{}
+	applyClaudeUpstreamHeaders(dst, src, "oat", "https://api.anthropic.com/v1/messages")
+	got := dst.Get("Anthropic-Beta")
+	if !strings.Contains(got, "claude-code-20250219") || !strings.Contains(got, "oauth-2025-04-20") {
+		t.Fatalf("应保留客户端 beta 并补 oauth flag, got %q", got)
+	}
+	if strings.Contains(got, "interleaved-thinking") {
+		t.Fatal("客户端已带 beta 时不应强加整套兜底")
+	}
+}

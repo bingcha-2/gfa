@@ -23,9 +23,11 @@ const claudeCodeSystemSignature = "You are Claude Code, Anthropic's official CLI
 // detectClaudeCodeClient 检查请求体 + 头,判断是否真 Claude Code。正版需命中以下之一:
 //
 //	(A) system 第一块带 CLI 开场白 —— body 里的硬指纹,最难伪造;
-//	(B) 整套客户端指纹【同时】出现:claude-cli/ UA + anthropic-beta:claude-code +
-//	    X-Claude-Code-Session-Id。单带一个头不算 —— 那太容易塞;要的是"非 CLI 正版面
-//	    (VSCode/JetBrains/Agent SDK)不被误杀,又不给随手塞一个头的反代放行"。
+//	(B) 整套客户端指纹【同时】出现:claude-cli/ UA + anthropic-beta 带 oauth-(或
+//	    claude-code) + X-Claude-Code-Session-Id。单带一个头不算 —— 那太容易塞;要的是
+//	    "非 CLI 正版面(VSCode/JetBrains/Agent SDK/后台 haiku 任务)不被误杀,又不给随手
+//	    塞一个头的反代放行"。oauth- 是订阅客户端【每条请求】都带的本质标记;claude-code 只是
+//	    feature flag,后台 haiku 任务会丢 —— 故二者任一即可。
 //
 // 注:能照搬整套指纹的高仿照样能骗过这层(头/system 都可复制)—— 那一层靠统计兜底
 // (一个母号下多 user_id / 多来源 IP / 高并发 / 每分钟多 session)。这层只过滤掉
@@ -36,9 +38,14 @@ func detectClaudeCodeClient(body []byte, h http.Header) (genuine bool, flag stri
 	}
 	ua := strings.ToLower(strings.TrimSpace(h.Get("User-Agent")))
 	hasCliUA := strings.HasPrefix(ua, "claude-cli/")
-	hasCCBeta := strings.Contains(strings.ToLower(h.Get("Anthropic-Beta")), "claude-code")
+	// oauth- 是第一方订阅客户端【每条请求】都带的本质标记(主对话 + 后台 haiku 任务都带);
+	// claude-code 只是 feature flag,后台任务会丢 —— 故二者任一即可。两个都按【去日期前缀 +
+	// 整 token】匹配,Anthropic 滚版本号(oauth-2026-… / claude-code-…)也不受影响。
+	beta := h.Get("Anthropic-Beta")
+	hasOAuthBeta := betaHasToken(beta, "oauth-")
+	hasCCBeta := betaHasToken(beta, "claude-code")
 	hasSession := strings.TrimSpace(h.Get("X-Claude-Code-Session-Id")) != ""
-	if hasCliUA && hasCCBeta && hasSession {
+	if hasCliUA && hasSession && (hasOAuthBeta || hasCCBeta) {
 		return true, ""
 	}
 	// 反代嫌疑:返回简短、无 PII 的 flag 说明缺了哪几样,后台据此分辨"非 CLI 正版" vs "真转卖"。
@@ -49,13 +56,25 @@ func detectClaudeCodeClient(body []byte, h http.Header) (genuine bool, flag stri
 		// 长着别的客户端的脸(Cline/Roo/python-requests/axios/openai-* 等)= 反代正向标记。
 		reasons = append(reasons, "foreign_ua")
 	}
-	if !hasCCBeta {
-		reasons = append(reasons, "no_cc_beta")
+	if !hasOAuthBeta && !hasCCBeta {
+		reasons = append(reasons, "no_oauth_beta")
 	}
 	if !hasSession {
 		reasons = append(reasons, "no_session_id")
 	}
 	return false, strings.Join(reasons, ",")
+}
+
+// betaHasToken 判断逗号分隔的 anthropic-beta 里是否有 token 以 prefix 开头(忽略大小写/空白)。
+// 用前缀 + 整 token 匹配:带日期的 flag(oauth-2025-04-20 / claude-code-20250219)随版本号
+// 变化也命中,且不会被某个 token 中间碰巧含该串误伤。
+func betaHasToken(beta, prefix string) bool {
+	for _, tok := range strings.Split(strings.ToLower(beta), ",") {
+		if strings.HasPrefix(strings.TrimSpace(tok), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractMetadataUserID 从请求体抠 Claude Code 的 metadata.user_id(每用户稳定 hash)。

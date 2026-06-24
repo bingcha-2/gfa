@@ -35,6 +35,11 @@ var ANTHROPIC_API_BASE = getEnvOrDefault("BCAI_ANTHROPIC_API_BASE", "https://api
 // claudeOAuthBeta 是订阅号 OAuth token 必带的 anthropic-beta 值(对照 Claude Code 2.x)。
 const claudeOAuthBeta = "oauth-2025-04-20"
 
+// claudeFallbackBeta:客户端【完全没带】anthropic-beta(base_url 模式)时的整套兜底,
+// 对照真 claude-desktop(claude-cli/2.1.x · agent-sdk/0.3.x)后台请求的 anthropic-beta —— 让补出
+// 来的请求看起来就是个正版客户端,而不是只挂一个裸 oauth flag(后者反而扎眼)。
+const claudeFallbackBeta = "oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,extended-cache-ttl-2025-04-11"
+
 const claudeTransportFriendlyMessage = "冰茶AI 正在重试连接 Claude。当前请求未能通过你的出口代理建立稳定连接，通常是本机网络、VPN 节点或代理链路临时不通导致。如果持续出现，请切换 VPN 节点或检查本机网络。"
 
 // 底层网络错误里常带真实出口/住宅代理地址(IP、IPv6 或供应商域名)——那是商业机密、
@@ -399,11 +404,20 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 		(isClaudeStreamingResponse(resp) || requestWantsStream(body))
 	if streamBack {
+		// SSE 实际几乎不压缩;万一上游对流回了 Content-Encoding,就地包一层解压再解析/转发。
+		streamReader := io.Reader(resp.Body)
+		if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+			if rc, decErr := decompressReader(enc, resp.Body); decErr == nil {
+				defer rc.Close()
+				streamReader = rc
+				resp.Header.Del("Content-Encoding") // 须在 writeUpstreamHeaders 之前删
+			}
+		}
 		writeUpstreamHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		// 把 SSE 同时 tee 到审计缓冲(保留 flush,不破坏流式),供这条日志输出完整响应体。
 		tee := newAuditTee(w)
-		usage, copyErr := copyStreamingClaudeResponse(tee, resp.Body)
+		usage, copyErr := copyStreamingClaudeResponse(tee, streamReader)
 		audit.respBody = tee.captured()
 		details := claudeReportDetailsFromUsage(resp.StatusCode, modelKey, usage)
 		details.ClientFlag = clientFlag
@@ -445,6 +459,12 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		audit.note = "读上游响应失败:" + readErr.Error()
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read Claude upstream response")
 		return
+	}
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		if decoded, ok := decodeUpstreamBytes(enc, respBody); ok {
+			respBody = decoded
+			resp.Header.Del("Content-Encoding") // 已还原明文,别再向客户端误标编码
+		}
 	}
 	audit.respBody = respBody
 	writeUpstreamHeaders(w, resp)
@@ -541,6 +561,12 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		if decoded, ok := decodeUpstreamBytes(enc, respBody); ok {
+			respBody = decoded
+			resp.Header.Del("Content-Encoding")
+		}
+	}
 	audit.status = resp.StatusCode
 	audit.respBody = respBody
 	writeUpstreamHeaders(w, resp)
@@ -561,10 +587,13 @@ func isClaudeStreamingResponse(resp *http.Response) bool {
 // applyClaudeUpstreamHeaders 复用 Claude Code 自带的 anthropic-* / user-agent 头,
 // 只把鉴权换成租来的 OAuth token(去掉 x-api-key,避免与 Bearer 冲突)。
 func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL string) {
+	// 注意:不再 skip accept-encoding —— 原样转发真客户端的 Accept-Encoding 给上游,
+	// 消除「裸奔无 Accept-Encoding」这一与 node header 矛盾的反代破绽;上游若回压缩 body,
+	// 由转发层就地解压(见 decodeUpstreamBytes / decompressReader)。
 	skip := map[string]bool{
 		"host": true, "authorization": true, "x-api-key": true,
 		"content-length": true, "connection": true, "proxy-connection": true,
-		"transfer-encoding": true, "accept-encoding": true,
+		"transfer-encoding": true,
 	}
 	for k, vs := range src {
 		if skip[strings.ToLower(k)] {
@@ -582,9 +611,13 @@ func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL str
 		dst.Set("anthropic-version", "2023-06-01")
 	}
 	// api.anthropic.com 只在带 oauth beta flag 时才接受订阅号 OAuth (sk-ant-oat…) token。
-	// 优先信任客户端自带的 oauth flag(真 Claude Code 随版本同步更新,比硬编码准);
-	// 仅当客户端完全没带 oauth flag 时才用硬编码常量兜底(base_url 模式可能省略)。
-	dst.Set("anthropic-beta", ensureOAuthBeta(dst.Get("anthropic-beta"), claudeOAuthBeta))
+	//   - 客户端【没带任何 beta】(base_url 模式)→ 补整套兜底(对照真 desktop),别只挂裸 oauth flag;
+	//   - 客户端【带了自己的 beta】→ 信任它(随 SDK 同步更新,比硬编码准),只确保含 oauth flag。
+	if strings.TrimSpace(dst.Get("anthropic-beta")) == "" {
+		dst.Set("anthropic-beta", claudeFallbackBeta)
+	} else {
+		dst.Set("anthropic-beta", ensureOAuthBeta(dst.Get("anthropic-beta"), claudeOAuthBeta))
+	}
 	if u, err := url.Parse(targetURL); err == nil {
 		dst.Set("Host", u.Host)
 	}

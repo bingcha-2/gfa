@@ -39,7 +39,7 @@ func TestDetectClaudeCodeClient_MissingSystem(t *testing.T) {
 	if genuine {
 		t.Fatal("missing system must be flagged as non-genuine")
 	}
-	if flag != "no_cc_system_prompt,no_cc_beta,no_session_id" {
+	if flag != "no_cc_system_prompt,no_oauth_beta,no_session_id" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }
@@ -51,7 +51,7 @@ func TestDetectClaudeCodeClient_ForeignSystem(t *testing.T) {
 		t.Fatal("foreign system prompt must be non-genuine")
 	}
 	// no CC system + no UA + no beta + no session-id
-	if flag != "no_cc_system_prompt,no_ua,no_cc_beta,no_session_id" {
+	if flag != "no_cc_system_prompt,no_ua,no_oauth_beta,no_session_id" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }
@@ -114,7 +114,49 @@ func TestDetectClaudeCodeClient_ForeignUA(t *testing.T) {
 	if genuine {
 		t.Fatal("foreign client must be non-genuine")
 	}
-	if flag != "no_cc_system_prompt,foreign_ua,no_cc_beta,no_session_id" {
+	if flag != "no_cc_system_prompt,foreign_ua,no_oauth_beta,no_session_id" {
+		t.Fatalf("unexpected flag: %q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_DesktopHaikuBackground(t *testing.T) {
+	// 回归:claude-desktop 后台 haiku 任务 —— 带 oauth- beta 但【不带】claude-code beta,
+	// body 也无 CC 开场白。旧逻辑误判为 no_cc_system_prompt,no_cc_beta;现应放行。
+	body := []byte(`{"model":"claude-haiku-4-5-20251001","system":"Summarize the conversation title.","messages":[]}`)
+	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/2.1.170 (external, claude-desktop, agent-sdk/0.3.170)")
+	h.Set("Anthropic-Beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13")
+	h.Set("X-Claude-Code-Session-Id", "12e12442-2674-45df-a8fd-434f448223db")
+	genuine, flag := detectClaudeCodeClient(body, h)
+	if !genuine {
+		t.Fatalf("desktop haiku 后台请求(oauth beta + claude-cli + session)应放行,got flag=%q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_OAuthBetaDateAgnostic(t *testing.T) {
+	// oauth- 用前缀匹配 → Anthropic 滚版本号(未来 oauth-2027-…)也命中,无需改代码。
+	body := []byte(`{"model":"claude-opus-4","messages":[]}`)
+	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/3.0.0")
+	h.Set("Anthropic-Beta", "oauth-2027-01-01,some-future-flag")
+	h.Set("X-Claude-Code-Session-Id", "sid-future")
+	if g, flag := detectClaudeCodeClient(body, h); !g {
+		t.Fatalf("oauth- 前缀应不受日期影响放行,got flag=%q", flag)
+	}
+}
+
+func TestDetectClaudeCodeClient_RawApiNoOAuthStillFlagged(t *testing.T) {
+	// 裸 API 转卖:claude-cli UA + session 都能塞,但既无 oauth- 也无 claude-code beta → 仍标记。
+	body := []byte(`{"model":"claude-opus-4","messages":[]}`)
+	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/2.1.170")
+	h.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
+	h.Set("X-Claude-Code-Session-Id", "sid")
+	g, flag := detectClaudeCodeClient(body, h)
+	if g {
+		t.Fatal("无 oauth/claude-code beta 仍应判为非正版")
+	}
+	if flag != "no_cc_system_prompt,no_oauth_beta" {
 		t.Fatalf("unexpected flag: %q", flag)
 	}
 }
