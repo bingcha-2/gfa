@@ -23,6 +23,23 @@ export interface OpenProfileResult {
   webdriver: string;
 }
 
+export interface AdsPowerProfileSummary {
+  userId: string;
+  name?: string;
+  groupId?: string;
+  domainName?: string;
+  raw?: any;
+}
+
+export interface CreateAdsPowerProfileInput {
+  name: string;
+  groupId?: string;
+  domainName?: string;
+  openUrls?: string[];
+  proxyConfig?: any;
+  fingerprintConfig?: Record<string, unknown>;
+}
+
 const DEFAULT_CONFIG: AdsPowerConfig = {
   baseUrl: "http://localhost:50325",
   maxRetries: 3,
@@ -59,6 +76,75 @@ export class AdsPowerClient {
       headers["Authorization"] = `Bearer ${this.config.apiKey}`;
     }
     return fetch(url, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } });
+  }
+
+  async listProfiles(page = 1, pageSize = 100): Promise<AdsPowerProfileSummary[]> {
+    const url = this.buildUrl("/api/v1/user/list", {
+      page: String(page),
+      page_size: String(pageSize),
+    });
+    const res = await this.fetchWithAuth(url);
+    const json = (await res.json()) as {
+      code: number;
+      msg: string;
+      data?: { list?: any[] };
+    };
+    if (json.code !== 0) {
+      throw new Error(`[adspower] listProfiles failed: ${json.msg}`);
+    }
+    return (Array.isArray(json.data?.list) ? json.data!.list! : [])
+      .map((item) => ({
+        userId: String(item.user_id || item.userId || item.id || "").trim(),
+        name: item.name ? String(item.name) : undefined,
+        groupId: item.group_id ? String(item.group_id) : undefined,
+        domainName: item.domain_name ? String(item.domain_name) : undefined,
+        raw: item,
+      }))
+      .filter((item) => item.userId);
+  }
+
+  async createProfile(input: CreateAdsPowerProfileInput): Promise<{ profileId: string; raw: any }> {
+    const url = this.buildUrl("/api/v1/user/create");
+    const body: Record<string, unknown> = {
+      name: input.name,
+      group_id: input.groupId || process.env.ADSPOWER_GROUP_ID || "0",
+      domain_name: input.domainName || "",
+      open_urls: input.openUrls || [],
+      fingerprint_config: input.fingerprintConfig || {},
+    };
+    if (input.proxyConfig) {
+      body.user_proxy_config = input.proxyConfig;
+    }
+    const res = await this.fetchWithAuth(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json()) as { code: number; msg: string; data?: any };
+    if (json.code !== 0) {
+      throw new Error(`[adspower] createProfile failed: ${json.msg}`);
+    }
+    const data = json.data || {};
+    const profileId = String(data.user_id || data.userId || data.id || data.profile_id || "").trim();
+    if (!profileId) {
+      throw new Error("[adspower] createProfile succeeded but did not return a profile id");
+    }
+    return { profileId, raw: data };
+  }
+
+  async deleteProfiles(profileIds: string[]): Promise<void> {
+    const ids = profileIds.map((id) => String(id || "").trim()).filter(Boolean);
+    if (!ids.length) return;
+    const url = this.buildUrl("/api/v1/user/delete");
+    const res = await this.fetchWithAuth(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_ids: ids }),
+    });
+    const json = (await res.json()) as { code: number; msg: string };
+    if (json.code !== 0) {
+      throw new Error(`[adspower] deleteProfiles failed: ${json.msg}`);
+    }
   }
 
   /**

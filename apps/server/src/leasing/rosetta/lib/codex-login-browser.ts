@@ -7,9 +7,14 @@
 // 各步页面/选择器均来自本仓库实跑验证（见 scripts/test_codex_login.ts）。
 // 接码格式与解析见 extractSmsCode。返回授权 code 交由 codex.service 换 token 落库。
 
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { startLocalSocksRelay, parseUpstream, generateGoogleTOTP } from "./playwright-oauth";
 import { toSocks5ProxyUrl } from "./store";
+import {
+  makeDefaultAdsPowerClient,
+  parseProxyToAdsPowerUserConfig,
+} from "./adspower-profile-manager";
+import type { AdsPowerClient } from "./adspower-client";
 
 export interface CodexBrowserLoginOpts {
   /** codex OAuth 授权 URL（含 PKCE challenge，与后续换 token 的 codeVerifier 同源） */
@@ -19,12 +24,14 @@ export interface CodexBrowserLoginOpts {
   email: string;
   password: string;
   totpSecret?: string | null;
-  /** 美国手机号（仅数字，无国家码），如 3527217858 */
-  phoneNumber: string;
+  /** 美国手机号（仅数字，无国家码），如 3527217858；仅在账号触发加手机时需要 */
+  phoneNumber?: string;
   /** 接码网址 */
-  smsUrl: string;
-  /** 出口代理（任意受支持格式，内部归一化为 socks5://） */
-  proxyUrl: string;
+  smsUrl?: string;
+  /** 出口代理（任意受支持格式，非 AdsPower 时内部归一化为 socks5://） */
+  proxyUrl?: string;
+  /** 已绑定的 AdsPower profile；优先使用它打开浏览器并保留 Cookie */
+  adspowerProfileId?: string;
   /** 默认 false：与 Anthropic 流程一致（服务器侧需有显示/xvfb），降低被检测概率 */
   headless?: boolean;
   /** 进度回调，上报当前步骤名 */
@@ -75,6 +82,20 @@ export function extractSmsCode(raw: string): string | null {
   const six = searchSpace.match(/(?<!\d)(\d{6})(?!\d)/);
   if (six) return six[1];
   const any = searchSpace.match(/(?<!\d)(\d{4,8})(?!\d)/);
+  return any ? any[1] : null;
+}
+
+export function extractOpenAIEmailCode(raw: string): string | null {
+  const text = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+
+  const preferred = text.match(
+    /(?:openai|chatgpt|verification|security|one-time|code)[^\d]{0,120}(\d{6})(?!\d)/i,
+  );
+  if (preferred) return preferred[1];
+
+  const windowed = text.match(/(?:openai|chatgpt).{0,300}/i)?.[0] || text;
+  const any = windowed.match(/(?<!\d)(\d{6})(?!\d)/);
   return any ? any[1] : null;
 }
 
@@ -148,6 +169,133 @@ async function clickContinue(page: Page): Promise<void> {
   await page.keyboard.press("Enter").catch(() => {});
 }
 
+async function bodyText(page: Page): Promise<string> {
+  return page.locator("body").innerText({ timeout: 1500 }).catch(() => "");
+}
+
+async function clickFirst(page: Page, selectors: string[]): Promise<boolean> {
+  for (const selector of selectors) {
+    const loc = page.locator(selector);
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const el = loc.nth(i);
+      if (await el.isVisible().catch(() => false)) {
+        await el.click({ timeout: 3500 }).catch(() => el.evaluate((node: HTMLElement) => node.click()).catch(() => {}));
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function fillVerificationCode(page: Page, code: string): Promise<boolean> {
+  const loc = page.locator(
+    'input[inputmode="numeric"], input[autocomplete="one-time-code"], input[name*="code" i], input[id*="code" i], input[type="tel"], input[type="text"]',
+  );
+  const visible: Locator[] = [];
+  const n = await loc.count().catch(() => 0);
+  for (let i = 0; i < n; i++) {
+    const input = loc.nth(i);
+    if (await input.isVisible().catch(() => false)) visible.push(input);
+  }
+  if (visible.length >= code.length) {
+    for (let i = 0; i < code.length; i++) {
+      await visible[i].click().catch(() => {});
+      await visible[i].fill(code[i]).catch(() => {});
+    }
+    return true;
+  }
+  if (visible.length) {
+    await visible[0].click().catch(() => {});
+    await visible[0].fill("").catch(() => {});
+    await visible[0].pressSequentially(code, { delay: 70 }).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+async function outlookLoginIfNeeded(page: Page, email: string, password: string): Promise<boolean> {
+  for (let i = 0; i < 12; i++) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+    await sleep(1200);
+    const url = page.url();
+    const text = await bodyText(page);
+    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱/i.test(text)) return true;
+
+    if (await fillFirst(page, 'input[type="email"], input[name="loginfmt"], input[autocomplete="username"]', email)) {
+      await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")']);
+      continue;
+    }
+    if (await fillFirst(page, 'input[type="password"], input[name="passwd"]', password)) {
+      await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")', 'button:has-text("Sign in")']);
+      continue;
+    }
+    if (/Stay signed in/i.test(text)) {
+      await clickFirst(page, ['button:has-text("No")', 'input[value="No"]']);
+      continue;
+    }
+    if (/Help us protect your account|Verify your identity|Enter code|security code/i.test(text)) {
+      return false;
+    }
+    if (await clickFirst(page, [
+      'a:has-text("Sign in")',
+      'button:has-text("Sign in")',
+      'input[value="Sign in"]',
+      'a:has-text("登录")',
+      'button:has-text("登录")',
+    ])) {
+      continue;
+    }
+    if (/outlook\.live\.com\/mail/i.test(url) && i >= 2) return true;
+  }
+  return false;
+}
+
+async function openOpenAiMailAndExtractCode(page: Page): Promise<string | null> {
+  for (let attempt = 1; attempt <= 18; attempt++) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+    await sleep(2500);
+    const text = await bodyText(page);
+    const code = extractOpenAIEmailCode(text);
+    if (code && /OpenAI|ChatGPT|verification|security code/i.test(text)) return code;
+
+    const clicked = await clickFirst(page, [
+      'div[role="option"]:has-text("OpenAI")',
+      'div[role="row"]:has-text("OpenAI")',
+      'div[aria-label*="OpenAI" i]',
+      'div[role="option"]:has-text("ChatGPT")',
+      'div[role="row"]:has-text("ChatGPT")',
+      'div[aria-label*="ChatGPT" i]',
+      'div[role="option"]:has-text("verification code")',
+      'div[role="row"]:has-text("verification code")',
+    ]);
+    if (clicked) {
+      await sleep(2500);
+      const openedCode = extractOpenAIEmailCode(await bodyText(page));
+      if (openedCode) return openedCode;
+    }
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+  }
+  return null;
+}
+
+async function fetchOutlookOpenAICode(context: BrowserContext, email: string, password: string): Promise<string | null> {
+  const page = await context.newPage();
+  try {
+    await page.goto(`https://login.live.com/login.srf?login_hint=${encodeURIComponent(email)}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 45_000,
+    }).catch(() => {});
+    await outlookLoginIfNeeded(page, email, password);
+    await page.goto("https://outlook.live.com/mail/0/inbox", { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+    const loggedIn = await outlookLoginIfNeeded(page, email, password);
+    if (!loggedIn) return null;
+    return openOpenAiMailAndExtractCode(page);
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 /** 新开标签 goto(smsUrl) 读 body —— 走浏览器代理出口、绕过 CORS */
 async function fetchSmsRaw(context: BrowserContext, smsUrl: string): Promise<string> {
   const page = await context.newPage();
@@ -191,30 +339,42 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
   const smsTimeoutMs = opts.smsTimeoutMs ?? DEFAULT_SMS_TIMEOUT_MS;
 
-  const normalizedProxy = toSocks5ProxyUrl(opts.proxyUrl);
-  if (!normalizedProxy) return { ok: false, error: "代理为空或格式无法识别" };
-
   let relay: { port: number; close: () => void } | null = null;
   let browser: Browser | null = null;
+  let adspower: { client: AdsPowerClient; profileId: string } | null = null;
 
   try {
-    const upstream = parseUpstream(normalizedProxy);
-    relay = await startLocalSocksRelay(upstream);
+    let context: BrowserContext;
+    if (opts.adspowerProfileId) {
+      const client = makeDefaultAdsPowerClient();
+      const proxyConfig = opts.proxyUrl ? parseProxyToAdsPowerUserConfig(opts.proxyUrl) : undefined;
+      const opened = await client.openProfile(opts.adspowerProfileId, proxyConfig);
+      adspower = { client, profileId: opts.adspowerProfileId };
+      browser = await chromium.connectOverCDP(opened.debugUrl);
+      context = browser.contexts()[0];
+      if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
+      await context.addInitScript(STEALTH_INIT).catch(() => {});
+    } else {
+      const normalizedProxy = toSocks5ProxyUrl(opts.proxyUrl);
+      if (!normalizedProxy) return { ok: false, error: "代理为空或格式无法识别" };
+      const upstream = parseUpstream(normalizedProxy);
+      relay = await startLocalSocksRelay(upstream);
 
-    browser = await chromium.launch({
-      headless: opts.headless ?? false,
-      proxy: { server: `socks5://127.0.0.1:${relay.port}` },
-      ignoreDefaultArgs: ["--enable-automation"],
-      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-    });
-    const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-      viewport: { width: 1280, height: 800 },
-      locale: "en-US",
-      timezoneId: "America/New_York",
-    });
-    await context.addInitScript(STEALTH_INIT);
+      browser = await chromium.launch({
+        headless: opts.headless ?? false,
+        proxy: { server: `socks5://127.0.0.1:${relay.port}` },
+        ignoreDefaultArgs: ["--enable-automation"],
+        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+      });
+      context = await browser.newContext({
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York",
+      });
+      await context.addInitScript(STEALTH_INIT);
+    }
 
     // 截获回调 code（redirect_uri 不会真正可达，靠导航/请求 URL 抓取）
     let authCode: string | null = null;
@@ -231,12 +391,13 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
     context.on("request", (req) => grab(req.url()));
     context.on("framenavigated", (f) => grab(f.url()));
 
-    const page = await context.newPage();
+    const page = context.pages()[0] || (await context.newPage());
     onStep("opening_authorize_url");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 40_000 }).catch(() => {});
 
     let emailDone = false;
     let pwdDone = false;
+    let emailCodeDone = false;
     let totpDone = false;
     let phoneEntered = false;
 
@@ -260,6 +421,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
 
       const url = page.url();
       const inputs = await readInputs(page);
+      const pageText = await bodyText(page);
       const has = (re: RegExp) => inputs.some((i) => re.test(JSON.stringify(i)));
 
       // 账号选择页（profile 残留旧会话；通常不出现）
@@ -293,6 +455,24 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
         }
       }
 
+      const looksLikeEmailCode =
+        (/\/email-verification/i.test(url) ||
+          /check your email|sent.*email|enter.*code|verification code|verify your email|security code/i.test(pageText)) &&
+        has(/code|one-time|numeric/i) &&
+        !/phone|sms|text message/i.test(pageText);
+      if (!emailCodeDone && looksLikeEmailCode) {
+        onStep("email_code_polling");
+        const code = await fetchOutlookOpenAICode(context, opts.email, opts.password);
+        if (!code) {
+          return { ok: false, error: "未能从 Outlook 邮箱自动获取 OpenAI 邮箱验证码，可能需要人工处理 Microsoft 安全验证", step: "email_code_polling", lastUrl: url };
+        }
+        onStep("email_code_fill");
+        await fillVerificationCode(page, code);
+        await clickContinue(page);
+        emailCodeDone = true;
+        continue;
+      }
+
       // TOTP：/mfa-challenge
       if (!totpDone && opts.totpSecret && /\/mfa-challenge/i.test(url)) {
         onStep("totp");
@@ -306,6 +486,9 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       // 加手机号：/add-phone（国家码默认 US +1）
       if (!phoneEntered && /\/add-phone/i.test(url)) {
         onStep("add_phone");
+        if (!opts.phoneNumber) {
+          return { ok: false, error: "账号要求绑定手机号，请补充接码手机号后重试", step: "add_phone", lastUrl: url };
+        }
         await fillFirst(page, '#tel, input[type="tel"][autocomplete="tel"], input[type="tel"]', opts.phoneNumber);
         await clickContinue(page);
         phoneEntered = true;
@@ -315,6 +498,9 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       // 接码：/phone-verification
       if (/\/phone-verification/i.test(url) && has(/code|one-time/i)) {
         onStep("sms_polling");
+        if (!opts.smsUrl) {
+          return { ok: false, error: "账号进入短信验证页，请补充接码网址后重试", step: "sms_polling", lastUrl: url };
+        }
         const code = await pollSms(context, opts.smsUrl, smsTimeoutMs);
         if (!code) {
           return { ok: false, error: "未收到短信验证码（可在页面重发后重试）", step: "sms_polling", lastUrl: url };
@@ -341,6 +527,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     if (browser) await browser.close().catch(() => {});
+    if (adspower) await adspower.client.closeProfile(adspower.profileId).catch(() => {});
     if (relay) relay.close();
   }
 }

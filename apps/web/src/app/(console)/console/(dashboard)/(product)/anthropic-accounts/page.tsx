@@ -82,6 +82,8 @@ type ClaudePrechargeAccount = {
   billingType: string;
   status: PrechargeStatus;
   hasMailPassword: boolean;
+  hasRecoveryEmail: boolean;
+  hasTotpSecret: boolean;
   hasSessionKey: boolean;
   lastProbeAt: string;
   lastError: string;
@@ -966,7 +968,7 @@ export default function ClaudeAccountsPage() {
               <FieldLabel>预充值账号行</FieldLabel>
               <Textarea
                 rows={3}
-                placeholder="email----password----sk-ant-sid02-可选"
+                placeholder="email----password----recovery@nmailbox.org----https://2fa.show/2fa/BASE32TOTP----sk-ant-sid02-可选"
                 value={prechargeLines}
                 onChange={(e) => setPrechargeLines(e.target.value)}
               />
@@ -1046,6 +1048,8 @@ export default function ClaudeAccountsPage() {
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             <Badge variant={account.hasMailPassword ? "secondary" : "outline"}>邮箱{account.hasMailPassword ? "有" : "无"}</Badge>
+                            <Badge variant={account.hasRecoveryEmail ? "secondary" : "outline"}>恢复{account.hasRecoveryEmail ? "有" : "无"}</Badge>
+                            <Badge variant={account.hasTotpSecret ? "secondary" : "outline"}>TOTP{account.hasTotpSecret ? "有" : "无"}</Badge>
                             <Badge variant={account.hasSessionKey ? "secondary" : "outline"}>SK{account.hasSessionKey ? "有" : "无"}</Badge>
                           </div>
                           {account.rateLimitTier || account.billingType ? (

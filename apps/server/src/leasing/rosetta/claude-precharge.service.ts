@@ -36,12 +36,16 @@ export type ClaudePrechargeOrgProbeResult = {
 
 type ProbeOptions = {
   keepBrowserOpen?: boolean;
+  recoveryEmail?: string;
+  totpSecret?: string;
 };
 
 type StoredPrechargeAccount = {
   id: number;
   email: string;
   mailPassword?: string;
+  recoveryEmail?: string;
+  totpSecret?: string;
   sessionKey?: string;
   proxyUrl?: string;
   adspowerProfileId?: string;
@@ -108,6 +112,8 @@ export class ClaudePrechargeService {
         billingType: String(account.billingType || ""),
         status: normalizeStatus(account.status),
         hasMailPassword: Boolean(account.mailPassword),
+        hasRecoveryEmail: Boolean(account.recoveryEmail),
+        hasTotpSecret: Boolean(account.totpSecret),
         hasSessionKey: Boolean(account.sessionKey),
         lastProbeAt: String(account.lastProbeAt || ""),
         lastError: String(account.lastError || ""),
@@ -140,6 +146,8 @@ export class ClaudePrechargeService {
       if (existing) {
         id = Number(existing.id);
         existing.mailPassword = parsed.mailPassword;
+        if (parsed.recoveryEmail) existing.recoveryEmail = parsed.recoveryEmail;
+        if (parsed.totpSecret) existing.totpSecret = parsed.totpSecret;
         if (parsed.sessionKey) existing.sessionKey = parsed.sessionKey;
         if (proxyUrl) existing.proxyUrl = proxyUrl;
         if (adspowerProfileId) existing.adspowerProfileId = adspowerProfileId;
@@ -152,6 +160,8 @@ export class ClaudePrechargeService {
           id,
           email: parsed.email,
           mailPassword: parsed.mailPassword,
+          recoveryEmail: parsed.recoveryEmail,
+          totpSecret: parsed.totpSecret,
           sessionKey: parsed.sessionKey,
           proxyUrl,
           adspowerProfileId,
@@ -199,6 +209,8 @@ export class ClaudePrechargeService {
       password: account.mailPassword,
       proxyUrl: account.proxyUrl || "",
       adspowerProfileId: account.adspowerProfileId || "",
+      recoveryEmail: account.recoveryEmail || "",
+      totpSecret: account.totpSecret || "",
       sessionKey: "",
     });
     return this.afterActivationStart(found, result);
@@ -214,6 +226,8 @@ export class ClaudePrechargeService {
       password: "",
       proxyUrl: account.proxyUrl || "",
       adspowerProfileId: account.adspowerProfileId || "",
+      recoveryEmail: account.recoveryEmail || "",
+      totpSecret: account.totpSecret || "",
       sessionKey: account.sessionKey,
     });
     return this.afterActivationStart(found, result);
@@ -249,7 +263,11 @@ export class ClaudePrechargeService {
     if (mode === "quick" && !account.sessionKey) return this.markProbeError(found, "NEEDS_RELOGIN", "sessionKey 为空");
 
     const result = mode === "login"
-      ? await this.loginAndReadOrganization(account, { keepBrowserOpen: options.keepBrowserOpen })
+      ? await this.loginAndReadOrganization(account, {
+          keepBrowserOpen: options.keepBrowserOpen,
+          recoveryEmail: account.recoveryEmail || "",
+          totpSecret: account.totpSecret || "",
+        })
       : await this.readOrganizationWithSessionKey(account);
     if (options.keepBrowserOpen && result.session) {
       this.holdManualProbeSession(account.id, result.session);
@@ -323,25 +341,30 @@ export class ClaudePrechargeService {
       password: account.mailPassword || "",
       proxyUrl: account.proxyUrl,
       adspowerProfileId: account.adspowerProfileId,
+      recoveryEmail: options.recoveryEmail || account.recoveryEmail || "",
+      totpSecret: options.totpSecret || account.totpSecret || "",
     });
     if (!trigger.ok || !trigger.session) return { error: trigger.error || "浏览器触发失败" };
 
     try {
-      const mail = await fetchAnthropicMagicLinkViaWeb({
-        email: account.email,
-        password: account.mailPassword || "",
-        sinceMs: triggerStart - 30_000,
-        waitMs: 90_000,
-        proxyUrl: account.proxyUrl,
-      });
-      if (!mail.ok || !mail.url) {
-        return {
-          error: mail.error || "未获取到 magic link",
-          currentUrl: trigger.session.page.url(),
-          session: options.keepBrowserOpen ? trigger.session : undefined,
-        };
+      const domain = account.email.split("@")[1]?.toLowerCase() || "";
+      if (domain !== "gmail.com") {
+        const mail = await fetchAnthropicMagicLinkViaWeb({
+          email: account.email,
+          password: account.mailPassword || "",
+          sinceMs: triggerStart - 30_000,
+          waitMs: 90_000,
+          proxyUrl: account.proxyUrl,
+        });
+        if (!mail.ok || !mail.url) {
+          return {
+            error: mail.error || "未获取到 magic link",
+            currentUrl: trigger.session.page.url(),
+            session: options.keepBrowserOpen ? trigger.session : undefined,
+          };
+        }
+        await trigger.session.page.goto(mail.url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch(() => {});
       }
-      await trigger.session.page.goto(mail.url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch(() => {});
       const orgs = await waitForClaudeOrganizationsFromPage(trigger.session.page, {
         previousSessionKey: account.sessionKey || "",
         settleMs: 10_000,
@@ -382,8 +405,45 @@ function parsePrechargeLine(line: string) {
   const parts = line.split(/----+/).map((part) => part.trim());
   const email = parts[0] || "";
   const mailPassword = parts[1] || "";
-  const sessionKey = (parts.find((part, index) => index >= 2 && part.startsWith("sk-ant-")) || "").trim();
-  return { email, mailPassword, sessionKey };
+  let recoveryEmail = "";
+  let totpSecret = "";
+  let sessionKey = "";
+  for (const part of parts.slice(2)) {
+    if (!part) continue;
+    if (!sessionKey && part.startsWith("sk-ant-")) {
+      sessionKey = part;
+      continue;
+    }
+    if (!recoveryEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(part)) {
+      recoveryEmail = part;
+      continue;
+    }
+    const parsedTotp = extractTotpSecret(part);
+    if (!totpSecret && parsedTotp) {
+      totpSecret = parsedTotp;
+    }
+  }
+  return { email, mailPassword, recoveryEmail, totpSecret, sessionKey };
+}
+
+function extractTotpSecret(raw: string): string {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const candidates: string[] = [];
+  try {
+    const url = new URL(value);
+    candidates.push(url.pathname.split("/").filter(Boolean).pop() || "");
+    const querySecret = url.searchParams.get("secret") || url.searchParams.get("totp") || url.searchParams.get("key") || "";
+    if (querySecret) candidates.push(querySecret);
+  } catch {
+    // raw secret rather than a URL
+  }
+  candidates.push(value);
+  for (const candidate of candidates) {
+    const cleaned = candidate.toUpperCase().replace(/[^A-Z2-7]/g, "");
+    if (cleaned.length >= 16) return cleaned;
+  }
+  return "";
 }
 
 function normalizeStatus(raw: unknown): ClaudePrechargeStatus {

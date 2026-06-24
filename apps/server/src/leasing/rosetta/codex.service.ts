@@ -22,6 +22,10 @@ import { base64Url, codeChallenge, decodeJwtPayload } from "./lib/pkce";
 import { setAccountEnabled } from "./lib/pool";
 import { nowIso, readJson, writeJson, setAccountProxyInPool } from "./lib/store";
 import { runCodexBrowserLogin } from "./lib/codex-login-browser";
+import {
+  ensureAdspowerProfileForAccount,
+  makeDefaultAdsPowerClient,
+} from "./lib/adspower-profile-manager";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -78,6 +82,10 @@ export class CodexService {
       alias: String(account.alias || ""),
       planType: String(account.planType || ""),
       proxyUrl: String(account.proxyUrl || ""),
+      adspowerProfileId: String(account.adspowerProfileId || ""),
+      adspowerProfileStatus: String(account.adspowerProfileStatus || ""),
+      adspowerProfileProvider: String(account.adspowerProfileProvider || ""),
+      adspowerProfileLastUsedAt: String(account.adspowerProfileLastUsedAt || ""),
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
       boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
       usedShares: shares.get(Number(account.id || 0)) || 0,
@@ -110,18 +118,27 @@ export class CodexService {
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      if (payload.proxyUrl !== undefined) existing.proxyUrl = String(payload.proxyUrl || "").trim();
+      if (payload.adspowerProfileId !== undefined) {
+        const profileId = String(payload.adspowerProfileId || "").trim();
+        if (profileId) existing.adspowerProfileId = profileId;
+        else delete existing.adspowerProfileId;
+      }
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
       accountId = maxId + 1;
-      accounts.push({
+      const record: any = {
         id: accountId,
         email,
         refreshToken,
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
         alias: String(payload.alias || ""),
         planType: String(payload.planType || ""),
-      });
+      };
+      if (payload.proxyUrl) record.proxyUrl = String(payload.proxyUrl).trim();
+      if (payload.adspowerProfileId) record.adspowerProfileId = String(payload.adspowerProfileId).trim();
+      accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
@@ -578,7 +595,7 @@ export class CodexService {
 
   /**
    * 发起自动上号。校验入参 → 建独立 pending → 起后台任务跑浏览器登录 → 立即返回 jobId。
-   * payload: { email, password, totpSecret?, phoneNumber, smsUrl, proxyUrl, headless? }
+   * payload: { email, password, totpSecret?, phoneNumber?, smsUrl?, proxyUrl, adspowerProfileId?, headless? }
    */
   startAutomatedCodexLogin(payload: any) {
     const email = String(payload?.email || "").trim();
@@ -587,12 +604,12 @@ export class CodexService {
     const phoneNumber = String(payload?.phoneNumber || "").replace(/\D/g, "");
     const smsUrl = String(payload?.smsUrl || "").trim();
     const proxyUrl = String(payload?.proxyUrl || "").trim();
+    const adspowerProfileId = String(payload?.adspowerProfileId || "").trim();
 
     if (!email) return { ok: false, error: "邮箱不能为空" };
     if (!password) return { ok: false, error: "密码不能为空" };
-    if (!phoneNumber) return { ok: false, error: "接码手机号不能为空" };
-    if (!/^https?:\/\//i.test(smsUrl)) return { ok: false, error: "接码网址格式无效" };
-    if (!proxyUrl) return { ok: false, error: "出口代理不能为空" };
+    if (smsUrl && !/^https?:\/\//i.test(smsUrl)) return { ok: false, error: "接码网址格式无效" };
+    if (!proxyUrl && !adspowerProfileId) return { ok: false, error: "出口代理或 AdsPower profile 必填" };
 
     this.pruneAutoLoginJobs();
 
@@ -610,17 +627,47 @@ export class CodexService {
     this.autoLoginJobs.set(jobId, job);
 
     // 后台异步执行，不阻塞 HTTP 响应。
-    void this.runAutoLoginJob(job, pending, { email, password, totpSecret, phoneNumber, smsUrl, proxyUrl, headless: payload?.headless === true });
+    void this.runAutoLoginJob(job, pending, { email, password, totpSecret, phoneNumber, smsUrl, proxyUrl, adspowerProfileId, headless: payload?.headless === true });
 
-    return { ok: true, jobId, expiresAt: job.expiresAt };
+    return { ok: true, jobId, expiresAt: job.expiresAt, adspowerProfileId };
   }
 
   private async runAutoLoginJob(
     job: CodexAutoLoginJob,
     pending: CodexOAuthPending,
-    creds: { email: string; password: string; totpSecret: string | null; phoneNumber: string; smsUrl: string; proxyUrl: string; headless?: boolean },
+    creds: {
+      email: string;
+      password: string;
+      totpSecret: string | null;
+      phoneNumber: string;
+      smsUrl: string;
+      proxyUrl: string;
+      adspowerProfileId: string;
+      headless?: boolean;
+    },
   ) {
     try {
+      let adspowerProfileId = creds.adspowerProfileId;
+      let proxyUrl = creds.proxyUrl;
+      if (!adspowerProfileId) {
+        job.step = "creating_adspower_profile";
+        const draft: any = { id: 0, email: creds.email, proxyUrl };
+        const profile = await ensureAdspowerProfileForAccount({
+          dataDir: this.ctx.dataDir,
+          provider: "codex",
+          account: draft,
+          client: makeDefaultAdsPowerClient(),
+        });
+        if (!profile.ok) {
+          job.status = "failed";
+          job.error = profile.error;
+          return;
+        }
+        adspowerProfileId = profile.profileId;
+        proxyUrl = String(draft.proxyUrl || proxyUrl || "");
+        this.reserveCodexProfileBinding(creds.email, proxyUrl, adspowerProfileId);
+      }
+
       const res = await runCodexBrowserLogin({
         authorizeUrl: pending.authUrl,
         redirectUri: pending.redirectUri,
@@ -629,7 +676,8 @@ export class CodexService {
         totpSecret: creds.totpSecret,
         phoneNumber: creds.phoneNumber,
         smsUrl: creds.smsUrl,
-        proxyUrl: creds.proxyUrl,
+        proxyUrl,
+        adspowerProfileId,
         headless: creds.headless,
         onStep: (step) => { job.step = step; },
       });
@@ -644,7 +692,7 @@ export class CodexService {
       // 把出口代理写到该账号（运行时用），与手动「设置代理」同款归一化。
       if (result.accountId != null) {
         try {
-          setAccountProxyInPool(path.join(this.ctx.dataDir, "codex-accounts.json"), Number(result.accountId), creds.proxyUrl);
+          this.setCodexAccountEgressProfile(Number(result.accountId), proxyUrl, adspowerProfileId);
         } catch {
           // 落代理失败不影响上号本身
         }
@@ -657,6 +705,48 @@ export class CodexService {
       job.status = "failed";
       job.error = err instanceof Error ? err.message : String(err);
     }
+  }
+
+  private setCodexAccountEgressProfile(accountId: number, proxyUrl: string, adspowerProfileId: string) {
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    if (proxyUrl) setAccountProxyInPool(filePath, accountId, proxyUrl);
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return;
+    if (adspowerProfileId) {
+      account.adspowerProfileId = adspowerProfileId;
+      account.adspowerProfileStatus = "active";
+      account.adspowerProfileProvider = "codex";
+      account.adspowerProfileLastUsedAt = nowIso();
+    }
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+  }
+
+  private reserveCodexProfileBinding(email: string, proxyUrl: string, adspowerProfileId: string) {
+    if (!email || !adspowerProfileId) return;
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    let account = accounts.find((item: any) => String(item.email || "").toLowerCase() === email.toLowerCase());
+    if (!account) {
+      const maxId = accounts.reduce((max: number, item: any) => Math.max(max, Number(item.id || 0)), 0);
+      account = {
+        id: maxId + 1,
+        email,
+        refreshToken: "",
+        enabled: false,
+        alias: "",
+        planType: "",
+      };
+      accounts.push(account);
+    }
+    if (proxyUrl) account.proxyUrl = proxyUrl;
+    account.adspowerProfileId = adspowerProfileId;
+    account.adspowerProfileStatus = "active";
+    account.adspowerProfileProvider = "codex";
+    account.adspowerProfileLastUsedAt = nowIso();
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
   }
 
   getAutomatedCodexLoginStatus(jobId: string) {

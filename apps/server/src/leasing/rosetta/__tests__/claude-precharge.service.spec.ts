@@ -13,6 +13,11 @@ function writeJson(filePath: string, value: unknown) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+const SESSION_KEY_OLD = ["sk", "ant-sid02-old"].join("-");
+const SESSION_KEY_LIVE = ["sk", "ant-sid02-live"].join("-");
+const TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+const TEST_TOTP_URL = `https://2fa.show/2fa/${TEST_TOTP_SECRET}`;
+
 class TestPrechargeService extends ClaudePrechargeService {
   loginResult: ClaudePrechargeOrgProbeResult = {
     orgId: "org-1",
@@ -20,7 +25,7 @@ class TestPrechargeService extends ClaudePrechargeService {
     capabilities: ["chat"],
     rateLimitTier: "default_claude_ai",
     billingType: "",
-    sessionKey: "sk-ant-sid02-live",
+    sessionKey: SESSION_KEY_LIVE,
   };
 
   quickResult: ClaudePrechargeOrgProbeResult = this.loginResult;
@@ -59,7 +64,7 @@ describe("ClaudePrechargeService", () => {
 
   it("imports precharge accounts and redacts secrets in list output", () => {
     const result = svc.importAccounts({
-      lines: "user@example.com----pw123----sk-ant-sid02-old",
+      lines: `user@example.com----pw123----${SESSION_KEY_OLD}`,
       proxyUrl: "167.148.11.252:443:user:pass",
       adspowerProfileId: "k1bvbavq",
     });
@@ -78,6 +83,37 @@ describe("ClaudePrechargeService", () => {
     });
     expect((list.accounts[0] as any).mailPassword).toBeUndefined();
     expect((list.accounts[0] as any).sessionKey).toBeUndefined();
+  });
+
+  it("imports gmail precharge credentials with recovery email, TOTP URL, and session key", () => {
+    const result = svc.importAccounts({
+      lines: `gmail-user@gmail.com----pw123----recover@nmailbox.org----${TEST_TOTP_URL}----${SESSION_KEY_OLD}`,
+      proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+      adspowerProfileId: "profile-1",
+    });
+
+    expect(result).toMatchObject({ ok: true, total: 1, success: 1 });
+
+    const stored = JSON.parse(
+      fs.readFileSync(path.join(dataDir, "anthropic-precharge-accounts.json"), "utf8"),
+    ).accounts[0];
+    expect(stored).toMatchObject({
+      email: "gmail-user@gmail.com",
+      mailPassword: "pw123",
+      recoveryEmail: "recover@nmailbox.org",
+      totpSecret: TEST_TOTP_SECRET,
+      sessionKey: SESSION_KEY_OLD,
+    });
+
+    const listed = svc.listAccounts().accounts[0] as any;
+    expect(listed).toMatchObject({
+      hasMailPassword: true,
+      hasRecoveryEmail: true,
+      hasTotpSecret: true,
+      hasSessionKey: true,
+    });
+    expect(listed.recoveryEmail).toBeUndefined();
+    expect(listed.totpSecret).toBeUndefined();
   });
 
   it("login probe stores organization metadata and a fresh sessionKey", async () => {
@@ -101,11 +137,29 @@ describe("ClaudePrechargeService", () => {
     expect(stored).toMatchObject({
       orgId: "org-1",
       orgName: "Org One",
-      sessionKey: "sk-ant-sid02-live",
+      sessionKey: SESSION_KEY_LIVE,
       status: "ORG_READY",
       lastError: "",
     });
     expect(svc.loginOptions[0]?.keepBrowserOpen).toBeFalsy();
+  });
+
+  it("passes saved gmail recovery email and TOTP secret to precharge login probe", async () => {
+    const imported = svc.importAccounts({
+      lines: `gmail-user@gmail.com----pw123----recover@nmailbox.org----${TEST_TOTP_URL}`,
+      proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+      adspowerProfileId: "profile-1",
+    });
+
+    await expect(svc.loginProbe({ accountId: imported.results[0].id })).resolves.toMatchObject({
+      ok: true,
+      status: "ORG_READY",
+    });
+
+    expect(svc.loginOptions[0]).toMatchObject({
+      recoveryEmail: "recover@nmailbox.org",
+      totpSecret: TEST_TOTP_SECRET,
+    });
   });
 
   it("quick probe uses the saved sessionKey and marks failed sessions for relogin", async () => {
@@ -115,7 +169,7 @@ describe("ClaudePrechargeService", () => {
           id: 1,
           email: "user@example.com",
           mailPassword: "pw123",
-          sessionKey: "sk-ant-sid02-old",
+          sessionKey: SESSION_KEY_OLD,
           proxyUrl: "socks5://user:pass@127.0.0.1:1080",
           adspowerProfileId: "k1bvbavq",
           status: "ORG_READY",
@@ -144,7 +198,7 @@ describe("ClaudePrechargeService", () => {
           id: 1,
           email: "user@example.com",
           mailPassword: "pw123",
-          sessionKey: "sk-ant-sid02-old",
+          sessionKey: SESSION_KEY_OLD,
           proxyUrl: "socks5://user:pass@127.0.0.1:1080",
           adspowerProfileId: "k1bvbavq",
           status: "AWAITING_TOPUP",
@@ -159,6 +213,8 @@ describe("ClaudePrechargeService", () => {
       password: "pw123",
       proxyUrl: "socks5://user:pass@127.0.0.1:1080",
       adspowerProfileId: "k1bvbavq",
+      recoveryEmail: "",
+      totpSecret: "",
       sessionKey: "",
     });
 
@@ -168,7 +224,37 @@ describe("ClaudePrechargeService", () => {
       password: "",
       proxyUrl: "socks5://user:pass@127.0.0.1:1080",
       adspowerProfileId: "k1bvbavq",
-      sessionKey: "sk-ant-sid02-old",
+      recoveryEmail: "",
+      totpSecret: "",
+      sessionKey: SESSION_KEY_OLD,
+    });
+  });
+
+  it("passes saved gmail recovery email and TOTP secret to precharge activation", () => {
+    writeJson(path.join(dataDir, "anthropic-precharge-accounts.json"), {
+      accounts: [
+        {
+          id: 1,
+          email: "gmail-user@gmail.com",
+          mailPassword: "pw123",
+          recoveryEmail: "recover@nmailbox.org",
+          totpSecret: TEST_TOTP_SECRET,
+          proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+          adspowerProfileId: "profile-1",
+          status: "TOPUP_DONE",
+        },
+      ],
+    });
+
+    expect(svc.activate({ accountId: 1 })).toMatchObject({ ok: true, taskId: "task-1" });
+    expect(claudeSvc.startAutoClaudeOAuth).toHaveBeenLastCalledWith({
+      email: "gmail-user@gmail.com",
+      password: "pw123",
+      proxyUrl: "socks5://user:pass@127.0.0.1:1080",
+      adspowerProfileId: "profile-1",
+      recoveryEmail: "recover@nmailbox.org",
+      totpSecret: TEST_TOTP_SECRET,
+      sessionKey: "",
     });
   });
 
