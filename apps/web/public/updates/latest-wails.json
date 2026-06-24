@@ -1,30 +1,30 @@
 {
-  "version": "12.0.1",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.1/BingchaAI-12.0.1.exe",
-  "sha256": "917E981EFBF0C4D7A3B5C1F6BC8CC2AD9F5775798025E81CBEECAA9455A36F4B",
-  "size": 21812224,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.1/BingchaAI-12.0.1-setup.exe",
-  "installerSha256": "BF27BCB5943C66EBAAA2525E05C6E1B98750D2662F1520E8E1D53E139D7248F9",
-  "installerSize": 11513613,
-  "changelog": "-优化了客户端连接的稳定性与兼容性\n-修复了若干已知问题\n-更新了版本号",
-  "minVersion": "12.0.1",
+  "version": "11.2.1",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v11.2.1/BingchaAI-11.2.1.exe",
+  "sha256": "98BBCE91F4F579C9BEB78D1874C9D49C43BE17319E70C51AB50D22AC24260FF0",
+  "size": 21827072,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v11.2.1/BingchaAI-11.2.1-setup.exe",
+  "installerSha256": "E4B6EAD814792448BEE28F342C3A424264D13704E7778A4E032F7AA8F25FBD38",
+  "installerSize": 11520344,
+  "changelog": "-解决了用户提出的问题。\\n-解决了提出问题的用户。\\n-更新了最新的版本号",
+  "minVersion": "11.2.1",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.1/BingchaAI-12.0.1-arm64.dmg",
-      "sha256": "9D9E7486D6234649C1FF2DF67730CD56EC0E883E63F96D78BE84C7B142C0F913",
-      "size": 10378263
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v11.2.1/BingchaAI-11.2.1-arm64.dmg",
+      "sha256": "23EB806724599571B0BEA9DB6245E37D9167CE8C8CE30FE821261CB215330235",
+      "size": 10384874
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.1/BingchaAI-12.0.1-amd64.dmg",
-      "sha256": "EDCBE0BF38F4D6347D478E0BA1C90BC1B114B8EF2AE11E8F11C0B8A838B9B9ED",
-      "size": 11115931
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v11.2.1/BingchaAI-11.2.1-amd64.dmg",
+      "sha256": "78C0D4FB1D44D4226C7B375691BA8B6126526E70D769A8F852B562D2BB2A53CF",
+      "size": 11120857
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v12.0.1/BingchaAI-12.0.1-linux-amd64.tar.gz",
-      "sha256": "D6A21F76B5FCA71F90E62FE6BFBDC930B267ACADE7690306B50EADD595351C0A",
-      "size": 8808239
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v11.2.1/BingchaAI-11.2.1-linux-amd64.tar.gz",
+      "sha256": "238E6FF78C91A311D0A1329B92065CDF069953AD16C056E12EB97CB74793AF1C",
+      "size": 8813338
     }
   }
 }
