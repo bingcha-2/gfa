@@ -1845,6 +1845,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   private markAccountTokenError(accountId: number, errorMessage: string) {
     const state = this.ensureRuntime(accountId);
+    const wasError = state.quotaStatus === "error"; // 抓"首次升级 error"沿,避免重复落封号
     state.consecutiveErrors++;
 
     if (isPermanentTokenRefreshError(errorMessage)) {
@@ -1859,6 +1860,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         state.quotaStatusReason = "invalid_grant";
         state.exhaustedUntil = now + TOKEN_REFRESH_FAILURE_COOLDOWN_MS;
         this.persistQuotaStatus(accountId, state);
+        this.recordAuthDeathBan(accountId, "invalid_grant", errorMessage, state.tokenDeathStrikes, wasError);
       } else {
         state.quotaStatus = "exhausted";          // 黄、出池、可自动复检
         state.quotaStatusReason = "invalid_grant"; // 保留真因供遥测/复现
@@ -1870,7 +1872,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       state.quotaStatus = "error";
       state.quotaStatusReason = "consecutive_errors";
       this.persistQuotaStatus(accountId, state);
+      this.recordAuthDeathBan(accountId, "consecutive_errors", errorMessage, state.consecutiveErrors, wasError);
     }
+  }
+
+  /**
+   * 鉴权类死号确认(invalid_grant 满击 / 连续报错)→ 落一条封号事件 + dump 封号前请求时间线。
+   * 与 403 service_disabled 的 recordBan 同构。真封号在本系统多表现为上游【吊销 token / 刷新
+   * 返回 invalid_grant】→ 走"鉴权失效"(quotaStatus=error)死号路径而非 403 service_disabled;
+   * 若不在此补一条,这批被封的号永远进不了封号台账,也丢了 recordBan 最值钱的取证 dump
+   * (封号前请求时间线:出口 IP / 反代命中 / surface 等)。
+   * 只在【首次】升级为 error 时落(wasError 守卫)—— 死号已被 isAccountBlocked 拦在轮换外,
+   * 重复进来不会再 dump 空环;号复活后再次死亡则 wasError=false,正常落下一条新封号事件。
+   */
+  private recordAuthDeathBan(
+    accountId: number,
+    reason: string,
+    body: string,
+    strikes: number,
+    wasError: boolean,
+  ) {
+    if (wasError || !this.banEventRecorder) return;
+    const acct = this.readAccounts().find((a) => a.id === accountId) as { email?: string } | undefined;
+    this.banEventRecorder.recordBan({
+      provider: this.provider.id,
+      accountId,
+      accountEmail: acct?.email,
+      reason,
+      upstreamStatus: 401, // 鉴权死号无单一 HTTP 码;401 表语义"凭证失效",真因在 reason
+      upstreamBody: String(body || ""),
+      modelKey: "",
+      deathStrikes: strikes,
+    });
   }
 
   /**

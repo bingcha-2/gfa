@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { REMOTE_ACCOUNT_ERROR_THRESHOLD, TOKEN_DEATH_STRIKE_THRESHOLD } from "../../token-server/token-billing";
 import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 // 封号事件记录器接入 LeaseService:
@@ -133,5 +134,46 @@ describe("封号事件记录接入 LeaseService", () => {
   it("未注入 recorder 时主流程不报错(antigravity 路径)", async () => {
     const svc = makeService({ noRecorder: true });
     await expect(leaseAndReport(svc, 403, "http_403_service_disabled")).resolves.toBe(1);
+  });
+
+  // 真封号在本系统多表现为"吊销 token / 刷新 invalid_grant" → 走"鉴权失效"死号路径
+  // (quotaStatus=error)而非 403 service_disabled。这批号也必须落封号台账 + dump 封号前时间线。
+  it("invalid_grant 确认死号(鉴权失效)→ recordBan(reason=invalid_grant)", async () => {
+    const svc = makeService();
+    // 先喂一次正常上报,填充封号前请求时间线(内存环)。
+    await leaseAndReport(svc, 200, "");
+    recorder.recordBan.mockClear();
+    // cliproxy 上报 invalid_grant:一击即升级为持久化死号(quotaStatus=error)。
+    (svc as any).applyExternalAccountFailure({ accountId: 1, status: 401, reason: "invalid_grant" });
+    expect(recorder.recordBan).toHaveBeenCalledTimes(1);
+    const arg = recorder.recordBan.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      provider: "anthropic", accountId: 1, accountEmail: "a@x.com", reason: "invalid_grant", upstreamStatus: 401,
+    });
+    expect(arg.deathStrikes).toBeGreaterThanOrEqual(TOKEN_DEATH_STRIKE_THRESHOLD);
+  });
+
+  it("连续报错确认死号 → recordBan(reason=consecutive_errors)", async () => {
+    const svc = makeService();
+    for (let i = 0; i < REMOTE_ACCOUNT_ERROR_THRESHOLD; i++) {
+      (svc as any).markAccountTokenError(1, "upstream 500 internal");
+    }
+    expect(recorder.recordBan).toHaveBeenCalledTimes(1);
+    expect(recorder.recordBan.mock.calls[0][0]).toMatchObject({
+      provider: "anthropic", accountId: 1, reason: "consecutive_errors",
+    });
+  });
+
+  it("invalid_grant 未满击(软冷却)不误记封号", async () => {
+    const svc = makeService();
+    (svc as any).markAccountTokenError(1, "invalid_grant"); // strikes=1 < 阈值
+    expect(recorder.recordBan).not.toHaveBeenCalled();
+  });
+
+  it("已是死号时重复失败不重复 recordBan(只在首次升级 error 时落)", async () => {
+    const svc = makeService();
+    (svc as any).applyExternalAccountFailure({ accountId: 1, status: 401, reason: "invalid_grant" });
+    (svc as any).applyExternalAccountFailure({ accountId: 1, status: 401, reason: "invalid_grant" });
+    expect(recorder.recordBan).toHaveBeenCalledTimes(1);
   });
 });
