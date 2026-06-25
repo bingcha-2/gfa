@@ -17,6 +17,10 @@ import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import type { AccessKeyService } from "./access-key.service";
 import type { RosettaContext } from "./lib/context";
 import { fetchAnthropicMagicLink } from "./lib/imap-magic-link";
+import {
+  ensureAdspowerProfileForAccount,
+  makeDefaultAdsPowerClient,
+} from "./lib/adspower-profile-manager";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
 import {
@@ -37,10 +41,11 @@ const CLAUDE_OAUTH_TOKEN_ENDPOINT = process.env.BCAI_CLAUDE_TOKEN_ENDPOINT || "h
 const CLAUDE_OAUTH_REDIRECT_URI = process.env.BCAI_CLAUDE_REDIRECT_URI || "https://platform.claude.com/oauth/code/callback";
 const CLAUDE_OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
 const CLAUDE_OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
-export const DEFAULT_ANTHROPIC_ADSPOWER_PROFILE_ID = "k1bvbavq";
 
+// Empty means "no profile bound yet" — onboarding provisions a per-account sticky AdsPower
+// profile (with the static IP baked in) instead of falling back to one shared profile.
 export function resolveAnthropicAdspowerProfileId(requested?: string, stored?: string): string {
-  return requested?.trim() || stored?.trim() || DEFAULT_ANTHROPIC_ADSPOWER_PROFILE_ID;
+  return requested?.trim() || stored?.trim() || "";
 }
 
 function extractSetCookies(res: Response): string {
@@ -77,6 +82,7 @@ type CodexOAuthPending = {
   isUpdate?: boolean;
   proxyUrl?: string;
   mailPassword?: string;
+  adspowerProfileId?: string;
 };
 
 export type ClaudeManualLoginRunnerOptions = {
@@ -101,6 +107,17 @@ export type ClaudeManualLoginRunnerResult = {
 export type ClaudeManualLoginRunner = (
   opts: ClaudeManualLoginRunnerOptions,
 ) => Promise<ClaudeManualLoginRunnerResult>;
+
+type ClaudeAutoOAuthTask = {
+  taskId: string;
+  phase: string;
+  status: "running" | "done" | "error";
+  error?: string;
+  email?: string;
+  isUpdate?: boolean;
+  accountId?: number;
+  finishedAt?: number;
+};
 
 type ClaudeManualLoginTask = {
   taskId: string;
@@ -218,7 +235,9 @@ export async function runClaudeManualLogin(
 
 export class ClaudeAccountService {
   private claudeOAuthPending: CodexOAuthPending | null = null;
-  private playwrightSession: PlaywrightOAuthSession | null = null;
+  // Keyed by taskId so concurrent onboardings / re-auths (e.g. a batch of accounts whose tokens
+  // expired at once) each track their own status instead of clobbering a single slot.
+  private readonly autoOAuthTasks = new Map<string, ClaudeAutoOAuthTask>();
   private readonly manualLoginTasks = new Map<string, ClaudeManualLoginTask>();
   private readonly manualLoginSessions = new Map<string, PlaywrightOAuthSession>();
 
@@ -679,6 +698,7 @@ export class ClaudeAccountService {
       alias: String(tokenData?.organization?.name || ""),
       proxyUrl: pending.proxyUrl || "",
       mailPassword: pending.mailPassword || "",
+      adspowerProfileId: pending.adspowerProfileId || undefined,
     });
     if (!result.ok) throw new Error(String(result.error || "Failed to save Claude account"));
 
@@ -757,16 +777,6 @@ export class ClaudeAccountService {
   // the background job + returns a taskId instantly; getAutoOAuthStatus()
   // returns the live status for polling.
 
-  private autoOAuthTask: {
-    taskId: string;
-    phase: string;
-    status: "running" | "done" | "error";
-    error?: string;
-    email?: string;
-    isUpdate?: boolean;
-    accountId?: number;
-  } | null = null;
-
   startAutoClaudeOAuth(payload: {
     email: string;
     password: string;
@@ -807,22 +817,34 @@ export class ClaudeAccountService {
     if (!sessionKey && !password) return { ok: false, error: "password 必填(用于抓取 magic link)" };
 
     const taskId = base64Url(crypto.randomBytes(12));
-    this.autoOAuthTask = { taskId, phase: "starting", status: "running" };
+    this.pruneFinishedAutoOAuthTasks();
+    this.autoOAuthTasks.set(taskId, { taskId, phase: "starting", status: "running" });
 
     // Fire and forget — caller polls via getAutoOAuthStatus
     this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId, recoveryEmail, totpSecret, sessionKey).catch((err) => {
-      if (this.autoOAuthTask?.taskId === taskId) {
-        this.autoOAuthTask.status = "error";
-        this.autoOAuthTask.error = String(err?.message || err);
+      const task = this.autoOAuthTasks.get(taskId);
+      if (task) {
+        task.status = "error";
+        task.error = String(err?.message || err);
+        task.finishedAt = Date.now();
       }
     });
 
     return { ok: true, taskId };
   }
 
+  // Drop tasks that finished a while ago so the map doesn't grow unbounded. Running tasks and
+  // recently-finished ones (still being polled by the frontend) are kept.
+  private pruneFinishedAutoOAuthTasks() {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [id, task] of this.autoOAuthTasks) {
+      if (task.finishedAt && task.finishedAt < cutoff) this.autoOAuthTasks.delete(id);
+    }
+  }
+
   getAutoOAuthStatus(taskId: string) {
-    const t = this.autoOAuthTask;
-    if (!t || t.taskId !== taskId) return { ok: false, error: "任务不存在" };
+    const t = this.autoOAuthTasks.get(taskId);
+    if (!t) return { ok: false, error: "任务不存在" };
     return {
       ok: true,
       taskId: t.taskId,
@@ -845,20 +867,15 @@ export class ClaudeAccountService {
     totpSecret?: string,
     sessionKey?: string,
   ) {
-    const task = this.autoOAuthTask!;
+    const task = this.autoOAuthTasks.get(taskId)!;
     const step = (phase: string) => {
-      if (task.taskId !== taskId) return;
       task.phase = phase;
       console.log(`[auto-oauth] ${email}: ${phase}`);
     };
+    // Per-run browser session (local, not shared) so concurrent runs never close each other's.
+    let session: PlaywrightOAuthSession | null = null;
 
     try {
-      // Clean up any previous browser session
-      if (this.playwrightSession) {
-        await this.playwrightSession.close().catch(() => {});
-        this.playwrightSession = null;
-      }
-
       // 1. Create OAuth pending (PKCE + authorize URL)
       step("creating OAuth session");
       this.claudeOAuthPending = null;
@@ -866,6 +883,26 @@ export class ClaudeAccountService {
       if (!startResult.ok) throw new Error("OAuth 会话创建失败");
       const pending = this.claudeOAuthPending!;
       pending.mailPassword = password;
+
+      // Ensure a per-account sticky AdsPower profile. Unbound accounts get their own profile —
+      // cookies/fingerprint stay tied to this account and the static proxy is baked into the
+      // profile — instead of every Claude account sharing one fixed profile.
+      if (!adspowerProfileId) {
+        step("creating AdsPower profile");
+        const draft: { email: string; proxyUrl?: string; adspowerProfileId?: string } = { email, proxyUrl };
+        const ensured = await ensureAdspowerProfileForAccount({
+          dataDir: this.ctx.dataDir,
+          provider: "anthropic",
+          account: draft,
+          client: makeDefaultAdsPowerClient(),
+          allowRebuildOnMissing: true,
+        });
+        if (!ensured.ok) throw new Error(ensured.error);
+        adspowerProfileId = ensured.profileId;
+        if (draft.proxyUrl) proxyUrl = draft.proxyUrl; // manager normalizes to socks5
+      }
+      pending.adspowerProfileId = adspowerProfileId;
+      pending.proxyUrl = proxyUrl || pending.proxyUrl;
 
       if (sessionKey && sessionKey.trim()) {
         step(adspowerProfileId ? `SK 直登 (AdsPower ${adspowerProfileId})` : "SK 直登 (SOCKS5)");
@@ -891,13 +928,12 @@ export class ClaudeAccountService {
           }
         }
 
-        if (task.taskId === taskId) {
-          task.status = "done";
-          task.email = result.email;
-          task.isUpdate = result.isUpdate;
-          task.accountId = result.accountId;
-          task.phase = "completed";
-        }
+        task.status = "done";
+        task.email = result.email;
+        task.isUpdate = result.isUpdate;
+        task.accountId = result.accountId;
+        task.phase = "completed";
+        task.finishedAt = Date.now();
         return;
       }
 
@@ -916,7 +952,7 @@ export class ClaudeAccountService {
       if (!trigger.ok || !trigger.session) {
         throw new Error(trigger.error || "浏览器触发失败");
       }
-      this.playwrightSession = trigger.session;
+      session = trigger.session;
       step(`email submitted (${((Date.now() - triggerStart) / 1000).toFixed(1)}s), waiting for magic link email`);
 
       const domain = email.split("@")[1]?.toLowerCase() || "";
@@ -936,8 +972,8 @@ export class ClaudeAccountService {
           proxyUrl,
         });
         if (!mailResult.ok || !mailResult.url) {
-          await this.playwrightSession.close().catch(() => {});
-          this.playwrightSession = null;
+          await session.close().catch(() => {});
+          session = null;
           throw new Error(mailResult.error || "未获取到 magic link");
         }
         mailResultUrl = mailResult.url;
@@ -947,9 +983,9 @@ export class ClaudeAccountService {
       }
 
       // 4. Consume magic link in browser → OAuth code
-      const consume = await this.playwrightSession.consumeMagicLink(mailResultUrl, 60_000);
-      await this.playwrightSession.close().catch(() => {});
-      this.playwrightSession = null;
+      const consume = await session.consumeMagicLink(mailResultUrl, 60_000);
+      await session.close().catch(() => {});
+      session = null;
 
       if (!consume.ok || !consume.code) {
         throw new Error(consume.error || "未获取到 OAuth code");
@@ -971,18 +1007,19 @@ export class ClaudeAccountService {
         }
       }
 
-      if (task.taskId === taskId) {
-        task.status = "done";
-        task.email = result.email;
-        task.isUpdate = result.isUpdate;
-        task.accountId = result.accountId;
-        task.phase = "completed";
-      }
+      task.status = "done";
+      task.email = result.email;
+      task.isUpdate = result.isUpdate;
+      task.accountId = result.accountId;
+      task.phase = "completed";
+      task.finishedAt = Date.now();
     } catch (err: any) {
-      if (task.taskId === taskId) {
-        task.status = "error";
-        task.error = String(err?.message || err);
-      }
+      task.status = "error";
+      task.error = String(err?.message || err);
+      task.finishedAt = Date.now();
+    } finally {
+      // Close a browser session left open by an error mid-flow (success paths already closed it).
+      if (session) await session.close().catch(() => {});
     }
   }
 

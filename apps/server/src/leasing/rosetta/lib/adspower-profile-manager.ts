@@ -1,7 +1,14 @@
 import * as path from "path";
 
-import { AdsPowerClient, type AdsPowerProfileSummary } from "./adspower-client";
+import {
+  AdsPowerClient,
+  parseProxyToAdsPowerUserConfig,
+  type AdsPowerProfileSummary,
+} from "./adspower-client";
 import { nowIso, readJson, toSocks5ProxyUrl, writeJson } from "./store";
+
+// Re-exported for callers/tests that historically imported it from this module.
+export { parseProxyToAdsPowerUserConfig };
 
 export type AdspowerProfileProvider = "anthropic" | "codex" | "antigravity";
 
@@ -31,6 +38,11 @@ export type EnsureAdspowerProfileOptions = {
   now?: () => Date;
   profileCap?: number;
   protectMinutes?: number;
+  // When true, a bound profile that is missing (evicted/trashed) is rebuilt as a fresh personal
+  // profile instead of returning needsRestore, and an account still on a shared (legacy) profile
+  // is migrated to its own. Used for providers that can always re-login from stored credentials
+  // (Claude). Codex keeps the strict needsRestore behavior to preserve an irreplaceable session.
+  allowRebuildOnMissing?: boolean;
 };
 
 export type EnsureAdspowerProfileResult =
@@ -62,28 +74,6 @@ export function makeDefaultAdsPowerClient(): AdsPowerClient {
   });
 }
 
-export function parseProxyToAdsPowerUserConfig(proxyUrl: string): any {
-  const proxy = String(proxyUrl || "").trim();
-  if (!proxy) return null;
-  try {
-    const url = new URL(proxy);
-    const type = url.protocol.replace(":", "").toLowerCase();
-    if (!["http", "https", "socks5", "socks5h"].includes(type)) return null;
-    const normalizedType = type === "socks5h" ? "socks5" : type;
-    const config: any = {
-      proxy_soft: "other",
-      proxy_type: normalizedType,
-      proxy_host: url.hostname,
-      proxy_port: String(url.port || (normalizedType === "socks5" ? 1080 : 80)),
-    };
-    if (url.username) config.proxy_user = decodeURIComponent(url.username);
-    if (url.password) config.proxy_password = decodeURIComponent(url.password);
-    return config;
-  } catch {
-    return null;
-  }
-}
-
 export async function ensureAdspowerProfileForAccount(
   opts: EnsureAdspowerProfileOptions,
 ): Promise<EnsureAdspowerProfileResult> {
@@ -94,18 +84,30 @@ export async function ensureAdspowerProfileForAccount(
   const storedProfileId = String(opts.account.adspowerProfileId || "").trim();
 
   if (storedProfileId) {
-    if (profileIds.has(storedProfileId)) {
+    const live = profileIds.has(storedProfileId);
+    const canRebuild = Boolean(opts.allowRebuildOnMissing);
+    // A profile shared by more than one account is a legacy shared profile (the old fixed Claude
+    // one). Rebuild-capable providers migrate off it to a personal profile; others keep reusing.
+    const shared = live && (countProfileReferences(opts.dataDir, profileIds).get(storedProfileId) || 0) > 1;
+
+    if (live && !(shared && canRebuild)) {
       markProfileActive(opts.account, opts.provider, now);
       return { ok: true, profileId: storedProfileId, created: false };
     }
-    opts.account.adspowerProfileStatus = "trashed";
-    opts.account.adspowerProfileTrashedAt = now.toISOString();
-    return {
-      ok: false,
-      needsRestore: true,
-      profileId: storedProfileId,
-      error: `AdsPower profile ${storedProfileId} is missing. Restore it from AdsPower Trash, then retry this same account.`,
-    };
+    if (!live && !canRebuild) {
+      opts.account.adspowerProfileStatus = "trashed";
+      opts.account.adspowerProfileTrashedAt = now.toISOString();
+      return {
+        ok: false,
+        needsRestore: true,
+        profileId: storedProfileId,
+        error: `AdsPower profile ${storedProfileId} is missing. Restore it from AdsPower Trash, then retry this same account.`,
+      };
+    }
+    // Fall through to create a fresh personal profile: either migrating off a shared legacy
+    // profile, or rebuilding one that was evicted. Clear the stale binding first.
+    opts.account.adspowerProfileId = "";
+    delete opts.account.adspowerProfileTrashedAt;
   }
 
   const proxyUrl = normalizeProxyForProvider(opts.provider, opts.account.proxyUrl || "");
@@ -214,6 +216,9 @@ function collectSafeProfileCandidates(opts: {
   protectMinutes: number;
 }) {
   const protectMs = Math.max(0, opts.protectMinutes) * 60_000;
+  // Profiles bound by more than one live account (e.g. Claude's fixed shared profile) must never
+  // be evicted: deleting one id would break every account that points at it. Count references first.
+  const refCounts = countProfileReferences(opts.dataDir, opts.profileIds);
   const out: Array<{
     provider: AdspowerProfileProvider;
     filePath: string;
@@ -231,6 +236,7 @@ function collectSafeProfileCandidates(opts: {
       if (sameAccount(account, opts.currentAccount) && pool.provider === opts.currentProvider) continue;
       if (String(account.adspowerProfileStatus || "active") === "trashed") continue;
       if (account.adspowerProfileProtected === true) continue;
+      if ((refCounts.get(profileId) || 0) > 1) continue;
       const lastTime = timestampOf(
         account.adspowerProfileLastUsedAt ||
           account.adspowerProfileCreatedAt ||
@@ -243,6 +249,23 @@ function collectSafeProfileCandidates(opts: {
   }
   out.sort((a, b) => a.sortTime - b.sortTime || a.profileId.localeCompare(b.profileId));
   return out;
+}
+
+// Count how many live (non-trashed) accounts reference each AdsPower profile id across all pools.
+// A count > 1 means the profile is shared and must be protected from cap eviction.
+function countProfileReferences(dataDir: string, liveProfileIds: Set<string>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const pool of POOL_FILES) {
+    const data = readJson(path.join(dataDir, pool.fileName), { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    for (const account of accounts) {
+      const profileId = String(account.adspowerProfileId || "").trim();
+      if (!profileId || !liveProfileIds.has(profileId)) continue;
+      if (String(account.adspowerProfileStatus || "active") === "trashed") continue;
+      counts.set(profileId, (counts.get(profileId) || 0) + 1);
+    }
+  }
+  return counts;
 }
 
 function sameAccount(a: any, b: any): boolean {

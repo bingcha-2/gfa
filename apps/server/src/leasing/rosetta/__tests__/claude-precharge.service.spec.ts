@@ -30,6 +30,14 @@ class TestPrechargeService extends ClaudePrechargeService {
 
   quickResult: ClaudePrechargeOrgProbeResult = this.loginResult;
   loginOptions: any[] = [];
+  ensureProfileCalls = 0;
+
+  protected override async ensureAdspowerProfile(account: any): Promise<{ ok: boolean; error?: string }> {
+    this.ensureProfileCalls += 1;
+    account.adspowerProfileId = "prov-profile";
+    account.proxyUrl = "socks5://user:pass@1.2.3.4:443";
+    return { ok: true };
+  }
 
   protected override async loginAndReadOrganization(_account?: any, options?: any): Promise<ClaudePrechargeOrgProbeResult> {
     this.loginOptions.push(options || {});
@@ -83,6 +91,22 @@ describe("ClaudePrechargeService", () => {
     });
     expect((list.accounts[0] as any).mailPassword).toBeUndefined();
     expect((list.accounts[0] as any).sessionKey).toBeUndefined();
+  });
+
+  it("provisions a sticky AdsPower profile during login probe when none is bound", async () => {
+    const imported = svc.importAccounts({
+      lines: "fresh@example.com----pw123",
+      proxyUrl: "socks5://user:pass@1.2.3.4:443",
+      adspowerProfileId: "",
+    });
+
+    const probed = await svc.loginProbe({ accountId: imported.results[0].id });
+
+    expect(svc.ensureProfileCalls).toBe(1);
+    expect(probed).toMatchObject({ ok: true, status: "ORG_READY" });
+
+    const listed = svc.listAccounts().accounts[0];
+    expect(listed.adspowerProfileId).toBe("prov-profile");
   });
 
   it("imports gmail precharge credentials with recovery email, TOTP URL, and session key", () => {
@@ -290,7 +314,7 @@ describe("ClaudePrechargeService", () => {
     });
   });
 
-  it("rejects precharge manual login when the strict AdsPower environment is incomplete", async () => {
+  it("rejects manual login without proxy or password, but auto-provisions a missing profile", async () => {
     writeJson(path.join(dataDir, "anthropic-precharge-accounts.json"), {
       accounts: [
         { id: 1, email: "no-proxy@example.com", mailPassword: "pw123", adspowerProfileId: "profile-1" },
@@ -299,9 +323,12 @@ describe("ClaudePrechargeService", () => {
       ],
     });
 
+    // Proxy and password stay hard requirements (egress + magic-link fetch).
     await expect(svc.manualLogin({ accountId: 1 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("代理") });
-    await expect(svc.manualLogin({ accountId: 2 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("AdsPower") });
     await expect(svc.manualLogin({ accountId: 3 })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("密码") });
+    // A missing profile is no longer fatal — it gets provisioned, then login proceeds.
+    await expect(svc.manualLogin({ accountId: 2 })).resolves.toMatchObject({ ok: true, status: "ORG_READY" });
+    expect(svc.ensureProfileCalls).toBe(1);
     expect(claudeSvc.startManualClaudeLoginWithCredentials).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,10 @@ import * as path from "path";
 
 import type { RosettaContext } from "./lib/context";
 import {
+  ensureAdspowerProfileForAccount,
+  makeDefaultAdsPowerClient,
+} from "./lib/adspower-profile-manager";
+import {
   readClaudeOrganizationsViaSessionKey,
   triggerMagicLinkViaBrowser,
   waitForClaudeOrganizationsFromPage,
@@ -258,7 +262,13 @@ export class ClaudePrechargeService {
     const account = found.account;
     if (!account) return { ok: false, error: "账号不存在" };
     if (!account.proxyUrl) return this.markProbeError(found, "PROBE_FAILED", "出口代理为空");
-    if (!account.adspowerProfileId) return this.markProbeError(found, "PROBE_FAILED", "AdsPower profile 为空");
+    if (!account.adspowerProfileId) {
+      // No profile bound yet → provision a per-account sticky one (static IP baked in) instead
+      // of requiring a manually-set shared profile.
+      const ensured = await this.ensureAdspowerProfile(account);
+      if (!ensured.ok) return this.markProbeError(found, "PROBE_FAILED", ensured.error || "AdsPower profile 创建失败");
+      this.save(found.data);
+    }
     if (mode === "login" && !account.mailPassword) return this.markProbeError(found, "NEEDS_RELOGIN", "邮箱密码为空");
     if (mode === "quick" && !account.sessionKey) return this.markProbeError(found, "NEEDS_RELOGIN", "sessionKey 为空");
 
@@ -327,6 +337,19 @@ export class ClaudePrechargeService {
       data,
       account: data.accounts.find((account) => Number(account.id) === accountId),
     };
+  }
+
+  // Provision a per-account sticky AdsPower profile, mutating the account with its new
+  // profileId and normalized proxy. Overridable in tests. Default uses the shared lifecycle manager.
+  protected async ensureAdspowerProfile(account: StoredPrechargeAccount): Promise<{ ok: boolean; error?: string }> {
+    const ensured = await ensureAdspowerProfileForAccount({
+      dataDir: this.ctx.dataDir,
+      provider: "anthropic",
+      account,
+      client: makeDefaultAdsPowerClient(),
+      allowRebuildOnMissing: true,
+    });
+    return ensured.ok ? { ok: true } : { ok: false, error: ensured.error };
   }
 
   protected async loginAndReadOrganization(

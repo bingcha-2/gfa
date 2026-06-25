@@ -17,9 +17,13 @@ import (
 // ─── Claude 出口层(utls TLS 指纹 + 每号粘性住宅代理)──────────────────────────
 //
 // 对照 reclaude internal/fingerprint + internal/proxyroute。两个目的:
-//   1. utls 伪装 ClientHello —— 让到 api.anthropic.com 的 TLS 指纹看起来像 Node.js
-//      运行时(Claude Code 的真实 runtime),消除 Go 标准库直连的 JA3/JA4 不匹配。
-//      Node.js 用 OpenSSL,utls 里最接近的预设是 Firefox(同 OpenSSL 系)。
+//   1. utls 伪装 ClientHello —— 让到 api.anthropic.com 的 TLS 指纹【逐字节】等于真
+//      Claude Code(Node/undici over OpenSSL)。不是"挑个最接近的浏览器预设",而是按真
+//      客户端实测的 ClientHello 手搓 spec(见 claudeCodeClientHelloSpec):cipher/扩展/
+//      曲线/签名算法/顺序全对齐,连域名时 JA3=dc782a9d…、无 SNI 时 JA3=e97f5146…,与真
+//      客户端一致 → 混入真实用户流量,不再是"全池统一却和真客户端不一样"的可聚类指纹。
+//      (历史教训:曾用 Firefox 预设,带了 ECH 等 Firefox 专属扩展、ALPN 还得强降 http/1.1,
+//       JA3 和真客户端对不上且全池一个值,正是被批量封号的破绽。)
 //   2. 每号粘性代理 —— 同一个 Claude 订阅号的出口固定走一个住宅/移动代理 IP,
 //      避免"一个机房 IP 挂 N 个号 / 同号多地登录"的聚类与不可能旅行信号。
 //      代理 URL 由服务端按租到的账号下发(claudeProxyUrl),客户端据此路由该跳。
@@ -86,14 +90,71 @@ func dialRawThroughProxy(ctx context.Context, addr string, proxyURL string) (net
 	return ConnectViaProxy(proxyURL, host, port, 30*time.Second)
 }
 
-// newClaudeUpstreamTransport 构造到 api.anthropic.com 的 transport:
-// DialTLSContext = (经代理的原始 TCP)+ utls Firefox(≈Node)握手,并【强制 ALPN 只剩
-// http/1.1】。
+// claudeCodeClientHelloSpec 返回【逐字节复刻真 Claude Code(claude-cli/2.x · Node/undici
+// over OpenSSL)】的 utls ClientHelloSpec。cipher 套件、扩展类型与顺序、椭圆曲线、签名算法
+// 全部按真客户端抓包结果排列;ALPN 只宣告 http/1.1(真客户端就是 http/1.1,不发 h2)。
 //
-// 关键坑(对照 reclaude 的 chromeHTTPClient):光设 DialTLSContext 只能让 Go 客户端不主动
-// 发起 h2,但 Firefox 预设的 ALPN 仍向服务器宣告 h2 → 服务器选 HTTP/2 回二进制帧,而本
-// transport 按 HTTP/1.1 解析 → "malformed HTTP response"。所以必须把 ALPN 扩展改成只剩
-// http/1.1,逼服务器走 1.1。指纹其余部分保持 Firefox。
+// 校验(见 claude_egress_test.go + 一次性沙盒验证):
+//   - 无 SNI(连 IP)时 JA3 = e97f5146a7009cc2918b50e903b6ff8d
+//   - 含 SNI(连 api.anthropic.com)时 JA3 = dc782a9d905fdcee1223a3d4e8108bc6
+//     两者均与真 claude-cli 实测一致;且该 spec 真连 api.anthropic.com 握手成功(返回 401)。
+//
+// 必须【每次拨号新建一个 spec】:KeyShareExtension 等在握手时会写入每连接的临时密钥,复用会串号。
+func claudeCodeClientHelloSpec() *utls.ClientHelloSpec {
+	return &utls.ClientHelloSpec{
+		TLSVersMin: utls.VersionTLS12,
+		TLSVersMax: utls.VersionTLS13,
+		CipherSuites: []uint16{
+			utls.TLS_AES_128_GCM_SHA256,                        // 1301
+			utls.TLS_AES_256_GCM_SHA384,                        // 1302
+			utls.TLS_CHACHA20_POLY1305_SHA256,                  // 1303
+			utls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,       // c02b
+			utls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,         // c02f
+			utls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,       // c02c
+			utls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,         // c030
+			utls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, // cca9
+			utls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,   // cca8
+			utls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,          // c009
+			utls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,            // c013
+			utls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,          // c00a
+			utls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,            // c014
+			utls.TLS_RSA_WITH_AES_128_GCM_SHA256,               // 009c
+			utls.TLS_RSA_WITH_AES_256_GCM_SHA384,               // 009d
+			utls.TLS_RSA_WITH_AES_128_CBC_SHA,                  // 002f
+			utls.TLS_RSA_WITH_AES_256_CBC_SHA,                  // 0035
+		},
+		CompressionMethods: []byte{0x00},
+		Extensions: []utls.TLSExtension{
+			&utls.SNIExtension{},                      // 0000 —— ServerName 由 utls 从 Config 自动填;连域名时放第一位(对齐 OpenSSL)
+			&utls.UtlsExtendedMasterSecretExtension{}, // 0017
+			&utls.RenegotiationInfoExtension{Renegotiation: utls.RenegotiateOnceAsClient},                       // ff01
+			&utls.SupportedCurvesExtension{Curves: []utls.CurveID{utls.X25519, utls.CurveP256, utls.CurveP384}}, // 000a: 001d 0017 0018
+			&utls.SupportedPointsExtension{SupportedPoints: []byte{0x00}},                                       // 000b: uncompressed
+			&utls.SessionTicketExtension{},                           // 0023
+			&utls.ALPNExtension{AlpnProtocols: []string{"http/1.1"}}, // 0010: 真客户端只 http/1.1
+			&utls.StatusRequestExtension{},                           // 0005
+			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []utls.SignatureScheme{
+				utls.ECDSAWithP256AndSHA256, // 0403
+				utls.PSSWithSHA256,          // 0804
+				utls.PKCS1WithSHA256,        // 0401
+				utls.ECDSAWithP384AndSHA384, // 0503
+				utls.PSSWithSHA384,          // 0805
+				utls.PKCS1WithSHA384,        // 0501
+				utls.PSSWithSHA512,          // 0806
+				utls.PKCS1WithSHA512,        // 0601
+				utls.PKCS1WithSHA1,          // 0201
+			}},
+			&utls.SCTExtension{}, // 0012
+			&utls.KeyShareExtension{KeyShares: []utls.KeyShare{{Group: utls.X25519}}},                  // 0033
+			&utls.PSKKeyExchangeModesExtension{Modes: []uint8{utls.PskModeDHE}},                        // 002d
+			&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}}, // 002b
+		},
+	}
+}
+
+// newClaudeUpstreamTransport 构造到 api.anthropic.com 的 transport:
+// DialTLSContext = (经代理的原始 TCP)+ utls 握手,ClientHello 由 claudeCodeClientHelloSpec
+// 精确复刻真 Claude Code(只宣告 http/1.1,与真客户端一致;服务器据此选 1.1,本 transport 正常解析)。
 func newClaudeUpstreamTransport(proxyURL string) *http.Transport {
 	return newClaudeUpstreamTransportFn(func() string { return proxyURL })
 }
@@ -117,20 +178,11 @@ func newClaudeUpstreamTransportFn(proxyFn func() string) *http.Transport {
 			if splitErr != nil {
 				host = addr
 			}
-			// 取 Firefox 预设的 ClientHello spec,把 ALPN 改成只 http/1.1 后再握手。
-			spec, specErr := utls.UTLSIdToSpec(utls.HelloFirefox_Auto)
-			if specErr != nil {
-				raw.Close()
-				return nil, fmt.Errorf("utls spec: %w", specErr)
-			}
-			for i, ext := range spec.Extensions {
-				if alpn, ok := ext.(*utls.ALPNExtension); ok {
-					alpn.AlpnProtocols = []string{"http/1.1"}
-					spec.Extensions[i] = alpn
-				}
-			}
+			// ClientHello 逐字节复刻真 Claude Code(见 claudeCodeClientHelloSpec)。
+			// 每拨号新建 spec:KeyShare 等含每连接临时密钥,不可复用。
+			spec := claudeCodeClientHelloSpec()
 			conn := utls.UClient(raw, &utls.Config{ServerName: host}, utls.HelloCustom)
-			if err := conn.ApplyPreset(&spec); err != nil {
+			if err := conn.ApplyPreset(spec); err != nil {
 				raw.Close()
 				return nil, fmt.Errorf("utls apply preset: %w", err)
 			}

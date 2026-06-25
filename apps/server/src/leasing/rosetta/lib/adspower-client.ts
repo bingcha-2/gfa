@@ -46,6 +46,33 @@ const DEFAULT_CONFIG: AdsPowerConfig = {
   retryDelayMs: 3000,
 };
 
+/**
+ * Convert a proxy URL into AdsPower's user_proxy_config shape.
+ * Canonical implementation shared by the profile manager and the Playwright OAuth flow.
+ * socks5h is normalized to socks5 (AdsPower has no separate socks5h type).
+ */
+export function parseProxyToAdsPowerUserConfig(proxyUrl: string): any {
+  const proxy = String(proxyUrl || "").trim();
+  if (!proxy) return null;
+  try {
+    const url = new URL(proxy);
+    const type = url.protocol.replace(":", "").toLowerCase();
+    if (!["http", "https", "socks5", "socks5h"].includes(type)) return null;
+    const normalizedType = type === "socks5h" ? "socks5" : type;
+    const config: any = {
+      proxy_soft: "other",
+      proxy_type: normalizedType,
+      proxy_host: url.hostname,
+      proxy_port: String(url.port || (normalizedType === "socks5" ? 1080 : 80)),
+    };
+    if (url.username) config.proxy_user = decodeURIComponent(url.username);
+    if (url.password) config.proxy_password = decodeURIComponent(url.password);
+    return config;
+  } catch {
+    return null;
+  }
+}
+
 export class AdsPowerClient {
   private config: AdsPowerConfig;
   /** Serial mutex: only one openProfile call at a time to avoid AdsPower rate-limit */

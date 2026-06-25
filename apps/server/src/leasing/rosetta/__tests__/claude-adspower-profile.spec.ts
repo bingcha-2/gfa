@@ -11,7 +11,7 @@ describe("resolveAnthropicAdspowerProfileId", () => {
     expect(resolveAnthropicAdspowerProfileId("", "stored-profile")).toBe("stored-profile");
   });
 
-  it("defaults to k1bvbavq when neither source provides a profile", () => {
-    expect(resolveAnthropicAdspowerProfileId(undefined, undefined)).toBe("k1bvbavq");
+  it("returns empty when neither source provides a profile, so onboarding provisions a per-account sticky profile", () => {
+    expect(resolveAnthropicAdspowerProfileId(undefined, undefined)).toBe("");
   });
 });

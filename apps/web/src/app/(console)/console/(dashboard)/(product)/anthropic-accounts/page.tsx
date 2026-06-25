@@ -179,7 +179,7 @@ export default function ClaudeAccountsPage() {
   const [planType, setPlanType] = useState("");
   const [alias, setAlias] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
-  const [adspowerProfileId, setAdspowerProfileId] = useState("k1bvbavq");
+  const [adspowerProfileId, setAdspowerProfileId] = useState("");
   const [importProxyUrl, setImportProxyUrl] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -224,7 +224,7 @@ export default function ClaudeAccountsPage() {
   const [prechargeLoading, setPrechargeLoading] = useState(false);
   const [prechargeLines, setPrechargeLines] = useState("");
   const [prechargeProxyUrl, setPrechargeProxyUrl] = useState("");
-  const [prechargeProfileId, setPrechargeProfileId] = useState("k1bvbavq");
+  const [prechargeProfileId, setPrechargeProfileId] = useState("");
   const [prechargeImporting, setPrechargeImporting] = useState(false);
   const [prechargeBusyId, setPrechargeBusyId] = useState<number | null>(null);
   const [manualLoginBusyKey, setManualLoginBusyKey] = useState<string | null>(null);
@@ -543,7 +543,7 @@ export default function ClaudeAccountsPage() {
       totpSecret,
       sessionKey,
       proxyUrl: toSocks5(importProxyUrl),
-      adspowerProfileId: "k1bvbavq", // 固定选择 k1bvbavq
+      adspowerProfileId: "", // 留空 → 后端按账号自动新建独立 sticky profile（静态 IP 烤进 profile）
     };
   }
 
@@ -984,7 +984,7 @@ export default function ClaudeAccountsPage() {
             <Field>
               <FieldLabel>AdsPower Profile</FieldLabel>
               <Input
-                placeholder="k1bvbavq"
+                placeholder="留空自动新建独立号"
                 value={prechargeProfileId}
                 onChange={(e) => setPrechargeProfileId(e.target.value)}
               />
@@ -1160,7 +1160,7 @@ export default function ClaudeAccountsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            粘贴账号行（支持 3 段或 5 段格式，中间 2 段为无效内容，代理在右侧单独框填入），自动解析后使用 AdsPower (k1bvbavq) 与出口代理抓取 Anthropic 登录并换绑 token。
+            粘贴账号行（支持 3 段或 5 段格式，中间 2 段为无效内容，代理在右侧单独框填入），自动解析后按账号自动新建独立 AdsPower profile（静态 IP 烤进 profile）抓取 Anthropic 登录并换绑 token。
           </p>
 
           {/* Step 1: 粘贴解析 */}

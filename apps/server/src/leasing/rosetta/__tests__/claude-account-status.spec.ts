@@ -95,4 +95,20 @@ describe("startAutoClaudeOAuth SK direct login", () => {
       "sk-ant-sid02-AbCdEf1234567890",
     );
   });
+
+  it("tracks concurrent auto-OAuth tasks independently instead of clobbering", () => {
+    const svc = new ClaudeAccountService({ dataDir } as any, stubAccessKey);
+    vi.spyOn(svc as any, "runAutoOAuth").mockResolvedValue(undefined);
+
+    const a = svc.startAutoClaudeOAuth({ email: "a@example.com", password: "pw", proxyUrl: "socks5://127.0.0.1:1080" });
+    const b = svc.startAutoClaudeOAuth({ email: "b@example.com", password: "pw", proxyUrl: "socks5://127.0.0.1:1080" });
+
+    expect(a.taskId).toBeTruthy();
+    expect(b.taskId).toBeTruthy();
+    expect(a.taskId).not.toBe(b.taskId);
+    // The single-slot implementation dropped task A the moment B started, so polling A's
+    // taskId returned "任务不存在". Both must now resolve independently.
+    expect(svc.getAutoOAuthStatus(a.taskId!)).toMatchObject({ ok: true, status: "running" });
+    expect(svc.getAutoOAuthStatus(b.taskId!)).toMatchObject({ ok: true, status: "running" });
+  });
 });

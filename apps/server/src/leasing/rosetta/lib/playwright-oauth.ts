@@ -18,7 +18,7 @@ import * as net from "net";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { SocksClient } from "socks";
 import * as OTPAuth from "otpauth";
-import { AdsPowerClient } from "./adspower-client";
+import { AdsPowerClient, parseProxyToAdsPowerUserConfig } from "./adspower-client";
 
 export type PlaywrightOAuthOpts = {
   authorizeUrl: string;
@@ -254,32 +254,6 @@ export function parseUpstream(proxyUrl: string) {
   };
 }
 
-export function parseProxyToAdsPowerConfig(proxyUrl: string): any {
-  if (!proxyUrl) return null;
-  try {
-    const url = new URL(proxyUrl);
-    const type = url.protocol.replace(":", "");
-    if (!["http", "https", "socks5"].includes(type)) {
-      return null;
-    }
-    const config: any = {
-      proxy_soft: "other",
-      proxy_type: type,
-      proxy_host: url.hostname,
-      proxy_port: String(url.port || (type === "socks5" ? 1080 : 80)),
-    };
-    if (url.username) {
-      config.proxy_user = decodeURIComponent(url.username);
-    }
-    if (url.password) {
-      config.proxy_password = decodeURIComponent(url.password);
-    }
-    return config;
-  } catch {
-    return null;
-  }
-}
-
 export type ClaudeWebOrganization = {
   id?: number | string;
   uuid?: string;
@@ -479,7 +453,7 @@ export async function readClaudeOrganizationsViaSessionKey(opts: {
       const host = process.env.ADSPOWER_HOST || "http://127.0.0.1:50325";
       const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
       const client = new AdsPowerClient({ baseUrl: host, apiKey });
-      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerUserConfig(opts.proxyUrl) : undefined;
       const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
       adspowerOpts = { client, profileId: opts.adspowerProfileId };
       browser = await chromium.connectOverCDP(openRes.debugUrl);
@@ -608,7 +582,7 @@ export async function loginViaSessionKey(opts: {
       const host = process.env.ADSPOWER_HOST || "http://127.0.0.1:50325";
       const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
       const client = new AdsPowerClient({ baseUrl: host, apiKey });
-      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerUserConfig(opts.proxyUrl) : undefined;
       console.log(`[sk-login] Connecting to AdsPower Profile: ${opts.adspowerProfileId} with proxyUrl: ${opts.proxyUrl || "profile default"}`);
 
       const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
@@ -721,7 +695,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
       const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
       const client = new AdsPowerClient({ baseUrl: host, apiKey });
 
-      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerUserConfig(opts.proxyUrl) : undefined;
       console.log(`[playwright-oauth] Connecting to AdsPower Profile: ${opts.adspowerProfileId} with proxyUrl: ${opts.proxyUrl || "profile default"}`);
 
       const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
