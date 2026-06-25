@@ -21,6 +21,10 @@ import (
 
 const mitmDefaultPort = 48801
 
+// mitmPortFallbackTries 是 MITM 端口兜底的尝试个数:48801 被外部进程占住且回收不了时,
+// 依次退到 48802…48808 直到绑上,避免接管永久死锁(见 pickMitmPort)。
+const mitmPortFallbackTries = 8
+
 type mitmManager struct {
 	mu      sync.Mutex
 	proxy   *mitmProxy
@@ -155,15 +159,28 @@ func (m *mitmManager) StartProxy(port int, card, deviceId, upstream string) erro
 	}
 	m.root = root
 	m.card, m.deviceId, m.upstream = card, deviceId, upstream
-	m.port = port
+
+	// 重启时(看门狗/重新接管)优先回到上次绑定、且已注入 Claude 的端口,避免换口后
+	// Claude 还指着旧端口;首次启动 m.port==0 → 用传入端口(默认 48801)。
+	desired := port
+	if m.port > 0 {
+		desired = m.port
+	}
 
 	p := newMitmProxy(mitmNewLeafCache(root), m.buildHandler(), m.userProxy)
-	if err := p.Start(fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
+	bound, err := pickMitmPort(desired, mitmPortFallbackTries, func(pt int) error {
+		return p.Start(fmt.Sprintf("127.0.0.1:%d", pt))
+	})
+	if err != nil {
 		return fmt.Errorf("start mitm proxy: %w", err)
 	}
 	m.proxy = p
 	m.running = true
-	Log("[mitm] MITM 代理监听 127.0.0.1:%d (Claude 桌面端 Code/Cowork 接管)", port)
+	m.port = bound
+	if bound != desired {
+		Log("[mitm] 端口 %d 被外部进程占用,已兜底改用 %d(注入地址自动跟随)", desired, bound)
+	}
+	Log("[mitm] MITM 代理监听 127.0.0.1:%d (Claude 桌面端 Code/Cowork 接管)", bound)
 	return nil
 }
 

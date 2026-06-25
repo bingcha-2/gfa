@@ -80,6 +80,32 @@ func listenWithReclaim(addr string) (net.Listener, error) {
 	return nil, fmt.Errorf("端口 %d 回收后仍无法监听: %w", port, err)
 }
 
+// pickMitmPort 为 MITM 代理选一个能绑上的端口:从 start 起依次试 start, start+1, …,
+// 共 tries 个。bind 是真正的绑定动作(成功返回 nil)。
+//
+// 为什么需要它(对照 LocalHTTPProxy 的端口兜底):MITM 端口是写死的固定值,一旦被
+// 【非本程序】进程占着(errPortForeignHeld,典型是客户机上没退干净的旧版本实例、或别的
+// 软件),reclaimPort 出于安全【绝不杀】它 —— 此时若没有兜底,接管就永久死锁(看门狗无限
+// 重试)。这里遇到"端口被占"(foreign 或 in-use)就跳到下一个端口,任意端口绑上即返回。
+// 注入给 Claude 客户端的代理地址是动态读 m.port 的(见 mitmManager.proxyAddr),所以换端口
+// 后注入会自动跟上。非端口类错误(如 CA 失败)立即返回,不做无谓重试。
+func pickMitmPort(start, tries int, bind func(port int) error) (int, error) {
+	var lastErr error
+	for i := 0; i < tries; i++ {
+		cand := start + i
+		err := bind(cand)
+		if err == nil {
+			return cand, nil
+		}
+		lastErr = err
+		if errors.Is(err, errPortForeignHeld) || isAddrInUse(err) {
+			continue // 该端口被占,试下一个
+		}
+		return 0, err // 非端口问题,别白试
+	}
+	return 0, fmt.Errorf("MITM 端口 %d..%d 全部被占用,最后错误: %w", start, start+tries-1, lastErr)
+}
+
 // reclaimPort 杀掉监听指定端口、且【确属本程序】的残留进程(跳过自身)。
 // 返回 (杀掉的数量, 是否见到非本程序/无法判定的占用者)。
 // 安全优先:不是本程序、或无法确认身份的进程,一律【不杀】,只标记 foreign=true。
