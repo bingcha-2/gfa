@@ -1,6 +1,6 @@
 module bcai-wails
 
-go 1.25.0
+go 1.26.0
 
 require (
 	fyne.io/systray v1.12.2
@@ -10,7 +10,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/refraction-networking/utls v1.8.2
 	github.com/wailsapp/wails/v2 v2.12.0
-	golang.org/x/net v0.38.0
+	golang.org/x/net v0.47.0
 	modernc.org/sqlite v1.34.5
 )
 
@@ -35,15 +35,16 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.47 // indirect
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
