@@ -4,6 +4,7 @@ import { type LocalAccountView, type LocalGatewayStatus, type ProviderLocalApi }
 import { cn } from '@/lib/utils'
 import { LocalStatsTab } from './LocalStatsTab'
 import { LocalWakeupTab } from './LocalWakeupTab'
+import { LocalInstancesTab } from './LocalInstancesTab'
 
 /**
  * 通用「本地自有号」suite:账号 tab(主)+ 统计 tab + 网关运行态头 + 可选接管号源切换。
@@ -56,7 +57,7 @@ export function LocalProviderSuite({ title, api, supportsSource = false }: Local
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState<'accounts' | 'stats' | 'wakeup'>('accounts')
+  const [tab, setTab] = useState<'accounts' | 'stats' | 'wakeup' | 'instances'>('accounts')
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -248,7 +249,7 @@ export function LocalProviderSuite({ title, api, supportsSource = false }: Local
 
       {/* tab 栏:账号(主) / 统计 */}
       <div className="flex gap-5 border-b border-[var(--border-light)]">
-        {([['accounts', '账号'], ['stats', '统计'], ['wakeup', '保活']] as const).map(([id, label]) => (
+        {([['accounts', '账号'], ['stats', '统计'], ['wakeup', '保活'], ['instances', '实例']] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -264,6 +265,7 @@ export function LocalProviderSuite({ title, api, supportsSource = false }: Local
 
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
+      {tab === 'instances' && <LocalInstancesTab api={api} />}
 
       {/* 账号列表(主功能) */}
       {tab === 'accounts' && (

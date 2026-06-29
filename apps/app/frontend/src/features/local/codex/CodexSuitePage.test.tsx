@@ -39,6 +39,9 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalSetCodexWakeupConfig: vi.fn().mockResolvedValue(undefined),
     LocalCodexWakeupRunNow: vi.fn().mockResolvedValue([]),
     LocalCodexWakeupHistory: vi.fn().mockResolvedValue([{ atMs: 1700000000000, accountId: 'a1', email: 'yifan@example.com', ok: true }]),
+    LocalInstanceList: vi.fn().mockResolvedValue([{ id: 'i1', provider: 'codex', name: '工作', userDataDir: '/tmp/w', createdAt: 1 }]),
+    LocalInstanceCreate: vi.fn().mockResolvedValue({ id: 'i2', provider: 'codex', name: '新', userDataDir: '/tmp/n', createdAt: 2 }),
+    LocalInstanceDelete: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -123,5 +126,17 @@ describe('CodexSuitePage', () => {
     expect(await screen.findByText('已选 1')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
     await waitFor(() => expect(app.LocalDeleteAccounts).toHaveBeenCalledWith(['a1']))
+  })
+
+  it('shows the instances tab and can create a profile', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '实例' }))
+    expect(await screen.findByText('工作')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: '新实例' } })
+    fireEvent.change(screen.getByLabelText('user-data 目录'), { target: { value: '/tmp/x' } })
+    fireEvent.click(screen.getByRole('button', { name: /创建/ }))
+    await waitFor(() => expect(app.LocalInstanceCreate).toHaveBeenCalledWith('codex', '新实例', '/tmp/x', '', '', ''))
   })
 })

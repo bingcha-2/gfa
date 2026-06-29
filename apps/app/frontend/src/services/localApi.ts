@@ -47,6 +47,19 @@ export interface LocalStatsSnapshot {
 export interface WakeupConfig { enabled: boolean; intervalMinutes: number }
 export interface WakeupRunEntry { atMs: number; accountId: string; email: string; ok: boolean; err?: string }
 
+export interface InstanceProfile {
+  id: string
+  provider: string
+  name: string
+  userDataDir: string
+  workingDir?: string
+  extraArgs?: string
+  bindAccountId?: string
+  createdAt: number
+  lastLaunchedAt?: number
+  pid?: number
+}
+
 /** 一个 provider 的本地账号能力(UI 组件只依赖此接口)。 */
 export interface ProviderLocalApi {
   listAccounts(): Promise<LocalAccountView[]>
@@ -66,6 +79,9 @@ export interface ProviderLocalApi {
   setWakeupConfig(enabled: boolean, intervalMinutes: number): Promise<void>
   wakeupRunNow(): Promise<WakeupRunEntry[]>
   wakeupHistory(): Promise<WakeupRunEntry[]>
+  instanceList(): Promise<InstanceProfile[]>
+  instanceCreate(name: string, userDataDir: string, workingDir: string, extraArgs: string, bindAccountId: string): Promise<InstanceProfile>
+  instanceDelete(id: string): Promise<void>
   /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
   getSource?(): Promise<string>
   setSource?(source: 'remote' | 'local'): Promise<void>
@@ -98,6 +114,9 @@ export const codexLocalApi: ProviderLocalApi = {
   setWakeupConfig: (e, i) => app().LocalSetCodexWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalCodexWakeupRunNow() as Promise<WakeupRunEntry[]>,
   wakeupHistory: () => app().LocalCodexWakeupHistory() as Promise<WakeupRunEntry[]>,
+  instanceList: () => app().LocalInstanceList('codex') as Promise<InstanceProfile[]>,
+  instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('codex', n, d, w, e, b) as Promise<InstanceProfile>,
+  instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
   getSource: () => app().LocalGetCodexSource() as Promise<string>,
   setSource: (src) => app().LocalSetCodexSource(src) as Promise<void>,
 }
@@ -120,4 +139,7 @@ export const antigravityLocalApi: ProviderLocalApi = {
   setWakeupConfig: (e, i) => app().LocalSetAntigravityWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalAntigravityWakeupRunNow() as Promise<WakeupRunEntry[]>,
   wakeupHistory: () => app().LocalAntigravityWakeupHistory() as Promise<WakeupRunEntry[]>,
+  instanceList: () => app().LocalInstanceList('antigravity') as Promise<InstanceProfile[]>,
+  instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('antigravity', n, d, w, e, b) as Promise<InstanceProfile>,
+  instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
 }
