@@ -52,6 +52,8 @@ export interface CodexBrowserLoginResult {
 const DEFAULT_MAX_STEPS = 16;
 const DEFAULT_SMS_TIMEOUT_MS = 90_000;
 const SMS_POLL_INTERVAL_MS = 3_000;
+const SECURITY_VERIFICATION_TIMEOUT_MS = 45_000;
+const SECURITY_VERIFICATION_POLL_MS = 1_000;
 
 /**
  * 解析接码接口返回里的验证码。yuntl.cc 纯文本：
@@ -173,6 +175,53 @@ async function bodyText(page: Page): Promise<string> {
   return page.locator("body").innerText({ timeout: 1500 }).catch(() => "");
 }
 
+async function pageTitle(page: Page): Promise<string> {
+  const maybeTitle = (page as any)?.title;
+  if (typeof maybeTitle !== "function") return "";
+  return maybeTitle.call(page).catch(() => "");
+}
+
+function matchesInput(inputs: Array<Record<string, string | null>>, re: RegExp): boolean {
+  return inputs.some((input) => re.test(JSON.stringify(input)));
+}
+
+function looksLikeOpenAiSecurityVerification(url: string, title: string, text: string): boolean {
+  if (!/auth\.openai\.com/i.test(url)) return false;
+  return /performing security verification|protect against malicious bots|just a moment/i.test(`${title} ${text}`);
+}
+
+function looksLikeOpenAiLoginSurface(inputs: Array<Record<string, string | null>>, text: string): boolean {
+  return (
+    matchesInput(inputs, /email|username|password/i) ||
+    /welcome back|email address|continue with google|continue with microsoft|continue with apple|continue with phone/i.test(text)
+  );
+}
+
+async function waitForOpenAiSecurityVerification(
+  page: Page,
+  onStep: (step: string) => void,
+): Promise<CodexBrowserLoginResult | null> {
+  const deadline = Date.now() + SECURITY_VERIFICATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+    const url = page.url();
+    const title = await pageTitle(page);
+    const text = await bodyText(page);
+    const inputs = await readInputs(page);
+    if (!looksLikeOpenAiSecurityVerification(url, title, text) || looksLikeOpenAiLoginSurface(inputs, text)) {
+      return null;
+    }
+    onStep("security_verification");
+    await sleep(SECURITY_VERIFICATION_POLL_MS);
+  }
+  return {
+    ok: false,
+    error: `OpenAI 安全校验页在 ${Math.round(SECURITY_VERIFICATION_TIMEOUT_MS / 1000)} 秒内未放行`,
+    step: "security_verification",
+    lastUrl: page.url(),
+  };
+}
+
 async function clickFirst(page: Page, selectors: string[]): Promise<boolean> {
   for (const selector of selectors) {
     const loc = page.locator(selector);
@@ -214,12 +263,21 @@ async function fillVerificationCode(page: Page, code: string): Promise<boolean> 
   return false;
 }
 
-async function outlookLoginIfNeeded(page: Page, email: string, password: string): Promise<boolean> {
+type OutlookLoginResult = { ok: boolean; code?: string };
+
+function normalizeOutlookLoginResult(result: OutlookLoginResult | boolean): OutlookLoginResult {
+  return typeof result === "boolean" ? { ok: result } : result;
+}
+
+async function outlookLoginIfNeeded(page: Page, email: string, password: string): Promise<OutlookLoginResult | boolean> {
   for (let i = 0; i < 12; i++) {
     await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
     await sleep(1200);
     const url = page.url();
     const text = await bodyText(page);
+    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other/i.test(text)) {
+      return { ok: true, code: extractOpenAIEmailCode(text) || undefined };
+    }
     if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱/i.test(text)) return true;
 
     if (await fillFirst(page, 'input[type="email"], input[name="loginfmt"], input[autocomplete="username"]', email)) {
@@ -286,10 +344,12 @@ async function fetchOutlookOpenAICode(context: BrowserContext, email: string, pa
       waitUntil: "domcontentloaded",
       timeout: 45_000,
     }).catch(() => {});
-    await outlookLoginIfNeeded(page, email, password);
+    const firstLogin = normalizeOutlookLoginResult(await outlookLoginIfNeeded(page, email, password));
+    if (firstLogin.code) return firstLogin.code;
     await page.goto("https://outlook.live.com/mail/0/inbox", { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
-    const loggedIn = await outlookLoginIfNeeded(page, email, password);
-    if (!loggedIn) return null;
+    const loggedIn = normalizeOutlookLoginResult(await outlookLoginIfNeeded(page, email, password));
+    if (!loggedIn.ok) return null;
+    if (loggedIn.code) return loggedIn.code;
     return openOpenAiMailAndExtractCode(page);
   } finally {
     await page.close().catch(() => {});
@@ -394,6 +454,8 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
     const page = context.pages()[0] || (await context.newPage());
     onStep("opening_authorize_url");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 40_000 }).catch(() => {});
+    const securityGate = await waitForOpenAiSecurityVerification(page, onStep);
+    if (securityGate) return securityGate;
 
     let emailDone = false;
     let pwdDone = false;
@@ -422,7 +484,12 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       const url = page.url();
       const inputs = await readInputs(page);
       const pageText = await bodyText(page);
-      const has = (re: RegExp) => inputs.some((i) => re.test(JSON.stringify(i)));
+      const has = (re: RegExp) => matchesInput(inputs, re);
+      if (looksLikeOpenAiSecurityVerification(url, await pageTitle(page), pageText)) {
+        const securityRetry = await waitForOpenAiSecurityVerification(page, onStep);
+        if (securityRetry) return securityRetry;
+        continue;
+      }
 
       // 账号选择页（profile 残留旧会话；通常不出现）
       if (/choose-an-account/i.test(url)) {
