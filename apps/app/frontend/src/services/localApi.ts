@@ -82,6 +82,8 @@ export interface ProviderLocalApi {
   instanceList(): Promise<InstanceProfile[]>
   instanceCreate(name: string, userDataDir: string, workingDir: string, extraArgs: string, bindAccountId: string): Promise<InstanceProfile>
   instanceDelete(id: string): Promise<void>
+  instanceLaunch(id: string): Promise<void>
+  instanceStop(id: string): Promise<void>
   /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
   getSource?(): Promise<string>
   setSource?(source: 'remote' | 'local'): Promise<void>
@@ -117,6 +119,8 @@ export const codexLocalApi: ProviderLocalApi = {
   instanceList: () => app().LocalInstanceList('codex') as Promise<InstanceProfile[]>,
   instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('codex', n, d, w, e, b) as Promise<InstanceProfile>,
   instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
+  instanceLaunch: (id) => app().LocalInstanceLaunch(id) as Promise<void>,
+  instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
   getSource: () => app().LocalGetCodexSource() as Promise<string>,
   setSource: (src) => app().LocalSetCodexSource(src) as Promise<void>,
 }
@@ -142,4 +146,6 @@ export const antigravityLocalApi: ProviderLocalApi = {
   instanceList: () => app().LocalInstanceList('antigravity') as Promise<InstanceProfile[]>,
   instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('antigravity', n, d, w, e, b) as Promise<InstanceProfile>,
   instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
+  instanceLaunch: (id) => app().LocalInstanceLaunch(id) as Promise<void>,
+  instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
 }

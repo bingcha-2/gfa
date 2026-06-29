@@ -50,6 +50,16 @@ export function LocalInstancesTab({ api }: { api: ProviderLocalApi }) {
     try { await api.instanceDelete(id); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
   }
 
+  const onLaunch = async (id: string) => {
+    setBusy(`launch-${id}`)
+    try { await api.instanceLaunch(id); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
+  }
+
+  const onStop = async (id: string) => {
+    setBusy(`stop-${id}`)
+    try { await api.instanceStop(id); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
+  }
+
   const emailOf = (id?: string) => accounts.find((a) => a.id === id)?.email || ''
 
   if (loading) return <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
@@ -96,9 +106,13 @@ export function LocalInstancesTab({ api }: { api: ProviderLocalApi }) {
                 <div className="text-[10px] font-mono-data text-[var(--text-muted)] truncate mt-0.5">{p.userDataDir}</div>
               </div>
               <div className="flex items-center gap-1.5">
-                <button disabled title="启动真实 app 需在已安装目标 app 的真机上接入" className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-muted)] inline-flex items-center gap-1 opacity-50 cursor-not-allowed">
-                  <Play size={12} /> 启动
-                </button>
+                {p.pid ? (
+                  <button onClick={() => onStop(p.id)} disabled={busy === `stop-${p.id}`} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">停止</button>
+                ) : (
+                  <button onClick={() => onLaunch(p.id)} disabled={busy === `launch-${p.id}`} title="需已安装目标 app" className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1 disabled:opacity-50">
+                    <Play size={12} /> 启动
+                  </button>
+                )}
                 <button onClick={() => onDelete(p.id)} disabled={busy === `del-${p.id}`} className="text-[var(--text-muted)] hover:text-[var(--danger)] w-7 h-7 inline-flex items-center justify-center rounded-[7px] hover:bg-[var(--danger)]/10" title="删除"><Trash2 size={14} /></button>
               </div>
             </div>
