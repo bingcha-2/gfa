@@ -13,6 +13,7 @@ import (
 	"bcai-wails/internal/local/antigravityauth"
 	"bcai-wails/internal/local/codexauth"
 	"bcai-wails/internal/local/gateway"
+	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
@@ -34,6 +35,7 @@ var (
 	localOnce      sync.Once
 	localAcc       *account.Store
 	localSources   *takeover.SourceStore
+	localInstances *instance.Store
 	localProviders map[account.Provider]*providerCtx
 	localErr       error
 )
@@ -52,6 +54,7 @@ func ensureLocal() error {
 		}
 		localAcc = acc
 		localSources = takeover.NewSourceStore(dir)
+		localInstances = instance.NewStore(dir)
 		localProviders = map[account.Provider]*providerCtx{}
 
 		mk := func(p account.Provider, login manager.LoginFunc) *providerCtx {
@@ -425,4 +428,42 @@ func (a *App) LocalAntigravityWakeupRunNow() ([]wakeup.RunEntry, error) {
 }
 func (a *App) LocalAntigravityWakeupHistory() ([]wakeup.RunEntry, error) {
 	return a.wakeupHistory(account.ProviderAntigravity)
+}
+
+// ───────────────────────── 多实例 profile 管理 ─────────────────────────
+// 实际启动/停止真实 app(进程隔离 user-data-dir)属平台集成,需真机,后续接入。
+
+func (a *App) LocalInstanceList(provider string) ([]*instance.Profile, error) {
+	if err := ensureLocal(); err != nil {
+		return nil, err
+	}
+	return localInstances.List(provider)
+}
+
+func (a *App) LocalInstanceCreate(provider, name, userDataDir, workingDir, extraArgs, bindAccountID string) (*instance.Profile, error) {
+	if err := ensureLocal(); err != nil {
+		return nil, err
+	}
+	p := &instance.Profile{
+		Provider: provider, Name: name, UserDataDir: userDataDir,
+		WorkingDir: workingDir, ExtraArgs: extraArgs, BindAccountID: bindAccountID,
+	}
+	if err := localInstances.Create(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (a *App) LocalInstanceUpdate(p instance.Profile) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localInstances.Update(&p)
+}
+
+func (a *App) LocalInstanceDelete(id string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localInstances.Delete(id)
 }
