@@ -76,7 +76,14 @@ func (g *Gateway) Start(port int) (int, error) {
 	}
 
 	mgr := coreauth.NewManager(authsync.NewStore(g.acc, g.provider), authsync.Selector{}, nil)
-	svc, err := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(cfgPath).WithCoreAuthManager(mgr).Build()
+	// Service.Run 不会自动 Load 注入的 manager。用 OnAfterStart 在 server 就绪
+	//(executor 已注册)后 Load,确保自有号能正确绑定 codex executor。
+	svc, err := cliproxy.NewBuilder().
+		WithConfig(cfg).
+		WithConfigPath(cfgPath).
+		WithCoreAuthManager(mgr).
+		WithHooks(cliproxy.Hooks{OnAfterStart: func(*cliproxy.Service) { _ = mgr.Load(context.Background()) }}).
+		Build()
 	if err != nil {
 		return 0, err
 	}
@@ -90,8 +97,6 @@ func (g *Gateway) Start(port int) (int, error) {
 		defer func() { _ = recover() }() // 兜崩溃,不带垮主程序
 		_ = svc.Run(ctx)
 	}()
-	// Service.Run 不会自动 Load 注入的 coreauth.Manager;主动加载自有号入池。
-	_ = mgr.Load(ctx)
 	return port, nil
 }
 

@@ -38,9 +38,18 @@ func TestGateway_ServesV1WithOwnAccount(t *testing.T) {
 		t.Fatalf("gateway not listening on %s", g.Addr())
 	}
 
-	// 自有号开机即入池(Start 内主动 Load)。安全不变式:只有 PoolEnabled 自有号进得来。
-	if n := g.LoadedAuthCount(); n != 1 {
-		t.Fatalf("expected 1 own account loaded into gateway, got %d", n)
+	// 自有号在 server 就绪后(OnAfterStart)被 Load 入池。轮询等待异步加载完成。
+	// 安全不变式:只有 PoolEnabled 自有号进得来。
+	loaded := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if g.LoadedAuthCount() == 1 {
+			loaded = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !loaded {
+		t.Fatalf("expected 1 own account loaded into gateway, got %d", g.LoadedAuthCount())
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -50,12 +59,8 @@ func TestGateway_ServesV1WithOwnAccount(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	// 数据面可达即通过(具体状态取决于鉴权/上游;关键是嵌入网关在进程内真实服务)。
-	t.Logf("/v1/models status=%d", resp.StatusCode)
+	t.Logf("/v1/models status=%d, loaded own accounts=%d", resp.StatusCode, g.LoadedAuthCount())
 	if resp.StatusCode == 0 {
 		t.Fatal("no HTTP status from gateway")
 	}
-
-	// 诊断:确认自有号是否真被加载进 auth manager。
-	_ = g.Reload()
-	t.Logf("loaded auth count (custom store) = %d", g.LoadedAuthCount())
 }
