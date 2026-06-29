@@ -90,6 +90,8 @@ func (g *Gateway) Start(port int) (int, error) {
 		defer func() { _ = recover() }() // 兜崩溃,不带垮主程序
 		_ = svc.Run(ctx)
 	}()
+	// Service.Run 不会自动 Load 注入的 coreauth.Manager;主动加载自有号入池。
+	_ = mgr.Load(ctx)
 	return port, nil
 }
 
@@ -116,6 +118,17 @@ func (g *Gateway) Reload() error {
 		return nil
 	}
 	return mgr.Load(context.Background())
+}
+
+// LoadedAuthCount 返回网关 auth manager 当前已加载的 auth 数(测试/诊断用)。
+func (g *Gateway) LoadedAuthCount() int {
+	g.mu.Lock()
+	mgr := g.mgr
+	g.mu.Unlock()
+	if mgr == nil {
+		return 0
+	}
+	return len(mgr.List())
 }
 
 func (g *Gateway) Running() bool {
