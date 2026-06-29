@@ -1,4 +1,4 @@
-import { LayoutDashboard, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen, PlugZap } from 'lucide-react'
+import { LayoutDashboard, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen, PlugZap, Rocket } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
@@ -108,6 +108,20 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
           >
             <PlugZap size={20} strokeWidth={currentPage === 'local_codex' ? 2.2 : 1.7} className="flex-shrink-0" />
             {!collapsed && 'Codex'}
+          </button>
+          <button
+            onClick={() => onPageChange('local_antigravity')}
+            title={collapsed ? 'Antigravity' : undefined}
+            className={cn(
+              'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
+              collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
+              currentPage === 'local_antigravity'
+                ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            )}
+          >
+            <Rocket size={20} strokeWidth={currentPage === 'local_antigravity' ? 2.2 : 1.7} className="flex-shrink-0" />
+            {!collapsed && 'Antigravity'}
           </button>
         </div>
 

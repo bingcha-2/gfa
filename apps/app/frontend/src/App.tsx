@@ -6,6 +6,7 @@ import { SettingsPage } from '@/pages/SettingsPage'
 import { FaqPage } from '@/pages/FaqPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { CodexSuitePage } from '@/features/local/codex/CodexSuitePage'
+import { AntigravitySuitePage } from '@/features/local/antigravity/AntigravitySuitePage'
 import { ToastHost } from '@/components/ToastHost'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -82,6 +83,7 @@ export default function App() {
       case 'faq': return <FaqPage />
       case 'settings': return <SettingsPage />
       case 'local_codex': return <CodexSuitePage />
+      case 'local_antigravity': return <AntigravitySuitePage />
     }
   }
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Router } from 'lucide-react'
-import { localApi, type CodexStatsSnapshot } from '@/services/localApi'
+import { type LocalStatsSnapshot, type ProviderLocalApi } from '@/services/localApi'
 import { formatTokens } from '@/lib/utils'
 
-/** 本地 Codex 统计 tab:数据来自本地网关用量插件,与远程主页统计分开。 */
+/** 通用本地统计 tab:数据来自某 provider 的本地网关用量插件,与远程主页统计分开。 */
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'primary' | 'danger' }) {
   return (
@@ -19,21 +19,21 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
   )
 }
 
-export function CodexStatsTab() {
-  const [snap, setSnap] = useState<CodexStatsSnapshot | null>(null)
+export function LocalStatsTab({ api }: { api: ProviderLocalApi }) {
+  const [snap, setSnap] = useState<LocalStatsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
 
   const refresh = useCallback(async () => {
     try {
-      setSnap(await localApi.codexStats())
+      setSnap(await api.stats())
       setErr('')
     } catch (e) {
       setErr(String(e))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -62,7 +62,7 @@ export function CodexStatsTab() {
 
       {snap.totalRequests === 0 ? (
         <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
-          还没有请求。接管 Codex CLI 并发起对话后,这里会显示按账号与模型的用量。
+          还没有请求。接管 CLI 并发起对话后,这里会显示按账号与模型的用量。
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-3">

@@ -118,7 +118,7 @@ export interface UpdateStatus {
 }
 
 // ===== Pages =====
-export type PageId = 'home' | 'logs' | 'faq' | 'settings' | 'local_codex'
+export type PageId = 'home' | 'logs' | 'faq' | 'settings' | 'local_codex' | 'local_antigravity'
 
 // ===== Log =====
 export interface ParsedLog {

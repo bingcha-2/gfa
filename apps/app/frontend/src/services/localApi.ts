@@ -3,7 +3,9 @@
  *
  * 这些 App 方法尚未进 wailsjs 生成绑定(需 `wails generate module`),为不依赖
  * 重新生成、又遵守「不让 window.go.* 散落到组件」的约定,集中在此一处封装。
- * 待生成绑定补齐后,可平滑改为从 wailsjs/go/main/App 直接 import。
+ *
+ * 多 provider(codex / antigravity)共用同一套 UI:每个 provider 暴露一个
+ * 满足 ProviderLocalApi 的对象,UI 组件只依赖该接口。
  */
 
 export interface LocalAccountView {
@@ -29,17 +31,37 @@ export interface LocalGatewayStatus {
   port: number
 }
 
-export interface CodexStatModel { model: string; requests: number; totalTokens: number }
-export interface CodexStatAccount { authId: string; email: string; requests: number; totalTokens: number }
-export interface CodexStatRecent { atMs: number; authId: string; model: string; failed: boolean; latencyMs: number }
-export interface CodexStatsSnapshot {
+export interface LocalStatModel { model: string; requests: number; totalTokens: number }
+export interface LocalStatAccount { authId: string; email: string; requests: number; totalTokens: number }
+export interface LocalStatRecent { atMs: number; authId: string; model: string; failed: boolean; latencyMs: number }
+export interface LocalStatsSnapshot {
   totalRequests: number
   totalFailed: number
   totalInputTokens: number
   totalOutputTokens: number
-  byAccount: CodexStatAccount[] | null
-  byModel: CodexStatModel[] | null
-  recent: CodexStatRecent[] | null
+  byAccount: LocalStatAccount[] | null
+  byModel: LocalStatModel[] | null
+  recent: LocalStatRecent[] | null
+}
+
+/** 一个 provider 的本地账号能力(UI 组件只依赖此接口)。 */
+export interface ProviderLocalApi {
+  listAccounts(): Promise<LocalAccountView[]>
+  startLogin(): Promise<string>
+  waitLogin(loginId: string): Promise<LocalAccountView>
+  setPoolEnabled(id: string, enabled: boolean): Promise<void>
+  setPriority(id: string): Promise<void>
+  deleteAccount(id: string): Promise<void>
+  deleteAccounts(ids: string[]): Promise<void>
+  gatewayStart(): Promise<LocalGatewayStatus>
+  gatewayStop(): Promise<void>
+  gatewayStatus(): Promise<LocalGatewayStatus>
+  stats(): Promise<LocalStatsSnapshot>
+  exportAccounts(ids: string[]): Promise<string>
+  importFromJSON(json: string): Promise<number>
+  /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
+  getSource?(): Promise<string>
+  setSource?(source: 'remote' | 'local'): Promise<void>
 }
 
 type GoApp = Record<string, (...args: unknown[]) => Promise<unknown>>
@@ -51,20 +73,36 @@ function app(): GoApp {
   return a
 }
 
-export const localApi = {
-  listCodexAccounts: () => app().LocalListCodexAccounts() as Promise<LocalAccountView[]>,
-  startCodexLogin: () => app().LocalStartCodexLogin() as Promise<string>,
-  waitCodexLogin: (loginId: string) => app().LocalWaitCodexLogin(loginId) as Promise<LocalAccountView>,
-  deleteAccount: (id: string) => app().LocalDeleteAccount(id) as Promise<void>,
-  setPoolEnabled: (id: string, enabled: boolean) => app().LocalSetPoolEnabled(id, enabled) as Promise<void>,
-  setCodexPriority: (id: string) => app().LocalSetCodexPriority(id) as Promise<void>,
+export const codexLocalApi: ProviderLocalApi = {
+  listAccounts: () => app().LocalListCodexAccounts() as Promise<LocalAccountView[]>,
+  startLogin: () => app().LocalStartCodexLogin() as Promise<string>,
+  waitLogin: (id) => app().LocalWaitCodexLogin(id) as Promise<LocalAccountView>,
+  setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
+  setPriority: (id) => app().LocalSetCodexPriority(id) as Promise<void>,
+  deleteAccount: (id) => app().LocalDeleteAccount(id) as Promise<void>,
+  deleteAccounts: (ids) => app().LocalDeleteAccounts(ids) as Promise<void>,
   gatewayStart: () => app().LocalGatewayStart() as Promise<LocalGatewayStatus>,
   gatewayStop: () => app().LocalGatewayStop() as Promise<void>,
   gatewayStatus: () => app().LocalGatewayStatus() as Promise<LocalGatewayStatus>,
-  getCodexSource: () => app().LocalGetCodexSource() as Promise<string>,
-  setCodexSource: (source: 'remote' | 'local') => app().LocalSetCodexSource(source) as Promise<void>,
-  codexStats: () => app().LocalCodexStats() as Promise<CodexStatsSnapshot>,
-  exportCodexAccounts: (ids: string[]) => app().LocalExportCodexAccounts(ids) as Promise<string>,
-  importCodexFromJSON: (json: string) => app().LocalImportCodexFromJSON(json) as Promise<number>,
-  deleteAccounts: (ids: string[]) => app().LocalDeleteAccounts(ids) as Promise<void>,
+  stats: () => app().LocalCodexStats() as Promise<LocalStatsSnapshot>,
+  exportAccounts: (ids) => app().LocalExportCodexAccounts(ids) as Promise<string>,
+  importFromJSON: (json) => app().LocalImportCodexFromJSON(json) as Promise<number>,
+  getSource: () => app().LocalGetCodexSource() as Promise<string>,
+  setSource: (src) => app().LocalSetCodexSource(src) as Promise<void>,
+}
+
+export const antigravityLocalApi: ProviderLocalApi = {
+  listAccounts: () => app().LocalListAntigravityAccounts() as Promise<LocalAccountView[]>,
+  startLogin: () => app().LocalStartAntigravityLogin() as Promise<string>,
+  waitLogin: (id) => app().LocalWaitAntigravityLogin(id) as Promise<LocalAccountView>,
+  setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
+  setPriority: (id) => app().LocalSetAntigravityPriority(id) as Promise<void>,
+  deleteAccount: (id) => app().LocalDeleteAccount(id) as Promise<void>,
+  deleteAccounts: (ids) => app().LocalDeleteAccounts(ids) as Promise<void>,
+  gatewayStart: () => app().LocalAntigravityGatewayStart() as Promise<LocalGatewayStatus>,
+  gatewayStop: () => app().LocalAntigravityGatewayStop() as Promise<void>,
+  gatewayStatus: () => app().LocalAntigravityGatewayStatus() as Promise<LocalGatewayStatus>,
+  stats: () => app().LocalAntigravityStats() as Promise<LocalStatsSnapshot>,
+  exportAccounts: (ids) => app().LocalExportAntigravityAccounts(ids) as Promise<string>,
+  importFromJSON: (json) => app().LocalImportAntigravityFromJSON(json) as Promise<number>,
 }
