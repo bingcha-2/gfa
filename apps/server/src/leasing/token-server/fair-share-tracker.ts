@@ -491,6 +491,10 @@ export class FairShareTracker {
         now - tracker.pendingRise.since >= REBOUND_CONFIRM_MS &&
         tracker.pendingRise.count >= REBOUND_MIN_CONFIRMATIONS
       ) {
+        // 回血是下跌的镜像:账号回升 Δ → 各人 T_i 同步退还 Δ(按当前占比分摊)。否则 ΣT_i 越过
+        // 「1−低水位」上界(归因 > 实际消耗),已用满的卡 mine=e−T 卡在 0、血条不随母号回血恢复、
+        // 死等 reset(正是「母号回血了我的额度没跟上」的根因)。reset 是其极端情形(全退)。
+        this.refundAttributedOnRebound(tracker, tracker.pendingRise.fraction - tracker.lastFraction);
         tracker.lastFraction = tracker.pendingRise.fraction;
         tracker.pendingRise = null;
       }
@@ -498,6 +502,25 @@ export class FairShareTracker {
       tracker.pendingRise = null;
     }
     this.dirty = true;
+  }
+
+  /**
+   * 低水位回升 Δ 时,按各人当前 T_i 占比退还 Δ 的「已烧账号比例」(封顶 ΣT_i)。
+   * 维持不变量 ΣT_i ≤ 1−低水位 —— 与下跌归并(Δ=低水位−fraction → T_i 增)严格对称。
+   * 仅在「确认回升抬低水位」时调用(已过 5min + ≥2 次读数的噪声护栏),不会被瞬时虚高触发。
+   */
+  private refundAttributedOnRebound(tracker: BucketTracker, rise: number): void {
+    if (!(rise > 0)) return;
+    let sumT = 0;
+    for (const v of tracker.attributed.values()) sumT += v;
+    if (sumT <= 0) return;
+    const refund = Math.min(rise, sumT);
+    const factor = (sumT - refund) / sumT;
+    for (const [card, t] of tracker.attributed) {
+      const nt = t * factor;
+      if (nt > 1e-12) tracker.attributed.set(card, nt);
+      else tracker.attributed.delete(card);
+    }
   }
 
   /** 窗口 reset:清零 T_i/u_i,重算锁定 D + participants + 预留,设低水位为 fresh。 */

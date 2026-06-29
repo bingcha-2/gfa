@@ -529,11 +529,12 @@ describe("§15.1 低水位(fraction 非单调)", () => {
     now += 60 * 1000; // +1min(未达 5min)
     t.applyAccountQuotaSnapshot(1, BK, 0.9);
     expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.6, 6);
-    // 持续超过 5min 后再确认 → 抬到 0.9(无 resetAt 喂入);T_O1 不变(回升不归因)
+    // 持续超过 5min 后再确认 → 抬到 0.9(无 resetAt 喂入);回血是下跌的镜像,Δ=0.3 退还给 O1
+    // → T_O1=0.4×(0.4−0.3)/0.4=0.1(维持 ΣT ≤ 1−低水位:0.1 ≤ 0.1)。
     now += REBOUND_MS;
     t.applyAccountQuotaSnapshot(1, BK, 0.9);
     expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.9, 6);
-    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.4, 6);
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.1, 6);
   });
 
   it("★#35b 高频凑次数但持续时间不够 → 不抬(抗瞬时虚高)", () => {
@@ -575,6 +576,34 @@ describe("§15.1 低水位(fraction 非单调)", () => {
     // 再回升:since 重置为现在,刚开始不抬
     t.applyAccountQuotaSnapshot(1, BK, 0.9);
     expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.5, 6);
+  });
+
+  // 回血是下跌的镜像:确认回升时按比例退还 T_i,否则 ΣT 越过 1−低水位、已用满的卡血条卡死 0
+  // 不随母号回血恢复(死等 reset)。这正是「母号回血了我的额度没跟上」的根因之一。
+  it("★#35e 确认回升按比例退还 T_i,已用满的卡血条随母号回血恢复", () => {
+    let now = T;
+    const t = track(makeTracker({
+      now: () => now,
+      bound: { 1: [{ cardId: "O1", weight: 1 }, { cardId: "O2", weight: 1 }] },
+      seats: { 1: 2 },
+    }));
+    t.applyAccountQuotaSnapshot(1, BK, 1.0); // D=2,e=0.5
+    use(t, 1, "O1", 100);
+    t.applyAccountQuotaSnapshot(1, BK, 0.5); // 账号烧 50% 全归 O1 → T_O1=0.5=e → O1 血条 0
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeCloseTo(0, 6);
+
+    // 上游真回血到 0.9(reset 时间没变),确认满 5min。
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+    now += REBOUND_MS;
+    t.applyAccountQuotaSnapshot(1, BK, 0.9);
+
+    // 低水位抬到 0.9;Δ=0.4 全退给 O1(sumT=0.5)→ T_O1=0.5×(0.5−0.4)/0.5=0.1。
+    expect(t.getBucketStateForTesting(1, BK)?.lastFraction).toBeCloseTo(0.9, 6);
+    expect(t.getBucketStateForTesting(1, BK)?.attributed.O1).toBeCloseTo(0.1, 6);
+    // 血条恢复:mine=e−T=0.4 → (0.4×scale)/0.5,scale=1 → 0.8。不再卡死 0。
+    expect(t.getCardQuotaFractions(1, "O1")[BK].fraction).toBeGreaterThan(0.5);
+    // 不变量恢复:ΣT(0.1) ≤ 1−低水位(0.1)。
+    expect(totalAttributed(t, 1)).toBeLessThanOrEqual(1 - 0.9 + 1e-9);
   });
 });
 
