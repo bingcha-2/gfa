@@ -6,16 +6,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
-// detectCodexAppPath 检测 Codex 安装路径。
-// 优先级: 用户配置 > chrome-native-hosts.json(Codex 自写,跨平台通用)
-//        > 注册表/Spotlight/.desktop > 硬编码路径兜底
+// detectCodexAppPath 检测任一 Codex 安装路径(CLI 或 GUI)。
+// 一个接管按钮管理全部 Codex:CLI 与 App 共享 ~/.codex/config.toml,写一次配置即可同时覆盖。
 func detectCodexAppPath() string {
+	if p := detectCodexCLIPath(); p != "" {
+		return p
+	}
+	return detectCodexGUIPath()
+}
+
+func detectCodexCLIPath() string {
 	cfg := LoadConfig()
 	if cfg.CodexAppPath != "" {
-		if _, err := os.Stat(cfg.CodexAppPath); err == nil {
+		if info, err := os.Stat(cfg.CodexAppPath); err == nil && !info.IsDir() && !strings.HasSuffix(cfg.CodexAppPath, ".app") {
 			return cfg.CodexAppPath
 		}
 	}
@@ -29,35 +36,17 @@ func detectCodexAppPath() string {
 
 	switch runtime.GOOS {
 	case "darwin":
-		if p := spotlightFindApp("Codex.app"); p != "" {
+		if p := detectCodexCLIInAppBundle(spotlightFindApp("Codex.app")); p != "" {
 			return p
 		}
-		if _, err := os.Stat("/Applications/Codex.app"); err == nil {
-			return "/Applications/Codex.app"
+		if p := detectCodexCLIInAppBundle("/Applications/Codex.app"); p != "" {
+			return p
 		}
 	case "windows":
-		if loc := registryFindInstallPath("Codex"); loc != "" {
-			if info, err := os.Stat(loc); err == nil {
-				if info.IsDir() {
-					exe := filepath.Join(loc, "Codex.exe")
-					if exeInfo, exeErr := os.Stat(exe); exeErr == nil && !exeInfo.IsDir() {
-						return exe
-					}
-				} else {
-					return loc
-				}
-			}
-		}
 		localAppData := os.Getenv("LOCALAPPDATA")
-		programFiles := os.Getenv("ProgramFiles")
-		for _, p := range []string{
-			filepath.Join(localAppData, "OpenAI", "Codex", "bin", "codex.exe"),
-			filepath.Join(localAppData, "Programs", "Codex", "Codex.exe"),
-			filepath.Join(programFiles, "Codex", "Codex.exe"),
-		} {
-			if p == "" {
-				continue
-			}
+		appData := os.Getenv("APPDATA")
+		userProfile := os.Getenv("USERPROFILE")
+		for _, p := range codexWindowsCLICandidates(localAppData, appData, userProfile) {
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
 				return p
 			}
@@ -81,11 +70,82 @@ func detectCodexAppPath() string {
 		}
 	}
 
+	// Codex 0.142+ 的官方安装器/包布局会把 CLI 放到
+	// ~/.codex/packages/standalone/releases/<version-triple>/bin/codex(.exe)。
+	// 这类安装不一定进 PATH,Windows 桌面进程尤其容易漏掉。
+	if p := detectCodexInStandalonePackages(codexHomePath(), codexExecutableName()); p != "" {
+		return p
+	}
+
 	// 纯 CLI 安装兜底:npm -g / brew / 手动软链进 PATH 的 `codex`。这类安装不写
 	// chrome-native-hosts.json、不进注册表、也不在上面的固定目录里,仅靠前面的探测会漏检,
 	// 导致接管按钮不出现。放在最末位,保证 GUI / 官方安装优先。
 	if p := detectCodexOnPath(); p != "" {
 		return p
+	}
+	return ""
+}
+
+func detectCodexGUIPath() string {
+	cfg := LoadConfig()
+	if cfg.CodexAppPath != "" {
+		if runtime.GOOS == "darwin" && strings.HasSuffix(cfg.CodexAppPath, ".app") {
+			if _, err := os.Stat(cfg.CodexAppPath); err == nil {
+				return cfg.CodexAppPath
+			}
+		} else if runtime.GOOS == "windows" && strings.EqualFold(filepath.Base(cfg.CodexAppPath), "Codex.exe") {
+			if info, err := os.Stat(cfg.CodexAppPath); err == nil && !info.IsDir() {
+				return cfg.CodexAppPath
+			}
+		}
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		if p := spotlightFindApp("Codex.app"); p != "" {
+			return p
+		}
+		if _, err := os.Stat("/Applications/Codex.app"); err == nil {
+			return "/Applications/Codex.app"
+		}
+	case "windows":
+		if loc := registryFindInstallPath("Codex"); loc != "" {
+			if info, err := os.Stat(loc); err == nil {
+				if info.IsDir() {
+					exe := filepath.Join(loc, "Codex.exe")
+					if exeInfo, exeErr := os.Stat(exe); exeErr == nil && !exeInfo.IsDir() {
+						return exe
+					}
+				} else {
+					return loc
+				}
+			}
+		}
+		for _, p := range codexWindowsGUIExeCandidates(os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")) {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
+		}
+	case "linux":
+		if p := desktopFindApp("Codex"); p != "" {
+			return p
+		}
+		for _, p := range []string{"/opt/Codex/codex", "/usr/share/codex/codex"} {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+func detectCodexCLIInAppBundle(appPath string) string {
+	if appPath == "" {
+		return ""
+	}
+	cli := filepath.Join(appPath, "Contents", "Resources", "codex")
+	if info, err := os.Stat(cli); err == nil && !info.IsDir() {
+		return cli
 	}
 	return ""
 }
@@ -101,6 +161,39 @@ func codexWindowsGUIExeCandidates(localAppData, programFiles string) []string {
 	}
 	if programFiles != "" {
 		candidates = append(candidates, filepath.Join(programFiles, "Codex", "Codex.exe"))
+	}
+	return candidates
+}
+
+func codexExecutableName() string {
+	if runtime.GOOS == "windows" {
+		return "codex.exe"
+	}
+	return "codex"
+}
+
+// codexWindowsCLICandidates 返回 Windows 纯 CLI 安装的常见落点。
+// npm/pnpm/bun 的全局 shim 通常在用户目录下,从桌面 App 启动时 PATH 未必包含这些目录,
+// 所以不能只依赖 exec.LookPath("codex")。
+func codexWindowsCLICandidates(localAppData, appData, userProfile string) []string {
+	candidates := []string{}
+	if localAppData != "" {
+		candidates = append(candidates,
+			filepath.Join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
+			filepath.Join(localAppData, "OpenAI", "Codex", "bin", "codex.exe"),
+		)
+	}
+	if appData != "" {
+		candidates = append(candidates,
+			filepath.Join(appData, "npm", "codex.cmd"),
+			filepath.Join(appData, "pnpm", "codex.cmd"),
+		)
+	}
+	if userProfile != "" {
+		candidates = append(candidates,
+			filepath.Join(userProfile, ".bun", "bin", "codex.exe"),
+			filepath.Join(userProfile, ".bun", "bin", "codex.cmd"),
+		)
 	}
 	return candidates
 }
@@ -122,38 +215,7 @@ func detectCodexOnPath() string {
 // sqlite 历史可对齐。这里只查 GUI 专属安装位置(刻意不含 CLI 的 OpenAI\Codex\bin),避免把
 // CLI 误判成 GUI 而去做无意义的 kill/relaunch。
 func codexGUIInstalled() bool {
-	switch runtime.GOOS {
-	case "darwin":
-		if spotlightFindApp("Codex.app") != "" {
-			return true
-		}
-		_, err := os.Stat("/Applications/Codex.app")
-		return err == nil
-	case "windows":
-		if loc := registryFindInstallPath("Codex"); loc != "" {
-			if _, err := os.Stat(loc); err == nil {
-				return true
-			}
-		}
-		for _, p := range codexWindowsGUIExeCandidates(os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")) {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
-				return true
-			}
-		}
-		return false
-	case "linux":
-		if desktopFindApp("Codex") != "" {
-			return true
-		}
-		for _, p := range []string{"/opt/Codex/codex", "/usr/share/codex/codex"} {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
+	return detectCodexGUIPath() != ""
 }
 
 // detectCodexInVersionedBin 扫描 %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe。
@@ -181,6 +243,52 @@ func detectCodexInVersionedBin(localAppData string) string {
 		}
 		if mod := info.ModTime(); newest == "" || mod.After(newestMod) {
 			newest, newestMod = exe, mod
+		}
+	}
+	return newest
+}
+
+// detectCodexInStandalonePackages 扫描 ~/.codex/packages/standalone/releases。
+// 兼容两种官方 standalone 布局:
+//   - legacy:  releases/<version-triple>/codex(.exe)
+//   - package: releases/<version-triple>/bin/codex(.exe)
+//
+// 多个版本残留时取可执行文件修改时间最新者。
+func detectCodexInStandalonePackages(codexHome, exeName string) string {
+	if codexHome == "" || exeName == "" {
+		return ""
+	}
+	for _, exe := range []string{
+		filepath.Join(codexHome, "packages", "standalone", "current", "bin", exeName),
+		filepath.Join(codexHome, "packages", "standalone", "current", exeName),
+	} {
+		if info, err := os.Stat(exe); err == nil && !info.IsDir() {
+			return exe
+		}
+	}
+	releasesDir := filepath.Join(codexHome, "packages", "standalone", "releases")
+	entries, err := os.ReadDir(releasesDir)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	var newestMod time.Time
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		releaseDir := filepath.Join(releasesDir, e.Name())
+		for _, exe := range []string{
+			filepath.Join(releaseDir, "bin", exeName),
+			filepath.Join(releaseDir, exeName),
+		} {
+			info, err := os.Stat(exe)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if mod := info.ModTime(); newest == "" || mod.After(newestMod) {
+				newest, newestMod = exe, mod
+			}
 		}
 	}
 	return newest

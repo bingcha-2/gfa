@@ -311,7 +311,7 @@ func LaunchCodexApp() {
 		Log("[codex] 纯 CLI 安装(无桌面 GUI),无需拉起;config 已生效,重开终端即可")
 		return
 	}
-	path := detectCodexAppPath()
+	path := detectCodexGUIPath()
 	if path == "" {
 		Log("[codex] 未检测到 Codex 安装路径,跳过启动")
 		return

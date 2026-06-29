@@ -73,3 +73,18 @@ func TestCodexWindowsGUIExeCandidatesEmptyRoots(t *testing.T) {
 		t.Fatalf("只有 LOCALAPPDATA 时应只返回一个候选, got %v", got)
 	}
 }
+
+func TestDetectCodexCLIInAppBundle(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Codex.app")
+	cli := filepath.Join(app, "Contents", "Resources", "codex")
+	if err := os.MkdirAll(filepath.Dir(cli), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := detectCodexCLIInAppBundle(app); got != cli {
+		t.Fatalf("detectCodexCLIInAppBundle = %q, want %q", got, cli)
+	}
+}

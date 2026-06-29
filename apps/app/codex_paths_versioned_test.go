@@ -70,6 +70,87 @@ func TestDetectCodexInVersionedBinAbsent(t *testing.T) {
 	}
 }
 
+func TestDetectCodexInStandalonePackagesPackageLayout(t *testing.T) {
+	codexHome := t.TempDir()
+	releaseDir := filepath.Join(codexHome, "packages", "standalone", "releases", "0.142.4-x86_64-pc-windows-msvc")
+	binDir := filepath.Join(releaseDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(releaseDir, "codex-package.json"), "{}")
+	wantExe := filepath.Join(binDir, "codex.exe")
+	writeFile(t, wantExe, "codex")
+
+	got := detectCodexInStandalonePackages(codexHome, "codex.exe")
+	if got != wantExe {
+		t.Fatalf("detectCodexInStandalonePackages = %q, want %q", got, wantExe)
+	}
+}
+
+func TestDetectCodexInStandalonePackagesCurrentPackageLayout(t *testing.T) {
+	codexHome := t.TempDir()
+	wantExe := filepath.Join(codexHome, "packages", "standalone", "current", "bin", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(wantExe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, wantExe, "codex")
+
+	got := detectCodexInStandalonePackages(codexHome, "codex.exe")
+	if got != wantExe {
+		t.Fatalf("detectCodexInStandalonePackages current = %q, want %q", got, wantExe)
+	}
+}
+
+func TestDetectCodexInStandalonePackagesPicksNewest(t *testing.T) {
+	codexHome := t.TempDir()
+	older := filepath.Join(codexHome, "packages", "standalone", "releases", "0.141.0-x86_64-pc-windows-msvc", "bin", "codex.exe")
+	newer := filepath.Join(codexHome, "packages", "standalone", "releases", "0.142.4-x86_64-pc-windows-msvc", "bin", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(older), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(newer), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, older, "old")
+	writeFile(t, newer, "new")
+	past := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(older, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := detectCodexInStandalonePackages(codexHome, "codex.exe"); got != newer {
+		t.Fatalf("detectCodexInStandalonePackages = %q, want newest %q", got, newer)
+	}
+}
+
+func TestCodexWindowsCLICandidatesIncludesPackageManagerShims(t *testing.T) {
+	localAppData := filepath.Join("C:", "Users", "u", "AppData", "Local")
+	appData := filepath.Join("C:", "Users", "u", "AppData", "Roaming")
+	userProfile := filepath.Join("C:", "Users", "u")
+
+	got := codexWindowsCLICandidates(localAppData, appData, userProfile)
+	want := []string{
+		filepath.Join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
+		filepath.Join(localAppData, "OpenAI", "Codex", "bin", "codex.exe"),
+		filepath.Join(appData, "npm", "codex.cmd"),
+		filepath.Join(appData, "pnpm", "codex.cmd"),
+		filepath.Join(userProfile, ".bun", "bin", "codex.exe"),
+		filepath.Join(userProfile, ".bun", "bin", "codex.cmd"),
+	}
+	for _, w := range want {
+		found := false
+		for _, g := range got {
+			if g == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("codexWindowsCLICandidates missing %q in %v", w, got)
+		}
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
