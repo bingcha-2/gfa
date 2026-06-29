@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/codexauth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
@@ -21,14 +22,14 @@ func newMgr(t *testing.T) (*Manager, *account.Store, *fakeReloader) {
 	}
 	t.Cleanup(func() { acc.Close() })
 	fr := &fakeReloader{}
-	return New(acc, fr), acc, fr
+	return New(acc, fr, account.ProviderCodex, codexauth.Login), acc, fr
 }
 
 func TestListAccounts_View(t *testing.T) {
 	m, acc, _ := newMgr(t)
 	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "a@x.com", AuthKind: account.AuthOAuth,
 		PlanType: "pro", PoolEnabled: true, HourlyPercent: 30, Tags: []string{"主力"}})
-	views, err := m.ListAccounts(account.ProviderCodex)
+	views, err := m.ListAccounts()
 	if err != nil || len(views) != 1 {
 		t.Fatalf("list: %v len=%d", err, len(views))
 	}
@@ -44,7 +45,7 @@ func TestSetPriority_ClearsOthers(t *testing.T) {
 	a2 := &account.Account{Provider: account.ProviderCodex, Email: "2@x", PoolEnabled: true}
 	_ = acc.Add(a1)
 	_ = acc.Add(a2)
-	if err := m.SetPriority(account.ProviderCodex, a2.ID); err != nil {
+	if err := m.SetPriority(a2.ID); err != nil {
 		t.Fatalf("SetPriority: %v", err)
 	}
 	g1, _ := acc.Get(a1.ID)
@@ -59,7 +60,7 @@ func TestSetPriority_ClearsOthers(t *testing.T) {
 
 func TestSetPriority_NotFound(t *testing.T) {
 	m, _, _ := newMgr(t)
-	if err := m.SetPriority(account.ProviderCodex, "nope"); err == nil {
+	if err := m.SetPriority("nope"); err == nil {
 		t.Fatal("expected not-found error")
 	}
 }
@@ -85,8 +86,8 @@ func TestLogin_AsyncSavesAndReturnsView(t *testing.T) {
 	m.loginFn = func(ctx context.Context, cfg *config.Config) (*account.Account, error) {
 		return &account.Account{Provider: account.ProviderCodex, Email: "new@x.com", AuthKind: account.AuthOAuth, PoolEnabled: true}, nil
 	}
-	id := m.StartCodexLogin()
-	v, err := m.WaitCodexLogin(id)
+	id := m.StartLogin()
+	v, err := m.WaitLogin(id)
 	if err != nil {
 		t.Fatalf("wait: %v", err)
 	}
@@ -107,15 +108,15 @@ func TestLogin_Error(t *testing.T) {
 	m.loginFn = func(ctx context.Context, cfg *config.Config) (*account.Account, error) {
 		return nil, errors.New("oauth failed")
 	}
-	id := m.StartCodexLogin()
-	if _, err := m.WaitCodexLogin(id); err == nil {
+	id := m.StartLogin()
+	if _, err := m.WaitLogin(id); err == nil {
 		t.Fatal("expected login error propagated")
 	}
 }
 
 func TestWaitUnknownSession(t *testing.T) {
 	m, _, _ := newMgr(t)
-	if _, err := m.WaitCodexLogin("bogus"); err == nil {
+	if _, err := m.WaitLogin("bogus"); err == nil {
 		t.Fatal("expected unknown session error")
 	}
 }
@@ -125,14 +126,14 @@ func TestExportImport_RoundTripAndDedup(t *testing.T) {
 	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "a@x.com", AuthKind: account.AuthOAuth, RefreshToken: "rt-a", PlanType: "pro", Tags: []string{"主力"}})
 	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "b@x.com", AuthKind: account.AuthAPIKey, APIKey: "sk-b"})
 
-	dump, err := src.Export(account.ProviderCodex, nil)
+	dump, err := src.Export(nil)
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
 
 	// 导入到新 store
 	dst, dacc, _ := newMgr(t)
-	added, err := dst.ImportJSON(account.ProviderCodex, dump)
+	added, err := dst.ImportJSON(dump)
 	if err != nil || added != 2 {
 		t.Fatalf("ImportJSON added=%d err=%v", added, err)
 	}
@@ -158,7 +159,7 @@ func TestExportImport_RoundTripAndDedup(t *testing.T) {
 	}
 
 	// 再次导入同样数据 → 全部去重,added=0
-	again, err := dst.ImportJSON(account.ProviderCodex, dump)
+	again, err := dst.ImportJSON(dump)
 	if err != nil || again != 0 {
 		t.Fatalf("dedup failed: added=%d err=%v", again, err)
 	}

@@ -9,10 +9,12 @@ import (
 	"sync"
 
 	"bcai-wails/internal/local/account"
-	"bcai-wails/internal/local/codexauth"
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
+
+// LoginFunc 是某 provider 的 OAuth 登录(codexauth.Login / antigravityauth.Login)。
+type LoginFunc func(ctx context.Context, cfg *config.Config) (*account.Account, error)
 
 // Reloader 抽象「让网关重载自有号」,便于测试(gateway.Gateway 实现 Reload)。
 type Reloader interface{ Reload() error }
@@ -52,17 +54,21 @@ type loginState struct {
 }
 
 type Manager struct {
-	acc     *account.Store
-	gw      Reloader // nil-able(测试或网关未启动)
-	loginFn func(context.Context, *config.Config) (*account.Account, error)
+	acc      *account.Store
+	gw       Reloader // nil-able(测试或网关未启动)
+	provider account.Provider
+	loginFn  LoginFunc
 
 	mu     sync.Mutex
 	logins map[string]*loginState
 }
 
-func New(acc *account.Store, gw Reloader) *Manager {
-	return &Manager{acc: acc, gw: gw, loginFn: codexauth.Login, logins: map[string]*loginState{}}
+func New(acc *account.Store, gw Reloader, provider account.Provider, loginFn LoginFunc) *Manager {
+	return &Manager{acc: acc, gw: gw, provider: provider, loginFn: loginFn, logins: map[string]*loginState{}}
 }
+
+// Provider 返回此 manager 管理的 provider。
+func (m *Manager) Provider() account.Provider { return m.provider }
 
 func (m *Manager) reload() {
 	if m.gw != nil {
@@ -70,8 +76,8 @@ func (m *Manager) reload() {
 	}
 }
 
-func (m *Manager) ListAccounts(provider account.Provider) ([]AccountView, error) {
-	list, err := m.acc.List(provider)
+func (m *Manager) ListAccounts() ([]AccountView, error) {
+	list, err := m.acc.List(m.provider)
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +102,8 @@ func (m *Manager) SetPoolEnabled(id string, enabled bool) error {
 }
 
 // SetPriority 把某号设为优先出口,并清除同 provider 其它号的优先标记。
-func (m *Manager) SetPriority(provider account.Provider, id string) error {
-	list, err := m.acc.List(provider)
+func (m *Manager) SetPriority(id string) error {
+	list, err := m.acc.List(m.provider)
 	if err != nil {
 		return err
 	}
@@ -129,8 +135,8 @@ func (m *Manager) DeleteAccount(id string) error {
 	return nil
 }
 
-// StartCodexLogin 异步发起 OAuth(SDK 会开浏览器并阻塞等回调);返回 loginId。
-func (m *Manager) StartCodexLogin() string {
+// StartLogin 异步发起 OAuth(SDK 会开浏览器并阻塞等回调);返回 loginId。
+func (m *Manager) StartLogin() string {
 	id := uuid.NewString()
 	st := &loginState{done: make(chan struct{})}
 	m.mu.Lock()
@@ -173,8 +179,8 @@ type ExportRecord struct {
 }
 
 // Export 把指定账号(ids 为空=全部)导出为 JSON。
-func (m *Manager) Export(provider account.Provider, ids []string) (string, error) {
-	list, err := m.acc.List(provider)
+func (m *Manager) Export(ids []string) (string, error) {
+	list, err := m.acc.List(m.provider)
 	if err != nil {
 		return "", err
 	}
@@ -201,12 +207,12 @@ func (m *Manager) Export(provider account.Provider, ids []string) (string, error
 }
 
 // ImportJSON 从 JSON 导入账号,按 email 去重(已存在则跳过)。返回新增数量。
-func (m *Manager) ImportJSON(provider account.Provider, jsonStr string) (int, error) {
+func (m *Manager) ImportJSON(jsonStr string) (int, error) {
 	var recs []ExportRecord
 	if err := json.Unmarshal([]byte(jsonStr), &recs); err != nil {
 		return 0, err
 	}
-	existing, err := m.acc.List(provider)
+	existing, err := m.acc.List(m.provider)
 	if err != nil {
 		return 0, err
 	}
@@ -226,7 +232,7 @@ func (m *Manager) ImportJSON(provider account.Provider, jsonStr string) (int, er
 			kind = account.AuthOAuth
 		}
 		if err := m.acc.Add(&account.Account{
-			Provider: provider, Email: r.Email, AuthKind: kind, IDToken: r.IDToken, AccessToken: r.AccessToken,
+			Provider: m.provider, Email: r.Email, AuthKind: kind, IDToken: r.IDToken, AccessToken: r.AccessToken,
 			RefreshToken: r.RefreshToken, APIKey: r.APIKey, APIBaseURL: r.APIBaseURL, AccountID: r.AccountID,
 			PlanType: r.PlanType, Note: r.Note, Tags: r.Tags, PoolEnabled: true, QuotaStatus: account.QuotaOK,
 		}); err != nil {
@@ -256,8 +262,8 @@ func (m *Manager) DeleteAccounts(ids []string) error {
 	return nil
 }
 
-// WaitCodexLogin 阻塞直至对应登录完成,返回新号视图。
-func (m *Manager) WaitCodexLogin(id string) (AccountView, error) {
+// WaitLogin 阻塞直至对应登录完成,返回新号视图。
+func (m *Manager) WaitLogin(id string) (AccountView, error) {
 	m.mu.Lock()
 	st := m.logins[id]
 	m.mu.Unlock()
