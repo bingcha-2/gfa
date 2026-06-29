@@ -3,7 +3,9 @@ package wakeup
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"bcai-wails/internal/local/account"
 )
@@ -71,6 +73,39 @@ func TestRunOnce_DefaultIntervalWhenZero(t *testing.T) {
 	s.SetConfig(Config{Enabled: true, IntervalMinutes: 0})
 	if s.GetConfig().IntervalMinutes != defaultIntervalMin {
 		t.Fatalf("zero interval should default to %d, got %d", defaultIntervalMin, s.GetConfig().IntervalMinutes)
+	}
+}
+
+func TestStart_FiresWhenDue(t *testing.T) {
+	var calls int32
+	s := New(func(ctx context.Context, id string) error { atomic.AddInt32(&calls, 1); return nil }, accts("x@y"))
+	s.SetConfig(Config{Enabled: true, IntervalMinutes: 60}) // lastRun=0 → 立即 due
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx, 5*time.Millisecond)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&calls) >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&calls) < 1 {
+		t.Fatal("Start should have fired at least one ping when due")
+	}
+}
+
+func TestStart_DisabledDoesNotFire(t *testing.T) {
+	var calls int32
+	s := New(func(ctx context.Context, id string) error { atomic.AddInt32(&calls, 1); return nil }, accts("x@y"))
+	s.SetConfig(Config{Enabled: false})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx, 5*time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Fatalf("disabled scheduler should not fire, got %d", calls)
 	}
 }
 

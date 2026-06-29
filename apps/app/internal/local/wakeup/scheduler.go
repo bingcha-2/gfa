@@ -6,6 +6,7 @@ package wakeup
 import (
 	"context"
 	"sync"
+	"time"
 
 	"bcai-wails/internal/local/account"
 )
@@ -103,6 +104,29 @@ func (s *Scheduler) RunOnce(ctx context.Context, nowMs int64) []RunEntry {
 	}
 	s.mu.Unlock()
 	return entries
+}
+
+// Start 启动后台循环:每 checkEvery 检查一次,到点(DueAt)就跑一轮。
+// 由调用方持有 ctx 控制停止。
+func (s *Scheduler) Start(ctx context.Context, checkEvery time.Duration) {
+	if checkEvery <= 0 {
+		checkEvery = time.Minute
+	}
+	go func() {
+		t := time.NewTicker(checkEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				now := time.Now().UnixMilli()
+				if s.DueAt(now) {
+					s.RunOnce(ctx, now)
+				}
+			}
+		}
+	}()
 }
 
 // History 返回最近的唤醒历史(新→旧)。
