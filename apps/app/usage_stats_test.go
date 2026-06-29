@@ -72,6 +72,38 @@ func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
 	}
 }
 
+// codex/gpt 带缓存:Responses API 的 input_tokens 是 gross(含 cached)。reportUsageSafe
+// 必须先还原净输入再入账,否则缓存命中被按整价 input + 缓存价计两遍(约 11x 虚高,整体金额翻倍)。
+func TestReportUsageSafeCodexNetsOutCachedInput(t *testing.T) {
+	prev := globalUsageStats
+	globalUsageStats = &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+	defer func() { globalUsageStats = prev }()
+
+	p := &CodexProxy{reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {}}
+	// gross 输入 1000(其中缓存 900)+ 输出 200,total = 1200。BillableTotalTokens=0 跳过本地额度入账。
+	p.reportUsageSafe("card", "dev", ReportDetails{
+		ModelKey:          "gpt-5",
+		InputTokens:       1000,
+		OutputTokens:      200,
+		CachedInputTokens: 900,
+		RawTotalTokens:    1200,
+	}, "", nil)
+
+	row := globalUsageStats.GetTodayRecord().ByModel["gpt-5"]
+	if row == nil {
+		t.Fatalf("missing codex model row")
+	}
+	// 正确口径:净输入 100*1.25 + 输出 200*10 + 缓存读 900*0.125,/1e6 = 0.0022375 USD。
+	// bug 口径(gross 当净输入):1000*1.25 + 200*10 + 900*0.125 = 0.0033625,约多算 50%+。
+	want := 0.0022375
+	if got := row.EstimatedCostUSD; got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("codex cost = %v, want %v(缓存命中不得按整价重复计)", got, want)
+	}
+	if row.InputTokens != 100 || row.CachedTokens != 900 || row.CacheWriteTokens != 0 {
+		t.Fatalf("codex token breakdown = %+v", row)
+	}
+}
+
 // claude 带缓存:billable(缓存读 1/10 折)与 cacheWrite(=rawTotal-净入-出-缓存读)拆分,
 // 与服务端 billableTokenUsageTotal 同口径。
 func TestAddTokensBillableAndCacheWrite(t *testing.T) {

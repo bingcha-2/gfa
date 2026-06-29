@@ -159,8 +159,14 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 
 	// 持久化到每日统计。家族复用上面已算的 category(classifyModel→modelFamily,
 	// 唯一分类入口),不另起一套模型→家族判断,避免口径漂移。
+	// promptTokenCount 是 gross(含 cachedContentTokenCount),AddModelTokens 约定 input 为净输入
+	// (缓存读单独按缓存价计),故先还原净输入,否则缓存命中被整价+缓存价重复计(金额虚高)。
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
-		GetUsageStats().AddModelTokens(category, modelKey, inputTokens, outputTokens, cachedTokens, rawTotal)
+		netInput := inputTokens - cachedTokens
+		if netInput < 0 {
+			netInput = 0
+		}
+		GetUsageStats().AddModelTokens(category, modelKey, netInput, outputTokens, cachedTokens, rawTotal)
 	}
 
 	return TokenUsageResult{

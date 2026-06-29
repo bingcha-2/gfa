@@ -755,7 +755,13 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	}
 	// 再计入仪表盘统计(输入/输出 Token + 累计已节省)。与 antigravity 路径
 	// (proxy_tokens.go)共用 UsageStatsStore;节省金额在 AddTokens 内按 in/out 价格算。
-	GetUsageStats().AddModelTokens("gpt", details.ModelKey, details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+	// Responses API 的 input_tokens 是 gross(含 cached),AddModelTokens 约定 input 为净输入
+	// (缓存读单独按缓存价计),故先还原净输入,否则缓存命中被整价+缓存价重复计(金额虚高)。
+	netInput := details.InputTokens - details.CachedInputTokens
+	if netInput < 0 {
+		netInput = 0
+	}
+	GetUsageStats().AddModelTokens("gpt", details.ModelKey, netInput, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
 	GetUsageStats().AddGeneration()
 }
 
