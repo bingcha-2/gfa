@@ -51,6 +51,14 @@ export function CodexSuitePage() {
   const [tab, setTab] = useState<'accounts' | 'stats'>('accounts')
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  const toggleSel = (id: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const refresh = useCallback(async () => {
     try {
@@ -127,6 +135,20 @@ export function CodexSuitePage() {
       link.download = 'codex-accounts.json'
       link.click()
       URL.revokeObjectURL(url)
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onBatchDelete = async () => {
+    if (selected.size === 0) return
+    setBusy('batch')
+    try {
+      await localApi.deleteAccounts([...selected])
+      setSelected(new Set())
+      await refresh()
     } catch (e) {
       setErr(String(e))
     } finally {
@@ -251,6 +273,16 @@ export function CodexSuitePage() {
           </div>
         </div>
 
+        {selected.size > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 bg-[var(--primary-light)] border-b border-[var(--border-light)] text-[12px]">
+            <span className="text-[var(--primary-strong)] font-semibold">已选 {selected.size}</span>
+            <div className="flex gap-3">
+              <button onClick={() => setSelected(new Set())} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">取消</button>
+              <button onClick={onBatchDelete} disabled={busy === 'batch'} className="text-[var(--danger)] font-semibold hover:underline disabled:opacity-50">批量删除</button>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
         ) : accounts.length === 0 ? (
@@ -265,7 +297,8 @@ export function CodexSuitePage() {
           accounts.map((a) => {
             const st = statusLabel(a.quotaStatus)
             return (
-              <div key={a.id} className={cn('grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-3 border-t border-[var(--border-light)] first:border-t-0', a.priority && 'bg-[var(--primary-light)]')}>
+              <div key={a.id} className={cn('grid grid-cols-[auto_1fr_auto] gap-3 items-center px-4 py-3 border-t border-[var(--border-light)] first:border-t-0', a.priority && 'bg-[var(--primary-light)]')}>
+                <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSel(a.id)} className="w-3.5 h-3.5 accent-[var(--primary)] cursor-pointer" aria-label="选择账号" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     {a.priority && <ArrowUpRight size={15} className="text-[var(--primary-strong)] shrink-0" />}

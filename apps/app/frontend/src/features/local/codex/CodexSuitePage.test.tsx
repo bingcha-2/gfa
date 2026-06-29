@@ -97,4 +97,14 @@ describe('CodexSuitePage', () => {
     fireEvent.click(importButtons[importButtons.length - 1])
     await waitFor(() => expect(app.LocalImportCodexFromJSON).toHaveBeenCalledWith('[{"email":"new@x.com","authKind":"oauth"}]'))
   })
+
+  it('batch deletes selected accounts', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByLabelText('选择账号'))
+    expect(await screen.findByText('已选 1')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
+    await waitFor(() => expect(app.LocalDeleteAccounts).toHaveBeenCalledWith(['a1']))
+  })
 })
