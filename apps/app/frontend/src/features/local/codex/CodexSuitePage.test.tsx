@@ -26,6 +26,12 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalDeleteAccount: vi.fn().mockResolvedValue(undefined),
     LocalGatewayStart: vi.fn().mockResolvedValue({ running: true, addr: '127.0.0.1:19528', port: 19528 }),
     LocalGatewayStop: vi.fn().mockResolvedValue(undefined),
+    LocalCodexStats: vi.fn().mockResolvedValue({
+      totalRequests: 3, totalFailed: 1, totalInputTokens: 310, totalOutputTokens: 115,
+      byAccount: [{ authId: 'a1', email: 'yifan@example.com', requests: 2, totalTokens: 410 }],
+      byModel: [{ model: 'gpt-5-codex', requests: 2, totalTokens: 410 }],
+      recent: [{ atMs: 1700000000000, authId: 'a1', model: 'gpt-5-codex', failed: false, latencyMs: 1200 }],
+    }),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -60,5 +66,19 @@ describe('CodexSuitePage', () => {
     await screen.findByText('yifan@example.com')
     fireEvent.click(screen.getByRole('button', { name: '本地自有号' }))
     await waitFor(() => expect(app.LocalSetCodexSource).toHaveBeenCalledWith('local'))
+  })
+
+  it('shows the stats tab with gateway usage', async () => {
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '统计' }))
+    expect(await screen.findByText(/来源:本地网关/)).toBeInTheDocument()
+    expect(screen.getByText('请求数')).toBeInTheDocument()
+    expect(screen.getByText('错误率')).toBeInTheDocument()
+    // 按账号 / 按模型 区块渲染
+    expect(screen.getByText('按账号')).toBeInTheDocument()
+    expect(screen.getByText('按模型')).toBeInTheDocument()
+    // gpt-5-codex 在按模型与最近请求都出现
+    expect((await screen.findAllByText('gpt-5-codex')).length).toBeGreaterThanOrEqual(1)
   })
 })

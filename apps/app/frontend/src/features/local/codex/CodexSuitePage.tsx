@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Plus, RefreshCw, Trash2, ArrowUpRight, Power, PlugZap, Lock, Loader2 } from 'lucide-react'
 import { localApi, type LocalAccountView, type LocalGatewayStatus } from '@/services/localApi'
 import { cn } from '@/lib/utils'
+import { CodexStatsTab } from './CodexStatsTab'
 
 /**
  * 本地自有号 · Codex suite(P1:账号 tab 为主功能 + 网关运行态头部)。
@@ -47,6 +48,7 @@ export function CodexSuitePage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  const [tab, setTab] = useState<'accounts' | 'stats'>('accounts')
 
   const refresh = useCallback(async () => {
     try {
@@ -179,7 +181,26 @@ export function CodexSuitePage() {
         <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>
       )}
 
+      {/* tab 栏:账号(主) / 统计 */}
+      <div className="flex gap-5 border-b border-[var(--border-light)]">
+        {([['accounts', '账号'], ['stats', '统计']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={cn(
+              'py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors',
+              tab === id ? 'text-[var(--text-primary)] border-[var(--primary)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-secondary)]'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'stats' && <CodexStatsTab />}
+
       {/* 账号列表(主功能) */}
+      {tab === 'accounts' && (
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50">
           <span className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide">我的 Codex 账号 · {accounts.length}</span>
@@ -246,6 +267,7 @@ export function CodexSuitePage() {
           })
         )}
       </div>
+      )}
     </div>
   )
 }

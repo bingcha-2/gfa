@@ -29,6 +29,19 @@ export interface LocalGatewayStatus {
   port: number
 }
 
+export interface CodexStatModel { model: string; requests: number; totalTokens: number }
+export interface CodexStatAccount { authId: string; email: string; requests: number; totalTokens: number }
+export interface CodexStatRecent { atMs: number; authId: string; model: string; failed: boolean; latencyMs: number }
+export interface CodexStatsSnapshot {
+  totalRequests: number
+  totalFailed: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  byAccount: CodexStatAccount[] | null
+  byModel: CodexStatModel[] | null
+  recent: CodexStatRecent[] | null
+}
+
 type GoApp = Record<string, (...args: unknown[]) => Promise<unknown>>
 
 function app(): GoApp {
@@ -50,4 +63,5 @@ export const localApi = {
   gatewayStatus: () => app().LocalGatewayStatus() as Promise<LocalGatewayStatus>,
   getCodexSource: () => app().LocalGetCodexSource() as Promise<string>,
   setCodexSource: (source: 'remote' | 'local') => app().LocalSetCodexSource(source) as Promise<void>,
+  codexStats: () => app().LocalCodexStats() as Promise<CodexStatsSnapshot>,
 }
