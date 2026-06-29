@@ -25,6 +25,7 @@ type Gateway struct {
 
 	mu     sync.Mutex
 	svc    *cliproxy.Service
+	mgr    *coreauth.Manager
 	cancel context.CancelFunc
 	host   string
 	port   int
@@ -76,6 +77,7 @@ func (g *Gateway) Start(port int) (int, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g.svc = svc
+	g.mgr = mgr
 	g.cancel = cancel
 	g.port = port
 	go func() {
@@ -94,8 +96,20 @@ func (g *Gateway) Stop() error {
 	g.cancel()
 	err := g.svc.Shutdown(context.Background())
 	g.svc = nil
+	g.mgr = nil
 	g.cancel = nil
 	return err
+}
+
+// Reload 让运行中的网关重新从 auth Store 拉取自有号(切换池成员后调用)。
+func (g *Gateway) Reload() error {
+	g.mu.Lock()
+	mgr := g.mgr
+	g.mu.Unlock()
+	if mgr == nil {
+		return nil
+	}
+	return mgr.Load(context.Background())
 }
 
 func (g *Gateway) Running() bool {
