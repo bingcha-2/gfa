@@ -37,6 +37,12 @@ func New(acc *account.Store, p account.Provider, dataDir string) *Gateway {
 
 func (g *Gateway) Addr() string { return fmt.Sprintf("%s:%d", g.host, g.port) }
 
+func (g *Gateway) Port() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.port
+}
+
 // Start 启动网关。port=0 时自动选空闲端口。返回实际端口。
 func (g *Gateway) Start(port int) (int, error) {
 	g.mu.Lock()
