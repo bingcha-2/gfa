@@ -5,6 +5,7 @@ import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { FaqPage } from '@/pages/FaqPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { CodexSuitePage } from '@/features/local/codex/CodexSuitePage'
 import { ToastHost } from '@/components/ToastHost'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -80,6 +81,7 @@ export default function App() {
       case 'logs': return <LogsPage />
       case 'faq': return <FaqPage />
       case 'settings': return <SettingsPage />
+      case 'local_codex': return <CodexSuitePage />
     }
   }
 
