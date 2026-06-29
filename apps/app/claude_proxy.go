@@ -369,7 +369,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
 	}
-	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
+	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL, lease.AccountId)
 
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
@@ -542,7 +542,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 			p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 			return
 		}
-		applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
+		applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL, lease.AccountId)
 
 		var doErr error
 		resp, doErr = client.Do(req)
@@ -586,7 +586,7 @@ func isClaudeStreamingResponse(resp *http.Response) bool {
 
 // applyClaudeUpstreamHeaders 复用 Claude Code 自带的 anthropic-* / user-agent 头,
 // 只把鉴权换成租来的 OAuth token(去掉 x-api-key,避免与 Bearer 冲突)。
-func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL string) {
+func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL string, accountID int) {
 	// 注意:不再 skip accept-encoding —— 原样转发真客户端的 Accept-Encoding 给上游,
 	// 消除「裸奔无 Accept-Encoding」这一与 node header 矛盾的反代破绽;上游若回压缩 body,
 	// 由转发层就地解压(见 decodeUpstreamBytes / decompressReader)。
@@ -621,6 +621,9 @@ func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL str
 	if u, err := url.Parse(targetURL); err == nil {
 		dst.Set("Host", u.Host)
 	}
+	// 出口身份归一:把传输层指纹收敛成「一台稳定机器」,与 body 层 device_id 归一对齐
+	// (详见 applyClaudeClientIdentity)。动态字段透传,不在此处理。
+	applyClaudeClientIdentity(dst, src, accountID)
 }
 
 func writeUpstreamHeaders(w http.ResponseWriter, resp *http.Response) {

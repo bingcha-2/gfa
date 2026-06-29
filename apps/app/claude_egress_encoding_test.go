@@ -20,7 +20,7 @@ func TestApplyClaudeUpstreamHeaders_ForwardsAcceptEncoding(t *testing.T) {
 	src.Set("X-Api-Key", "sk-should-be-dropped")
 
 	dst := http.Header{}
-	applyClaudeUpstreamHeaders(dst, src, "oat-token", "https://api.anthropic.com/v1/messages")
+	applyClaudeUpstreamHeaders(dst, src, "oat-token", "https://api.anthropic.com/v1/messages", 1)
 
 	if got := dst.Get("Accept-Encoding"); got != "gzip, deflate, br, zstd" {
 		t.Fatalf("Accept-Encoding 应原样转发,得到 %q", got)
