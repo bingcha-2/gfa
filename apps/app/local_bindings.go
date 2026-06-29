@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/antigravityauth"
@@ -12,6 +16,7 @@ import (
 	"bcai-wails/internal/local/manager"
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
+	"bcai-wails/internal/local/wakeup"
 )
 
 // 本地自有号(本地接管)Wails 绑定。所有方法薄薄委托给 internal/local/manager。
@@ -19,8 +24,10 @@ import (
 //(account.Store 按 provider 列区分)与一份号源持久化。单例懒初始化。
 
 type providerCtx struct {
-	gw  *gateway.Gateway
-	mgr *manager.Manager
+	gw    *gateway.Gateway
+	mgr   *manager.Manager
+	wk    *wakeup.Scheduler
+	wkCfg *wakeup.ConfigStore
 }
 
 var (
@@ -49,7 +56,32 @@ func ensureLocal() error {
 
 		mk := func(p account.Provider, login manager.LoginFunc) *providerCtx {
 			gw := gateway.New(acc, p, filepath.Join(dir, string(p)))
-			return &providerCtx{gw: gw, mgr: manager.New(acc, gw, p, login)}
+			// 保活 ping:对本 provider 的网关做一次 /v1/models 触达(网关在跑才有意义)。
+			// 按号精度的保活(各号 token 刷新)作后续细化;此处先做网关级 keep-warm。
+			ping := func(ctx context.Context, _ string) error {
+				if !gw.Running() {
+					return errors.New("gateway not running")
+				}
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+gw.Addr()+"/v1/models", nil)
+				if err != nil {
+					return err
+				}
+				resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+				if err != nil {
+					return err
+				}
+				_ = resp.Body.Close()
+				return nil
+			}
+			accountsFn := func() []*account.Account {
+				l, _ := acc.ListPoolEnabled(p)
+				return l
+			}
+			wk := wakeup.New(ping, accountsFn)
+			wkCfg := wakeup.NewConfigStore(dir, string(p))
+			wk.SetConfig(wkCfg.Load())
+			wk.Start(context.Background(), time.Minute)
+			return &providerCtx{gw: gw, mgr: manager.New(acc, gw, p, login), wk: wk, wkCfg: wkCfg}
 		}
 		localProviders[account.ProviderCodex] = mk(account.ProviderCodex, codexauth.Login)
 		localProviders[account.ProviderAntigravity] = mk(account.ProviderAntigravity, antigravityauth.Login)
@@ -337,4 +369,60 @@ func (a *App) LocalImportAntigravityFromJSON(jsonStr string) (int, error) {
 		return 0, err
 	}
 	return pc.mgr.ImportJSON(jsonStr)
+}
+
+// ───────────────────────── Wakeup 保活(per provider) ─────────────────────────
+
+func (a *App) wakeupConfig(p account.Provider) (wakeup.Config, error) {
+	pc, err := ctxFor(p)
+	if err != nil {
+		return wakeup.Config{}, err
+	}
+	return pc.wk.GetConfig(), nil
+}
+
+func (a *App) setWakeupConfig(p account.Provider, enabled bool, intervalMinutes int) error {
+	pc, err := ctxFor(p)
+	if err != nil {
+		return err
+	}
+	cfg := wakeup.Config{Enabled: enabled, IntervalMinutes: intervalMinutes}
+	pc.wk.SetConfig(cfg)
+	return pc.wkCfg.Save(pc.wk.GetConfig())
+}
+
+func (a *App) wakeupRunNow(p account.Provider) ([]wakeup.RunEntry, error) {
+	pc, err := ctxFor(p)
+	if err != nil {
+		return nil, err
+	}
+	return pc.wk.RunOnce(context.Background(), time.Now().UnixMilli()), nil
+}
+
+func (a *App) wakeupHistory(p account.Provider) ([]wakeup.RunEntry, error) {
+	pc, err := ctxFor(p)
+	if err != nil {
+		return nil, err
+	}
+	return pc.wk.History(), nil
+}
+
+func (a *App) LocalCodexWakeupConfig() (wakeup.Config, error) { return a.wakeupConfig(account.ProviderCodex) }
+func (a *App) LocalSetCodexWakeupConfig(enabled bool, intervalMinutes int) error {
+	return a.setWakeupConfig(account.ProviderCodex, enabled, intervalMinutes)
+}
+func (a *App) LocalCodexWakeupRunNow() ([]wakeup.RunEntry, error) { return a.wakeupRunNow(account.ProviderCodex) }
+func (a *App) LocalCodexWakeupHistory() ([]wakeup.RunEntry, error) { return a.wakeupHistory(account.ProviderCodex) }
+
+func (a *App) LocalAntigravityWakeupConfig() (wakeup.Config, error) {
+	return a.wakeupConfig(account.ProviderAntigravity)
+}
+func (a *App) LocalSetAntigravityWakeupConfig(enabled bool, intervalMinutes int) error {
+	return a.setWakeupConfig(account.ProviderAntigravity, enabled, intervalMinutes)
+}
+func (a *App) LocalAntigravityWakeupRunNow() ([]wakeup.RunEntry, error) {
+	return a.wakeupRunNow(account.ProviderAntigravity)
+}
+func (a *App) LocalAntigravityWakeupHistory() ([]wakeup.RunEntry, error) {
+	return a.wakeupHistory(account.ProviderAntigravity)
 }

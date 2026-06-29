@@ -35,6 +35,10 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalExportCodexAccounts: vi.fn().mockResolvedValue('[]'),
     LocalImportCodexFromJSON: vi.fn().mockResolvedValue(1),
     LocalDeleteAccounts: vi.fn().mockResolvedValue(undefined),
+    LocalCodexWakeupConfig: vi.fn().mockResolvedValue({ enabled: false, intervalMinutes: 240 }),
+    LocalSetCodexWakeupConfig: vi.fn().mockResolvedValue(undefined),
+    LocalCodexWakeupRunNow: vi.fn().mockResolvedValue([]),
+    LocalCodexWakeupHistory: vi.fn().mockResolvedValue([{ atMs: 1700000000000, accountId: 'a1', email: 'yifan@example.com', ok: true }]),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -96,6 +100,19 @@ describe('CodexSuitePage', () => {
     const importButtons = screen.getAllByRole('button', { name: '导入' })
     fireEvent.click(importButtons[importButtons.length - 1])
     await waitFor(() => expect(app.LocalImportCodexFromJSON).toHaveBeenCalledWith('[{"email":"new@x.com","authKind":"oauth"}]'))
+  })
+
+  it('shows the wakeup tab and can toggle + run now', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '保活' }))
+    // 开关 + 立即运行
+    expect(await screen.findByRole('switch')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('switch'))
+    await waitFor(() => expect(app.LocalSetCodexWakeupConfig).toHaveBeenCalledWith(true, 240))
+    fireEvent.click(screen.getByRole('button', { name: /立即运行/ }))
+    await waitFor(() => expect(app.LocalCodexWakeupRunNow).toHaveBeenCalled())
   })
 
   it('batch deletes selected accounts', async () => {
