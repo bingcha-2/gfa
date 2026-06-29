@@ -64,6 +64,12 @@ P0 待定细节:嵌入**上游** CLIProxyAPI 还是 GFA 的 rensumo fork(若 for
 - ✅ go-toml v2(GFA v2.3.1 ≥ CLIProxy v2.2.2);gin v1.10.1 / logrus v1.9.3 为新增直接依赖,低冲突。GFA 已有 `modernc.org/sqlite`(纯 Go)、`go-toml/v2`。
 - ⚠️ CLIProxyAPI `go.mod` 声明 `go 1.26.0`,GFA 客户端为 `go 1.25.0`(本机 go1.25.5)。P0 需:把客户端工具链提到 1.26,或固定 `go` 指令兼容的 CLIProxyAPI commit/fork。非阻断。
 
+**✅ 嵌入编译可行性已实测通过(2026-06-30,scratchpad 隔离实验):**
+- 最小嵌入 `cliproxy.NewBuilder().WithConfig(cfg).Build()` + `svc.Run(ctx)` 编译成功(`go build` 退出 0)。
+- go1.26 工具链经 `GOTOOLCHAIN=auto` 自动下载成功。
+- 全部传递依赖解析正常(新增直接/间接:gin v1.10.1、logrus v1.9.3、redis/go-redis v9、fsnotify、oauth2、tiktoken-go 等),**utls 维持 v1.8.2**。
+- 剩余未验证项(留作 P0 Task 0.1 的真实验收):把依赖加进**真实** `apps/app/go.mod`(而非隔离模块)后,与 wails v2.12 等既有依赖的 MVS 共存是否仍编译;客户端构建/CI 是否允许 GOTOOLCHAIN 自动升级到 1.26。
+
 ## 6. 控制面(Go 原生新写)
 
 `features/local/*` 下,在 `apps/app` 用 Go 原生实现,复用 GFA 已有注入/MITM/egress:
