@@ -57,7 +57,12 @@ CLIProxyAPI(`github.com/router-for-me/CLIProxyAPI/v7`,MIT,纯 Go)原生支持 co
 
 **决策:进程内嵌入**(在 Wails Go 二进制里 goroutine 起 CLIProxyAPI server),理由:同 Go 生态、免跨语言 IPC、免分平台打包 sidecar、配置代码注入、用量/账号直连控制面、生命周期绑定 app。用 supervised goroutine + recover 兜崩溃。**可逆退化**:同一套 Builder API 几乎零改动可编成瘦 sidecar。
 
-P0 待定细节:嵌入**上游** CLIProxyAPI 还是 GFA 的 rensumo fork(若 fork 有报告回调等补丁);go.mod 依赖冲突验证(v7 整树)。
+P0 待定细节:嵌入**上游** CLIProxyAPI 还是 GFA 的 rensumo fork(若 fork 有报告回调等补丁)。
+
+**go.mod 依赖兼容性(已 derisk,2026-06-30):**
+- ✅ **utls 双方一致 = v1.8.2** —— 嵌入不动 GFA 出口指纹依赖(最大前提已过,见 [[claude-egress-tls-fingerprint]])。
+- ✅ go-toml v2(GFA v2.3.1 ≥ CLIProxy v2.2.2);gin v1.10.1 / logrus v1.9.3 为新增直接依赖,低冲突。GFA 已有 `modernc.org/sqlite`(纯 Go)、`go-toml/v2`。
+- ⚠️ CLIProxyAPI `go.mod` 声明 `go 1.26.0`,GFA 客户端为 `go 1.25.0`(本机 go1.25.5)。P0 需:把客户端工具链提到 1.26,或固定 `go` 指令兼容的 CLIProxyAPI commit/fork。非阻断。
 
 ## 6. 控制面(Go 原生新写)
 
