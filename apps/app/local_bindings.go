@@ -8,17 +8,19 @@ import (
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/gateway"
 	"bcai-wails/internal/local/manager"
+	"bcai-wails/internal/local/takeover"
 )
 
 // 本地自有号(本地接管)相关的 Wails 绑定。所有方法薄薄委托给 internal/local/manager,
 // App 层不含业务逻辑。单例懒初始化(首次使用时打开 SQLite + 建网关)。
 
 var (
-	localOnce sync.Once
-	localMgr  *manager.Manager
-	localGw   *gateway.Gateway
-	localAcc  *account.Store
-	localErr  error
+	localOnce    sync.Once
+	localMgr     *manager.Manager
+	localGw      *gateway.Gateway
+	localAcc     *account.Store
+	localSources *takeover.SourceStore
+	localErr     error
 )
 
 func ensureLocal() error {
@@ -36,6 +38,7 @@ func ensureLocal() error {
 		localAcc = acc
 		localGw = gateway.New(acc, account.ProviderCodex, dir)
 		localMgr = manager.New(acc, localGw)
+		localSources = takeover.NewSourceStore(dir)
 	})
 	return localErr
 }
@@ -112,4 +115,48 @@ func (a *App) LocalGatewayStatus() LocalGatewayStatusView {
 		return LocalGatewayStatusView{}
 	}
 	return LocalGatewayStatusView{Running: localGw.Running(), Addr: localGw.Addr(), Port: localGw.Port()}
+}
+
+// LocalGetCodexSource 返回 codex 当前号源(remote|local)。
+func (a *App) LocalGetCodexSource() string {
+	if err := ensureLocal(); err != nil {
+		return string(takeover.SourceRemote)
+	}
+	return string(localSources.Get("codex"))
+}
+
+// LocalSetCodexSource 切换 codex 接管号源。
+//
+//	local  → 启动本地网关,把 Codex 的 config.toml 指向网关端口(若已远程注入先还原)
+//	remote → 还原本地注入并停网关(远程接管仍由主页接管面板按原流程开启)
+//
+// 同一产品同时只有一种接管生效(互斥)。
+func (a *App) LocalSetCodexSource(source string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	src := takeover.Normalize(source)
+	if src == takeover.SourceLocal {
+		port, err := localGw.Start(0)
+		if err != nil {
+			return err
+		}
+		if IsCodexInjected() {
+			_ = RestoreCodexSettings()
+			_ = RestoreFakeCodexAuth()
+		}
+		if err := InjectCodexSettings(port); err != nil {
+			return err
+		}
+		if err := InjectFakeCodexAuth(); err != nil {
+			return err
+		}
+	} else {
+		if IsCodexInjected() {
+			_ = RestoreCodexSettings()
+			_ = RestoreFakeCodexAuth()
+		}
+		_ = localGw.Stop()
+	}
+	return localSources.Set("codex", src)
 }

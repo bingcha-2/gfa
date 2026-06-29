@@ -43,15 +43,21 @@ function QuotaBar({ label, percent }: { label: string; percent: number }) {
 export function CodexSuitePage() {
   const [accounts, setAccounts] = useState<LocalAccountView[]>([])
   const [gw, setGw] = useState<LocalGatewayStatus>({ running: false, addr: '', port: 0 })
+  const [source, setSource] = useState<'remote' | 'local'>('remote')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
 
   const refresh = useCallback(async () => {
     try {
-      const [list, status] = await Promise.all([localApi.listCodexAccounts(), localApi.gatewayStatus()])
+      const [list, status, src] = await Promise.all([
+        localApi.listCodexAccounts(),
+        localApi.gatewayStatus(),
+        localApi.getCodexSource(),
+      ])
       setAccounts(list || [])
       setGw(status)
+      setSource(src === 'local' ? 'local' : 'remote')
       setErr('')
     } catch (e) {
       setErr(String(e))
@@ -59,6 +65,19 @@ export function CodexSuitePage() {
       setLoading(false)
     }
   }, [])
+
+  const onSwitchSource = async (next: 'remote' | 'local') => {
+    if (next === source) return
+    setBusy('source')
+    try {
+      await localApi.setCodexSource(next)
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -128,6 +147,31 @@ export function CodexSuitePage() {
           >
             {busy === 'login' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} 登录新账号
           </button>
+        </div>
+      </div>
+
+      {/* 接管模式:远程托管 vs 本地自有号(互斥) */}
+      <div className="flex items-center justify-between rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+        <div>
+          <div className="text-[12px] font-semibold text-[var(--text-primary)]">接管模式</div>
+          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
+            {source === 'local' ? '本地自有号:Codex CLI 指向本地网关,用你自己的账号。' : '远程托管:Codex 用通行证租号(在主页接管面板开启)。'}
+          </div>
+        </div>
+        <div className="inline-flex bg-[var(--bg-tertiary)] rounded-[9px] p-[3px]">
+          {(['remote', 'local'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => onSwitchSource(m)}
+              disabled={busy === 'source'}
+              className={cn(
+                'px-3 py-[5px] rounded-[7px] text-[12px] font-semibold transition-colors disabled:opacity-60',
+                source === m ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+              )}
+            >
+              {m === 'remote' ? '远程托管' : '本地自有号'}
+            </button>
+          ))}
         </div>
       </div>
 

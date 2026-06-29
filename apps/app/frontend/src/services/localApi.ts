@@ -48,4 +48,6 @@ export const localApi = {
   gatewayStart: () => app().LocalGatewayStart() as Promise<LocalGatewayStatus>,
   gatewayStop: () => app().LocalGatewayStop() as Promise<void>,
   gatewayStatus: () => app().LocalGatewayStatus() as Promise<LocalGatewayStatus>,
+  getCodexSource: () => app().LocalGetCodexSource() as Promise<string>,
+  setCodexSource: (source: 'remote' | 'local') => app().LocalSetCodexSource(source) as Promise<void>,
 }
