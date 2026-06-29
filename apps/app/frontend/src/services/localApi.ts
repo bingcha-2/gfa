@@ -64,4 +64,7 @@ export const localApi = {
   getCodexSource: () => app().LocalGetCodexSource() as Promise<string>,
   setCodexSource: (source: 'remote' | 'local') => app().LocalSetCodexSource(source) as Promise<void>,
   codexStats: () => app().LocalCodexStats() as Promise<CodexStatsSnapshot>,
+  exportCodexAccounts: (ids: string[]) => app().LocalExportCodexAccounts(ids) as Promise<string>,
+  importCodexFromJSON: (json: string) => app().LocalImportCodexFromJSON(json) as Promise<number>,
+  deleteAccounts: (ids: string[]) => app().LocalDeleteAccounts(ids) as Promise<void>,
 }

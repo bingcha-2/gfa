@@ -118,6 +118,30 @@ func (a *App) LocalGatewayStatus() LocalGatewayStatusView {
 	return LocalGatewayStatusView{Running: localGw.Running(), Addr: localGw.Addr(), Port: localGw.Port()}
 }
 
+// LocalExportCodexAccounts 导出账号为 JSON(ids 为空=全部)。
+func (a *App) LocalExportCodexAccounts(ids []string) (string, error) {
+	if err := ensureLocal(); err != nil {
+		return "", err
+	}
+	return localMgr.Export(account.ProviderCodex, ids)
+}
+
+// LocalImportCodexFromJSON 从 JSON 导入账号(按 email 去重),返回新增数。
+func (a *App) LocalImportCodexFromJSON(jsonStr string) (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localMgr.ImportJSON(account.ProviderCodex, jsonStr)
+}
+
+// LocalDeleteAccounts 批量删除账号。
+func (a *App) LocalDeleteAccounts(ids []string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localMgr.DeleteAccounts(ids)
+}
+
 // LocalCodexStats 返回本地网关用量统计(按号/按模型/最近请求),并补全账号邮箱。
 func (a *App) LocalCodexStats() (stats.Snapshot, error) {
 	if err := ensureLocal(); err != nil {

@@ -119,3 +119,67 @@ func TestWaitUnknownSession(t *testing.T) {
 		t.Fatal("expected unknown session error")
 	}
 }
+
+func TestExportImport_RoundTripAndDedup(t *testing.T) {
+	src, acc, _ := newMgr(t)
+	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "a@x.com", AuthKind: account.AuthOAuth, RefreshToken: "rt-a", PlanType: "pro", Tags: []string{"主力"}})
+	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "b@x.com", AuthKind: account.AuthAPIKey, APIKey: "sk-b"})
+
+	dump, err := src.Export(account.ProviderCodex, nil)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	// 导入到新 store
+	dst, dacc, _ := newMgr(t)
+	added, err := dst.ImportJSON(account.ProviderCodex, dump)
+	if err != nil || added != 2 {
+		t.Fatalf("ImportJSON added=%d err=%v", added, err)
+	}
+	got, _ := dacc.List(account.ProviderCodex)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 imported, got %d", len(got))
+	}
+	// 字段保真 + AuthKind 区分
+	var oauth, apikey *account.Account
+	for _, a := range got {
+		if a.Email == "a@x.com" {
+			oauth = a
+		}
+		if a.Email == "b@x.com" {
+			apikey = a
+		}
+	}
+	if oauth == nil || oauth.RefreshToken != "rt-a" || oauth.PlanType != "pro" || oauth.AuthKind != account.AuthOAuth {
+		t.Fatalf("oauth import wrong: %+v", oauth)
+	}
+	if apikey == nil || apikey.APIKey != "sk-b" || apikey.AuthKind != account.AuthAPIKey {
+		t.Fatalf("apikey import wrong: %+v", apikey)
+	}
+
+	// 再次导入同样数据 → 全部去重,added=0
+	again, err := dst.ImportJSON(account.ProviderCodex, dump)
+	if err != nil || again != 0 {
+		t.Fatalf("dedup failed: added=%d err=%v", again, err)
+	}
+}
+
+func TestDeleteAccounts_Batch(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	a1 := &account.Account{Provider: account.ProviderCodex, Email: "1@x"}
+	a2 := &account.Account{Provider: account.ProviderCodex, Email: "2@x"}
+	a3 := &account.Account{Provider: account.ProviderCodex, Email: "3@x"}
+	_ = acc.Add(a1)
+	_ = acc.Add(a2)
+	_ = acc.Add(a3)
+	if err := m.DeleteAccounts([]string{a1.ID, a3.ID}); err != nil {
+		t.Fatalf("DeleteAccounts: %v", err)
+	}
+	got, _ := acc.List(account.ProviderCodex)
+	if len(got) != 1 || got[0].Email != "2@x" {
+		t.Fatalf("batch delete wrong: %+v", got)
+	}
+	if fr.n == 0 {
+		t.Fatal("expected reload after batch delete")
+	}
+}

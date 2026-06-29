@@ -4,6 +4,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 
@@ -154,6 +155,105 @@ func (m *Manager) StartCodexLogin() string {
 		st.view = toView(acc)
 	}()
 	return id
+}
+
+// ExportRecord 是导出/导入的账号载荷(含 token,因为是用户自己的号,用于备份/迁移)。
+type ExportRecord struct {
+	Email        string   `json:"email"`
+	AuthKind     string   `json:"authKind"`
+	IDToken      string   `json:"idToken,omitempty"`
+	AccessToken  string   `json:"accessToken,omitempty"`
+	RefreshToken string   `json:"refreshToken,omitempty"`
+	APIKey       string   `json:"apiKey,omitempty"`
+	APIBaseURL   string   `json:"apiBaseUrl,omitempty"`
+	AccountID    string   `json:"accountId,omitempty"`
+	PlanType     string   `json:"planType,omitempty"`
+	Note         string   `json:"note,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+}
+
+// Export 把指定账号(ids 为空=全部)导出为 JSON。
+func (m *Manager) Export(provider account.Provider, ids []string) (string, error) {
+	list, err := m.acc.List(provider)
+	if err != nil {
+		return "", err
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	recs := make([]ExportRecord, 0, len(list))
+	for _, a := range list {
+		if len(ids) > 0 && !want[a.ID] {
+			continue
+		}
+		recs = append(recs, ExportRecord{
+			Email: a.Email, AuthKind: string(a.AuthKind), IDToken: a.IDToken, AccessToken: a.AccessToken,
+			RefreshToken: a.RefreshToken, APIKey: a.APIKey, APIBaseURL: a.APIBaseURL, AccountID: a.AccountID,
+			PlanType: a.PlanType, Note: a.Note, Tags: a.Tags,
+		})
+	}
+	data, err := json.MarshalIndent(recs, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// ImportJSON 从 JSON 导入账号,按 email 去重(已存在则跳过)。返回新增数量。
+func (m *Manager) ImportJSON(provider account.Provider, jsonStr string) (int, error) {
+	var recs []ExportRecord
+	if err := json.Unmarshal([]byte(jsonStr), &recs); err != nil {
+		return 0, err
+	}
+	existing, err := m.acc.List(provider)
+	if err != nil {
+		return 0, err
+	}
+	seen := map[string]bool{}
+	for _, a := range existing {
+		if a.Email != "" {
+			seen[a.Email] = true
+		}
+	}
+	added := 0
+	for _, r := range recs {
+		if r.Email != "" && seen[r.Email] {
+			continue
+		}
+		kind := account.AuthKind(r.AuthKind)
+		if kind != account.AuthAPIKey {
+			kind = account.AuthOAuth
+		}
+		if err := m.acc.Add(&account.Account{
+			Provider: provider, Email: r.Email, AuthKind: kind, IDToken: r.IDToken, AccessToken: r.AccessToken,
+			RefreshToken: r.RefreshToken, APIKey: r.APIKey, APIBaseURL: r.APIBaseURL, AccountID: r.AccountID,
+			PlanType: r.PlanType, Note: r.Note, Tags: r.Tags, PoolEnabled: true, QuotaStatus: account.QuotaOK,
+		}); err != nil {
+			return added, err
+		}
+		if r.Email != "" {
+			seen[r.Email] = true
+		}
+		added++
+	}
+	if added > 0 {
+		m.reload()
+	}
+	return added, nil
+}
+
+// DeleteAccounts 批量删除。
+func (m *Manager) DeleteAccounts(ids []string) error {
+	for _, id := range ids {
+		if err := m.acc.Delete(id); err != nil {
+			return err
+		}
+	}
+	if len(ids) > 0 {
+		m.reload()
+	}
+	return nil
 }
 
 // WaitCodexLogin 阻塞直至对应登录完成,返回新号视图。

@@ -32,6 +32,9 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
       byModel: [{ model: 'gpt-5-codex', requests: 2, totalTokens: 410 }],
       recent: [{ atMs: 1700000000000, authId: 'a1', model: 'gpt-5-codex', failed: false, latencyMs: 1200 }],
     }),
+    LocalExportCodexAccounts: vi.fn().mockResolvedValue('[]'),
+    LocalImportCodexFromJSON: vi.fn().mockResolvedValue(1),
+    LocalDeleteAccounts: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -80,5 +83,18 @@ describe('CodexSuitePage', () => {
     expect(screen.getByText('按模型')).toBeInTheDocument()
     // gpt-5-codex 在按模型与最近请求都出现
     expect((await screen.findAllByText('gpt-5-codex')).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('imports accounts from pasted JSON', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /导入/ }))
+    const textarea = await screen.findByPlaceholderText(/you@example.com/)
+    fireEvent.change(textarea, { target: { value: '[{"email":"new@x.com","authKind":"oauth"}]' } })
+    // 头部与弹窗各有一个「导入」按钮;弹窗确认是最后一个
+    const importButtons = screen.getAllByRole('button', { name: '导入' })
+    fireEvent.click(importButtons[importButtons.length - 1])
+    await waitFor(() => expect(app.LocalImportCodexFromJSON).toHaveBeenCalledWith('[{"email":"new@x.com","authKind":"oauth"}]'))
   })
 })

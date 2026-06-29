@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Power, PlugZap, Lock, Loader2 } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, ArrowUpRight, Power, PlugZap, Lock, Loader2, Download, Upload, X } from 'lucide-react'
 import { localApi, type LocalAccountView, type LocalGatewayStatus } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 import { CodexStatsTab } from './CodexStatsTab'
@@ -49,6 +49,8 @@ export function CodexSuitePage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const [tab, setTab] = useState<'accounts' | 'stats'>('accounts')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
 
   const refresh = useCallback(async () => {
     try {
@@ -112,6 +114,38 @@ export function CodexSuitePage() {
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key)
     try { await fn(); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
+  }
+
+  const onExport = async () => {
+    setBusy('export')
+    try {
+      const json = await localApi.exportCodexAccounts([])
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'codex-accounts.json'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onImportConfirm = async () => {
+    setBusy('import')
+    try {
+      await localApi.importCodexFromJSON(importText)
+      setImportOpen(false)
+      setImportText('')
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
   }
 
   return (
@@ -204,9 +238,17 @@ export function CodexSuitePage() {
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50">
           <span className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide">我的 Codex 账号 · {accounts.length}</span>
-          <button onClick={() => void refresh()} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="刷新">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setImportOpen(true)} className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1" title="从 JSON 导入">
+              <Upload size={12} /> 导入
+            </button>
+            <button onClick={onExport} disabled={busy === 'export' || accounts.length === 0} className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 disabled:opacity-40" title="导出全部为 JSON">
+              <Download size={12} /> 导出
+            </button>
+            <button onClick={() => void refresh()} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] ml-1" title="刷新">
+              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -267,6 +309,29 @@ export function CodexSuitePage() {
           })
         )}
       </div>
+      )}
+
+      {importOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setImportOpen(false)}>
+          <div className="w-[460px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[13px] font-bold text-[var(--text-primary)]">从 JSON 导入账号</span>
+              <button onClick={() => setImportOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
+            </div>
+            <div className="text-[11px] text-[var(--text-muted)] mb-2">粘贴导出的 JSON,按邮箱去重(已存在的自动跳过)。</div>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              rows={8}
+              placeholder='[{"email":"you@example.com","authKind":"oauth","refreshToken":"..."}]'
+              className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] p-2 text-[12px] font-mono-data text-[var(--text-primary)] resize-none"
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setImportOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+              <button onClick={onImportConfirm} disabled={busy === 'import' || !importText.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">导入</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
