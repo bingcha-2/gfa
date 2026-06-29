@@ -60,11 +60,12 @@ func TestStore_UpdateRoundTrip(t *testing.T) {
 	a.HourlyPercent = 42
 	a.Priority = true
 	a.QuotaStatus = QuotaOK
+	a.ProjectID = "gcp-proj-1"
 	if err := s.Update(a); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got, _ := s.Get(a.ID)
-	if got.PlanType != "pro" || got.HourlyPercent != 42 || !got.Priority || got.QuotaStatus != QuotaOK || len(got.Tags) != 1 || got.Tags[0] != "主力" {
+	if got.PlanType != "pro" || got.HourlyPercent != 42 || !got.Priority || got.QuotaStatus != QuotaOK || len(got.Tags) != 1 || got.Tags[0] != "主力" || got.ProjectID != "gcp-proj-1" {
 		t.Fatalf("update round-trip wrong: %+v", got)
 	}
 }

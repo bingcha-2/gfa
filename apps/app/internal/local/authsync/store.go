@@ -56,6 +56,7 @@ func toAuth(a *account.Account) *coreauth.Auth {
 			"id_token":      a.IDToken,
 			"account_id":    a.AccountID,
 			"email":         a.Email,
+			"project_id":    a.ProjectID, // antigravity 需要
 		},
 		CreatedAt: time.UnixMilli(a.CreatedAt).UTC(),
 		UpdatedAt: time.UnixMilli(a.UpdatedAt).UTC(),

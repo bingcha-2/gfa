@@ -5,7 +5,10 @@ package account
 
 type Provider string
 
-const ProviderCodex Provider = "codex"
+const (
+	ProviderCodex       Provider = "codex"
+	ProviderAntigravity Provider = "antigravity"
+)
 
 type AuthKind string
 
@@ -36,6 +39,7 @@ type Account struct {
 	APIKey        string // 自备 API Key 号
 	APIBaseURL    string // 自备 API Key 号
 	AccountID     string // upstream account id
+	ProjectID     string // Google Cloud project(antigravity 用)
 	PlanType      string // pro/plus/team/free
 	Tags          []string
 	Note          string
