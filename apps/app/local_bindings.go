@@ -8,6 +8,7 @@ import (
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/gateway"
 	"bcai-wails/internal/local/manager"
+	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
 )
 
@@ -115,6 +116,21 @@ func (a *App) LocalGatewayStatus() LocalGatewayStatusView {
 		return LocalGatewayStatusView{}
 	}
 	return LocalGatewayStatusView{Running: localGw.Running(), Addr: localGw.Addr(), Port: localGw.Port()}
+}
+
+// LocalCodexStats 返回本地网关用量统计(按号/按模型/最近请求),并补全账号邮箱。
+func (a *App) LocalCodexStats() (stats.Snapshot, error) {
+	if err := ensureLocal(); err != nil {
+		return stats.Snapshot{}, err
+	}
+	snap := localGw.Stats()
+	list, _ := localAcc.List(account.ProviderCodex)
+	emails := make(map[string]string, len(list))
+	for _, ac := range list {
+		emails[ac.ID] = ac.Email
+	}
+	snap.SetEmails(emails)
+	return snap, nil
 }
 
 // LocalGetCodexSource 返回 codex 当前号源(remote|local)。

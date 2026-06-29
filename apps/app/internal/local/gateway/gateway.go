@@ -13,6 +13,7 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/authsync"
+	"bcai-wails/internal/local/stats"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
@@ -29,11 +30,15 @@ type Gateway struct {
 	cancel context.CancelFunc
 	host   string
 	port   int
+	stats  *stats.Collector
 }
 
 func New(acc *account.Store, p account.Provider, dataDir string) *Gateway {
-	return &Gateway{acc: acc, provider: p, dataDir: dataDir, host: "127.0.0.1"}
+	return &Gateway{acc: acc, provider: p, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
 }
+
+// Stats 返回网关用量快照(本地统计)。
+func (g *Gateway) Stats() stats.Snapshot { return g.stats.Snapshot() }
 
 func (g *Gateway) Addr() string { return fmt.Sprintf("%s:%d", g.host, g.port) }
 
@@ -87,6 +92,7 @@ func (g *Gateway) Start(port int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	svc.RegisterUsagePlugin(g.stats) // 收集每请求用量(本地统计)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g.svc = svc
