@@ -149,20 +149,46 @@ export class CodexProvider implements Provider<CodexAccount> {
     }
     const cq = quota?.codexQuota;
     if (cq && typeof cq === "object") {
-      const hourly = clampPercent(cq.hourlyPercent);
-      const weekly = clampPercent(cq.weeklyPercent);
+      const rawHourly = Number(cq.hourlyPercent);
+      const rawWeekly = Number(cq.weeklyPercent);
       const hourlyReset = cq.hourlyResetTime ? String(cq.hourlyResetTime) : "";
       const weeklyReset = cq.weeklyResetTime ? String(cq.weeklyResetTime) : "";
 
-      // Binding window = the more restrictive (lower remaining %) of the two.
-      const weeklyBinds = weekly < hourly;
-      const bindingPercent = weeklyBinds ? weekly : hourly;
-      const bindingReset = weeklyBinds ? weeklyReset : hourlyReset;
+      // Contract (mirrors ClaudeProvider): the client reports a window whose
+      // rate-limit data was absent on this upstream usage response as -1 — an
+      // explicit "unknown", never a fabricated value. Fabricating a healthy 100
+      // for an absent window would inflate the fair-share low-water mark, and the
+      // next real (low) reading would then back-attribute the whole drop to the
+      // active card in one shot → its blood bar sticks at 0 while the account
+      // recovers. So: known = a finite, non-negative percent; -1 (or an absent
+      // field → NaN) is unknown and keeps the last good value. A genuine 0 is 0.
+      const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0;
+      const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0;
+      if (!hourlyKnown && !weeklyKnown) {
+        // Report carried no usable window — don't touch persisted quota state.
+        return { account };
+      }
 
-      account.modelQuotaFractions = { codex: bindingPercent / 100 };
-      // Only overwrite the reset time when the snapshot actually carries one;
-      // a window without a reset string must not wipe a still-valid prior reset
-      // (cooldownForExhaustion relies on it to park the account until real reset).
+      const prevHourly = Number(acc.codexHourlyPercent ?? -1);
+      const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
+      const hourly = hourlyKnown ? clampPercent(rawHourly) : prevHourly;
+      const weekly = weeklyKnown ? clampPercent(rawWeekly) : prevWeekly;
+
+      // Binding window = the more restrictive of the KNOWN windows; if one side
+      // is unknown (-1), the other binds.
+      let weeklyBinds: boolean;
+      if (hourly < 0) weeklyBinds = true;
+      else if (weekly < 0) weeklyBinds = false;
+      else weeklyBinds = weekly < hourly;
+      const bindingPercent = weeklyBinds ? weekly : hourly;
+      const bindingReset = weeklyBinds
+        ? (weeklyKnown ? weeklyReset : String(acc.codexWeeklyResetTime || ""))
+        : (hourlyKnown ? hourlyReset : String(acc.codexHourlyResetTime || ""));
+
+      if (bindingPercent >= 0) account.modelQuotaFractions = { codex: bindingPercent / 100 };
+      // Only overwrite the reset time when we have one; a window without a reset
+      // must not wipe a still-valid prior reset (cooldownForExhaustion relies on
+      // it to park the account until real reset).
       if (bindingReset) {
         account.modelQuotaResetTimes = { codex: bindingReset };
       } else if (!account.modelQuotaResetTimes) {
@@ -170,10 +196,16 @@ export class CodexProvider implements Provider<CodexAccount> {
       }
       account.modelQuotaRefreshedAt = Date.now();
 
-      acc.codexHourlyPercent = hourly;
-      acc.codexWeeklyPercent = weekly;
-      acc.codexHourlyResetTime = hourlyReset;
-      acc.codexWeeklyResetTime = weeklyReset;
+      // Persist only the windows actually learned this report; keep prior values
+      // for unknown ones so a partial report can't corrupt the stored quota.
+      if (hourlyKnown) {
+        acc.codexHourlyPercent = clampPercent(rawHourly);
+        acc.codexHourlyResetTime = hourlyReset;
+      }
+      if (weeklyKnown) {
+        acc.codexWeeklyPercent = clampPercent(rawWeekly);
+        acc.codexWeeklyResetTime = weeklyReset;
+      }
     }
     return { account };
   }

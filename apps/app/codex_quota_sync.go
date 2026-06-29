@@ -174,7 +174,10 @@ func parseCodexUsage(u *codexUsageResponse) *CodexQuotaWindow {
 		return nil
 	}
 	now := time.Now().Unix()
-	w := &CodexQuotaWindow{HourlyPercent: 100, WeeklyPercent: 100}
+	// 缺失窗口报 -1(未知),不伪装满血 100。若填 100,服务端会把 fair-share 低水位抬到 ~1.0,
+	// 下次真实低值回来时整段跌幅被一次性归因给在场卡 → 血条卡死 0 而母号已恢复(与 Claude 同口径,
+	// 见 claude.provider.ts applyQuotaSnapshot:服务端按 <0=未知保留上次好值)。
+	w := &CodexQuotaWindow{HourlyPercent: -1, WeeklyPercent: -1}
 	if p := u.RateLimit.PrimaryWindow; p != nil {
 		w.HourlyPercent = codexRemainingPercent(p.UsedPercent)
 		w.HourlyResetTime = codexResetIso(p, now)
