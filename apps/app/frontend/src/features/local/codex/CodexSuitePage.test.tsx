@@ -42,6 +42,7 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalInstanceList: vi.fn().mockResolvedValue([{ id: 'i1', provider: 'codex', name: '工作', userDataDir: '/tmp/w', createdAt: 1 }]),
     LocalInstanceCreate: vi.fn().mockResolvedValue({ id: 'i2', provider: 'codex', name: '新', userDataDir: '/tmp/n', createdAt: 2 }),
     LocalInstanceDelete: vi.fn().mockResolvedValue(undefined),
+    LocalInstanceUpdate: vi.fn().mockResolvedValue(undefined),
     LocalInstanceLaunch: vi.fn().mockResolvedValue(undefined),
     LocalInstanceStop: vi.fn().mockResolvedValue(undefined),
     ...over,
@@ -143,5 +144,8 @@ describe('CodexSuitePage', () => {
     // 启动既有实例(无 pid → 显示启动)
     fireEvent.click(screen.getByRole('button', { name: /启动/ }))
     await waitFor(() => expect(app.LocalInstanceLaunch).toHaveBeenCalledWith('i1'))
+    // 改绑账号(内联下拉)
+    fireEvent.change(screen.getByLabelText('改绑账号'), { target: { value: 'a1' } })
+    await waitFor(() => expect(app.LocalInstanceUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'i1', bindAccountId: 'a1' })))
   })
 })

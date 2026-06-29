@@ -60,7 +60,10 @@ export function LocalInstancesTab({ api }: { api: ProviderLocalApi }) {
     try { await api.instanceStop(id); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
   }
 
-  const emailOf = (id?: string) => accounts.find((a) => a.id === id)?.email || ''
+  const onRebind = async (p: InstanceProfile, accId: string) => {
+    setBusy(`bind-${p.id}`)
+    try { await api.instanceUpdate({ ...p, bindAccountId: accId }); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
+  }
 
   if (loading) return <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
 
@@ -101,7 +104,10 @@ export function LocalInstancesTab({ api }: { api: ProviderLocalApi }) {
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-[13px] text-[var(--text-primary)] truncate">{p.name}</span>
                   {p.pid ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(22,163,74,0.12)] text-[#15803d]">运行中</span> : null}
-                  {p.bindAccountId && <span className="text-[10px] text-[var(--text-muted)] truncate">绑定 {emailOf(p.bindAccountId)}</span>}
+                  <select value={p.bindAccountId || ''} onChange={(e) => onRebind(p, e.target.value)} disabled={busy === `bind-${p.id}` || !!p.pid} aria-label="改绑账号" className="text-[10px] bg-transparent border border-[var(--border-light)] rounded px-1 py-0.5 text-[var(--text-muted)] max-w-[150px] disabled:opacity-50">
+                    <option value="">不绑定账号</option>
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.email}</option>)}
+                  </select>
                 </div>
                 <div className="text-[10px] font-mono-data text-[var(--text-muted)] truncate mt-0.5">{p.userDataDir}</div>
               </div>
