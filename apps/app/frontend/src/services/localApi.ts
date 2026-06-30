@@ -47,7 +47,10 @@ export interface LocalStatsSnapshot {
 }
 
 export interface WakeupConfig { enabled: boolean; intervalMinutes: number }
-export interface WakeupRunEntry { atMs: number; accountId: string; email: string; ok: boolean; err?: string }
+export interface WakeupRunEntry { atMs: number; accountId: string; email: string; ok: boolean; err?: string; newExpiry?: number }
+
+/** 自动刷新间隔(分钟):配额自动刷新 / 当前账号刷新。 */
+export interface RefreshConfig { quotaMinutes: number; currentMinutes: number }
 
 export interface InstanceProfile {
   id: string
@@ -73,6 +76,10 @@ export interface ProviderLocalApi {
   addByApiKey(apiKey: string, baseURL: string, email: string): Promise<LocalAccountView>
   setPoolEnabled(id: string, enabled: boolean): Promise<void>
   setPriority(id: string): Promise<void>
+  /** 按号额度刷新:真去上游拉额度并回填(provider 无关,按 id)。 */
+  refreshQuota(id: string): Promise<void>
+  /** 刷新本 provider 全部 pool_enabled 自有号额度,返回成功数量。 */
+  refreshAllQuotas(): Promise<number>
   /** 账号级编辑(共享绑定,按 id)。 */
   rename(id: string, name: string): Promise<void>
   setNote(id: string, note: string): Promise<void>
@@ -119,6 +126,8 @@ export const codexLocalApi: ProviderLocalApi = {
   addByApiKey: (key, base, email) => app().LocalAddCodexApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
   setPriority: (id) => app().LocalSetCodexPriority(id) as Promise<void>,
+  refreshQuota: (id) => app().LocalRefreshAccountQuota(id) as Promise<void>,
+  refreshAllQuotas: () => app().LocalRefreshAllQuotas('codex') as Promise<number>,
   rename: (id, name) => app().LocalRenameAccount(id, name) as Promise<void>,
   setNote: (id, note) => app().LocalSetAccountNote(id, note) as Promise<void>,
   setTags: (id, tags) => app().LocalSetAccountTags(id, tags) as Promise<void>,
@@ -153,6 +162,8 @@ export const antigravityLocalApi: ProviderLocalApi = {
   addByApiKey: (key, base, email) => app().LocalAddAntigravityApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
   setPriority: (id) => app().LocalSetAntigravityPriority(id) as Promise<void>,
+  refreshQuota: (id) => app().LocalRefreshAccountQuota(id) as Promise<void>,
+  refreshAllQuotas: () => app().LocalRefreshAllQuotas('antigravity') as Promise<number>,
   rename: (id, name) => app().LocalRenameAccount(id, name) as Promise<void>,
   setNote: (id, note) => app().LocalSetAccountNote(id, note) as Promise<void>,
   setTags: (id, tags) => app().LocalSetAccountTags(id, tags) as Promise<void>,
@@ -177,4 +188,16 @@ export const antigravityLocalApi: ProviderLocalApi = {
   instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
   getSource: () => app().LocalGetAntigravitySource() as Promise<string>,
   setSource: (src) => app().LocalSetAntigravitySource(src) as Promise<void>,
+}
+
+// ── 自动刷新间隔(全局,非 provider 特定) ──
+
+/** 读取自动刷新间隔(配额自动刷新 / 当前账号刷新,分钟)。 */
+export function getRefreshConfig(): Promise<RefreshConfig> {
+  return app().LocalGetRefreshConfig() as Promise<RefreshConfig>
+}
+
+/** 设置自动刷新间隔(分钟),返回 clamp 后的实际配置。 */
+export function setRefreshConfig(quotaMinutes: number, currentMinutes: number): Promise<RefreshConfig> {
+  return app().LocalSetRefreshConfig(quotaMinutes, currentMinutes) as Promise<RefreshConfig>
 }

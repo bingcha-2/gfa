@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"time"
 
@@ -20,6 +19,8 @@ import (
 	"bcai-wails/internal/local/gateway"
 	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
+	"bcai-wails/internal/local/quota"
+	"bcai-wails/internal/local/refreshcfg"
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
 	"bcai-wails/internal/local/wakeup"
@@ -75,19 +76,22 @@ type GatewayStatus struct {
 }
 
 type providerCtx struct {
-	mgr   *manager.Manager
-	wk    *wakeup.Scheduler
-	wkCfg *wakeup.ConfigStore
+	mgr       *manager.Manager
+	wk        *wakeup.Scheduler
+	wkCfg     *wakeup.ConfigStore
+	refresher manager.Refresher
 }
 
 type Hub struct {
-	dir       string
-	acc       *account.Store
-	gw        *gateway.Gateway // 反代网关:只喂 codex 自有号(antigravity 接管走 IDE 注入)
-	sources   *takeover.SourceStore
-	instances *instance.Store
-	platform  Platform
-	providers map[account.Provider]*providerCtx
+	dir         string
+	acc         *account.Store
+	gw          *gateway.Gateway // 反代网关:只喂 codex 自有号(antigravity 接管走 IDE 注入)
+	sources     *takeover.SourceStore
+	instances   *instance.Store
+	platform    Platform
+	providers   map[account.Provider]*providerCtx
+	refreshCfg  *refreshcfg.Store
+	autoRefresh *autoRefresher
 }
 
 // New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
@@ -98,45 +102,56 @@ func New(dir string, platform Platform) (*Hub, error) {
 		return nil, err
 	}
 	h := &Hub{
-		dir:       dir,
-		acc:       acc,
-		gw:        gateway.NewShared(acc, filepath.Join(dir, "gateway")),
-		sources:   takeover.NewSourceStore(dir),
-		instances: instance.NewStore(dir),
-		platform:  platform,
-		providers: map[account.Provider]*providerCtx{},
+		dir:        dir,
+		acc:        acc,
+		gw:         gateway.NewShared(acc, filepath.Join(dir, "gateway")),
+		sources:    takeover.NewSourceStore(dir),
+		instances:  instance.NewStore(dir),
+		platform:   platform,
+		providers:  map[account.Provider]*providerCtx{},
+		refreshCfg: refreshcfg.NewStore(dir),
 	}
-	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login)
-	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login)
+	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, quota.NewCodexRefresher(quota.CodexEndpoints{}))
+	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
+	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。
+	h.autoRefresh = newAutoRefresher(h, h.refreshCfg.Load())
+	h.autoRefresh.start(context.Background())
 	return h, nil
 }
 
-func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc) *providerCtx {
-	// 保活 ping:对共享网关做一次 /v1/models 触达(网关级 keep-warm)。
-	ping := func(ctx context.Context, _ string) error {
-		if !h.gw.Running() {
-			return errors.New("gateway not running")
+func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, refresher manager.Refresher) *providerCtx {
+	mgr := manager.New(h.acc, h.gw, p, login)
+	mgr.SetRefresher(refresher)
+
+	// 续约保活:逐个 pool_enabled 自有号刷 token(防过期)+ 轻探额度,
+	// 续约成功就持久化新过期时刻,返回给 wakeup history(NewExpiry)。
+	keepAlive := func(ctx context.Context, a *account.Account) (int64, error) {
+		if a.AuthKind == account.AuthAPIKey {
+			return 0, nil // API Key 号无 token 续约,视为存活。
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+h.gw.Addr()+"/v1/models", nil)
-		if err != nil {
-			return err
+		if refresher.TokenExpired(a) {
+			if err := refresher.RefreshToken(a); err != nil {
+				return 0, err
+			}
+			if err := h.acc.Update(a); err != nil {
+				return a.Expiry, err
+			}
 		}
-		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-		if err != nil {
-			return err
+		// 轻探额度(codex 真去上游 wham/usage;antigravity 满血占位)。
+		if _, err := refresher.FetchQuota(a); err != nil {
+			return a.Expiry, err
 		}
-		_ = resp.Body.Close()
-		return nil
+		return a.Expiry, nil
 	}
 	accountsFn := func() []*account.Account {
 		l, _ := h.acc.ListPoolEnabled(p)
 		return l
 	}
-	wk := wakeup.New(ping, accountsFn)
+	wk := wakeup.New(keepAlive, accountsFn)
 	wkCfg := wakeup.NewConfigStore(h.dir, string(p))
 	wk.SetConfig(wkCfg.Load())
 	wk.Start(context.Background(), time.Minute)
-	return &providerCtx{mgr: manager.New(h.acc, h.gw, p, login), wk: wk, wkCfg: wkCfg}
+	return &providerCtx{mgr: mgr, wk: wk, wkCfg: wkCfg, refresher: refresher}
 }
 
 func (h *Hub) ctx(p account.Provider) (*providerCtx, error) {
@@ -423,6 +438,46 @@ func (h *Hub) pickAntigravityToken() (AntigravityToken, error) {
 		Expiry:       chosen.Expiry,
 		IsGCPTos:     chosen.IsGCPTos,
 	}, nil
+}
+
+// ── 按号额度刷新(真去上游,移植 cockpit;持久化回填) ──
+
+// RefreshAccountQuota 刷新单个账号额度(按 id,provider 无关)。
+func (h *Hub) RefreshAccountQuota(id string) error {
+	a, err := h.acc.Get(id)
+	if err != nil {
+		return err
+	}
+	pc, err := h.ctx(a.Provider)
+	if err != nil {
+		return err
+	}
+	return pc.mgr.RefreshQuota(id)
+}
+
+// RefreshAllQuotas 刷新某 provider 的所有 pool_enabled 自有号额度,返回成功数量。
+func (h *Hub) RefreshAllQuotas(p account.Provider) (int, error) {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return 0, err
+	}
+	return pc.mgr.RefreshAllQuotas()
+}
+
+// ── 自动刷新间隔(配额自动刷新 / 当前账号刷新,分钟) ──
+
+func (h *Hub) GetRefreshConfig() refreshcfg.Config { return h.refreshCfg.Load() }
+
+func (h *Hub) SetRefreshConfig(quotaMinutes, currentMinutes int) (refreshcfg.Config, error) {
+	cfg := refreshcfg.Config{QuotaMinutes: quotaMinutes, CurrentMinutes: currentMinutes}
+	if err := h.refreshCfg.Save(cfg); err != nil {
+		return refreshcfg.Config{}, err
+	}
+	saved := h.refreshCfg.Load()
+	if h.autoRefresh != nil {
+		h.autoRefresh.setConfig(saved)
+	}
+	return saved, nil
 }
 
 // ── 保活 ──

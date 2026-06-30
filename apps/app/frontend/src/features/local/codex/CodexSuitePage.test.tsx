@@ -50,6 +50,10 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalInstanceUpdate: vi.fn().mockResolvedValue(undefined),
     LocalInstanceLaunch: vi.fn().mockResolvedValue(undefined),
     LocalInstanceStop: vi.fn().mockResolvedValue(undefined),
+    LocalRefreshAccountQuota: vi.fn().mockResolvedValue(undefined),
+    LocalRefreshAllQuotas: vi.fn().mockResolvedValue(1),
+    LocalGetRefreshConfig: vi.fn().mockResolvedValue({ quotaMinutes: 10, currentMinutes: 1 }),
+    LocalSetRefreshConfig: vi.fn().mockResolvedValue({ quotaMinutes: 30, currentMinutes: 5 }),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -235,5 +239,56 @@ describe('CodexSuitePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(app.LocalSetAccountNote).toHaveBeenCalledWith('a1', '这是备注'))
     await waitFor(() => expect(app.LocalSetAccountTags).toHaveBeenCalledWith('a1', ['a', 'b', 'c']))
+  })
+
+  it('账号行可单号刷新额度(调 refreshQuota,刷新后重拉列表)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '刷新额度' }))
+    await waitFor(() => expect(app.LocalRefreshAccountQuota).toHaveBeenCalledWith('a1'))
+    // 刷新后回填:重新拉取账号列表展示新百分比
+    await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('头部「全部刷新额度」调 refreshAllQuotas(provider=codex)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /全部刷新额度/ }))
+    await waitFor(() => expect(app.LocalRefreshAllQuotas).toHaveBeenCalledWith('codex'))
+  })
+
+  it('保活 tab 顶部有两个间隔下拉,读取 getRefreshConfig 当前值', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '保活' }))
+    await waitFor(() => expect(app.LocalGetRefreshConfig).toHaveBeenCalled())
+    const quotaSel = await screen.findByLabelText('配额自动刷新间隔') as HTMLSelectElement
+    const currentSel = screen.getByLabelText('当前账号刷新间隔') as HTMLSelectElement
+    expect(quotaSel.value).toBe('10')
+    expect(currentSel.value).toBe('1')
+  })
+
+  it('改配额自动刷新间隔下拉,调 setRefreshConfig(保留另一项)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '保活' }))
+    const quotaSel = await screen.findByLabelText('配额自动刷新间隔')
+    fireEvent.change(quotaSel, { target: { value: '30' } })
+    await waitFor(() => expect(app.LocalSetRefreshConfig).toHaveBeenCalledWith(30, 1))
+  })
+
+  it('改当前账号刷新间隔下拉,调 setRefreshConfig(保留另一项)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '保活' }))
+    const currentSel = await screen.findByLabelText('当前账号刷新间隔')
+    fireEvent.change(currentSel, { target: { value: '5' } })
+    await waitFor(() => expect(app.LocalSetRefreshConfig).toHaveBeenCalledWith(10, 5))
   })
 })

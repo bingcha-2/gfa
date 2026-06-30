@@ -17,12 +17,14 @@ const (
 )
 
 // RunEntry 一次对单个账号的唤醒结果。
+// 续约保活语义:逐号刷 token(防过期)+ 轻探额度,记录 ok/err/新过期时间。
 type RunEntry struct {
 	AtMs      int64  `json:"atMs"`
 	AccountID string `json:"accountId"`
 	Email     string `json:"email"`
 	Ok        bool   `json:"ok"`
 	Err       string `json:"err,omitempty"`
+	NewExpiry int64  `json:"newExpiry,omitempty"` // 续约后的 access_token 过期时刻(unix 秒,0=未变/未知)
 }
 
 type Config struct {
@@ -30,10 +32,11 @@ type Config struct {
 	IntervalMinutes int  `json:"intervalMinutes"`
 }
 
-// PingFunc 对某账号做一次保活请求(provider 特定,注入)。
-type PingFunc func(ctx context.Context, accountID string) error
+// KeepAliveFunc 对某账号做一次续约保活(刷 token 防过期 + 轻探额度),
+// 返回续约后的过期时刻(unix 秒,0=未变/未知)与错误(provider 特定,注入)。
+type KeepAliveFunc func(ctx context.Context, a *account.Account) (newExpiry int64, err error)
 
-// AccountsFunc 返回当前要保活的账号(通常是池内自有号)。
+// AccountsFunc 返回当前要保活的账号(池内自有号)。
 type AccountsFunc func() []*account.Account
 
 type Scheduler struct {
@@ -41,12 +44,12 @@ type Scheduler struct {
 	cfg        Config
 	lastRunMs  int64
 	history    []RunEntry
-	pingFn     PingFunc
+	keepAlive  KeepAliveFunc
 	accountsFn AccountsFunc
 }
 
-func New(pingFn PingFunc, accountsFn AccountsFunc) *Scheduler {
-	return &Scheduler{pingFn: pingFn, accountsFn: accountsFn, cfg: Config{IntervalMinutes: defaultIntervalMin}}
+func New(keepAlive KeepAliveFunc, accountsFn AccountsFunc) *Scheduler {
+	return &Scheduler{keepAlive: keepAlive, accountsFn: accountsFn, cfg: Config{IntervalMinutes: defaultIntervalMin}}
 }
 
 func (s *Scheduler) SetConfig(c Config) {
@@ -86,11 +89,14 @@ func (s *Scheduler) RunOnce(ctx context.Context, nowMs int64) []RunEntry {
 	}
 	entries := make([]RunEntry, 0, len(accts))
 	for _, a := range accts {
-		var err error
-		if s.pingFn != nil {
-			err = s.pingFn(ctx, a.ID)
+		var (
+			newExpiry int64
+			err       error
+		)
+		if s.keepAlive != nil {
+			newExpiry, err = s.keepAlive(ctx, a)
 		}
-		e := RunEntry{AtMs: nowMs, AccountID: a.ID, Email: a.Email, Ok: err == nil}
+		e := RunEntry{AtMs: nowMs, AccountID: a.ID, Email: a.Email, Ok: err == nil, NewExpiry: newExpiry}
 		if err != nil {
 			e.Err = err.Error()
 		}

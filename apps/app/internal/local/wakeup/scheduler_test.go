@@ -29,7 +29,7 @@ func TestDueAt_DisabledIsNeverDue(t *testing.T) {
 }
 
 func TestDueAt_IntervalGate(t *testing.T) {
-	s := New(func(ctx context.Context, id string) error { return nil }, accts("x@y"))
+	s := New(func(ctx context.Context, a *account.Account) (int64, error) { return 0, nil }, accts("x@y"))
 	s.SetConfig(Config{Enabled: true, IntervalMinutes: 60})
 	now := int64(1_000_000_000_000)
 	if !s.DueAt(now) {
@@ -45,12 +45,12 @@ func TestDueAt_IntervalGate(t *testing.T) {
 }
 
 func TestRunOnce_RecordsResultsAndHistory(t *testing.T) {
-	failFor := map[string]bool{"b": true} // 第二个账号失败
-	s := New(func(ctx context.Context, id string) error {
-		if failFor[id] {
-			return errors.New("ping failed")
+	failFor := map[string]bool{"b": true} // 第二个账号(ID="b")失败
+	s := New(func(ctx context.Context, a *account.Account) (int64, error) {
+		if failFor[a.ID] {
+			return 0, errors.New("keepalive failed")
 		}
-		return nil
+		return 1_700_000_111, nil // 续约后新过期时刻
 	}, accts("a@y", "b@y"))
 	s.SetConfig(Config{Enabled: true, IntervalMinutes: 60})
 
@@ -59,8 +59,11 @@ func TestRunOnce_RecordsResultsAndHistory(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
-	if !entries[0].Ok || entries[1].Ok || entries[1].Err == "" {
-		t.Fatalf("entries wrong: %+v", entries)
+	if !entries[0].Ok || entries[0].NewExpiry != 1_700_000_111 {
+		t.Fatalf("entry[0] should be ok with new expiry: %+v", entries[0])
+	}
+	if entries[1].Ok || entries[1].Err == "" {
+		t.Fatalf("entry[1] should fail: %+v", entries[1])
 	}
 	hist := s.History()
 	if len(hist) != 2 || hist[0].Email != "b@y" { // 新→旧,最新是 b
@@ -78,7 +81,7 @@ func TestRunOnce_DefaultIntervalWhenZero(t *testing.T) {
 
 func TestStart_FiresWhenDue(t *testing.T) {
 	var calls int32
-	s := New(func(ctx context.Context, id string) error { atomic.AddInt32(&calls, 1); return nil }, accts("x@y"))
+	s := New(func(ctx context.Context, a *account.Account) (int64, error) { atomic.AddInt32(&calls, 1); return 0, nil }, accts("x@y"))
 	s.SetConfig(Config{Enabled: true, IntervalMinutes: 60}) // lastRun=0 → 立即 due
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,7 +101,7 @@ func TestStart_FiresWhenDue(t *testing.T) {
 
 func TestStart_DisabledDoesNotFire(t *testing.T) {
 	var calls int32
-	s := New(func(ctx context.Context, id string) error { atomic.AddInt32(&calls, 1); return nil }, accts("x@y"))
+	s := New(func(ctx context.Context, a *account.Account) (int64, error) { atomic.AddInt32(&calls, 1); return 0, nil }, accts("x@y"))
 	s.SetConfig(Config{Enabled: false})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -110,7 +113,7 @@ func TestStart_DisabledDoesNotFire(t *testing.T) {
 }
 
 func TestHistory_CapsAtMax(t *testing.T) {
-	s := New(func(ctx context.Context, id string) error { return nil }, accts("only@y"))
+	s := New(func(ctx context.Context, a *account.Account) (int64, error) { return 0, nil }, accts("only@y"))
 	s.SetConfig(Config{Enabled: true})
 	for i := 0; i < maxHistory+30; i++ {
 		s.RunOnce(context.Background(), int64(i))

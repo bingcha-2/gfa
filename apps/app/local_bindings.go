@@ -9,6 +9,7 @@ import (
 	"bcai-wails/internal/local/hub"
 	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
+	"bcai-wails/internal/local/refreshcfg"
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/wakeup"
 )
@@ -86,6 +87,37 @@ func (a *App) LocalSetGatewayPort(port int) (hub.GatewayStatus, error) {
 		return hub.GatewayStatus{}, err
 	}
 	return localHub.SetGatewayPort(port)
+}
+
+// 按号额度刷新(真去上游,移植 cockpit;回填并持久化)。按 id,provider 无关。
+func (a *App) LocalRefreshAccountQuota(id string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localHub.RefreshAccountQuota(id)
+}
+
+// 刷新某 provider 全部 pool_enabled 自有号额度,返回成功数量。
+func (a *App) LocalRefreshAllQuotas(provider string) (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localHub.RefreshAllQuotas(account.Provider(provider))
+}
+
+// 自动刷新间隔(配额自动刷新 / 当前账号刷新,分钟)。
+func (a *App) LocalGetRefreshConfig() (refreshcfg.Config, error) {
+	if err := ensureLocal(); err != nil {
+		return refreshcfg.Config{}, err
+	}
+	return localHub.GetRefreshConfig(), nil
+}
+
+func (a *App) LocalSetRefreshConfig(quotaMinutes, currentMinutes int) (refreshcfg.Config, error) {
+	if err := ensureLocal(); err != nil {
+		return refreshcfg.Config{}, err
+	}
+	return localHub.SetRefreshConfig(quotaMinutes, currentMinutes)
 }
 
 // ── Codex ──

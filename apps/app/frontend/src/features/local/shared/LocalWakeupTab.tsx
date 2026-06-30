@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Play, RefreshCw, AlarmClock } from 'lucide-react'
-import { type ProviderLocalApi, type WakeupConfig, type WakeupRunEntry } from '@/services/localApi'
+import { Play, RefreshCw, AlarmClock, Gauge } from 'lucide-react'
+import { type ProviderLocalApi, type WakeupConfig, type WakeupRunEntry, type RefreshConfig, getRefreshConfig, setRefreshConfig } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
-/** 通用保活 tab:定时唤醒自有号(网关 keep-warm),配置 + 立即运行 + 历史。 */
+/** 自动刷新间隔下拉选项(分钟),口径对齐 cockpit;后端 clamp 正值,故无「关」。 */
+const REFRESH_MINUTE_OPTIONS = [1, 5, 10, 30, 60]
+
+/** 通用保活 tab:顶部自动刷新间隔(配额/当前账号)+ 定时唤醒自有号(keep-warm,配置 + 立即运行 + 历史)。 */
 export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
   const [cfg, setCfg] = useState<WakeupConfig>({ enabled: false, intervalMinutes: 240 })
   const [history, setHistory] = useState<WakeupRunEntry[]>([])
+  const [refreshCfg, setRefreshCfgState] = useState<RefreshConfig>({ quotaMinutes: 10, currentMinutes: 1 })
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
 
   const refresh = useCallback(async () => {
     try {
-      const [c, h] = await Promise.all([api.wakeupConfig(), api.wakeupHistory()])
+      const [c, h, rc] = await Promise.all([api.wakeupConfig(), api.wakeupHistory(), getRefreshConfig()])
       setCfg(c)
       setHistory(h || [])
+      setRefreshCfgState(rc)
       setErr('')
     } catch (e) {
       setErr(String(e))
@@ -31,6 +36,18 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
     try {
       await api.setWakeupConfig(next.enabled, next.intervalMinutes)
       await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const saveRefresh = async (next: RefreshConfig) => {
+    setBusy('refresh-cfg')
+    try {
+      const applied = await setRefreshConfig(next.quotaMinutes, next.currentMinutes)
+      setRefreshCfgState(applied)
     } catch (e) {
       setErr(String(e))
     } finally {
@@ -55,6 +72,31 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
   return (
     <div className="flex flex-col gap-4">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
+
+      {/* 自动刷新间隔:配额(全局)+ 当前账号(更频繁),后台 ticker 据此自动刷额度。 */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
+        <div className="text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5"><Gauge size={14} /> 自动刷新</div>
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          {([
+            ['配额自动刷新间隔', refreshCfg.quotaMinutes, (m: number) => saveRefresh({ ...refreshCfg, quotaMinutes: m })] as const,
+            ['当前账号刷新间隔', refreshCfg.currentMinutes, (m: number) => saveRefresh({ ...refreshCfg, currentMinutes: m })] as const,
+          ]).map(([label, value, onPick]) => (
+            <label key={label} className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)]">
+              {label.replace('间隔', '')}
+              <select
+                aria-label={label}
+                value={value}
+                disabled={busy === 'refresh-cfg'}
+                onChange={(e) => void onPick(Number(e.target.value))}
+                className="rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[30px] text-[12px] font-mono-data text-[var(--text-primary)] disabled:opacity-50"
+              >
+                {REFRESH_MINUTE_OPTIONS.map((m) => <option key={m} value={m}>{m} 分钟</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <div className="text-[11px] text-[var(--text-muted)]">配额按间隔在后台自动刷新;当前账号通常更频繁。</div>
+      </div>
 
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">

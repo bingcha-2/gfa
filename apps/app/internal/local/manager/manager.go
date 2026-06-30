@@ -56,10 +56,11 @@ type loginState struct {
 }
 
 type Manager struct {
-	acc      *account.Store
-	gw       Reloader // nil-able(测试或网关未启动)
-	provider account.Provider
-	loginFn  LoginFunc
+	acc       *account.Store
+	gw        Reloader // nil-able(测试或网关未启动)
+	provider  account.Provider
+	loginFn   LoginFunc
+	refresher Refresher // nil-able(按号额度刷新/续约;hub 注入)
 
 	mu     sync.Mutex
 	logins map[string]*loginState
