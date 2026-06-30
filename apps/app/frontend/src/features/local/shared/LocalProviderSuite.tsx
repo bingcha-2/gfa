@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { PlugZap, Lock, ArrowRight } from 'lucide-react'
+import { PlugZap, Lock, ArrowRight, AlertTriangle } from 'lucide-react'
 import { type LocalGatewayStatus, type ProviderLocalApi } from '@/services/localApi'
 import type { PageId } from '@/types'
 import { cn } from '@/lib/utils'
@@ -77,6 +77,14 @@ export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuit
         >
           去接管中心 <ArrowRight size={14} />
         </button>
+      </div>
+
+      {/* 风险横幅:本地自有号经反代池化出口有封号风险,使用即自担。 */}
+      <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[12px] text-[var(--text-secondary)] flex items-start gap-2">
+        <AlertTriangle size={14} className="text-[var(--warning)] mt-0.5 shrink-0" />
+        <span>
+          <span className="font-semibold text-[var(--warning)]">封号风险自负</span> —— 本地自有号经反代多开 / 池化出口可能触发官方风控、导致账号被封;是否使用及由此产生的后果,由你自行承担。
+        </span>
       </div>
 
       {/* tab 栏 */}
