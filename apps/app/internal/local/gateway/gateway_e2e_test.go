@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/routingcfg"
 )
 
 // E2E(造数据):注入一个自有号进池,启动嵌入网关,打 OpenAI 兼容端点,
@@ -28,7 +29,7 @@ func TestGateway_ServesV1WithOwnAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := NewShared(acc, dir)
+	g := NewShared(acc, dir, routingcfg.StrategyPriority)
 	if _, err := g.Start(0); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

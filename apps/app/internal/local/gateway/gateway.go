@@ -9,10 +9,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/authsync"
+	"bcai-wails/internal/local/routingcfg"
 	"bcai-wails/internal/local/stats"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -26,19 +28,79 @@ type Gateway struct {
 	acc     *account.Store
 	dataDir string
 
-	mu     sync.Mutex
-	svc    *cliproxy.Service
-	mgr    *coreauth.Manager
-	cancel context.CancelFunc
-	host   string
-	port   int
-	stats  *stats.Collector
+	mu       sync.Mutex
+	svc      *cliproxy.Service
+	mgr      *coreauth.Manager
+	cancel   context.CancelFunc
+	host     string
+	port     int
+	stats    *stats.Collector
+	selector *authsync.Selector // 路由选号器(策略可热切换)
+	apiKeys  []string           // 客户端访问 key(写进 CLIProxyAPI api-keys)
 }
 
 // NewShared 构建反代网关:单实例、单 Service,auth Store 只喂 codex 自有号
 //(antigravity 接管走 IDE 注入,见 internal/local/antigravityinject)。
-func NewShared(acc *account.Store, dataDir string) *Gateway {
-	return &Gateway{acc: acc, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
+// strategy 是初始路由策略;host 默认仅本机(127.0.0.1),局域网范围经 SetHost 切换。
+func NewShared(acc *account.Store, dataDir string, strategy routingcfg.Strategy) *Gateway {
+	return &Gateway{
+		acc:      acc,
+		dataDir:  dataDir,
+		host:     "127.0.0.1",
+		stats:    stats.NewCollector(),
+		selector: authsync.NewSelector(strategy),
+	}
+}
+
+// SetStrategy 热切换路由策略,立即对后续请求生效(无需重启网关)。
+func (g *Gateway) SetStrategy(s routingcfg.Strategy) { g.selector.SetStrategy(s) }
+
+// SetAPIKeys 设置客户端访问 key 列表并重启网关使之生效(若在运行)。
+func (g *Gateway) SetAPIKeys(keys []string) error {
+	g.mu.Lock()
+	g.apiKeys = append([]string(nil), keys...)
+	g.mu.Unlock()
+	return g.restartIfRunning()
+}
+
+// Host 返回当前绑定主机(127.0.0.1=仅本机,0.0.0.0=局域网)。
+func (g *Gateway) Host() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.host
+}
+
+// SetHost 改绑定主机并重启网关使之生效(若在运行)。仅接受 127.0.0.1/0.0.0.0。
+func (g *Gateway) SetHost(host string) error {
+	g.mu.Lock()
+	g.host = host
+	g.mu.Unlock()
+	return g.restartIfRunning()
+}
+
+// restartIfRunning 在网关运行时停-起一遍,让 cfg(api-keys/host)变更生效。
+func (g *Gateway) restartIfRunning() error {
+	if !g.Running() {
+		return nil
+	}
+	port := g.Port()
+	if err := g.Stop(); err != nil {
+		return err
+	}
+	_, err := g.Start(port)
+	return err
+}
+
+// yamlStringList 把字符串列表渲染成 yaml 序列项(每行两空格缩进);空列表渲染 "[]"。
+func yamlStringList(items []string) string {
+	if len(items) == 0 {
+		return "  []\n"
+	}
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "  - %q\n", it)
+	}
+	return b.String()
 }
 
 func (g *Gateway) newAuthStore() coreauth.Store {
@@ -48,6 +110,9 @@ func (g *Gateway) newAuthStore() coreauth.Store {
 
 // Stats 返回网关用量快照(本地统计)。
 func (g *Gateway) Stats() stats.Snapshot { return g.stats.Snapshot() }
+
+// Stats0 返回底层统计收集器(供分页查询 / 清空请求日志)。
+func (g *Gateway) Stats0() *stats.Collector { return g.stats }
 
 func (g *Gateway) Addr() string { return fmt.Sprintf("%s:%d", g.host, g.port) }
 
@@ -88,15 +153,16 @@ func (g *Gateway) Start(port int) (int, error) {
 	cfg.Host = g.host
 	cfg.Port = port
 	cfg.AuthDir = authDir // 自有号经自定义 Store 注入;保留目录满足配置/落盘需要
+	cfg.APIKeys = append([]string(nil), g.apiKeys...)
 
 	// Build 要求 config path(用于 watcher/reload);写一份最小 yaml 与 cfg 对齐。
 	cfgPath := filepath.Join(g.dataDir, "cliproxy.yaml")
-	yaml := fmt.Sprintf("host: %q\nport: %d\nauth-dir: %q\n", g.host, port, authDir)
+	yaml := fmt.Sprintf("host: %q\nport: %d\nauth-dir: %q\napi-keys:\n%s", g.host, port, authDir, yamlStringList(g.apiKeys))
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
 		return 0, err
 	}
 
-	mgr := coreauth.NewManager(g.newAuthStore(), authsync.Selector{}, nil)
+	mgr := coreauth.NewManager(g.newAuthStore(), g.selector, nil)
 	// Service.Run 不会自动 Load 注入的 manager。用 OnAfterStart 在 server 就绪
 	//(executor 已注册)后 Load,确保自有号能正确绑定 codex executor。
 	svc, err := cliproxy.NewBuilder().

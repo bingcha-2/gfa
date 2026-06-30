@@ -8,19 +8,24 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/antigravityauth"
 	"bcai-wails/internal/local/codexauth"
 	"bcai-wails/internal/local/gateway"
+	"bcai-wails/internal/local/gatewaycfg"
+	"bcai-wails/internal/local/gatewaykeys"
 	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
 	"bcai-wails/internal/local/quota"
 	"bcai-wails/internal/local/refreshcfg"
+	"bcai-wails/internal/local/routingcfg"
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
 	"bcai-wails/internal/local/wakeup"
@@ -97,6 +102,9 @@ type Hub struct {
 	platform    Platform
 	providers   map[account.Provider]*providerCtx
 	refreshCfg  *refreshcfg.Store
+	routingCfg  *routingcfg.Store
+	gwKeys      *gatewaykeys.Store
+	gwScope     *gatewaycfg.Store
 	autoRefresh *autoRefresher
 }
 
@@ -110,13 +118,19 @@ func New(dir string, platform Platform) (*Hub, error) {
 	h := &Hub{
 		dir:        dir,
 		acc:        acc,
-		gw:         gateway.NewShared(acc, filepath.Join(dir, "gateway")),
+		gw:         gateway.NewShared(acc, filepath.Join(dir, "gateway"), routingcfg.NewStore(dir).Load()),
+		routingCfg: routingcfg.NewStore(dir),
+		gwKeys:     gatewaykeys.NewStore(dir),
+		gwScope:    gatewaycfg.NewStore(dir),
 		sources:    takeover.NewSourceStore(dir),
 		instances:  instance.NewStore(dir),
 		platform:   platform,
 		providers:  map[account.Provider]*providerCtx{},
 		refreshCfg: refreshcfg.NewStore(dir),
 	}
+	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
+	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
+	_ = h.gw.SetHost(h.gwScope.Load().Host())
 	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, quota.NewCodexRefresher(quota.CodexEndpoints{}))
 	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
 	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。
@@ -344,6 +358,113 @@ func (h *Hub) Stats(p account.Provider) (stats.Snapshot, error) {
 	}
 	snap.SetEmails(emails)
 	return snap, nil
+}
+
+// ── 反代运营:路由策略 / 访问 key / 局域网范围 / 请求日志 / 连通测试 ──
+// 红线:全部只服务 codex 自有号网关;不碰远程租号路径。
+
+// GetRoutingStrategy 返回当前路由(选号)策略。
+func (h *Hub) GetRoutingStrategy() string { return string(h.routingCfg.Load()) }
+
+// SetRoutingStrategy 校验并持久化路由策略,热切换到运行中的网关(无需重启)。
+func (h *Hub) SetRoutingStrategy(s string) error {
+	// 拒绝无法识别为已知策略的输入(Normalize 会把未知折成默认,这里显式校验)。
+	if !routingcfg.IsKnown(s) {
+		return fmt.Errorf("hub: 未知路由策略 %q", s)
+	}
+	strategy := routingcfg.Normalize(s)
+	if err := h.routingCfg.Save(strategy); err != nil {
+		return err
+	}
+	h.gw.SetStrategy(strategy)
+	return nil
+}
+
+// ListGatewayKeys 返回客户端访问 key 列表。
+func (h *Hub) ListGatewayKeys() []gatewaykeys.Key { return h.gwKeys.List() }
+
+// CreateGatewayKey 新建一条访问 key,并把更新后的列表写入网关(重启生效)。
+func (h *Hub) CreateGatewayKey(name string) (gatewaykeys.Key, error) {
+	k, err := h.gwKeys.Create(name)
+	if err != nil {
+		return gatewaykeys.Key{}, err
+	}
+	if err := h.gw.SetAPIKeys(h.gwKeys.Values()); err != nil {
+		return gatewaykeys.Key{}, err
+	}
+	return k, nil
+}
+
+// DeleteGatewayKey 删除一条访问 key,并把更新后的列表写入网关(重启生效)。
+func (h *Hub) DeleteGatewayKey(id string) error {
+	if err := h.gwKeys.Delete(id); err != nil {
+		return err
+	}
+	return h.gw.SetAPIKeys(h.gwKeys.Values())
+}
+
+// RotateGatewayKey 重置一条访问 key 的值,并把更新后的列表写入网关(重启生效)。
+func (h *Hub) RotateGatewayKey(id string) (gatewaykeys.Key, error) {
+	k, err := h.gwKeys.Rotate(id)
+	if err != nil {
+		return gatewaykeys.Key{}, err
+	}
+	if err := h.gw.SetAPIKeys(h.gwKeys.Values()); err != nil {
+		return gatewaykeys.Key{}, err
+	}
+	return k, nil
+}
+
+// GetGatewayAccessScope 返回局域网范围(local=仅本机 / lan=局域网)。
+func (h *Hub) GetGatewayAccessScope() string { return string(h.gwScope.Load()) }
+
+// SetGatewayAccessScope 校验并持久化局域网范围,改网关绑定主机(重启生效)。
+func (h *Hub) SetGatewayAccessScope(scope string) error {
+	if !gatewaycfg.IsKnown(scope) {
+		return fmt.Errorf("hub: 未知访问范围 %q", scope)
+	}
+	sc := gatewaycfg.Normalize(scope)
+	if err := h.gwScope.Save(sc); err != nil {
+		return err
+	}
+	return h.gw.SetHost(sc.Host())
+}
+
+// QueryGatewayLogs 分页 + 过滤查询请求日志。filterJSON 为空表示无额外过滤。
+func (h *Hub) QueryGatewayLogs(offset, limit int, filterJSON string) (stats.LogPage, error) {
+	f := stats.QueryFilter{Offset: offset, Limit: limit}
+	if s := strings.TrimSpace(filterJSON); s != "" {
+		if err := json.Unmarshal([]byte(s), &f); err != nil {
+			return stats.LogPage{}, fmt.Errorf("hub: 解析过滤条件失败: %w", err)
+		}
+		f.Offset, f.Limit = offset, limit // offset/limit 以显式参数为准
+	}
+	page := h.gw.Stats0().Query(f)
+	emails := h.accountEmails(account.ProviderCodex)
+	for i := range page.Entries {
+		if e, ok := emails[page.Entries[i].AuthID]; ok {
+			page.Entries[i].Email = e
+		}
+	}
+	return page, nil
+}
+
+// ClearGatewayStats 清空网关统计与请求日志。
+func (h *Hub) ClearGatewayStats() error {
+	h.gw.Stats0().Clear()
+	return nil
+}
+
+// GatewayConnTest 对本地网关发一个最小真请求,返回连通结果。
+func (h *Hub) GatewayConnTest() gateway.ConnTestResult { return h.gw.ConnTest() }
+
+func (h *Hub) accountEmails(p account.Provider) map[string]string {
+	list, _ := h.acc.List(p)
+	emails := make(map[string]string, len(list))
+	for _, ac := range list {
+		emails[ac.ID] = ac.Email
+	}
+	return emails
 }
 
 // ── 接管号源(平台专有注入经 Platform） ──

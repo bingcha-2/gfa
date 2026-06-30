@@ -54,6 +54,27 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalRefreshAllQuotas: vi.fn().mockResolvedValue(1),
     LocalGetRefreshConfig: vi.fn().mockResolvedValue({ quotaMinutes: 10, currentMinutes: 1 }),
     LocalSetRefreshConfig: vi.fn().mockResolvedValue({ quotaMinutes: 30, currentMinutes: 5 }),
+    // ── 反代运营(Wave E)──
+    LocalSetGatewayPort: vi.fn().mockResolvedValue({ running: true, addr: '127.0.0.1:19528', port: 19528 }),
+    LocalGetRoutingStrategy: vi.fn().mockResolvedValue('priority'),
+    LocalSetRoutingStrategy: vi.fn().mockResolvedValue(undefined),
+    LocalGetGatewayAccessScope: vi.fn().mockResolvedValue('local'),
+    LocalSetGatewayAccessScope: vi.fn().mockResolvedValue(undefined),
+    LocalListGatewayKeys: vi.fn().mockResolvedValue([
+      { id: 'k1', name: '默认', value: 'sk-local-abcd1234efgh5678', createdAt: 1700000000000 },
+    ]),
+    LocalCreateGatewayKey: vi.fn().mockResolvedValue({ id: 'k2', name: '团队', value: 'sk-local-newkey99', createdAt: 1700000100000 }),
+    LocalDeleteGatewayKey: vi.fn().mockResolvedValue(undefined),
+    LocalRotateGatewayKey: vi.fn().mockResolvedValue({ id: 'k1', name: '默认', value: 'sk-local-rotated55', createdAt: 1700000000000 }),
+    LocalQueryGatewayLogs: vi.fn().mockResolvedValue({
+      total: 2,
+      entries: [
+        { atMs: 1700000000000, authId: 'a1', email: 'yifan@example.com', model: 'gpt-5-codex', failed: false, latencyMs: 1200 },
+        { atMs: 1700000001000, authId: 'a1', email: 'yifan@example.com', model: 'gpt-5-codex', failed: true, latencyMs: 80 },
+      ],
+    }),
+    LocalClearGatewayStats: vi.fn().mockResolvedValue(undefined),
+    LocalGatewayConnTest: vi.fn().mockResolvedValue({ ok: true, status: 200, latencyMs: 42, err: '' }),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -95,6 +116,13 @@ describe('CodexSuitePage', () => {
     expect(onNav).toHaveBeenCalledWith('takeover')
   })
 
+  async function openGateway() {
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '反代' }))
+    await screen.findByText('本地反代')
+  }
+
   it('反代 tab 显示网关运行态 + OpenAI 兼容地址', async () => {
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
@@ -102,6 +130,74 @@ describe('CodexSuitePage', () => {
     expect(await screen.findByText('本地反代')).toBeInTheDocument()
     // 网关运行中(mock addr 127.0.0.1:19528)→ 暴露 base URL
     expect(await screen.findByText('http://127.0.0.1:19528/v1')).toBeInTheDocument()
+  })
+
+  it('反代 tab 读取路由策略当前值,切换调 setRoutingStrategy', async () => {
+    const app = installApp()
+    await openGateway()
+    await waitFor(() => expect(app.LocalGetRoutingStrategy).toHaveBeenCalled())
+    // 当前 priority → 段控里「优先」高亮(aria-pressed)
+    const fairBtn = await screen.findByRole('button', { name: '公平分摊' })
+    fireEvent.click(fairBtn)
+    await waitFor(() => expect(app.LocalSetRoutingStrategy).toHaveBeenCalledWith('fair'))
+  })
+
+  it('反代 tab 局域网开关读取范围,开启调 setGatewayAccessScope(lan) 并给安全提示', async () => {
+    const app = installApp()
+    await openGateway()
+    await waitFor(() => expect(app.LocalGetGatewayAccessScope).toHaveBeenCalled())
+    const lanSwitch = await screen.findByRole('switch', { name: /局域网访问/ })
+    expect(lanSwitch).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(lanSwitch)
+    await waitFor(() => expect(app.LocalSetGatewayAccessScope).toHaveBeenCalledWith('lan'))
+    // 开局域网给一句安全提示
+    expect(await screen.findByText(/局域网内任何设备/)).toBeInTheDocument()
+  })
+
+  it('反代 tab 列出网关 key(掩码),可新建/轮换/删除', async () => {
+    const app = installApp()
+    await openGateway()
+    await waitFor(() => expect(app.LocalListGatewayKeys).toHaveBeenCalled())
+    expect(await screen.findByText('默认')).toBeInTheDocument()
+    // 掩码:不暴露完整值,但展示首尾
+    expect(screen.queryByText('sk-local-abcd1234efgh5678')).toBeNull()
+    // 新建
+    fireEvent.change(await screen.findByLabelText('新 key 名称'), { target: { value: '团队' } })
+    fireEvent.click(screen.getByRole('button', { name: /新建 key/ }))
+    await waitFor(() => expect(app.LocalCreateGatewayKey).toHaveBeenCalledWith('团队'))
+    // 轮换 / 删除
+    fireEvent.click(screen.getByRole('button', { name: '轮换 key' }))
+    await waitFor(() => expect(app.LocalRotateGatewayKey).toHaveBeenCalledWith('k1'))
+    fireEvent.click(screen.getByRole('button', { name: '删除 key' }))
+    await waitFor(() => expect(app.LocalDeleteGatewayKey).toHaveBeenCalledWith('k1'))
+  })
+
+  it('反代 tab 请求日志可过滤(仅失败)并清空', async () => {
+    const app = installApp()
+    await openGateway()
+    await waitFor(() => expect(app.LocalQueryGatewayLogs).toHaveBeenCalled())
+    // 初次拉取:offset 0,空过滤
+    expect(app.LocalQueryGatewayLogs).toHaveBeenCalledWith(0, expect.any(Number), '')
+    // 勾「仅失败」→ 带 failedOnly 过滤重新查询
+    fireEvent.click(screen.getByRole('checkbox', { name: '仅失败' }))
+    await waitFor(() =>
+      expect(app.LocalQueryGatewayLogs).toHaveBeenCalledWith(0, expect.any(Number), expect.stringContaining('failedOnly')),
+    )
+    // 清空
+    fireEvent.click(screen.getByRole('button', { name: '清空日志' }))
+    await waitFor(() => expect(app.LocalClearGatewayStats).toHaveBeenCalled())
+  })
+
+  it('反代 tab 连通测试按钮调 gatewayConnTest 并显示结果', async () => {
+    const app = installApp()
+    await openGateway()
+    fireEvent.click(screen.getByRole('button', { name: /连通测试/ }))
+    await waitFor(() => expect(app.LocalGatewayConnTest).toHaveBeenCalled())
+    // 显示 ok + 状态码 + 延迟(连通正常文案区分于请求日志里的延迟数字)
+    const result = await screen.findByText(/连通正常/)
+    expect(result).toBeInTheDocument()
+    expect(result.textContent).toMatch(/200/)
+    expect(result.textContent).toMatch(/42/)
   })
 
   it('shows the stats tab with gateway usage', async () => {

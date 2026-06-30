@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/routingcfg"
 )
 
 // 验证嵌入的 CLIProxyAPI 真能起停(不只是编译)。
@@ -17,7 +18,7 @@ func TestGateway_StartStop(t *testing.T) {
 	}
 	defer acc.Close()
 
-	g := NewShared(acc, dir)
+	g := NewShared(acc, dir, routingcfg.StrategyPriority)
 	port, err := g.Start(0)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -51,7 +52,7 @@ func TestGateway_SharedServesCodexOnly(t *testing.T) {
 	_ = acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "a@x.com", AuthKind: account.AuthOAuth,
 		AccessToken: "at-a", RefreshToken: "rt-a", AccountID: "acc_a", ProjectID: "p1", PoolEnabled: true, QuotaStatus: account.QuotaOK})
 
-	g := NewShared(acc, dir)
+	g := NewShared(acc, dir, routingcfg.StrategyPriority)
 	if _, err := g.Start(0); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestGateway_StartFixedPortFallsBackWhenBusy(t *testing.T) {
 	busy := l.Addr().(*net.TCPAddr).Port
 	defer l.Close()
 
-	g := NewShared(acc, dir)
+	g := NewShared(acc, dir, routingcfg.StrategyPriority)
 	got, err := g.Start(busy)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -112,7 +113,7 @@ func TestGateway_SetPortRestarts(t *testing.T) {
 	}
 	defer acc.Close()
 
-	g := NewShared(acc, dir)
+	g := NewShared(acc, dir, routingcfg.StrategyPriority)
 	p1, err := g.Start(0)
 	if err != nil {
 		t.Fatalf("Start: %v", err)

@@ -7,6 +7,7 @@ package authsync
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"bcai-wails/internal/local/account"
@@ -46,9 +47,10 @@ func toAuth(a *account.Account) *coreauth.Auth {
 		Label:    a.Email,
 		Status:   coreauth.StatusActive,
 		Attributes: map[string]string{
-			"plan_type": a.PlanType,
-			"auth_kind": string(a.AuthKind),
-			"priority":  prio,
+			"plan_type":     a.PlanType,
+			"auth_kind":     string(a.AuthKind),
+			"priority":      prio,
+			"remaining_pct": strconv.Itoa(accountRemainingPct(a)), // fair 路由用:剩余额度百分比
 		},
 		Metadata: map[string]any{
 			"access_token":  a.AccessToken,
@@ -61,6 +63,23 @@ func toAuth(a *account.Account) *coreauth.Auth {
 		CreatedAt: time.UnixMilli(a.CreatedAt).UTC(),
 		UpdatedAt: time.UnixMilli(a.UpdatedAt).UTC(),
 	}
+}
+
+// accountRemainingPct 把账号的「已用百分比」(小时/周里更紧的那个)折成剩余额度
+// 百分比(0-100),对齐 cockpit quota = min(hourly_remaining, weekly_remaining)。
+func accountRemainingPct(a *account.Account) int {
+	used := a.HourlyPercent
+	if a.WeeklyPercent > used {
+		used = a.WeeklyPercent
+	}
+	rem := 100 - used
+	if rem < 0 {
+		rem = 0
+	}
+	if rem > 100 {
+		rem = 100
+	}
+	return rem
 }
 
 // Save/Delete 满足接口;不持久化——单一事实源在 account.Store。

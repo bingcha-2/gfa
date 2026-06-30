@@ -1,44 +1,147 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Power, Copy, Check, Loader2, Globe, Lock, Plug } from 'lucide-react'
-import { type LocalGatewayStatus, type LocalStatRecent, type ProviderLocalApi } from '@/services/localApi'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Power, Copy, Check, Loader2, Globe, Lock, Plug, Route, Wifi, KeyRound,
+  RotateCw, Trash2, ListFilter, Plug2, AlertTriangle,
+} from 'lucide-react'
+import {
+  type LocalGatewayStatus, type ProviderLocalApi,
+  type RoutingStrategy, type GatewayAccessScope, type GatewayKey,
+  type GatewayLogEntry, type GatewayLogFilter, type GatewayConnTestResult,
+  getRoutingStrategy, setRoutingStrategy,
+  getGatewayAccessScope, setGatewayAccessScope,
+  listGatewayKeys, createGatewayKey, deleteGatewayKey, rotateGatewayKey,
+  queryGatewayLogs, clearGatewayStats, gatewayConnTest,
+} from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
 /**
- * 反代 tab —— 本地网关(CLIProxyAPI)作为 OpenAI 兼容 API 服务的入口:
- * 运行态 + 启停 + base URL(可复制)+ 在服务的自有号数 + 最近请求。
- * 对应 cockpit 的「Codex API 服务」页,但收进 suite 一个 tab,不另起页面。
- * 这里只用现有绑定(gatewayStart/Stop/Status、listAccounts、stats),不依赖未实现的控制面。
+ * 反代 tab —— 本地网关(CLIProxyAPI)作为 OpenAI 兼容 API 服务的运营面板。
+ *
+ * 在「运行态/启停/端口/base URL/最近请求」基础上,接 Wave E 的运营绑定:
+ *  - 路由策略(段控:轮询/优先/公平分摊)— get/setRoutingStrategy
+ *  - 局域网访问(开关:仅本机 ⇄ 局域网,开局域网给安全提示)— get/setGatewayAccessScope
+ *  - 网关 API Key(列表:名称/掩码值/复制/轮换/删除 + 新建)— list/create/delete/rotateGatewayKey
+ *  - 请求日志(可过滤:模型/账号/仅失败 + 加载更多 + 清空)— queryGatewayLogs/clearGatewayStats
+ *  - 连通测试(ok/状态/延迟)— gatewayConnTest
+ *
+ * 视觉沿用 GFA token(琥珀单色、克制分区、对比 ≥4.5:1)。只用已封装的 localApi 函数,
+ * 不让 window.go.* 散落到组件。
  */
+
+const STRATEGIES: [RoutingStrategy, string, string][] = [
+  ['round-robin', '轮询', '在池号间均匀轮转'],
+  ['priority', '优先', '优先号先用,用尽再降级'],
+  ['fair', '公平分摊', '剩余额度高者优先'],
+]
+
+const LOG_PAGE_SIZE = 20
+
+/** 掩码 key 值:保留前 8 与后 4,中间打码;短值则全打码。 */
+function maskKey(value: string): string {
+  if (!value) return '—'
+  if (value.length <= 12) return value.slice(0, 3) + '••••'
+  return `${value.slice(0, 8)}••••${value.slice(-4)}`
+}
+
 export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
   const [gw, setGw] = useState<LocalGatewayStatus>({ running: false, addr: '', port: 0 })
   const [accounts, setAccounts] = useState(0)
-  const [recent, setRecent] = useState<LocalStatRecent[]>([])
-  const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
   const [portInput, setPortInput] = useState('')
   const [portBusy, setPortBusy] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const refresh = useCallback(async () => {
+  // ── 运营态 ──
+  const [strategy, setStrategy] = useState<RoutingStrategy | null>(null)
+  const [strategyBusy, setStrategyBusy] = useState(false)
+  const [scope, setScope] = useState<GatewayAccessScope | null>(null)
+  const [scopeBusy, setScopeBusy] = useState(false)
+  const [keys, setKeys] = useState<GatewayKey[]>([])
+  const [keysLoaded, setKeysLoaded] = useState(false)
+  const [keyBusy, setKeyBusy] = useState<string | null>(null)
+  const [newKeyName, setNewKeyName] = useState('')
+  const [copiedKeyId, setCopiedKeyId] = useState('')
+
+  // ── 请求日志 ──
+  const [logs, setLogs] = useState<GatewayLogEntry[]>([])
+  const [logTotal, setLogTotal] = useState(0)
+  const [logsLoaded, setLogsLoaded] = useState(false)
+  const [logBusy, setLogBusy] = useState(false)
+  const [fModel, setFModel] = useState('')
+  const [fFailedOnly, setFFailedOnly] = useState(false)
+
+  // ── 连通测试 ──
+  const [connBusy, setConnBusy] = useState(false)
+  const [conn, setConn] = useState<GatewayConnTestResult | null>(null)
+
+  const buildFilter = useCallback((): GatewayLogFilter | undefined => {
+    const f: GatewayLogFilter = {}
+    if (fModel.trim()) f.model = fModel.trim()
+    if (fFailedOnly) f.failedOnly = true
+    return Object.keys(f).length ? f : undefined
+  }, [fModel, fFailedOnly])
+
+  const loadLogs = useCallback(async (append: boolean) => {
+    setLogBusy(true)
+    try {
+      const offset = append ? logs.length : 0
+      const page = await queryGatewayLogs(offset, LOG_PAGE_SIZE, buildFilter())
+      const entries = page.entries || []
+      setLogs((prev) => (append ? [...prev, ...entries] : entries))
+      setLogTotal(page.total)
+      setLogsLoaded(true)
+      setErr('')
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setLogBusy(false)
+    }
+  }, [logs.length, buildFilter])
+
+  const refreshStatus = useCallback(async () => {
     try {
       const status = await api.gatewayStatus()
       setGw(status)
       setPortInput((prev) => (prev === '' && status.port > 0 ? String(status.port) : prev))
       const list = await api.listAccounts()
       setAccounts((list || []).length)
-      const s = await api.stats()
-      setRecent((s.recent || []).slice(0, 20))
       setErr('')
     } catch (e) {
       setErr(String(e))
     }
   }, [api])
 
+  // 一次性拉运营配置(策略/范围/key);轮询只刷运行态,避免打扰输入。
+  const loadOps = useCallback(async () => {
+    try {
+      const [st, sc, ks] = await Promise.all([getRoutingStrategy(), getGatewayAccessScope(), listGatewayKeys()])
+      setStrategy(st)
+      setScope(sc)
+      setKeys(ks || [])
+      setKeysLoaded(true)
+    } catch (e) {
+      setErr(String(e))
+    }
+  }, [])
+
   useEffect(() => {
-    void refresh()
-    const id = setInterval(() => { void refresh() }, 4000)
+    void refreshStatus()
+    void loadOps()
+    void loadLogs(false)
+    const id = setInterval(() => { void refreshStatus() }, 4000)
     return () => clearInterval(id)
-  }, [refresh])
+    // loadLogs 仅首次;过滤变化由 onChange 显式触发,故此处忽略其依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshStatus, loadOps])
+
+  // 过滤变化 → 重查(首屏后)。
+  const filtersReady = useRef(false)
+  useEffect(() => {
+    if (!filtersReady.current) { filtersReady.current = true; return }
+    void loadLogs(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fModel, fFailedOnly])
 
   const onToggle = async () => {
     setBusy(true)
@@ -46,7 +149,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     try {
       if (gw.running) await api.gatewayStop()
       else await api.gatewayStart()
-      await refresh()
+      await refreshStatus()
     } catch (e) {
       setErr(String(e))
     } finally {
@@ -77,7 +180,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
       const status = await api.setGatewayPort(port)
       setGw(status)
       setPortInput(status.port > 0 ? String(status.port) : portInput)
-      await refresh()
+      await refreshStatus()
     } catch (e) {
       setErr(String(e))
     } finally {
@@ -87,11 +190,118 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
 
   const portDirty = portInput !== '' && Number(portInput) !== gw.port
 
+  const onPickStrategy = async (next: RoutingStrategy) => {
+    if (next === strategy) return
+    setStrategyBusy(true)
+    setErr('')
+    try {
+      await setRoutingStrategy(next)
+      setStrategy(next)
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setStrategyBusy(false)
+    }
+  }
+
+  const onToggleScope = async () => {
+    const next: GatewayAccessScope = scope === 'lan' ? 'local' : 'lan'
+    setScopeBusy(true)
+    setErr('')
+    try {
+      await setGatewayAccessScope(next)
+      setScope(next)
+      await refreshStatus()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setScopeBusy(false)
+    }
+  }
+
+  const onCreateKey = async () => {
+    const name = newKeyName.trim()
+    if (!name) return
+    setKeyBusy('create')
+    setErr('')
+    try {
+      await createGatewayKey(name)
+      setNewKeyName('')
+      setKeys(await listGatewayKeys())
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setKeyBusy(null)
+    }
+  }
+
+  const onRotateKey = async (id: string) => {
+    setKeyBusy(`rot-${id}`)
+    setErr('')
+    try {
+      await rotateGatewayKey(id)
+      setKeys(await listGatewayKeys())
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setKeyBusy(null)
+    }
+  }
+
+  const onDeleteKey = async (id: string) => {
+    setKeyBusy(`del-${id}`)
+    setErr('')
+    try {
+      await deleteGatewayKey(id)
+      setKeys(await listGatewayKeys())
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setKeyBusy(null)
+    }
+  }
+
+  const onCopyKey = async (k: GatewayKey) => {
+    try {
+      await navigator.clipboard.writeText(k.value)
+      setCopiedKeyId(k.id)
+      setTimeout(() => setCopiedKeyId(''), 1500)
+    } catch { /* 忽略 */ }
+  }
+
+  const onClearLogs = async () => {
+    setLogBusy(true)
+    setErr('')
+    try {
+      await clearGatewayStats()
+      await loadLogs(false)
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setLogBusy(false)
+    }
+  }
+
+  const onConnTest = async () => {
+    setConnBusy(true)
+    setErr('')
+    try {
+      setConn(await gatewayConnTest())
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setConnBusy(false)
+    }
+  }
+
+  const lanOn = scope === 'lan'
+  const hasMore = logs.length < logTotal
+
   return (
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
 
-      {/* 运行态 + 启停 */}
+      {/* 运行态 + 启停 + 连通测试 */}
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-9 h-9 rounded-[10px] bg-[var(--bg-tertiary)] flex items-center justify-center">
@@ -108,19 +318,108 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
             </div>
           </div>
         </div>
-        <button
-          onClick={onToggle}
-          disabled={busy}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onConnTest}
+            disabled={connBusy || !gw.running}
+            title={gw.running ? '' : '网关未运行'}
+            className="cursor-pointer text-[12px] font-semibold px-2.5 h-[34px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {connBusy ? <Loader2 size={14} className="animate-spin" /> : <Plug2 size={14} />}
+            连通测试
+          </button>
+          <button
+            onClick={onToggle}
+            disabled={busy}
+            className={cn(
+              'cursor-pointer text-[12px] font-semibold px-3 h-[34px] rounded-[8px] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed',
+              gw.running
+                ? 'border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                : 'bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)]',
+            )}
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
+            {gw.running ? '停止' : '启动'}
+          </button>
+        </div>
+      </div>
+
+      {/* 连通测试结果 */}
+      {conn && (
+        <div
           className={cn(
-            'text-[12px] font-semibold px-3 h-[34px] rounded-[8px] inline-flex items-center gap-1.5 disabled:opacity-50',
-            gw.running
-              ? 'border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-              : 'bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)]',
+            'rounded-[10px] border px-3 py-2 text-[12px] flex items-center gap-2',
+            conn.ok
+              ? 'border-[var(--success)] bg-[var(--success)]/10 text-[var(--text-secondary)]'
+              : 'border-[var(--danger)] bg-[var(--danger)]/5 text-[var(--danger)]',
           )}
         >
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
-          {gw.running ? '停止' : '启动'}
-        </button>
+          {conn.ok ? <Check size={14} className="text-[var(--success)]" /> : <AlertTriangle size={14} className="text-[var(--danger)]" />}
+          {conn.ok ? (
+            <span>连通正常 · HTTP <span className="font-mono-data text-[var(--text-primary)]">{conn.status}</span> · 延迟 <span className="font-mono-data text-[var(--text-primary)] tabular-nums">{conn.latencyMs}</span> ms</span>
+          ) : (
+            <span className="break-all">连通失败{conn.status ? ` · HTTP ${conn.status}` : ''}{conn.err ? ` · ${conn.err}` : ''}</span>
+          )}
+        </div>
+      )}
+
+      {/* 路由策略 */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4">
+        <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide mb-2 inline-flex items-center gap-1.5">
+          <Route size={12} /> 路由策略(在池号怎么选)
+        </div>
+        <div className="inline-flex rounded-[10px] bg-[var(--bg-tertiary)] p-0.5">
+          {STRATEGIES.map(([id, label]) => {
+            const active = strategy === id
+            return (
+              <button
+                key={id}
+                onClick={() => void onPickStrategy(id)}
+                disabled={strategyBusy}
+                aria-pressed={active}
+                className={cn(
+                  'cursor-pointer text-[12px] font-semibold px-3 h-[30px] rounded-[8px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                  active ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-[var(--shadow-sm)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
+                )}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-2">
+          {strategy ? STRATEGIES.find(([id]) => id === strategy)?.[2] : '加载中…'}
+        </div>
+      </div>
+
+      {/* 局域网访问 */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5">
+              {lanOn ? <Wifi size={14} /> : <Lock size={14} />} 局域网访问
+            </div>
+            <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
+              {scope === null ? '加载中…' : lanOn ? '已开放:局域网设备可连(0.0.0.0)' : '仅本机:只有这台电脑可连(127.0.0.1)'}
+            </div>
+          </div>
+          <button
+            onClick={onToggleScope}
+            disabled={scopeBusy || scope === null}
+            role="switch"
+            aria-checked={lanOn}
+            aria-label="局域网访问"
+            className={cn('cursor-pointer w-[42px] h-[24px] rounded-full relative transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0', lanOn ? 'bg-[var(--primary)]' : 'bg-[#cbd2dc]')}
+          >
+            <span className={cn('absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all', lanOn ? 'right-[3px]' : 'left-[3px]')} />
+          </button>
+        </div>
+        {lanOn && (
+          <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)] flex items-start gap-2">
+            <AlertTriangle size={13} className="text-[var(--warning)] mt-0.5 shrink-0" />
+            <span>已开放局域网:同一网络下的<span className="font-semibold text-[var(--warning)]">局域网内任何设备</span>都能用上面的地址调用你的自有号。务必配好下面的访问 key,别在不可信网络开放。</span>
+          </div>
+        )}
       </div>
 
       {/* 端口设置 */}
@@ -143,7 +442,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
           <button
             onClick={onApplyPort}
             disabled={portBusy || !portDirty}
-            className="text-[12px] font-semibold px-3 h-[34px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+            className="cursor-pointer text-[12px] font-semibold px-3 h-[34px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {portBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             应用并重启
@@ -160,7 +459,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
             <code className="flex-1 min-w-0 truncate rounded-[8px] bg-[var(--bg-tertiary)] px-3 py-2 text-[12px] font-mono-data text-[var(--text-primary)]">{baseUrl}</code>
             <button
               onClick={onCopy}
-              className="text-[12px] font-semibold px-2.5 h-[34px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1.5 shrink-0"
+              className="cursor-pointer text-[12px] font-semibold px-2.5 h-[34px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center gap-1.5 shrink-0"
             >
               {copied ? <Check size={14} className="text-[var(--success)]" /> : <Copy size={14} />}
               {copied ? '已复制' : '复制'}
@@ -169,21 +468,147 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
         </div>
       )}
 
-      {/* 最近请求 */}
-      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50 text-[11px] font-bold text-[var(--text-muted)] tracking-wide">最近请求 · {recent.length}</div>
-        {recent.length === 0 ? (
-          <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">还没有请求,接管后经反代的调用会显示在这里</div>
+      {/* 网关 API Key */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
+        <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide inline-flex items-center gap-1.5">
+          <KeyRound size={12} /> 网关访问 Key(客户端 Authorization 用)
+        </div>
+        {/* 新建 */}
+        <div className="flex items-center gap-2">
+          <input
+            value={newKeyName}
+            onChange={(e) => setNewKeyName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && newKeyName.trim() && keyBusy !== 'create') void onCreateKey() }}
+            placeholder="给 key 起个名,如「团队」「我的 IDE」"
+            aria-label="新 key 名称"
+            className="flex-1 min-w-0 rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 h-[34px] text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]"
+          />
+          <button
+            onClick={onCreateKey}
+            disabled={keyBusy === 'create' || !newKeyName.trim()}
+            className="cursor-pointer text-[12px] font-semibold px-3 h-[34px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {keyBusy === 'create' ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+            新建 key
+          </button>
+        </div>
+        {/* 列表 */}
+        {!keysLoaded ? (
+          <div className="py-6 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
+        ) : keys.length === 0 ? (
+          <div className="rounded-[8px] bg-[var(--bg-tertiary)] py-6 text-center text-[12px] text-[var(--text-muted)]">还没有访问 key。开放局域网前建议先建一个。</div>
         ) : (
-          <div className="divide-y divide-[var(--border-light)]">
-            {recent.map((r, i) => (
-              <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-3 items-center px-4 py-2 text-[12px]">
-                <span className="font-mono-data text-[var(--text-primary)] truncate">{r.model || '—'}</span>
-                <span className={cn('text-[11px]', r.failed ? 'text-[var(--danger)]' : 'text-[var(--success)]')}>{r.failed ? '失败' : '成功'}</span>
-                <span className="text-[11px] font-mono-data text-[var(--text-muted)] tabular-nums w-[64px] text-right">{r.latencyMs}ms</span>
-              </div>
-            ))}
+          <div className="flex flex-col divide-y divide-[var(--border-light)]">
+            {keys.map((k) => {
+              const rotating = keyBusy === `rot-${k.id}`
+              const deleting = keyBusy === `del-${k.id}`
+              return (
+                <div key={k.id} className="grid grid-cols-[1fr_auto] gap-3 items-center py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold text-[var(--text-primary)] truncate">{k.name}</div>
+                    <div className="text-[11px] font-mono-data text-[var(--text-muted)] truncate">{maskKey(k.value)}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => void onCopyKey(k)}
+                      title="复制完整 key"
+                      aria-label="复制 key"
+                      className="cursor-pointer w-[30px] h-[30px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center justify-center"
+                    >
+                      {copiedKeyId === k.id ? <Check size={14} className="text-[var(--success)]" /> : <Copy size={14} />}
+                    </button>
+                    <button
+                      onClick={() => void onRotateKey(k.id)}
+                      disabled={rotating || deleting}
+                      title="重置 key 值"
+                      aria-label="轮换 key"
+                      className="cursor-pointer w-[30px] h-[30px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {rotating ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
+                    </button>
+                    <button
+                      onClick={() => void onDeleteKey(k.id)}
+                      disabled={rotating || deleting}
+                      title="删除 key"
+                      aria-label="删除 key"
+                      className="cursor-pointer w-[30px] h-[30px] rounded-[8px] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger)]/5 inline-flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
+        )}
+        <div className="text-[11px] text-[var(--text-muted)]">改 key 会重启网关生效;客户端用 <code className="font-mono-data">Authorization: Bearer &lt;key&gt;</code> 调用。</div>
+      </div>
+
+      {/* 请求日志(可过滤 + 加载更多 + 清空) */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50 flex items-center justify-between gap-3 flex-wrap">
+          <span className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide inline-flex items-center gap-1.5">
+            <ListFilter size={12} /> 请求日志 · {logTotal}
+          </span>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <input
+              value={fModel}
+              onChange={(e) => setFModel(e.target.value)}
+              placeholder="按模型筛选"
+              aria-label="按模型筛选"
+              className="w-[130px] rounded-[8px] border border-[var(--border)] bg-[var(--bg-card)] px-2.5 h-[28px] text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]"
+            />
+            <label className="cursor-pointer text-[11px] text-[var(--text-secondary)] inline-flex items-center gap-1.5 select-none">
+              <input
+                type="checkbox"
+                checked={fFailedOnly}
+                onChange={(e) => setFFailedOnly(e.target.checked)}
+                aria-label="仅失败"
+                className="cursor-pointer accent-[var(--primary)]"
+              />
+              仅失败
+            </label>
+            <button
+              onClick={onClearLogs}
+              disabled={logBusy || logTotal === 0}
+              className="cursor-pointer text-[11px] font-semibold px-2.5 h-[28px] rounded-[8px] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger)]/5 inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={12} /> 清空日志
+            </button>
+          </div>
+        </div>
+        {!logsLoaded ? (
+          <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
+        ) : logs.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[12px] text-[var(--text-muted)]">
+            {fModel || fFailedOnly ? '没有命中筛选的请求。' : '还没有请求,接管后经反代的调用会显示在这里。'}
+          </div>
+        ) : (
+          <>
+            <div className="divide-y divide-[var(--border-light)]">
+              {logs.map((r, i) => (
+                <div key={`${r.atMs}-${i}`} className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-3 items-center px-4 py-2 text-[12px]">
+                  <span className="font-mono-data text-[var(--text-muted)] text-[11px]">{r.atMs ? new Date(r.atMs).toLocaleTimeString() : '—'}</span>
+                  <span className="font-mono-data text-[var(--text-primary)] truncate">{r.model || '—'}</span>
+                  <span className="text-[11px] text-[var(--text-secondary)] truncate max-w-[140px]">{r.email || r.authId || '—'}</span>
+                  <span className={cn('text-[11px]', r.failed ? 'text-[var(--danger)]' : 'text-[var(--success)]')}>{r.failed ? '失败' : '成功'}</span>
+                  <span className="text-[11px] font-mono-data text-[var(--text-muted)] tabular-nums w-[64px] text-right">{r.latencyMs}ms</span>
+                </div>
+              ))}
+            </div>
+            {hasMore && (
+              <div className="px-4 py-2.5 border-t border-[var(--border-light)] text-center">
+                <button
+                  onClick={() => void loadLogs(true)}
+                  disabled={logBusy}
+                  className="cursor-pointer text-[12px] font-semibold text-[var(--primary-strong)] hover:text-[var(--primary)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {logBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                  加载更多({logs.length}/{logTotal})
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -52,6 +52,36 @@ export interface WakeupRunEntry { atMs: number; accountId: string; email: string
 /** 自动刷新间隔(分钟):配额自动刷新 / 当前账号刷新。 */
 export interface RefreshConfig { quotaMinutes: number; currentMinutes: number }
 
+// ── 反代(codex 网关)运营 ──
+
+/** 路由(选号)策略:priority=优先号优先 / round-robin=轮询 / fair=剩余额度高者优先。 */
+export type RoutingStrategy = 'priority' | 'round-robin' | 'fair'
+
+/** 网关访问范围:local=仅本机(127.0.0.1) / lan=局域网(0.0.0.0)。默认仅本机。 */
+export type GatewayAccessScope = 'local' | 'lan'
+
+/** 客户端访问 key(调本地 /v1 用)。 */
+export interface GatewayKey { id: string; name: string; value: string; createdAt: number }
+
+/** 一条请求日志(email 由后端按 authId 补全)。 */
+export interface GatewayLogEntry {
+  atMs: number
+  authId: string
+  email: string
+  model: string
+  failed: boolean
+  latencyMs: number
+}
+
+/** 一页请求日志(total=命中过滤的总条数,供分页)。 */
+export interface GatewayLogPage { total: number; entries: GatewayLogEntry[] | null }
+
+/** 请求日志过滤条件(空字段=不按该维度过滤)。 */
+export interface GatewayLogFilter { model?: string; authId?: string; failedOnly?: boolean }
+
+/** 连通测试结果。 */
+export interface GatewayConnTestResult { ok: boolean; status: number; latencyMs: number; err: string }
+
 export interface InstanceProfile {
   id: string
   provider: string
@@ -210,4 +240,61 @@ export function getRefreshConfig(): Promise<RefreshConfig> {
 /** 设置自动刷新间隔(分钟),返回 clamp 后的实际配置。 */
 export function setRefreshConfig(quotaMinutes: number, currentMinutes: number): Promise<RefreshConfig> {
   return app().LocalSetRefreshConfig(quotaMinutes, currentMinutes) as Promise<RefreshConfig>
+}
+
+// ── 反代(codex 网关)运营(全局,非 provider 特定;网关只服务 codex) ──
+
+/** 读取当前路由(选号)策略。 */
+export function getRoutingStrategy(): Promise<RoutingStrategy> {
+  return app().LocalGetRoutingStrategy() as Promise<RoutingStrategy>
+}
+
+/** 设置路由策略(priority / round-robin / fair),热切换到运行中的网关。 */
+export function setRoutingStrategy(strategy: RoutingStrategy): Promise<void> {
+  return app().LocalSetRoutingStrategy(strategy) as Promise<void>
+}
+
+/** 列出客户端访问 key。 */
+export function listGatewayKeys(): Promise<GatewayKey[]> {
+  return app().LocalListGatewayKeys() as Promise<GatewayKey[]>
+}
+
+/** 新建一条访问 key(重启网关生效)。 */
+export function createGatewayKey(name: string): Promise<GatewayKey> {
+  return app().LocalCreateGatewayKey(name) as Promise<GatewayKey>
+}
+
+/** 删除一条访问 key(重启网关生效)。 */
+export function deleteGatewayKey(id: string): Promise<void> {
+  return app().LocalDeleteGatewayKey(id) as Promise<void>
+}
+
+/** 重置一条访问 key 的值(保留 id/名称;重启网关生效)。 */
+export function rotateGatewayKey(id: string): Promise<GatewayKey> {
+  return app().LocalRotateGatewayKey(id) as Promise<GatewayKey>
+}
+
+/** 读取局域网范围(local=仅本机 / lan=局域网)。 */
+export function getGatewayAccessScope(): Promise<GatewayAccessScope> {
+  return app().LocalGetGatewayAccessScope() as Promise<GatewayAccessScope>
+}
+
+/** 设置局域网范围(改网关绑定主机,重启生效)。 */
+export function setGatewayAccessScope(scope: GatewayAccessScope): Promise<void> {
+  return app().LocalSetGatewayAccessScope(scope) as Promise<void>
+}
+
+/** 分页 + 过滤查询请求日志(新→旧)。 */
+export function queryGatewayLogs(offset: number, limit: number, filter?: GatewayLogFilter): Promise<GatewayLogPage> {
+  return app().LocalQueryGatewayLogs(offset, limit, filter ? JSON.stringify(filter) : '') as Promise<GatewayLogPage>
+}
+
+/** 清空网关统计与请求日志。 */
+export function clearGatewayStats(): Promise<void> {
+  return app().LocalClearGatewayStats() as Promise<void>
+}
+
+/** 对本地网关发一个最小真请求,返回连通结果。 */
+export function gatewayConnTest(): Promise<GatewayConnTestResult> {
+  return app().LocalGatewayConnTest() as Promise<GatewayConnTestResult>
 }

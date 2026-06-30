@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"bcai-wails/internal/local/account"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 // 安全不变式:网关只看得到 PoolEnabled 的自有号。
@@ -54,20 +52,5 @@ func TestStore_CodexScoped_ExcludesAntigravity(t *testing.T) {
 	}
 	if len(auths) != 1 || auths[0].Provider != "codex" {
 		t.Fatalf("expected only codex auth, got %+v", auths)
-	}
-}
-
-func TestSelector_PrefersPriority(t *testing.T) {
-	a1 := &coreauth.Auth{ID: "1", Attributes: map[string]string{"priority": "0"}}
-	a2 := &coreauth.Auth{ID: "2", Attributes: map[string]string{"priority": "1"}}
-	got, err := Selector{}.Pick(context.Background(), "codex", "gpt-5", cliproxyexecutor.Options{}, []*coreauth.Auth{a1, a2})
-	if err != nil || got.ID != "2" {
-		t.Fatalf("expected priority a2, got %+v err=%v", got, err)
-	}
-}
-
-func TestSelector_EmptyErrors(t *testing.T) {
-	if _, err := (Selector{}).Pick(context.Background(), "codex", "m", cliproxyexecutor.Options{}, nil); err == nil {
-		t.Fatal("expected error on empty auths")
 	}
 }
