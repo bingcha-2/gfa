@@ -20,7 +20,12 @@ type localPlatform struct{}
 
 // CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI(注入式接管)。
 // 这与反代(cliproxy 网关)无关——反代是单独功能,由反代 tab 独立开关。
+//
+// 红线:注入自有号前先 RestoreCodexSettings 撤掉任何「远程接管」往 config.toml 写的
+// 自定义 provider 重定向 —— 否则 config.toml 还指着远程租号代理,自有号凭证会经远程
+// 代理出口(违反「远程/本地两条数据面互斥、自有号不经远程」)。两种接管互斥,这里强制。
 func (localPlatform) CodexInjectAccount(tok hub.CodexToken) error {
+	_ = RestoreCodexSettings()
 	return codexinject.InjectToHome(codexHomeDir(), codexinject.Token{
 		AuthKind:     tok.AuthKind,
 		IDToken:      tok.IDToken,
@@ -159,9 +164,10 @@ func (localPlatform) AntigravityStartDefault() error { return LaunchIDE() }
 func (localPlatform) AntigravityStopDefault() error {
 	switch runtime.GOOS {
 	case "darwin":
-		killProcessesByPattern("Antigravity IDE", "-TERM")
+		// 锚定到 .app/Contents/MacOS 主进程,避免误杀任何 argv 里含「Antigravity IDE」的无关进程。
+		killProcessesByPattern("Antigravity IDE.app/Contents/MacOS", "-TERM")
 		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
-			killProcessesByPattern("Antigravity IDE", "-9")
+			killProcessesByPattern("Antigravity IDE.app/Contents/MacOS", "-9")
 		}
 	case "windows":
 		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T").Run()
@@ -196,3 +202,20 @@ func (localPlatform) AntigravityFocusDefault() error {
 
 // AntigravityRuntimeRunning 返回 Antigravity IDE 是否在运行。
 func (localPlatform) AntigravityRuntimeRunning() bool { return IsIDERunning() }
+
+// CodexRestartApp 重启常驻 Codex GUI app,让它重读 ~/.codex/auth.json(切号后生效)。
+// codex CLI 每次运行自读 auth.json,无需重启;此方法仅针对常驻 GUI。未装则 no-op。
+func (localPlatform) CodexRestartApp() error {
+	appPath := detectCodexGUIPath()
+	if appPath == "" {
+		return nil
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		killProcessesByPattern(codexGUIProcessPattern, "-TERM") // 锚定主进程,避免误杀
+	case "windows":
+		_ = hideCmd("taskkill", "/IM", "Codex.exe", "/T").Run()
+	}
+	_, err := localPlatform{}.LaunchApp(appPath, "", nil)
+	return err
+}

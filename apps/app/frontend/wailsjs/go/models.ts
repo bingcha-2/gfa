@@ -1,3 +1,49 @@
+export namespace gateway {
+	
+	export class ConnTestResult {
+	    ok: boolean;
+	    status: number;
+	    latencyMs: number;
+	    err: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConnTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.status = source["status"];
+	        this.latencyMs = source["latencyMs"];
+	        this.err = source["err"];
+	    }
+	}
+
+}
+
+export namespace gatewaykeys {
+	
+	export class Key {
+	    id: string;
+	    name: string;
+	    value: string;
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Key(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.value = source["value"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+
+}
+
 export namespace hub {
 	
 	export class GatewayStatus {
@@ -308,8 +354,10 @@ export namespace manager {
 	export class AccountView {
 	    id: string;
 	    email: string;
+	    name: string;
 	    provider: string;
 	    authKind: string;
+	    note: string;
 	    planType: string;
 	    quotaStatus: string;
 	    tags: string[];
@@ -329,8 +377,10 @@ export namespace manager {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.email = source["email"];
+	        this.name = source["name"];
 	        this.provider = source["provider"];
 	        this.authKind = source["authKind"];
+	        this.note = source["note"];
 	        this.planType = source["planType"];
 	        this.quotaStatus = source["quotaStatus"];
 	        this.tags = source["tags"];
@@ -341,6 +391,25 @@ export namespace manager {
 	        this.hourlyResetAt = source["hourlyResetAt"];
 	        this.weeklyResetAt = source["weeklyResetAt"];
 	        this.lastUsedAt = source["lastUsedAt"];
+	    }
+	}
+
+}
+
+export namespace refreshcfg {
+	
+	export class Config {
+	    quotaMinutes: number;
+	    currentMinutes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.quotaMinutes = source["quotaMinutes"];
+	        this.currentMinutes = source["currentMinutes"];
 	    }
 	}
 
@@ -366,6 +435,60 @@ export namespace stats {
 	        this.totalTokens = source["totalTokens"];
 	    }
 	}
+	export class RequestEntry {
+	    atMs: number;
+	    authId: string;
+	    email: string;
+	    model: string;
+	    failed: boolean;
+	    latencyMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.atMs = source["atMs"];
+	        this.authId = source["authId"];
+	        this.email = source["email"];
+	        this.model = source["model"];
+	        this.failed = source["failed"];
+	        this.latencyMs = source["latencyMs"];
+	    }
+	}
+	export class LogPage {
+	    total: number;
+	    entries: RequestEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LogPage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.entries = this.convertValues(source["entries"], RequestEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ModelStat {
 	    model: string;
 	    requests: number;
@@ -382,26 +505,7 @@ export namespace stats {
 	        this.totalTokens = source["totalTokens"];
 	    }
 	}
-	export class RequestEntry {
-	    atMs: number;
-	    authId: string;
-	    model: string;
-	    failed: boolean;
-	    latencyMs: number;
 	
-	    static createFrom(source: any = {}) {
-	        return new RequestEntry(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.atMs = source["atMs"];
-	        this.authId = source["authId"];
-	        this.model = source["model"];
-	        this.failed = source["failed"];
-	        this.latencyMs = source["latencyMs"];
-	    }
-	}
 	export class Snapshot {
 	    totalRequests: number;
 	    totalFailed: number;
@@ -469,6 +573,7 @@ export namespace wakeup {
 	    email: string;
 	    ok: boolean;
 	    err?: string;
+	    newExpiry?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RunEntry(source);
@@ -481,6 +586,7 @@ export namespace wakeup {
 	        this.email = source["email"];
 	        this.ok = source["ok"];
 	        this.err = source["err"];
+	        this.newExpiry = source["newExpiry"];
 	    }
 	}
 

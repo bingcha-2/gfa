@@ -94,6 +94,22 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function LocalAddAntigravityApiKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LocalAddAntigravityApiKey'](arg1, arg2, arg3);
+}
+
+export function LocalAddAntigravityToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LocalAddAntigravityToken'](arg1, arg2, arg3);
+}
+
+export function LocalAddCodexApiKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LocalAddCodexApiKey'](arg1, arg2, arg3);
+}
+
+export function LocalAddCodexToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LocalAddCodexToken'](arg1, arg2, arg3);
+}
+
 export function LocalAntigravityGatewayStart() {
   return window['go']['main']['App']['LocalAntigravityGatewayStart']();
 }
@@ -122,6 +138,10 @@ export function LocalAntigravityWakeupRunNow() {
   return window['go']['main']['App']['LocalAntigravityWakeupRunNow']();
 }
 
+export function LocalClearGatewayStats() {
+  return window['go']['main']['App']['LocalClearGatewayStats']();
+}
+
 export function LocalCodexStats() {
   return window['go']['main']['App']['LocalCodexStats']();
 }
@@ -138,6 +158,10 @@ export function LocalCodexWakeupRunNow() {
   return window['go']['main']['App']['LocalCodexWakeupRunNow']();
 }
 
+export function LocalCreateGatewayKey(arg1) {
+  return window['go']['main']['App']['LocalCreateGatewayKey'](arg1);
+}
+
 export function LocalDeleteAccount(arg1) {
   return window['go']['main']['App']['LocalDeleteAccount'](arg1);
 }
@@ -146,12 +170,20 @@ export function LocalDeleteAccounts(arg1) {
   return window['go']['main']['App']['LocalDeleteAccounts'](arg1);
 }
 
+export function LocalDeleteGatewayKey(arg1) {
+  return window['go']['main']['App']['LocalDeleteGatewayKey'](arg1);
+}
+
 export function LocalExportAntigravityAccounts(arg1) {
   return window['go']['main']['App']['LocalExportAntigravityAccounts'](arg1);
 }
 
 export function LocalExportCodexAccounts(arg1) {
   return window['go']['main']['App']['LocalExportCodexAccounts'](arg1);
+}
+
+export function LocalGatewayConnTest() {
+  return window['go']['main']['App']['LocalGatewayConnTest']();
 }
 
 export function LocalGatewayStart() {
@@ -174,12 +206,36 @@ export function LocalGetCodexSource() {
   return window['go']['main']['App']['LocalGetCodexSource']();
 }
 
+export function LocalGetGatewayAccessScope() {
+  return window['go']['main']['App']['LocalGetGatewayAccessScope']();
+}
+
+export function LocalGetRefreshConfig() {
+  return window['go']['main']['App']['LocalGetRefreshConfig']();
+}
+
+export function LocalGetRoutingStrategy() {
+  return window['go']['main']['App']['LocalGetRoutingStrategy']();
+}
+
+export function LocalImportAntigravityAuthFiles(arg1) {
+  return window['go']['main']['App']['LocalImportAntigravityAuthFiles'](arg1);
+}
+
 export function LocalImportAntigravityFromJSON(arg1) {
   return window['go']['main']['App']['LocalImportAntigravityFromJSON'](arg1);
 }
 
+export function LocalImportCodexAuthFiles(arg1) {
+  return window['go']['main']['App']['LocalImportCodexAuthFiles'](arg1);
+}
+
 export function LocalImportCodexFromJSON(arg1) {
   return window['go']['main']['App']['LocalImportCodexFromJSON'](arg1);
+}
+
+export function LocalImportCodexFromLocal() {
+  return window['go']['main']['App']['LocalImportCodexFromLocal']();
 }
 
 export function LocalInstanceCreate(arg1, arg2, arg3, arg4, arg5, arg6) {
@@ -214,6 +270,38 @@ export function LocalListCodexAccounts() {
   return window['go']['main']['App']['LocalListCodexAccounts']();
 }
 
+export function LocalListGatewayKeys() {
+  return window['go']['main']['App']['LocalListGatewayKeys']();
+}
+
+export function LocalQueryGatewayLogs(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LocalQueryGatewayLogs'](arg1, arg2, arg3);
+}
+
+export function LocalRefreshAccountQuota(arg1) {
+  return window['go']['main']['App']['LocalRefreshAccountQuota'](arg1);
+}
+
+export function LocalRefreshAllQuotas(arg1) {
+  return window['go']['main']['App']['LocalRefreshAllQuotas'](arg1);
+}
+
+export function LocalRenameAccount(arg1, arg2) {
+  return window['go']['main']['App']['LocalRenameAccount'](arg1, arg2);
+}
+
+export function LocalRotateGatewayKey(arg1) {
+  return window['go']['main']['App']['LocalRotateGatewayKey'](arg1);
+}
+
+export function LocalSetAccountNote(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetAccountNote'](arg1, arg2);
+}
+
+export function LocalSetAccountTags(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetAccountTags'](arg1, arg2);
+}
+
 export function LocalSetAntigravityPriority(arg1) {
   return window['go']['main']['App']['LocalSetAntigravityPriority'](arg1);
 }
@@ -238,8 +326,24 @@ export function LocalSetCodexWakeupConfig(arg1, arg2) {
   return window['go']['main']['App']['LocalSetCodexWakeupConfig'](arg1, arg2);
 }
 
+export function LocalSetGatewayAccessScope(arg1) {
+  return window['go']['main']['App']['LocalSetGatewayAccessScope'](arg1);
+}
+
+export function LocalSetGatewayPort(arg1) {
+  return window['go']['main']['App']['LocalSetGatewayPort'](arg1);
+}
+
 export function LocalSetPoolEnabled(arg1, arg2) {
   return window['go']['main']['App']['LocalSetPoolEnabled'](arg1, arg2);
+}
+
+export function LocalSetRefreshConfig(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetRefreshConfig'](arg1, arg2);
+}
+
+export function LocalSetRoutingStrategy(arg1) {
+  return window['go']['main']['App']['LocalSetRoutingStrategy'](arg1);
 }
 
 export function LocalStartAntigravityLogin() {
@@ -248,6 +352,10 @@ export function LocalStartAntigravityLogin() {
 
 export function LocalStartCodexLogin() {
   return window['go']['main']['App']['LocalStartCodexLogin']();
+}
+
+export function LocalSyncAntigravityFromIDE() {
+  return window['go']['main']['App']['LocalSyncAntigravityFromIDE']();
 }
 
 export function LocalWaitAntigravityLogin(arg1) {

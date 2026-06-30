@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/codexsettings"
 	"bcai-wails/internal/local/instance"
 )
 
@@ -21,11 +22,12 @@ type fakePlatform struct {
 	ideToken           AntigravityToken
 	ideTokenErr        error
 
-	agStartCount  int
-	agStopCount   int
-	agFocusCount  int
-	agStatusCount int
-	agRunning     bool
+	agStartCount      int
+	agStopCount       int
+	agFocusCount      int
+	agStatusCount     int
+	agRunning         bool
+	codexRestartCount int
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -63,6 +65,7 @@ func (f *fakePlatform) AntigravityStopDefault() error {
 }
 func (f *fakePlatform) AntigravityFocusDefault() error  { f.agFocusCount++; return nil }
 func (f *fakePlatform) AntigravityRuntimeRunning() bool { f.agStatusCount++; return f.agRunning }
+func (f *fakePlatform) CodexRestartApp() error          { f.codexRestartCount++; return nil }
 
 func newHub(t *testing.T) (*Hub, *fakePlatform) {
 	t.Helper()
@@ -162,6 +165,41 @@ func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
 	}
 	if fp.agRestoreCount < 1 {
 		t.Fatal("expected antigravity restored on remote")
+	}
+}
+
+// 切换接管源后重启对应客户端:antigravity 在跑则停+起(重读 state.vscdb);
+// codex 仅当「切换时启动 Codex App」(LaunchOnSwitch)开启才重启 GUI。
+func TestHub_RestartOnSwitch(t *testing.T) {
+	h, fp := newHub(t)
+	fp.agRunning = true
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com", AccessToken: "AT", PoolEnabled: true})
+	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
+		t.Fatalf("ag local: %v", err)
+	}
+	if fp.agStopCount < 1 || fp.agStartCount < 1 {
+		t.Fatalf("antigravity 切换应重启 IDE(stop=%d start=%d)", fp.agStopCount, fp.agStartCount)
+	}
+
+	// codex 默认 LaunchOnSwitch=true(对齐 cockpit)→ 切换应重启 GUI。
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "cx@x.com", AuthKind: account.AuthOAuth, AccessToken: "AT", PoolEnabled: true})
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("codex local: %v", err)
+	}
+	if fp.codexRestartCount < 1 {
+		t.Fatalf("默认 LaunchOnSwitch=true 时切换应重启 codex GUI,got %d", fp.codexRestartCount)
+	}
+
+	// 关掉 LaunchOnSwitch → 再切换不应重启。
+	if _, err := h.SaveCodexSettings(codexsettings.Settings{LaunchOnSwitch: false}); err != nil {
+		t.Fatalf("SaveCodexSettings: %v", err)
+	}
+	before := fp.codexRestartCount
+	if err := h.SetSource(account.ProviderCodex, "remote"); err != nil {
+		t.Fatalf("codex remote: %v", err)
+	}
+	if fp.codexRestartCount != before {
+		t.Fatalf("LaunchOnSwitch 关时不应重启 codex,got %d (was %d)", fp.codexRestartCount, before)
 	}
 }
 

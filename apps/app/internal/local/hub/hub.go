@@ -91,6 +91,9 @@ type Platform interface {
 	AntigravityStopDefault() error
 	AntigravityFocusDefault() error
 	AntigravityRuntimeRunning() bool
+
+	// CodexRestartApp 重启常驻 Codex GUI app(切号后重读 auth.json);未装则 no-op。
+	CodexRestartApp() error
 }
 
 // GatewayStatus 网关状态视图(前端用)。
@@ -610,7 +613,30 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 			_ = h.platform.AntigravityRestoreAccount()
 		}
 	}
-	return h.sources.Set(string(p), src)
+	if err := h.sources.Set(string(p), src); err != nil {
+		return err
+	}
+	// 切换接管源后重启对应客户端,让注入/还原的登录真正生效。
+	h.restartClientAfterSwitch(p)
+	return nil
+}
+
+// restartClientAfterSwitch 切换接管源后重启对应客户端,让注入的新登录生效:
+//   - antigravity:IDE 常驻、把 state.vscdb 缓存在内存,若在跑则重启(停+起)才会重读新号;
+//     没在跑就不动(下次用户自己打开即读到新态)。
+//   - codex:CLI 每次运行自读 auth.json 无需重启;仅当用户开了「切换时启动 Codex App」才重启常驻 GUI。
+func (h *Hub) restartClientAfterSwitch(p account.Provider) {
+	switch p {
+	case account.ProviderAntigravity:
+		if h.platform.AntigravityRuntimeRunning() {
+			_ = h.platform.AntigravityStopDefault()
+			_ = h.platform.AntigravityStartDefault()
+		}
+	case account.ProviderCodex:
+		if h.GetCodexSettings().LaunchOnSwitch {
+			_ = h.platform.CodexRestartApp()
+		}
+	}
 }
 
 // pickCodexToken 选要注入的 codex 自有号:优先级号,否则第一个进池号。
