@@ -151,4 +151,6 @@ export const antigravityLocalApi: ProviderLocalApi = {
   instanceUpdate: (p) => app().LocalInstanceUpdate(p) as Promise<void>,
   instanceLaunch: (id) => app().LocalInstanceLaunch(id) as Promise<void>,
   instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
+  getSource: () => app().LocalGetAntigravitySource() as Promise<string>,
+  setSource: (src) => app().LocalSetAntigravitySource(src) as Promise<void>,
 }

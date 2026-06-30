@@ -20,6 +20,8 @@ function installApp() {
     LocalAntigravityGatewayStop: vi.fn(),
     LocalExportAntigravityAccounts: vi.fn(),
     LocalImportAntigravityFromJSON: vi.fn(),
+    LocalGetAntigravitySource: vi.fn().mockResolvedValue('remote'),
+    LocalSetAntigravitySource: vi.fn().mockResolvedValue(undefined),
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
   return base
@@ -35,9 +37,13 @@ describe('AntigravitySuitePage', () => {
     expect(screen.getByText(/网关 127\.0\.0\.1:19529/)).toBeInTheDocument()
   })
 
-  it('does not show the source toggle (antigravity has no remote/local switch yet)', async () => {
+  it('shows the source toggle and can switch to local (IDE settings → local gateway)', async () => {
+    const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    expect(screen.queryByText('接管模式')).toBeNull()
+    expect(screen.getByText('接管模式')).toBeInTheDocument()
+    const { fireEvent, waitFor } = await import('@testing-library/react')
+    fireEvent.click(screen.getByRole('button', { name: '本地自有号' }))
+    await waitFor(() => expect(app.LocalSetAntigravitySource).toHaveBeenCalledWith('local'))
   })
 })
