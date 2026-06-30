@@ -7,6 +7,7 @@ import { LocalAccountsTab } from './LocalAccountsTab'
 import { LocalStatsTab } from './LocalStatsTab'
 import { LocalWakeupTab } from './LocalWakeupTab'
 import { LocalInstancesTab } from './LocalInstancesTab'
+import { LocalGatewayTab } from './LocalGatewayTab'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
@@ -23,7 +24,7 @@ export interface LocalProviderSuiteProps {
   onNavigate?: (p: PageId) => void
 }
 
-const TABS = [['accounts', '账号'], ['stats', '统计'], ['wakeup', '保活'], ['instances', '实例']] as const
+const TABS = [['accounts', '账号'], ['gateway', '反代'], ['stats', '统计'], ['wakeup', '保活'], ['instances', '实例']] as const
 type TabId = (typeof TABS)[number][0]
 
 export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuiteProps) {
@@ -104,6 +105,7 @@ export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuit
       </div>
 
       {tab === 'accounts' && <LocalAccountsTab title={title} api={api} />}
+      {tab === 'gateway' && <LocalGatewayTab api={api} />}
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
       {tab === 'instances' && <LocalInstancesTab api={api} />}

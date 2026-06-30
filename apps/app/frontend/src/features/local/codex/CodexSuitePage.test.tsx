@@ -85,6 +85,15 @@ describe('CodexSuitePage', () => {
     expect(onNav).toHaveBeenCalledWith('takeover')
   })
 
+  it('反代 tab 显示网关运行态 + OpenAI 兼容地址', async () => {
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '反代' }))
+    expect(await screen.findByText('本地反代')).toBeInTheDocument()
+    // 网关运行中(mock addr 127.0.0.1:19528)→ 暴露 base URL
+    expect(await screen.findByText('http://127.0.0.1:19528/v1')).toBeInTheDocument()
+  })
+
   it('shows the stats tab with gateway usage', async () => {
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
