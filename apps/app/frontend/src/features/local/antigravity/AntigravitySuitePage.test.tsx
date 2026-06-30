@@ -24,6 +24,36 @@ function installApp() {
     LocalSyncAntigravityFromIDE: vi.fn().mockResolvedValue(1),
     LocalGetAntigravitySource: vi.fn().mockResolvedValue('remote'),
     LocalSetAntigravitySource: vi.fn().mockResolvedValue(undefined),
+    // ── 账号组织(分组 + 显式当前号 + 重排序)(Wave I · 共享) ──
+    LocalListAccountGroups: vi.fn().mockResolvedValue([
+      { id: 'gr1', name: '主力', sortOrder: 0, accountIds: ['g1'], createdAt: 1700000000000 },
+    ]),
+    LocalCreateAccountGroup: vi.fn().mockResolvedValue({ id: 'gr2', name: '备用', sortOrder: 1, accountIds: [], createdAt: 1700000100000 }),
+    LocalRenameAccountGroup: vi.fn().mockResolvedValue(null),
+    LocalUpdateAccountGroupSortOrder: vi.fn().mockResolvedValue(null),
+    LocalDeleteAccountGroup: vi.fn().mockResolvedValue(undefined),
+    LocalAssignAccountsToGroup: vi.fn().mockResolvedValue(null),
+    LocalRemoveAccountsFromGroup: vi.fn().mockResolvedValue(null),
+    LocalResolveAccountGroups: vi.fn().mockResolvedValue({ g1: 'gr1' }),
+    LocalCurrentAntigravityAccount: vi.fn().mockResolvedValue(null),
+    LocalSetCurrentAntigravityAccount: vi.fn().mockResolvedValue(undefined),
+    LocalReorderAntigravityAccounts: vi.fn().mockResolvedValue(undefined),
+    // ── 数据 tab(数据迁移 + WebDAV + antigravity 运行时 + 切换历史)(Wave J · 共享) ──
+    LocalExportDataBundle: vi.fn().mockResolvedValue('{"version":1,"instances":[]}'),
+    LocalImportDataBundle: vi.fn().mockResolvedValue(3),
+    LocalGetWebDAVConfig: vi.fn().mockResolvedValue({ enabled: false, url: '', username: '', password: '', remoteDir: 'bcai-backup' }),
+    LocalSetWebDAVConfig: vi.fn().mockImplementation((c: unknown) => Promise.resolve(c)),
+    LocalWebDAVUploadBackup: vi.fn().mockResolvedValue(undefined),
+    LocalWebDAVDownloadBackup: vi.fn().mockResolvedValue(2),
+    LocalAntigravityRuntimeStatus: vi.fn().mockResolvedValue(true),
+    LocalAntigravityStartDefault: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityStopDefault: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityRestartDefault: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityFocusDefault: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravitySwitchHistory: vi.fn().mockResolvedValue([
+      { id: 'h1', timestamp: 1700000000000, accountId: 'g1', targetEmail: 'switched@gmail.com', triggerType: 'manual', triggerSource: 'user', localOk: true, seamlessOk: true, success: true, localDurationMs: 100, totalDurationMs: 200 },
+    ]),
+    LocalClearAntigravitySwitchHistory: vi.fn().mockResolvedValue(undefined),
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
   return base
@@ -99,5 +129,81 @@ describe('AntigravitySuitePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /加号/ }))
     await screen.findByRole('menuitem', { name: /浏览器登录/ })
     expect(screen.queryByRole('menuitem', { name: /从本地.*导入/ })).toBeNull()
+  })
+
+  // ── 账号组织:分组 + 显式当前号 + 重排序(antigravity 走 provider=antigravity 绑定)──
+
+  it('账号 tab 渲染分组筛选条,新建分组调 createAccountGroup', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    await waitFor(() => expect(app.LocalListAccountGroups).toHaveBeenCalled())
+    expect(await screen.findByRole('button', { name: '全部账号' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /新建分组/ }))
+    fireEvent.change(await screen.findByLabelText('分组名称'), { target: { value: '备用' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建分组' }))
+    await waitFor(() => expect(app.LocalCreateAccountGroup).toHaveBeenCalledWith('备用'))
+  })
+
+  it('账号行「设为当前号」走 antigravity 绑定 setCurrentAntigravityAccount', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: '设为当前号' }))
+    await waitFor(() => expect(app.LocalSetCurrentAntigravityAccount).toHaveBeenCalledWith('g1'))
+  })
+
+  it('重排序走 antigravity 绑定 reorderAntigravityAccounts', async () => {
+    const app = installApp()
+    ;(app.LocalListAntigravityAccounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'g1', email: 'a@x.com', name: '', provider: 'antigravity', authKind: 'oauth', note: '', planType: 'pro', quotaStatus: 'ok', tags: [], poolEnabled: true, priority: false, hourlyPercent: 1, weeklyPercent: 1, hourlyResetAt: 0, weeklyResetAt: 0, lastUsedAt: 0 },
+      { id: 'g2', email: 'b@x.com', name: '', provider: 'antigravity', authKind: 'oauth', note: '', planType: 'pro', quotaStatus: 'ok', tags: [], poolEnabled: true, priority: false, hourlyPercent: 1, weeklyPercent: 1, hourlyResetAt: 0, weeklyResetAt: 0, lastUsedAt: 0 },
+    ])
+    render(<AntigravitySuitePage />)
+    await screen.findByText('a@x.com')
+    fireEvent.click(screen.getAllByRole('button', { name: '下移' })[0])
+    await waitFor(() => expect(app.LocalReorderAntigravityAccounts).toHaveBeenCalledWith(['g2', 'g1']))
+  })
+
+  // ── 数据 tab(数据迁移 + WebDAV + antigravity 额外:运行时 + 切换历史)──
+
+  it('有「数据」tab,打开后读取 WebDAV 配置 + 运行时状态 + 切换历史', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    await waitFor(() => expect(app.LocalGetWebDAVConfig).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalAntigravityRuntimeStatus).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalAntigravitySwitchHistory).toHaveBeenCalled())
+  })
+
+  it('数据 tab 导出 bundle 调 exportDataBundle', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    fireEvent.click(await screen.findByRole('button', { name: /导出/ }))
+    await waitFor(() => expect(app.LocalExportDataBundle).toHaveBeenCalled())
+  })
+
+  it('数据 tab(antigravity)显示默认实例运行时控制,启动调 startDefault', async () => {
+    const app = installApp()
+    ;(app.LocalAntigravityRuntimeStatus as ReturnType<typeof vi.fn>).mockResolvedValue(false)
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    expect(await screen.findByText('默认实例运行时')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '启动' }))
+    await waitFor(() => expect(app.LocalAntigravityStartDefault).toHaveBeenCalled())
+  })
+
+  it('数据 tab(antigravity)切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    expect(await screen.findByText('switched@gmail.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清空历史' }))
+    await waitFor(() => expect(app.LocalClearAntigravitySwitchHistory).toHaveBeenCalled())
   })
 })

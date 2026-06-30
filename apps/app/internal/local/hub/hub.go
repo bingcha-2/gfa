@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/accountgroups"
+	"bcai-wails/internal/local/aghistory"
 	"bcai-wails/internal/local/antigravityauth"
 	"bcai-wails/internal/local/codexauth"
 	"bcai-wails/internal/local/codexsettings"
@@ -32,6 +34,7 @@ import (
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
 	"bcai-wails/internal/local/wakeup"
+	"bcai-wails/internal/local/webdav"
 )
 
 // AntigravityToken 是注入 Antigravity IDE 所需的一份自有号登录态(不经网关)。
@@ -60,6 +63,7 @@ type CodexToken struct {
 // 接管模型(对齐 cockpit)—— 接管都是「把号注入正版客户端」,与反代(cliproxy 网关)无关:
 //   - codex 'local':CodexInjectAccount 把自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI。
 //   - antigravity 'local':AntigravityInjectAccount 把自有号写进 IDE state.vscdb,真 IDE 直连 Google。
+//
 // 反代(网关)是单独的附加功能,只 codex 有,由反代 tab 经 GatewayStart/Stop 独立开关。
 type Platform interface {
 	// CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json(注入式接管,不经网关)。
@@ -80,6 +84,13 @@ type Platform interface {
 	DetectAppPath(provider string) string
 	LaunchApp(appPath, workingDir string, args []string) (int, error)
 	StopProcess(pid int) error
+
+	// Antigravity 「默认实例」运行时控制(拉起/聚焦/停 已装 IDE 进程,复用平台探测/启停)。
+	// 对齐 cockpit runtime.startDefault/stopDefault/restartDefault/focusDefault/status。
+	AntigravityStartDefault() error
+	AntigravityStopDefault() error
+	AntigravityFocusDefault() error
+	AntigravityRuntimeRunning() bool
 }
 
 // GatewayStatus 网关状态视图(前端用)。
@@ -117,6 +128,11 @@ type Hub struct {
 	speedStore  *economy.SpeedStore
 	// codexSettings 是「Codex 设置」面板的本地持久化。
 	codexSettings *codexsettings.Store
+
+	// 账号组织 / 切号历史 / WebDAV 同步(均为自包含纯逻辑包,本地 JSON 持久化)。
+	groups    *accountgroups.Store
+	agHistory *aghistory.Store
+	webdav    *webdav.ConfigStore
 }
 
 // New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
@@ -144,6 +160,10 @@ func New(dir string, platform Platform) (*Hub, error) {
 		switchStore:   newSwitchConfigStore(dir),
 		speedStore:    economy.NewSpeedStore(dir),
 		codexSettings: codexsettings.NewStore(dir),
+
+		groups:    accountgroups.NewStore(dir),
+		agHistory: aghistory.NewStore(dir),
+		webdav:    webdav.NewConfigStore(dir),
 	}
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
@@ -222,7 +242,11 @@ func (h *Hub) DeleteAccount(id string) error {
 	if err != nil {
 		return err
 	}
-	return pc.mgr.DeleteAccount(id)
+	if err := pc.mgr.DeleteAccount(id); err != nil {
+		return err
+	}
+	h.cleanupAccountGroups()
+	return nil
 }
 
 func (h *Hub) DeleteAccounts(ids []string) error {
@@ -307,6 +331,64 @@ func (h *Hub) SetPriority(p account.Provider, id string) error {
 		return err
 	}
 	return pc.mgr.SetPriority(id)
+}
+
+// CurrentAccount 返回某 provider 的当前(优先级)号视图;空池返回 (nil,nil)。
+// 对齐 cockpit accounts.current。
+func (h *Hub) CurrentAccount(p account.Provider) (*manager.AccountView, error) {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return nil, err
+	}
+	cur, err := pc.mgr.Current()
+	if err != nil || cur == nil {
+		return nil, err
+	}
+	v := manager.ToView(cur)
+	return &v, nil
+}
+
+// SetCurrentAccount 显式设当前号(= 设优先出口,并清同 provider 其它号优先)。
+// codex 处于 local 接管态时重注入新当前号到 ~/.codex/auth.json。对齐 cockpit accounts.setCurrent。
+func (h *Hub) SetCurrentAccount(p account.Provider, id string) error {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return err
+	}
+	if err := pc.mgr.SetCurrent(id); err != nil {
+		return err
+	}
+	h.reinjectIfLocal(p)
+	return nil
+}
+
+// ReorderAccounts 按 ids 顺序持久化某 provider 账号排序(未列出的排末尾)。
+// 对齐 cockpit accounts.reorder。
+func (h *Hub) ReorderAccounts(p account.Provider, ids []string) error {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return err
+	}
+	return pc.mgr.Reorder(ids)
+}
+
+// reinjectIfLocal 若某 provider 当前为 local 接管态,重注入其当前号(切当前号需同步本机注入)。
+func (h *Hub) reinjectIfLocal(p account.Provider) {
+	if h.sources.Get(string(p)) != takeover.SourceLocal {
+		return
+	}
+	switch p {
+	case account.ProviderCodex:
+		if tok, err := h.pickCodexToken(); err == nil {
+			_ = h.platform.CodexRestoreAccount()
+			_ = h.platform.CodexInjectAccount(tok)
+		}
+	case account.ProviderAntigravity:
+		if tok, err := h.pickAntigravityToken(); err == nil {
+			_ = h.platform.AntigravityRestoreAccount()
+			_ = h.platform.AntigravityInjectAccount(tok)
+		}
+	}
 }
 
 func (h *Hub) Export(p account.Provider, ids []string) (string, error) {

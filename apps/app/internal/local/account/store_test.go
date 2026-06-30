@@ -104,6 +104,52 @@ func TestStore_NamePersistsOnAdd(t *testing.T) {
 	}
 }
 
+// Reorder 按给定 id 顺序持久化排序;List 优先按 sort_order 升序,其次 created_at。
+func TestStore_ReorderOrdersList(t *testing.T) {
+	s := newTestStore(t)
+	a := &Account{Provider: ProviderCodex, Email: "a@y.com", PoolEnabled: true}
+	b := &Account{Provider: ProviderCodex, Email: "b@y.com", PoolEnabled: true}
+	c := &Account{Provider: ProviderCodex, Email: "c@y.com", PoolEnabled: true}
+	_ = s.Add(a)
+	_ = s.Add(b)
+	_ = s.Add(c)
+	// 默认按 created_at:a,b,c
+	if list, _ := s.List(ProviderCodex); list[0].Email != "a@y.com" || list[2].Email != "c@y.com" {
+		t.Fatalf("default order wrong: %+v", list)
+	}
+	if err := s.Reorder(ProviderCodex, []string{c.ID, a.ID, b.ID}); err != nil {
+		t.Fatalf("Reorder: %v", err)
+	}
+	list, _ := s.List(ProviderCodex)
+	if list[0].Email != "c@y.com" || list[1].Email != "a@y.com" || list[2].Email != "b@y.com" {
+		t.Fatalf("reordered list wrong: %+v", list)
+	}
+}
+
+// Reorder 只影响指定 provider;未列出的号排到尾部(保持稳定)。
+func TestStore_ReorderProviderScopedAndStable(t *testing.T) {
+	s := newTestStore(t)
+	a := &Account{Provider: ProviderCodex, Email: "a@y.com", PoolEnabled: true}
+	b := &Account{Provider: ProviderCodex, Email: "b@y.com", PoolEnabled: true}
+	ag := &Account{Provider: ProviderAntigravity, Email: "ag@y.com", PoolEnabled: true}
+	_ = s.Add(a)
+	_ = s.Add(b)
+	_ = s.Add(ag)
+	// 只给 b 一个 id,a 未列出应排到 b 之后。
+	if err := s.Reorder(ProviderCodex, []string{b.ID}); err != nil {
+		t.Fatalf("Reorder: %v", err)
+	}
+	codex, _ := s.List(ProviderCodex)
+	if len(codex) != 2 || codex[0].Email != "b@y.com" || codex[1].Email != "a@y.com" {
+		t.Fatalf("scoped/stable order wrong: %+v", codex)
+	}
+	// antigravity 不受影响。
+	agList, _ := s.List(ProviderAntigravity)
+	if len(agList) != 1 || agList[0].Email != "ag@y.com" {
+		t.Fatalf("antigravity should be untouched: %+v", agList)
+	}
+}
+
 // 网关只喂 codex:ListPoolEnabled(codex) 不应混入 antigravity 进池号。
 func TestStore_ListPoolEnabled_ProviderScoped(t *testing.T) {
 	s := newTestStore(t)

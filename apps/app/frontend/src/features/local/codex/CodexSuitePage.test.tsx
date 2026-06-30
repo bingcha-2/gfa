@@ -108,6 +108,56 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalBrowseForPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalDetectCodexAppPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalOpenCodexConfigToml: vi.fn().mockResolvedValue(undefined),
+    // ── 账号组织(分组 + 显式当前号 + 重排序)(Wave I · 共享) ──
+    LocalListAccountGroups: vi.fn().mockResolvedValue([
+      { id: 'gr1', name: '主力', sortOrder: 0, accountIds: ['a1'], createdAt: 1700000000000 },
+    ]),
+    LocalCreateAccountGroup: vi.fn().mockResolvedValue({ id: 'gr2', name: '备用', sortOrder: 1, accountIds: [], createdAt: 1700000100000 }),
+    LocalRenameAccountGroup: vi.fn().mockResolvedValue({ id: 'gr1', name: '改名后', sortOrder: 0, accountIds: ['a1'], createdAt: 1700000000000 }),
+    LocalUpdateAccountGroupSortOrder: vi.fn().mockResolvedValue(null),
+    LocalDeleteAccountGroup: vi.fn().mockResolvedValue(undefined),
+    LocalAssignAccountsToGroup: vi.fn().mockResolvedValue({ id: 'gr1', name: '主力', sortOrder: 0, accountIds: ['a1'], createdAt: 1700000000000 }),
+    LocalRemoveAccountsFromGroup: vi.fn().mockResolvedValue({ id: 'gr1', name: '主力', sortOrder: 0, accountIds: [], createdAt: 1700000000000 }),
+    LocalResolveAccountGroups: vi.fn().mockResolvedValue({ a1: 'gr1' }),
+    LocalCurrentCodexAccount: vi.fn().mockResolvedValue(fakeAccount()),
+    LocalSetCurrentCodexAccount: vi.fn().mockResolvedValue(undefined),
+    LocalReorderCodexAccounts: vi.fn().mockResolvedValue(undefined),
+    // ── 实例增强 + 跨实例会话(Wave I/J · codex)──
+    LocalInstanceSetQuickConfig: vi.fn().mockResolvedValue(undefined),
+    LocalListCodexSessions: vi.fn().mockResolvedValue([
+      {
+        sessionId: 's1', title: '重构网关', cwd: '/work/gfa', updatedAt: 1700000000000,
+        locationCount: 2,
+        locations: [
+          { instanceId: 'i1', instanceName: '工作', running: true },
+          { instanceId: 'i2', instanceName: '副本', running: false },
+        ],
+      },
+    ]),
+    LocalCodexSessionTokenStats: vi.fn().mockResolvedValue([
+      { sessionId: 's1', inputTokens: 1200, outputTokens: 340, totalTokens: 1540 },
+    ]),
+    LocalMoveCodexSessionsToTrash: vi.fn().mockResolvedValue({
+      requestedSessionCount: 1, trashedSessionCount: 1, trashedInstanceCount: 2,
+      trashDir: '/hub/trash', message: '已移入废纸篓',
+    }),
+    LocalListTrashedCodexSessions: vi.fn().mockResolvedValue([
+      {
+        sessionId: 's9', title: '旧会话', cwd: '/work/old', deletedAt: 1699999999000,
+        locationCount: 1, locations: [{ instanceId: 'i1', instanceName: '工作' }],
+      },
+    ]),
+    LocalRestoreCodexSessionsFromTrash: vi.fn().mockResolvedValue({
+      requestedSessionCount: 1, restoredSessionCount: 1, restoredInstanceCount: 1,
+      message: '已恢复',
+    }),
+    // ── 数据 tab(数据迁移 + WebDAV)(Wave J · 共享,codex 无 antigravity 运行时)──
+    LocalExportDataBundle: vi.fn().mockResolvedValue('{"version":1,"instances":[]}'),
+    LocalImportDataBundle: vi.fn().mockResolvedValue(3),
+    LocalGetWebDAVConfig: vi.fn().mockResolvedValue({ enabled: false, url: '', username: '', password: '', remoteDir: 'bcai-backup' }),
+    LocalSetWebDAVConfig: vi.fn().mockImplementation((c: unknown) => Promise.resolve(c)),
+    LocalWebDAVUploadBackup: vi.fn().mockResolvedValue(undefined),
+    LocalWebDAVDownloadBackup: vi.fn().mockResolvedValue(2),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -299,6 +349,126 @@ describe('CodexSuitePage', () => {
     // 改绑账号(内联下拉)
     fireEvent.change(screen.getByLabelText('改绑账号'), { target: { value: 'a1' } })
     await waitFor(() => expect(app.LocalInstanceUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'i1', bindAccountId: 'a1' })))
+  })
+
+  // ── 实例增强:启动方式 / 跟随当前账号 / 快捷上下文(Wave I)──
+
+  async function openInstances() {
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '实例' }))
+    await screen.findByText('工作')
+  }
+
+  it('实例行可展开配置面板,启动方式段控切 CLI 调 instanceSetQuickConfig(launchMode=cli)', async () => {
+    const app = installApp()
+    await openInstances()
+    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
+    // 当前 gui(默认)→ GUI 段控高亮
+    expect((await screen.findByRole('button', { name: 'GUI' })).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'CLI' }))
+    await waitFor(() =>
+      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', 'cli', expect.any(String), expect.any(Boolean), null, null),
+    )
+  })
+
+  it('实例配置面板「跟随当前账号」开关 off→on 调 instanceSetQuickConfig(followLocalAccount=true)', async () => {
+    const app = installApp()
+    await openInstances()
+    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
+    const sw = await screen.findByRole('switch', { name: /跟随当前账号/ })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(sw)
+    await waitFor(() =>
+      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', expect.any(String), expect.any(String), true, null, null),
+    )
+  })
+
+  it('实例配置面板改上下文窗口/压缩阈值失焦调 instanceSetQuickConfig(带数值)', async () => {
+    const app = installApp()
+    await openInstances()
+    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
+    const ctx = await screen.findByLabelText('上下文窗口') as HTMLInputElement
+    const compact = screen.getByLabelText('压缩阈值') as HTMLInputElement
+    fireEvent.change(ctx, { target: { value: '516000' } })
+    fireEvent.change(compact, { target: { value: '460000' } })
+    fireEvent.blur(compact)
+    await waitFor(() =>
+      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', expect.any(String), expect.any(String), expect.any(Boolean), 516000, 460000),
+    )
+  })
+
+  it('实例配置面板:已配置实例回填 launchMode/follow/上下文当前值', async () => {
+    installApp({
+      LocalInstanceList: vi.fn().mockResolvedValue([
+        { id: 'i1', provider: 'codex', name: '工作', userDataDir: '/tmp/w', launchMode: 'cli', followLocalAccount: true, quickContextWindow: 516000, quickAutoCompact: 460000, createdAt: 1 },
+      ]),
+    })
+    await openInstances()
+    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
+    expect((await screen.findByRole('button', { name: 'CLI' })).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('switch', { name: /跟随当前账号/ })).toHaveAttribute('aria-checked', 'true')
+    expect((screen.getByLabelText('上下文窗口') as HTMLInputElement).value).toBe('516000')
+    expect((screen.getByLabelText('压缩阈值') as HTMLInputElement).value).toBe('460000')
+  })
+
+  // ── 跨实例会话:列会话 / token 统计 / 移回收站 / 废纸篓恢复(Wave J)──
+
+  async function openSessions() {
+    await openInstances()
+    fireEvent.click(screen.getByRole('button', { name: /跨实例会话/ }))
+  }
+
+  it('跨实例会话:打开调 listCodexSessions,列出会话(标题/cwd/落点数)', async () => {
+    const app = installApp()
+    await openSessions()
+    await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledWith('', ''))
+    expect(await screen.findByText('重构网关')).toBeInTheDocument()
+    expect(screen.getByText('/work/gfa')).toBeInTheDocument()
+    // 落点数 = 2(出现在 2 个实例)
+    expect(screen.getByText(/2 个实例/)).toBeInTheDocument()
+  })
+
+  it('跨实例会话:输入标题过滤重新查询 listCodexSessions(带 titleQuery)', async () => {
+    const app = installApp()
+    await openSessions()
+    await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalled())
+    fireEvent.change(await screen.findByLabelText('会话标题过滤'), { target: { value: '网关' } })
+    await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledWith('网关', ''))
+  })
+
+  it('跨实例会话:勾选后「统计 token」调 codexSessionTokenStats 并显示用量', async () => {
+    const app = installApp()
+    await openSessions()
+    await screen.findByText('重构网关')
+    fireEvent.click(screen.getByRole('checkbox', { name: /选择会话/ }))
+    fireEvent.click(screen.getByRole('button', { name: /统计 token/ }))
+    await waitFor(() => expect(app.LocalCodexSessionTokenStats).toHaveBeenCalledWith(['s1']))
+    // 累计 token 展示
+    expect(await screen.findByText(/1540/)).toBeInTheDocument()
+  })
+
+  it('跨实例会话:勾选后「移入废纸篓」调 moveCodexSessionsToTrash 并重拉列表', async () => {
+    const app = installApp()
+    await openSessions()
+    await screen.findByText('重构网关')
+    expect(app.LocalListCodexSessions).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('checkbox', { name: /选择会话/ }))
+    fireEvent.click(screen.getByRole('button', { name: '移入废纸篓' }))
+    await waitFor(() => expect(app.LocalMoveCodexSessionsToTrash).toHaveBeenCalledWith(['s1']))
+    await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledTimes(2))
+  })
+
+  it('跨实例会话:切到废纸篓调 listTrashedCodexSessions,恢复调 restoreCodexSessionsFromTrash', async () => {
+    const app = installApp()
+    await openSessions()
+    await screen.findByText('重构网关')
+    fireEvent.click(screen.getByRole('button', { name: '废纸篓' }))
+    await waitFor(() => expect(app.LocalListTrashedCodexSessions).toHaveBeenCalled())
+    expect(await screen.findByText('旧会话')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: /选择会话/ }))
+    fireEvent.click(screen.getByRole('button', { name: /恢复/ }))
+    await waitFor(() => expect(app.LocalRestoreCodexSessionsFromTrash).toHaveBeenCalledWith(['s9']))
   })
 
   it('加号菜单可粘贴 token 加号(调 addByToken)', async () => {
@@ -667,5 +837,161 @@ describe('CodexSuitePage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /去保活设置/ }))
     // 切到保活 tab:保活 tab 会拉 wakeupConfig
     await waitFor(() => expect(app.LocalCodexWakeupConfig).toHaveBeenCalled())
+  })
+
+  // ── 账号组织:分组 + 显式当前号 + 重排序(Wave I · 共享)──
+
+  it('账号 tab 加载时拉分组与归属映射,渲染分组筛选条', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    await waitFor(() => expect(app.LocalListAccountGroups).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalResolveAccountGroups).toHaveBeenCalled())
+    // 分组筛选条:全部 + 已建分组「主力」
+    expect(await screen.findByRole('button', { name: '全部账号' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /主力/ })).toBeInTheDocument()
+  })
+
+  it('新建分组:填名称调 createAccountGroup 并重拉分组', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    await waitFor(() => expect(app.LocalListAccountGroups).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /新建分组/ }))
+    fireEvent.change(await screen.findByLabelText('分组名称'), { target: { value: '备用' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建分组' }))
+    await waitFor(() => expect(app.LocalCreateAccountGroup).toHaveBeenCalledWith('备用'))
+    await waitFor(() => expect(app.LocalListAccountGroups).toHaveBeenCalledTimes(2))
+  })
+
+  it('按分组筛选:点「主力」只显示该组账号,点「全部」恢复', async () => {
+    installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a1', email: 'in-group@x.com' }),
+        fakeAccount({ id: 'a2', email: 'no-group@x.com', priority: false }),
+      ]),
+      LocalResolveAccountGroups: vi.fn().mockResolvedValue({ a1: 'gr1' }),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('in-group@x.com')
+    expect(screen.getByText('no-group@x.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /主力/ }))
+    await waitFor(() => expect(screen.queryByText('no-group@x.com')).toBeNull())
+    expect(screen.getByText('in-group@x.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '全部账号' }))
+    expect(await screen.findByText('no-group@x.com')).toBeInTheDocument()
+  })
+
+  it('编辑账号弹窗可选所属分组,改组调 assignAccountsToGroup', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    const sel = await screen.findByLabelText('所属分组') as HTMLSelectElement
+    // 当前归属 gr1(主力)
+    expect(sel.value).toBe('gr1')
+    // 选另一组(创建一个后切;此处先建组使其出现在下拉)—— 直接切到「无分组」走移除
+    fireEvent.change(sel, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(app.LocalRemoveAccountsFromGroup).toHaveBeenCalledWith('gr1', ['a1']))
+  })
+
+  it('账号行「设为当前号」调 setCurrentAccount 并重拉列表', async () => {
+    const app = installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a2', email: 'not-current@x.com', priority: false }),
+      ]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('not-current@x.com')
+    expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '设为当前号' }))
+    await waitFor(() => expect(app.LocalSetCurrentCodexAccount).toHaveBeenCalledWith('a2'))
+    await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('已是当前号(priority)时不显示「设为当前号」,显示「当前」标记', async () => {
+    installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([fakeAccount({ id: 'a1', priority: true })]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    expect(screen.queryByRole('button', { name: '设为当前号' })).toBeNull()
+    expect(screen.getByText('当前号')).toBeInTheDocument()
+  })
+
+  it('↑↓ 重排序:点「下移」按新顺序调 reorderAccounts 并重拉列表', async () => {
+    const app = installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a1', email: 'first@x.com', priority: false }),
+        fakeAccount({ id: 'a2', email: 'second@x.com', priority: false }),
+      ]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('first@x.com')
+    // 第一行的「下移」:a1 与 a2 互换 → 顺序 ['a2','a1']
+    const downButtons = screen.getAllByRole('button', { name: '下移' })
+    fireEvent.click(downButtons[0])
+    await waitFor(() => expect(app.LocalReorderCodexAccounts).toHaveBeenCalledWith(['a2', 'a1']))
+    await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('首行「上移」与末行「下移」禁用(无法越界)', async () => {
+    installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a1', email: 'first@x.com', priority: false }),
+        fakeAccount({ id: 'a2', email: 'second@x.com', priority: false }),
+      ]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('first@x.com')
+    const ups = screen.getAllByRole('button', { name: '上移' })
+    const downs = screen.getAllByRole('button', { name: '下移' })
+    expect(ups[0]).toBeDisabled()
+    expect(downs[downs.length - 1]).toBeDisabled()
+  })
+
+  // ── 数据 tab(数据迁移 + WebDAV;codex 无 antigravity 运行时)──
+
+  it('codex 有「数据」tab,打开后读取 WebDAV 配置', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    await waitFor(() => expect(app.LocalGetWebDAVConfig).toHaveBeenCalled())
+    expect(await screen.findByLabelText('WebDAV 地址')).toBeInTheDocument()
+  })
+
+  it('数据 tab 导出 bundle 调 exportDataBundle,导入调 importDataBundle', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    fireEvent.click(await screen.findByRole('button', { name: /导出/ }))
+    await waitFor(() => expect(app.LocalExportDataBundle).toHaveBeenCalled())
+    fireEvent.change(screen.getByLabelText('待导入的数据'), { target: { value: '{"version":1}' } })
+    fireEvent.click(screen.getByRole('button', { name: /^导入$/ }))
+    await waitFor(() => expect(app.LocalImportDataBundle).toHaveBeenCalledWith('{"version":1}'))
+  })
+
+  it('数据 tab WebDAV 上传/下载调对应绑定', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    fireEvent.click(await screen.findByRole('button', { name: /上传备份/ }))
+    await waitFor(() => expect(app.LocalWebDAVUploadBackup).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /下载恢复/ }))
+    await waitFor(() => expect(app.LocalWebDAVDownloadBackup).toHaveBeenCalled())
+  })
+
+  it('codex 数据 tab 不显示 antigravity 默认实例运行时与切换历史', async () => {
+    installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    await screen.findByLabelText('WebDAV 地址')
+    expect(screen.queryByText('默认实例运行时')).toBeNull()
+    expect(screen.queryByText('切换历史')).toBeNull()
   })
 })

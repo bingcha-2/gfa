@@ -247,3 +247,63 @@ func TestDeleteAccounts_Batch(t *testing.T) {
 		t.Fatal("expected reload after batch delete")
 	}
 }
+
+// Current 返回当前(优先级)号;无优先级时回退第一个;空池返回 nil。
+func TestManager_Current(t *testing.T) {
+	m, acc, _ := newMgr(t)
+	if cur, err := m.Current(); err != nil || cur != nil {
+		t.Fatalf("empty pool should yield nil current: %+v %v", cur, err)
+	}
+	a := &account.Account{Provider: account.ProviderCodex, Email: "a@x.com", PoolEnabled: true}
+	b := &account.Account{Provider: account.ProviderCodex, Email: "b@x.com", PoolEnabled: true, Priority: true}
+	_ = acc.Add(a)
+	_ = acc.Add(b)
+	cur, err := m.Current()
+	if err != nil || cur == nil || cur.ID != b.ID {
+		t.Fatalf("expected priority account as current: %+v %v", cur, err)
+	}
+}
+
+// SetCurrent 等价于把某号设为优先(并清其它),Current 随之指向它。
+func TestManager_SetCurrent(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	a := &account.Account{Provider: account.ProviderCodex, Email: "a@x.com", PoolEnabled: true, Priority: true}
+	b := &account.Account{Provider: account.ProviderCodex, Email: "b@x.com", PoolEnabled: true}
+	_ = acc.Add(a)
+	_ = acc.Add(b)
+	before := fr.n
+	if err := m.SetCurrent(b.ID); err != nil {
+		t.Fatalf("SetCurrent: %v", err)
+	}
+	cur, _ := m.Current()
+	if cur == nil || cur.ID != b.ID {
+		t.Fatalf("current should be b after SetCurrent: %+v", cur)
+	}
+	ga, _ := acc.Get(a.ID)
+	if ga.Priority {
+		t.Fatal("a should no longer be priority")
+	}
+	if fr.n == before {
+		t.Fatal("expected gateway reload after SetCurrent")
+	}
+}
+
+// Reorder 委托 store 持久化排序,ListAccounts 随之换序,并触发网关 reload。
+func TestManager_Reorder(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	a := &account.Account{Provider: account.ProviderCodex, Email: "a@x.com", PoolEnabled: true}
+	b := &account.Account{Provider: account.ProviderCodex, Email: "b@x.com", PoolEnabled: true}
+	_ = acc.Add(a)
+	_ = acc.Add(b)
+	before := fr.n
+	if err := m.Reorder([]string{b.ID, a.ID}); err != nil {
+		t.Fatalf("Reorder: %v", err)
+	}
+	views, _ := m.ListAccounts()
+	if len(views) != 2 || views[0].ID != b.ID || views[1].ID != a.ID {
+		t.Fatalf("reordered views wrong: %+v", views)
+	}
+	if fr.n == before {
+		t.Fatal("expected reload after Reorder")
+	}
+}

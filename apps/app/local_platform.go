@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"bcai-wails/internal/local/antigravityinject"
 	"bcai-wails/internal/local/codexinject"
@@ -148,3 +149,50 @@ func (localPlatform) StopProcess(pid int) error {
 	}
 	return proc.Kill()
 }
+
+// ── Antigravity 默认实例运行时(复用 ide_inject.go 既有的探测/启停/进程检测) ──
+
+// AntigravityStartDefault 拉起已装 Antigravity IDE(不杀进程,仅打开)。
+func (localPlatform) AntigravityStartDefault() error { return LaunchIDE() }
+
+// AntigravityStopDefault 停掉 Antigravity IDE 进程(SIGTERM,必要时 SIGKILL)。
+func (localPlatform) AntigravityStopDefault() error {
+	switch runtime.GOOS {
+	case "darwin":
+		killProcessesByPattern("Antigravity IDE", "-TERM")
+		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
+			killProcessesByPattern("Antigravity IDE", "-9")
+		}
+	case "windows":
+		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T").Run()
+		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
+			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T", "/F").Run()
+		}
+	case "linux":
+		_ = hideCmd("pkill", "-TERM", "-f", "antigravity-ide").Run()
+		waitForProcessExit(IsIDERunning, 3*time.Second)
+	}
+	return nil
+}
+
+// AntigravityFocusDefault 把 Antigravity IDE 带到前台(未运行则拉起)。
+func (localPlatform) AntigravityFocusDefault() error {
+	idePath := detectAntigravityIDEPathCached()
+	if idePath == "" {
+		return fmt.Errorf("未检测到 Antigravity IDE 安装路径")
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		// open -a 会聚焦已运行实例,未运行则拉起。
+		return exec.Command("open", "-a", idePath).Start()
+	default:
+		// 其它平台:未运行则拉起(已运行时多数 IDE 会聚焦既有窗口)。
+		if IsIDERunning() {
+			return nil
+		}
+		return LaunchIDE()
+	}
+}
+
+// AntigravityRuntimeRunning 返回 Antigravity IDE 是否在运行。
+func (localPlatform) AntigravityRuntimeRunning() bool { return IsIDERunning() }

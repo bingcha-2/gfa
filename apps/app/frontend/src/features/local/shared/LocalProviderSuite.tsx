@@ -10,6 +10,7 @@ import { LocalInstancesTab } from './LocalInstancesTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
 import { LocalModelProvidersTab } from './LocalModelProvidersTab'
 import { LocalSettingsTab } from './LocalSettingsTab'
+import { LocalDataTab } from './LocalDataTab'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
@@ -30,11 +31,15 @@ export interface LocalProviderSuiteProps {
   hasModelProviders?: boolean
   /** 是否有「Codex 设置」面板(本地 Codex 设置 + config.toml 快捷配置)。仅 codex。 */
   hasSettings?: boolean
+  /** 是否有「数据」tab(数据迁移 bundle + WebDAV 同步)。codex / antigravity 都有。 */
+  hasData?: boolean
+  /** 数据 tab 是否额外显示 antigravity 默认实例运行时控制 + 切换历史。仅 antigravity。 */
+  antigravityRuntime?: boolean
 }
 
-type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances' | 'settings'
+type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances' | 'settings' | 'data'
 
-export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false }: LocalProviderSuiteProps) {
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false, hasData = false, antigravityRuntime = false }: LocalProviderSuiteProps) {
   const tabs: [TabId, string][] = [
     ['accounts', '账号'],
     ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
@@ -42,6 +47,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
     ['stats', '统计'],
     ['wakeup', '保活'],
     ['instances', '实例'],
+    ...(hasData ? ([['data', '数据']] as [TabId, string][]) : []),
     ...(hasSettings ? ([['settings', '设置']] as [TabId, string][]) : []),
   ]
   const [source, setSource] = useState<'remote' | 'local'>('remote')
@@ -124,6 +130,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
       {tab === 'instances' && <LocalInstancesTab api={api} />}
+      {tab === 'data' && <LocalDataTab showAntigravity={antigravityRuntime} />}
       {tab === 'settings' && <LocalSettingsTab onNavigate={(p) => { if (p === 'wakeup') setTab('wakeup'); else onNavigate?.(p) }} />}
     </div>
   )

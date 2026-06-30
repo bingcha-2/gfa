@@ -1,0 +1,207 @@
+package hub
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/instance"
+	"bcai-wails/internal/local/sessionsync"
+)
+
+// ── 账号组织(groups) ──
+
+func TestHub_AccountGroups_CRUDAndAssign(t *testing.T) {
+	h, _ := newHub(t)
+	g, err := h.CreateAccountGroup("工作")
+	if err != nil || g.Name != "工作" {
+		t.Fatalf("CreateAccountGroup: %+v %v", g, err)
+	}
+	if _, err := h.RenameAccountGroup(g.ID, "私人"); err != nil {
+		t.Fatalf("RenameAccountGroup: %v", err)
+	}
+	if _, err := h.AssignAccountsToGroup(g.ID, []string{"acc1", "acc2"}); err != nil {
+		t.Fatalf("AssignAccountsToGroup: %v", err)
+	}
+	groups, err := h.ListAccountGroups()
+	if err != nil || len(groups) != 1 || groups[0].Name != "私人" || len(groups[0].AccountIDs) != 2 {
+		t.Fatalf("ListAccountGroups wrong: %+v %v", groups, err)
+	}
+	if h.GroupOfAccount("acc1") != g.ID {
+		t.Fatalf("GroupOfAccount should map acc1 to %s", g.ID)
+	}
+	if _, err := h.RemoveAccountsFromGroup(g.ID, []string{"acc1"}); err != nil {
+		t.Fatalf("RemoveAccountsFromGroup: %v", err)
+	}
+	if err := h.DeleteAccountGroup(g.ID); err != nil {
+		t.Fatalf("DeleteAccountGroup: %v", err)
+	}
+	groups, _ = h.ListAccountGroups()
+	if len(groups) != 0 {
+		t.Fatalf("expected no groups after delete, got %+v", groups)
+	}
+}
+
+// 删账号时应从所有分组里清掉该账号(membership 清理)。
+func TestHub_DeleteAccount_CleansGroupMembership(t *testing.T) {
+	h, _ := newHub(t)
+	v, err := h.AddByToken(account.ProviderCodex, "rt", "at", "m@x.com")
+	if err != nil {
+		t.Fatalf("AddByToken: %v", err)
+	}
+	g, _ := h.CreateAccountGroup("g")
+	if _, err := h.AssignAccountsToGroup(g.ID, []string{v.ID}); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := h.DeleteAccount(v.ID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+	groups, _ := h.ListAccountGroups()
+	if len(groups) != 1 || len(groups[0].AccountIDs) != 0 {
+		t.Fatalf("deleted account should be removed from group: %+v", groups)
+	}
+}
+
+// ── 显式当前号 get/set + 重排序 ──
+
+func TestHub_CurrentAndSetCurrentAndReorder(t *testing.T) {
+	h, _ := newHub(t)
+	a, _ := h.AddByToken(account.ProviderCodex, "rt", "at", "a@x.com")
+	b, _ := h.AddByToken(account.ProviderCodex, "rt", "at", "b@x.com")
+	// 默认无优先级 -> current 为第一个(a)。
+	cur, err := h.CurrentAccount(account.ProviderCodex)
+	if err != nil || cur == nil || cur.ID != a.ID {
+		t.Fatalf("expected a as default current: %+v %v", cur, err)
+	}
+	if err := h.SetCurrentAccount(account.ProviderCodex, b.ID); err != nil {
+		t.Fatalf("SetCurrentAccount: %v", err)
+	}
+	cur, _ = h.CurrentAccount(account.ProviderCodex)
+	if cur == nil || cur.ID != b.ID {
+		t.Fatalf("current should be b: %+v", cur)
+	}
+	if err := h.ReorderAccounts(account.ProviderCodex, []string{b.ID, a.ID}); err != nil {
+		t.Fatalf("ReorderAccounts: %v", err)
+	}
+	views, _ := h.ListAccounts(account.ProviderCodex)
+	if len(views) != 2 || views[0].ID != b.ID {
+		t.Fatalf("reordered list wrong: %+v", views)
+	}
+}
+
+// ── 实例增强字段设置 ──
+
+func TestHub_InstanceSetExtraFields(t *testing.T) {
+	h, _ := newHub(t)
+	p, _ := h.InstanceCreate("codex", "x", "/tmp/x", "", "", "")
+	cw := int64(1048576)
+	if err := h.InstanceSetQuickConfig(p.ID, "cli", "fast", true, &cw, nil); err != nil {
+		t.Fatalf("InstanceSetQuickConfig: %v", err)
+	}
+	got, _ := h.instances.Get(p.ID)
+	if got.LaunchMode != instance.LaunchModeCLI || got.AppSpeed != instance.AppSpeedFast || !got.FollowLocalAccount {
+		t.Fatalf("extra fields not set: %+v", got)
+	}
+	if got.QuickContextWindow == nil || *got.QuickContextWindow != cw || got.QuickAutoCompact != nil {
+		t.Fatalf("quick config pointers wrong: ctx=%v compact=%v", got.QuickContextWindow, got.QuickAutoCompact)
+	}
+}
+
+// ── 数据迁移 bundle:导出含实例,导入清运行态并回灌实例库 ──
+
+func TestHub_DataTransfer_ExportImportRoundTrip(t *testing.T) {
+	h, _ := newHub(t)
+	_, _ = h.InstanceCreate("codex", "工作", "/tmp/w", "/wd", "--foo", "")
+	data, err := h.ExportDataBundle()
+	if err != nil {
+		t.Fatalf("ExportDataBundle: %v", err)
+	}
+	// 全新 hub 导入这份 bundle,实例库应被替换为 bundle 内容。
+	h2, _ := newHub(t)
+	n, err := h2.ImportDataBundle(data)
+	if err != nil {
+		t.Fatalf("ImportDataBundle: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 instance imported, got %d", n)
+	}
+	list, _ := h2.InstanceList("codex")
+	if len(list) != 1 || list[0].Name != "工作" || list[0].WorkingDir != "/wd" {
+		t.Fatalf("imported instance wrong: %+v", list)
+	}
+}
+
+// ── 会话同步:实例集合从实例库映射,trashRoot 在 hub 数据目录下 ──
+
+func TestHub_ListSessions_MapsInstancesAndTrashRoot(t *testing.T) {
+	h, _ := newHub(t)
+	// 造一个带 user-data-dir 的 codex 实例,放一份 rollout 会话。
+	dataDir := filepath.Join(t.TempDir(), "udd")
+	sessDir := filepath.Join(dataDir, "sessions", "2026", "06", "30")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rollout := filepath.Join(sessDir, "rollout-2026-06-30T00-00-00-sid1.jsonl")
+	line := `{"type":"session_meta","payload":{"id":"sid1","cwd":"/proj"}}` + "\n"
+	if err := os.WriteFile(rollout, []byte(line), 0o644); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+	p, _ := h.InstanceCreate("codex", "实例A", dataDir, "", "", "")
+	_ = p
+	recs, err := h.ListSessions(sessionsync.SearchFilter{})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(recs) != 1 || recs[0].SessionID != "sid1" {
+		t.Fatalf("expected sid1 session: %+v", recs)
+	}
+	if len(recs[0].Locations) != 1 || recs[0].Locations[0].InstanceName != "实例A" {
+		t.Fatalf("location should carry instance name: %+v", recs[0].Locations)
+	}
+}
+
+// ── WebDAV 配置往返(纯持久化,不连网) ──
+
+func TestHub_WebDAVConfigRoundTrip(t *testing.T) {
+	h, _ := newHub(t)
+	cfg := h.GetWebDAVConfig()
+	if cfg.Enabled {
+		t.Fatalf("default webdav should be disabled: %+v", cfg)
+	}
+	cfg.Enabled = true
+	cfg.URL = "https://dav.example.com/"
+	cfg.Username = "u"
+	cfg.Password = "p"
+	cfg.RemoteDir = "bcai"
+	saved, err := h.SetWebDAVConfig(cfg)
+	if err != nil {
+		t.Fatalf("SetWebDAVConfig: %v", err)
+	}
+	if !saved.Enabled || saved.Username != "u" {
+		t.Fatalf("webdav not persisted: %+v", saved)
+	}
+}
+
+// ── Antigravity runtime 控制经 Platform 委托 ──
+
+func TestHub_AntigravityRuntime_DelegatesToPlatform(t *testing.T) {
+	h, fp := newHub(t)
+	if err := h.AntigravityStartDefault(); err != nil {
+		t.Fatalf("StartDefault: %v", err)
+	}
+	if err := h.AntigravityStopDefault(); err != nil {
+		t.Fatalf("StopDefault: %v", err)
+	}
+	if err := h.AntigravityRestartDefault(); err != nil {
+		t.Fatalf("RestartDefault: %v", err)
+	}
+	if err := h.AntigravityFocusDefault(); err != nil {
+		t.Fatalf("FocusDefault: %v", err)
+	}
+	_ = h.AntigravityRuntimeStatus()
+	if fp.agStartCount != 2 || fp.agStopCount != 2 || fp.agFocusCount != 1 || fp.agStatusCount != 1 {
+		t.Fatalf("runtime delegation counts wrong: start=%d stop=%d focus=%d status=%d",
+			fp.agStartCount, fp.agStopCount, fp.agFocusCount, fp.agStatusCount)
+	}
+}

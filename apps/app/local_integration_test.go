@@ -10,6 +10,7 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/economy"
+	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/takeover"
 )
 
@@ -253,5 +254,205 @@ func TestLocal_EconomyAlertEndToEnd(t *testing.T) {
 	}
 	if !reloaded.Enabled || reloaded.ThresholdPct != 20 {
 		t.Errorf("预警配置重载丢失: %+v", reloaded)
+	}
+}
+
+// TestLocal_AccountGroupAssignEndToEnd 端到端跑「分组建/归组后列表 + 解析」链路:
+// 加两份 codex 自有号 → LocalCreateAccountGroup 建组 → LocalAssignAccountsToGroup
+// 把两号归组 → LocalListAccountGroups 断言成员落库 → LocalResolveAccountGroups
+// 断言 账号→组名 反查;再把其中一号改归新组,断言 Assign 的独占语义(一号只属一组)。
+func TestLocal_AccountGroupAssignEndToEnd(t *testing.T) {
+	localTestEnv(t)
+	app := NewApp()
+
+	a1, err := app.LocalAddCodexToken("rt-grp-1", "at-grp-1", "grp1@example.com")
+	if err != nil {
+		t.Fatalf("LocalAddCodexToken(1) 失败: %v", err)
+	}
+	a2, err := app.LocalAddCodexToken("rt-grp-2", "at-grp-2", "grp2@example.com")
+	if err != nil {
+		t.Fatalf("LocalAddCodexToken(2) 失败: %v", err)
+	}
+
+	g, err := app.LocalCreateAccountGroup("团队 A")
+	if err != nil {
+		t.Fatalf("LocalCreateAccountGroup 失败: %v", err)
+	}
+	if g.ID == "" || g.Name != "团队 A" {
+		t.Fatalf("建组回视图异常: %+v", g)
+	}
+
+	if _, err := app.LocalAssignAccountsToGroup(g.ID, []string{a1.ID, a2.ID}); err != nil {
+		t.Fatalf("LocalAssignAccountsToGroup 失败: %v", err)
+	}
+
+	// 回读分组列表确认两号都落进 g(真 accountgroups.Store JSON)。
+	groups, err := app.LocalListAccountGroups()
+	if err != nil {
+		t.Fatalf("LocalListAccountGroups 失败: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("应恰有 1 个分组,实际: %+v", groups)
+	}
+	if len(groups[0].AccountIDs) != 2 {
+		t.Fatalf("分组应含 2 个成员,实际: %+v", groups[0].AccountIDs)
+	}
+
+	// 账号→groupID 反查(ResolveAccountGroups 返回 accountID→groupID)。
+	resolved, err := app.LocalResolveAccountGroups()
+	if err != nil {
+		t.Fatalf("LocalResolveAccountGroups 失败: %v", err)
+	}
+	if resolved[a1.ID] != g.ID || resolved[a2.ID] != g.ID {
+		t.Fatalf("解析账号→groupID 异常: %+v", resolved)
+	}
+
+	// 独占语义:把 a2 归到新组,a2 应自动从「团队 A」移除。
+	g2, err := app.LocalCreateAccountGroup("团队 B")
+	if err != nil {
+		t.Fatalf("LocalCreateAccountGroup(2) 失败: %v", err)
+	}
+	if _, err := app.LocalAssignAccountsToGroup(g2.ID, []string{a2.ID}); err != nil {
+		t.Fatalf("LocalAssignAccountsToGroup(改组) 失败: %v", err)
+	}
+	resolved2, err := app.LocalResolveAccountGroups()
+	if err != nil {
+		t.Fatalf("LocalResolveAccountGroups(改组后) 失败: %v", err)
+	}
+	if resolved2[a1.ID] != g.ID {
+		t.Errorf("a1 应仍属「团队 A」(%s),实际 %q", g.ID, resolved2[a1.ID])
+	}
+	if resolved2[a2.ID] != g2.ID {
+		t.Errorf("a2 改组后应属「团队 B」(%s,独占),实际 %q", g2.ID, resolved2[a2.ID])
+	}
+}
+
+// TestLocal_InstanceQuickConfigEndToEnd 端到端跑实例 quick config 写读链路:
+// LocalInstanceCreate 建一个 codex 实例 → LocalInstanceSetQuickConfig 写
+// launchMode/appSpeed/followLocalAccount/contextWindow/autoCompact → LocalInstanceList
+// 回读断言落库;再 nil 删 autoCompact 断言独立清键(不影响 contextWindow)。
+func TestLocal_InstanceQuickConfigEndToEnd(t *testing.T) {
+	localTestEnv(t)
+	app := NewApp()
+
+	prof, err := app.LocalInstanceCreate("codex", "工作实例", t.TempDir(), "", "", "")
+	if err != nil {
+		t.Fatalf("LocalInstanceCreate 失败: %v", err)
+	}
+	if prof.ID == "" || prof.Provider != "codex" {
+		t.Fatalf("建实例回视图异常: %+v", prof)
+	}
+
+	cw := int64(1000000)
+	acl := int64(150000)
+	if err := app.LocalInstanceSetQuickConfig(prof.ID, instance.LaunchModeCLI, instance.AppSpeedFast, true, &cw, &acl); err != nil {
+		t.Fatalf("LocalInstanceSetQuickConfig 失败: %v", err)
+	}
+
+	got := findInstance(t, app, prof.ID)
+	if got.LaunchMode != instance.LaunchModeCLI {
+		t.Errorf("launchMode = %q, 期望 %q", got.LaunchMode, instance.LaunchModeCLI)
+	}
+	if got.AppSpeed != instance.AppSpeedFast {
+		t.Errorf("appSpeed = %q, 期望 %q", got.AppSpeed, instance.AppSpeedFast)
+	}
+	if !got.FollowLocalAccount {
+		t.Errorf("followLocalAccount 应为 true")
+	}
+	if got.QuickContextWindow == nil || *got.QuickContextWindow != cw {
+		t.Errorf("quickContextWindow = %v, 期望 %d", got.QuickContextWindow, cw)
+	}
+	if got.QuickAutoCompact == nil || *got.QuickAutoCompact != acl {
+		t.Errorf("quickAutoCompact = %v, 期望 %d", got.QuickAutoCompact, acl)
+	}
+
+	// nil 删 autoCompact:contextWindow 保留。
+	if err := app.LocalInstanceSetQuickConfig(prof.ID, instance.LaunchModeCLI, instance.AppSpeedFast, true, &cw, nil); err != nil {
+		t.Fatalf("LocalInstanceSetQuickConfig(删 autoCompact) 失败: %v", err)
+	}
+	after := findInstance(t, app, prof.ID)
+	if after.QuickAutoCompact != nil {
+		t.Errorf("删键后 quickAutoCompact 应为 nil,实际 %v", *after.QuickAutoCompact)
+	}
+	if after.QuickContextWindow == nil || *after.QuickContextWindow != cw {
+		t.Errorf("删 autoCompact 不应影响 quickContextWindow,实际 %v", after.QuickContextWindow)
+	}
+}
+
+// findInstance 从 LocalInstanceList(codex) 里按 id 取一个实例,找不到即 fatal。
+func findInstance(t *testing.T, app *App, id string) *instance.Profile {
+	t.Helper()
+	list, err := app.LocalInstanceList("codex")
+	if err != nil {
+		t.Fatalf("LocalInstanceList 失败: %v", err)
+	}
+	for _, p := range list {
+		if p.ID == id {
+			return p
+		}
+	}
+	t.Fatalf("实例 %s 不在列表中: %+v", id, list)
+	return nil
+}
+
+// TestLocal_DataBundleRoundTripEndToEnd 端到端跑数据迁移 export→import round-trip:
+// 建实例 + 设非默认路由策略 → LocalExportDataBundle 出版本化 JSON → 清掉单例换新 HOME
+// 模拟换机 → LocalImportDataBundle 还原 → 断言实例与路由策略回灌,且运行态(pid)被清。
+func TestLocal_DataBundleRoundTripEndToEnd(t *testing.T) {
+	localTestEnv(t)
+	app := NewApp()
+
+	prof, err := app.LocalInstanceCreate("codex", "迁移实例", t.TempDir(), "/work", "--foo", "")
+	if err != nil {
+		t.Fatalf("LocalInstanceCreate 失败: %v", err)
+	}
+	// 给实例一个运行态 pid,验证 import 端清零。
+	prof.Pid = 4321
+	if err := app.LocalInstanceUpdate(*prof); err != nil {
+		t.Fatalf("LocalInstanceUpdate(置 pid) 失败: %v", err)
+	}
+	if err := app.LocalSetRoutingStrategy("round-robin"); err != nil {
+		t.Fatalf("LocalSetRoutingStrategy 失败: %v", err)
+	}
+
+	bundle, err := app.LocalExportDataBundle()
+	if err != nil {
+		t.Fatalf("LocalExportDataBundle 失败: %v", err)
+	}
+	if !strings.Contains(bundle, "迁移实例") || !strings.Contains(bundle, "round-robin") {
+		t.Fatalf("导出 bundle 未含实例/路由:\n%s", bundle)
+	}
+
+	// 换机:新 HOME + 新单例,确认是从 bundle 还原而非旧库残留。
+	t.Setenv("HOME", t.TempDir())
+	resetLocalSingleton()
+	app2 := NewApp()
+
+	// 还原前新 HOME 应无实例。
+	if pre, err := app2.LocalInstanceList("codex"); err != nil {
+		t.Fatalf("LocalInstanceList(还原前) 失败: %v", err)
+	} else if len(pre) != 0 {
+		t.Fatalf("换机后还原前不应有实例,实际: %+v", pre)
+	}
+
+	n, err := app2.LocalImportDataBundle(bundle)
+	if err != nil {
+		t.Fatalf("LocalImportDataBundle 失败: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("应导入 1 个实例,实际 %d", n)
+	}
+
+	restored := findInstance(t, app2, prof.ID)
+	if restored.Name != "迁移实例" || restored.WorkingDir != "/work" || restored.ExtraArgs != "--foo" {
+		t.Errorf("还原实例字段异常: %+v", restored)
+	}
+	if restored.Pid != 0 {
+		t.Errorf("import 应清运行态 pid,实际 %d", restored.Pid)
+	}
+	if got, err := app2.LocalGetRoutingStrategy(); err != nil {
+		t.Fatalf("LocalGetRoutingStrategy 失败: %v", err)
+	} else if got != "round-robin" {
+		t.Errorf("路由策略还原 = %q, 期望 round-robin", got)
 	}
 }

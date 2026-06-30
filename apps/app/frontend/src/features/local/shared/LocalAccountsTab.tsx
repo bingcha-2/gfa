@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, X, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, X, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2 } from 'lucide-react'
 import {
   type LocalAccountView, type ProviderLocalApi,
   type AlertConfig, type SwitchConfig, type AppSpeed, type ServiceTier, type ContextPreset,
@@ -7,6 +7,10 @@ import {
   refreshCodexSubscription, getCodexResetCredits, consumeCodexResetCredit,
   codexReferralEligibility, sendCodexReferralInvites,
   type CodexSubscriptionSnapshot, type CodexResetCreditsSnapshot, type CodexReferralInviteEligibility,
+  type AccountGroup,
+  listAccountGroups, createAccountGroup, resolveAccountGroups,
+  assignAccountsToGroup, removeAccountsFromGroup,
+  setCurrentAccount, reorderAccounts,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -229,7 +233,7 @@ function RowExtras({ account }: { account: LocalAccountView }) {
   const available = credits?.available_count ?? 0
 
   return (
-    <div className="col-span-3 mt-2 rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]/40 px-3 py-2.5 flex flex-col gap-2.5">
+    <div className="col-span-4 mt-2 rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]/40 px-3 py-2.5 flex flex-col gap-2.5">
       {err && <div className="text-[11px] text-[var(--danger)] break-all">{err}</div>}
 
       {/* 订阅 + reset 次数 */}
@@ -317,11 +321,22 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [keyValue, setKeyValue] = useState('')
   const [keyBaseUrl, setKeyBaseUrl] = useState('')
   const [keyEmail, setKeyEmail] = useState('')
-  // 行内编辑(重命名/备注/标签)
+  // 行内编辑(重命名/备注/标签/分组)
   const [editing, setEditing] = useState<LocalAccountView | null>(null)
   const [editName, setEditName] = useState('')
   const [editNote, setEditNote] = useState('')
   const [editTags, setEditTags] = useState('')
+  const [editGroup, setEditGroup] = useState('')
+  // 账号组织:分组列表 + 归属映射(accountId→groupId)+ 当前筛选 + 新建组弹窗
+  const [groups, setGroups] = useState<AccountGroup[]>([])
+  const [groupOf, setGroupOf] = useState<Record<string, string>>({})
+  const [groupFilter, setGroupFilter] = useState<string>('all')
+  const [groupModalOpen, setGroupModalOpen] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+
+  // provider 取号视角:优先取已加载账号的 provider,空列表回退到 title(codex/antigravity)。
+  const provider: 'codex' | 'antigravity' =
+    accounts[0]?.provider === 'antigravity' || title.toLowerCase() === 'antigravity' ? 'antigravity' : 'codex'
 
   useEffect(() => {
     if (!addMenuOpen) return
@@ -346,6 +361,16 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     return next
   })
 
+  const refreshGroups = useCallback(async () => {
+    try {
+      const [gs, map] = await Promise.all([listAccountGroups(), resolveAccountGroups()])
+      setGroups(gs || [])
+      setGroupOf(map || {})
+    } catch {
+      // 分组只是组织视图,失败不打断账号管理。
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
       setAccounts((await api.listAccounts()) || [])
@@ -357,7 +382,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     }
   }, [api])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => { void refresh(); void refreshGroups() }, [refresh, refreshGroups])
 
   const onLogin = async () => {
     setBusy('login')
@@ -512,6 +537,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     setEditName(a.name || '')
     setEditNote(a.note || '')
     setEditTags((a.tags || []).join(', '))
+    setEditGroup(groupOf[a.id] || '')
   }
 
   const onEditSave = async () => {
@@ -520,12 +546,48 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     const name = editName.trim()
     const note = editNote.trim()
     const tags = editTags.split(',').map((t) => t.trim()).filter(Boolean)
+    const prevGroup = groupOf[id] || ''
     setBusy('edit')
     try {
       if (name !== (editing.name || '')) await api.rename(id, name)
       if (note !== (editing.note || '')) await api.setNote(id, note)
       if (tags.join(' ') !== (editing.tags || []).join(' ')) await api.setTags(id, tags)
+      if (editGroup !== prevGroup) {
+        if (editGroup) await assignAccountsToGroup(editGroup, [id])
+        else if (prevGroup) await removeAccountsFromGroup(prevGroup, [id])
+      }
       setEditing(null)
+      await refresh()
+      await refreshGroups()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // 新建分组:trim 名称,建后重拉分组并关闭弹窗。
+  const onCreateGroup = async () => {
+    const name = newGroupName.trim()
+    if (!name) return
+    setBusy('group')
+    try {
+      await createAccountGroup(name)
+      setGroupModalOpen(false)
+      setNewGroupName('')
+      await refreshGroups()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // 显式设为当前号(= 设优先出口;local 接管态后端会重注入)。
+  const onSetCurrent = async (id: string) => {
+    setBusy(`current-${id}`)
+    try {
+      await setCurrentAccount(provider, id)
       await refresh()
     } catch (e) {
       setErr(String(e))
@@ -534,12 +596,72 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     }
   }
 
+  // ↑↓ 重排序:在可见顺序里交换 from/to,持久化整列新顺序。
+  const onMove = async (index: number, dir: -1 | 1) => {
+    const to = index + dir
+    if (to < 0 || to >= accounts.length) return
+    const next = accounts.slice()
+    const [moved] = next.splice(index, 1)
+    next.splice(to, 0, moved)
+    setAccounts(next) // 乐观:先就地反映新顺序
+    setBusy(`move-${moved.id}`)
+    try {
+      await reorderAccounts(provider, next.map((a) => a.id))
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // 按当前分组筛选(all=全部;否则只留归属该组的号)。
+  const visible = useMemo(
+    () => (groupFilter === 'all' ? accounts : accounts.filter((a) => groupOf[a.id] === groupFilter)),
+    [accounts, groupFilter, groupOf],
+  )
+
   return (
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
       {importInfo && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/5 px-3 py-2 text-[12px] text-[var(--success)]">{importInfo}</div>}
 
       {hasEconomy && <EconomyBar />}
+
+      {/* 分组筛选条:全部 + 各分组(显示成员数)+ 新建分组。 */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          aria-label="全部账号"
+          aria-pressed={groupFilter === 'all'}
+          onClick={() => setGroupFilter('all')}
+          className={cn('cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border transition-colors', groupFilter === 'all' ? 'border-[var(--primary)] bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}
+        >
+          全部 · {accounts.length}
+        </button>
+        {groups.map((g) => {
+          const count = accounts.filter((a) => groupOf[a.id] === g.id).length
+          const active = groupFilter === g.id
+          return (
+            <button
+              key={g.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setGroupFilter(g.id)}
+              className={cn('cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border transition-colors', active ? 'border-[var(--primary)] bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}
+            >
+              {g.name} · {count}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => { setNewGroupName(''); setGroupModalOpen(true) }}
+          className="cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border border-dashed border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1"
+        >
+          <FolderPlus size={12} /> 新建分组
+        </button>
+      </div>
 
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50">
@@ -632,17 +754,43 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
               <Plus size={14} /> 登录新账号
             </button>
           </div>
+        ) : visible.length === 0 ? (
+          <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">该分组下还没有账号</div>
         ) : (
-          accounts.map((a) => {
+          visible.map((a) => {
             const st = statusLabel(a.quotaStatus)
+            // 重排序基于整列真实位置;筛选态下顺序不连续,故仅在「全部」视图启用 ↑↓。
+            const realIndex = accounts.findIndex((x) => x.id === a.id)
+            const reorderable = groupFilter === 'all'
             return (
               <div key={a.id} className={cn('px-4 py-3 border-t border-[var(--border-light)] first:border-t-0', a.priority && 'bg-[var(--primary-light)]')}>
-                <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
+                <div className="grid grid-cols-[auto_auto_1fr_auto] gap-3 items-center">
                 <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSel(a.id)} className="w-3.5 h-3.5 accent-[var(--primary)] cursor-pointer" aria-label="选择账号" />
+                <div className="flex flex-col -my-1">
+                  <button
+                    onClick={() => onMove(realIndex, -1)}
+                    disabled={!reorderable || realIndex <= 0 || busy === `move-${a.id}`}
+                    aria-label="上移"
+                    title={reorderable ? '上移' : '清除分组筛选后可排序'}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-5 h-5 inline-flex items-center justify-center rounded-[5px] hover:bg-[var(--bg-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronUp size={13} />
+                  </button>
+                  <button
+                    onClick={() => onMove(realIndex, 1)}
+                    disabled={!reorderable || realIndex >= accounts.length - 1 || busy === `move-${a.id}`}
+                    aria-label="下移"
+                    title={reorderable ? '下移' : '清除分组筛选后可排序'}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-5 h-5 inline-flex items-center justify-center rounded-[5px] hover:bg-[var(--bg-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronDown size={13} />
+                  </button>
+                </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     {a.priority && <ArrowUpRight size={15} className="text-[var(--primary-strong)] shrink-0" />}
                     <span className="font-semibold text-[13px] text-[var(--text-primary)] truncate">{a.name || a.email || '(未知邮箱)'}</span>
+                    {a.priority && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--primary)] text-[var(--primary-ink)] inline-flex items-center gap-1 shrink-0"><CheckCircle2 size={11} /> 当前号</span>}
                     {a.name && a.email && <span className="text-[11px] text-[var(--text-muted)] truncate">{a.email}</span>}
                     {a.planType && <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full', planBadgeClass(a.planType))}>{a.planType}</span>}
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{a.authKind === 'apikey' ? 'API Key' : 'OAuth'}</span>
@@ -686,14 +834,16 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                   >
                     {a.poolEnabled ? '移出池' : '加入池'}
                   </button>
-                  <button
-                    onClick={() => act(`prio-${a.id}`, () => api.setPriority(a.id))}
-                    disabled={busy === `prio-${a.id}` || a.priority}
-                    className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"
-                    title="设为优先出口"
-                  >
-                    优先
-                  </button>
+                  {!a.priority && (
+                    <button
+                      onClick={() => onSetCurrent(a.id)}
+                      disabled={busy === `current-${a.id}`}
+                      className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40 inline-flex items-center gap-1"
+                      title="显式设为当前出口号(local 接管态会重注入)"
+                    >
+                      {busy === `current-${a.id}` ? <Loader2 size={13} className="animate-spin" /> : null} 设为当前号
+                    </button>
+                  )}
                   <button
                     onClick={() => act(`del-${a.id}`, () => api.deleteAccount(a.id))}
                     disabled={busy === `del-${a.id}`}
@@ -716,7 +866,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                 </div>
                 </div>
                 {hasEconomy && expanded.has(a.id) && (
-                  <div className="grid grid-cols-[auto_1fr_auto]">
+                  <div className="grid grid-cols-[auto_auto_1fr_auto]">
                     <RowExtras account={a} />
                   </div>
                 )}
@@ -821,10 +971,44 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
               <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">标签(逗号分隔)
                 <input aria-label="标签(逗号分隔)" value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="主力, 备用" className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
               </label>
+              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">所属分组
+                <select aria-label="所属分组" value={editGroup} onChange={(e) => setEditGroup(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]">
+                  <option value="">(无分组)</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="flex justify-end gap-2 mt-3">
               <button onClick={() => setEditing(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
               <button onClick={onEditSave} disabled={busy === 'edit'} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {groupModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setGroupModalOpen(false)}>
+          <div className="w-[400px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[13px] font-bold text-[var(--text-primary)]">新建分组</span>
+              <button onClick={() => setGroupModalOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
+            </div>
+            <div className="text-[11px] text-[var(--text-muted)] mb-3">分组只用于本地组织视图,一个账号只属于一个分组。</div>
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">分组名称
+              <input
+                aria-label="分组名称"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void onCreateGroup() }}
+                placeholder="如:主力 / 备用 / 测试"
+                className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]"
+              />
+            </label>
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setGroupModalOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+              <button onClick={onCreateGroup} disabled={busy === 'group' || !newGroupName.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">创建分组</button>
             </div>
           </div>
         </div>

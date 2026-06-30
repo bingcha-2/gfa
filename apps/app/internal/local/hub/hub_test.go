@@ -20,6 +20,12 @@ type fakePlatform struct {
 	codexAuthPath      string
 	ideToken           AntigravityToken
 	ideTokenErr        error
+
+	agStartCount  int
+	agStopCount   int
+	agFocusCount  int
+	agStatusCount int
+	agRunning     bool
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -44,6 +50,19 @@ func (f *fakePlatform) LaunchApp(appPath, workingDir string, args []string) (int
 	return 4321, nil
 }
 func (f *fakePlatform) StopProcess(pid int) error { return nil }
+
+func (f *fakePlatform) AntigravityStartDefault() error {
+	f.agStartCount++
+	f.agRunning = true
+	return nil
+}
+func (f *fakePlatform) AntigravityStopDefault() error {
+	f.agStopCount++
+	f.agRunning = false
+	return nil
+}
+func (f *fakePlatform) AntigravityFocusDefault() error  { f.agFocusCount++; return nil }
+func (f *fakePlatform) AntigravityRuntimeRunning() bool { f.agStatusCount++; return f.agRunning }
 
 func newHub(t *testing.T) (*Hub, *fakePlatform) {
 	t.Helper()

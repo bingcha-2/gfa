@@ -39,6 +39,9 @@ type AccountView struct {
 	LastUsedAt    int64    `json:"lastUsedAt"`
 }
 
+// ToView 把一个 account.Account 适配成只读视图(供 hub 显式当前号 get 复用)。
+func ToView(a *account.Account) AccountView { return toView(a) }
+
 func toView(a *account.Account) AccountView {
 	return AccountView{
 		ID: a.ID, Email: a.Email, Name: a.Name, Provider: string(a.Provider), AuthKind: string(a.AuthKind),
@@ -128,6 +131,38 @@ func (m *Manager) SetPriority(id string) error {
 	}
 	if !found {
 		return errors.New("manager: account not found")
+	}
+	m.reload()
+	return nil
+}
+
+// Current 返回当前(优先级)号:优先级号;无优先级则第一个进池号;空池返回 (nil,nil)。
+// 对齐 cockpit accounts.current(resolve_current_account_id)。
+func (m *Manager) Current() (*account.Account, error) {
+	list, err := m.acc.ListPoolEnabled(m.provider)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, nil
+	}
+	for _, a := range list {
+		if a.Priority {
+			return a, nil
+		}
+	}
+	return list[0], nil
+}
+
+// SetCurrent 显式设当前号 = 把某号设为优先出口(并清同 provider 其它号优先标记)。
+// 对齐 cockpit accounts.setCurrent。
+func (m *Manager) SetCurrent(id string) error { return m.SetPriority(id) }
+
+// Reorder 按 ids 顺序持久化本 provider 账号排序(未列出的排到末尾),并热刷网关。
+// 对齐 cockpit accounts.reorder。
+func (m *Manager) Reorder(ids []string) error {
+	if err := m.acc.Reorder(m.provider, ids); err != nil {
+		return err
 	}
 	m.reload()
 	return nil

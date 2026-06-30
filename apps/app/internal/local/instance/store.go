@@ -14,18 +14,46 @@ import (
 	"github.com/google/uuid"
 )
 
+// 启动方式与推理速度的取值常量(照 cockpit InstanceLaunchMode / CodexAppSpeed 移植)。
+const (
+	LaunchModeGUI = "gui" // 拉起官方桌面 App(cockpit 的 "app")
+	LaunchModeCLI = "cli" // 拉起命令行
+
+	AppSpeedStandard = "standard"
+	AppSpeedFast     = "fast"
+)
+
 // Profile 一个隔离实例的配置。
 type Profile struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"` // codex | antigravity
-	Name           string `json:"name"`
-	UserDataDir    string `json:"userDataDir"`
-	WorkingDir     string `json:"workingDir,omitempty"`
-	ExtraArgs      string `json:"extraArgs,omitempty"`
-	BindAccountID  string `json:"bindAccountId,omitempty"`
-	CreatedAt      int64  `json:"createdAt"`
-	LastLaunchedAt int64  `json:"lastLaunchedAt,omitempty"`
-	Pid            int    `json:"pid,omitempty"` // >0 表示运行中(由启动层维护)
+	ID            string `json:"id"`
+	Provider      string `json:"provider"` // codex | antigravity
+	Name          string `json:"name"`
+	UserDataDir   string `json:"userDataDir"`
+	WorkingDir    string `json:"workingDir,omitempty"`
+	ExtraArgs     string `json:"extraArgs,omitempty"`
+	BindAccountID string `json:"bindAccountId,omitempty"`
+
+	// 实例增强(照 cockpit quick config / launch_mode / app_speed / follow_local_account)。
+	LaunchMode         string `json:"launchMode,omitempty"`         // gui | cli(默认 gui)
+	AppSpeed           string `json:"appSpeed,omitempty"`           // standard | fast(默认 standard)
+	FollowLocalAccount bool   `json:"followLocalAccount,omitempty"` // 跟随本地当前账号
+	QuickContextWindow *int64 `json:"quickContextWindow,omitempty"` // config.toml model_context_window;nil=不配置
+	QuickAutoCompact   *int64 `json:"quickAutoCompact,omitempty"`   // config.toml model_auto_compact_token_limit;nil=不配置
+
+	CreatedAt      int64 `json:"createdAt"`
+	LastLaunchedAt int64 `json:"lastLaunchedAt,omitempty"`
+	Pid            int   `json:"pid,omitempty"` // >0 表示运行中(由启动层维护)
+}
+
+// migrate 为缺失的增强字段填充安全默认(前向兼容旧 JSON)。
+// 在每次 load 后调用,使旧实例读出即带 gui/standard 默认,而非空串。
+func (p *Profile) migrate() {
+	if p.LaunchMode == "" {
+		p.LaunchMode = LaunchModeGUI
+	}
+	if p.AppSpeed == "" {
+		p.AppSpeed = AppSpeedStandard
+	}
 }
 
 type Store struct {
@@ -42,6 +70,9 @@ func (s *Store) load() []*Profile {
 	data, err := os.ReadFile(s.path)
 	if err == nil {
 		_ = json.Unmarshal(data, &list)
+	}
+	for _, p := range list {
+		p.migrate()
 	}
 	return list
 }
@@ -68,6 +99,7 @@ func (s *Store) Create(p *Profile) error {
 	if p.CreatedAt == 0 {
 		p.CreatedAt = time.Now().UnixMilli()
 	}
+	p.migrate()
 	list := append(s.load(), p)
 	return s.save(list)
 }
@@ -84,6 +116,25 @@ func (s *Store) List(provider string) ([]*Profile, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
 	return out, nil
+}
+
+// All 返回全部 provider 的实例(按 createdAt 升序),供数据迁移导出用。
+func (s *Store) All() []*Profile {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	all := s.load()
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt < all[j].CreatedAt })
+	return all
+}
+
+// Replace 用给定列表整体替换实例库(数据迁移导入用),原子落盘。
+func (s *Store) Replace(list []*Profile) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range list {
+		p.migrate()
+	}
+	return s.save(list)
 }
 
 func (s *Store) Get(id string) (*Profile, bool) {

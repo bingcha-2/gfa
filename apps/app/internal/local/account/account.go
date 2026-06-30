@@ -48,6 +48,7 @@ type Account struct {
 	Note          string
 	PoolEnabled   bool // 是否进网关池
 	Priority      bool // 优先出口
+	SortOrder     int  // 手动排序序号(越小越靠前;默认 0 时按 created_at 兜底)
 	QuotaStatus   QuotaStatus
 	QuotaReason   string
 	HourlyPercent int

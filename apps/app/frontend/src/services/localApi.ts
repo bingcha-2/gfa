@@ -90,6 +90,16 @@ export interface InstanceProfile {
   workingDir?: string
   extraArgs?: string
   bindAccountId?: string
+  /** 启动方式:gui(官方桌面 App)| cli。默认 gui。 */
+  launchMode?: string
+  /** 推理速度档:standard | fast。默认 standard。 */
+  appSpeed?: string
+  /** 跟随本地当前账号。 */
+  followLocalAccount?: boolean
+  /** config.toml model_context_window;未配置时省略。 */
+  quickContextWindow?: number
+  /** config.toml model_auto_compact_token_limit;未配置时省略。 */
+  quickAutoCompact?: number
   createdAt: number
   lastLaunchedAt?: number
   pid?: number
@@ -608,4 +618,320 @@ export function detectCodexAppPath(): Promise<string> {
 /** 用系统默认编辑器打开 ~/.codex/config.toml。 */
 export function openCodexConfigToml(): Promise<void> {
   return app().LocalOpenCodexConfigToml() as Promise<void>
+}
+
+// ── 账号组织(分组)+ 显式当前号 + 重排序 ──
+// 自包含:分组持久化在本地 JSON;当前号 = 优先级号;重排序持久化 sortOrder。
+// 红线:只读写本地分组/优先级/排序,与远程租号 / 网关出口无关。
+
+/** 一个账号分组(账号互斥归属:一个号只属于一个分组)。 */
+export interface AccountGroup {
+  id: string
+  name: string
+  sortOrder: number
+  accountIds: string[] | null
+  createdAt: number
+}
+
+/** 列出全部分组(按 sortOrder 升序)。 */
+export function listAccountGroups(): Promise<AccountGroup[]> {
+  return app().LocalListAccountGroups() as Promise<AccountGroup[]>
+}
+
+/** 新建分组(trim 名称)。 */
+export function createAccountGroup(name: string): Promise<AccountGroup> {
+  return app().LocalCreateAccountGroup(name) as Promise<AccountGroup>
+}
+
+/** 改分组名;分组不存在返回 null。 */
+export function renameAccountGroup(groupId: string, name: string): Promise<AccountGroup | null> {
+  return app().LocalRenameAccountGroup(groupId, name) as Promise<AccountGroup | null>
+}
+
+/** 改分组排序序号。 */
+export function updateAccountGroupSortOrder(groupId: string, sortOrder: number): Promise<AccountGroup | null> {
+  return app().LocalUpdateAccountGroupSortOrder(groupId, sortOrder) as Promise<AccountGroup | null>
+}
+
+/** 删除分组。 */
+export function deleteAccountGroup(groupId: string): Promise<void> {
+  return app().LocalDeleteAccountGroup(groupId) as Promise<void>
+}
+
+/** 把账号加入分组(自动从其它分组移除)。 */
+export function assignAccountsToGroup(groupId: string, accountIds: string[]): Promise<AccountGroup | null> {
+  return app().LocalAssignAccountsToGroup(groupId, accountIds) as Promise<AccountGroup | null>
+}
+
+/** 把账号移出分组。 */
+export function removeAccountsFromGroup(groupId: string, accountIds: string[]): Promise<AccountGroup | null> {
+  return app().LocalRemoveAccountsFromGroup(groupId, accountIds) as Promise<AccountGroup | null>
+}
+
+/** 返回 accountId→groupId 映射(一次性渲染归属)。 */
+export function resolveAccountGroups(): Promise<Record<string, string>> {
+  return app().LocalResolveAccountGroups() as Promise<Record<string, string>>
+}
+
+/** 读某 provider 的当前(优先级)号;无则返回 null。 */
+export function currentAccount(provider: 'codex' | 'antigravity'): Promise<LocalAccountView | null> {
+  return (provider === 'codex'
+    ? app().LocalCurrentCodexAccount()
+    : app().LocalCurrentAntigravityAccount()) as Promise<LocalAccountView | null>
+}
+
+/** 显式设当前号(= 设优先出口;local 接管态会重注入)。 */
+export function setCurrentAccount(provider: 'codex' | 'antigravity', id: string): Promise<void> {
+  return (provider === 'codex'
+    ? app().LocalSetCurrentCodexAccount(id)
+    : app().LocalSetCurrentAntigravityAccount(id)) as Promise<void>
+}
+
+/** 按 ids 顺序持久化某 provider 账号排序(未列出的排末尾)。 */
+export function reorderAccounts(provider: 'codex' | 'antigravity', ids: string[]): Promise<void> {
+  return (provider === 'codex'
+    ? app().LocalReorderCodexAccounts(ids)
+    : app().LocalReorderAntigravityAccounts(ids)) as Promise<void>
+}
+
+// ── 实例增强:局部设置 launchMode / appSpeed / followLocalAccount / quick config ──
+
+/**
+ * 局部设置某实例的启动/速度/跟随/快捷上下文配置。
+ * quickContextWindow/quickAutoCompact 传 null 表示「不配置/继承官方」,正整数表示写入。
+ */
+export function instanceSetQuickConfig(
+  id: string,
+  launchMode: string,
+  appSpeed: string,
+  followLocalAccount: boolean,
+  quickContextWindow: number | null,
+  quickAutoCompact: number | null,
+): Promise<void> {
+  return app().LocalInstanceSetQuickConfig(
+    id,
+    launchMode,
+    appSpeed,
+    followLocalAccount,
+    quickContextWindow,
+    quickAutoCompact,
+  ) as Promise<void>
+}
+
+// ── codex 跨实例会话管理(列/统计/废纸篓) ──
+// 自包含:实例集合来自实例库,废纸篓在 hub 数据目录;与远程租号 / 网关出口无关。
+
+/** 一条会话在某实例中的落点。 */
+export interface SessionLocation {
+  instanceId: string
+  instanceName: string
+  running: boolean
+}
+
+/** 跨实例去重后的一条会话。 */
+export interface SessionRecord {
+  sessionId: string
+  title: string
+  cwd: string
+  updatedAt: number | null
+  locationCount: number
+  locations: SessionLocation[] | null
+}
+
+/** 一条会话的累计 token 用量。 */
+export interface SessionTokenStats {
+  sessionId: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
+/** 移入废纸篓的结果汇总。 */
+export interface TrashSummary {
+  requestedSessionCount: number
+  trashedSessionCount: number
+  trashedInstanceCount: number
+  trashDir: string
+  message: string
+}
+
+/** 废纸篓中一条会话曾经的实例落点。 */
+export interface TrashedSessionLocation {
+  instanceId: string
+  instanceName: string
+}
+
+/** 废纸篓中去重后的一条会话。 */
+export interface TrashedSessionRecord {
+  sessionId: string
+  title: string
+  cwd: string
+  deletedAt: number | null
+  locationCount: number
+  locations: TrashedSessionLocation[] | null
+}
+
+/** 从废纸篓恢复的结果汇总。 */
+export interface RestoreSummary {
+  requestedSessionCount: number
+  restoredSessionCount: number
+  restoredInstanceCount: number
+  message: string
+}
+
+/** 跨实例去重列会话(可按标题/内容过滤)。 */
+export function listCodexSessions(titleQuery = '', contentQuery = ''): Promise<SessionRecord[]> {
+  return app().LocalListCodexSessions(titleQuery, contentQuery) as Promise<SessionRecord[]>
+}
+
+/** 统计若干会话的累计 token 用量。 */
+export function codexSessionTokenStats(sessionIds: string[]): Promise<SessionTokenStats[]> {
+  return app().LocalCodexSessionTokenStats(sessionIds) as Promise<SessionTokenStats[]>
+}
+
+/** 把若干会话移入废纸篓。 */
+export function moveCodexSessionsToTrash(sessionIds: string[]): Promise<TrashSummary> {
+  return app().LocalMoveCodexSessionsToTrash(sessionIds) as Promise<TrashSummary>
+}
+
+/** 列废纸篓中的会话。 */
+export function listTrashedCodexSessions(): Promise<TrashedSessionRecord[]> {
+  return app().LocalListTrashedCodexSessions() as Promise<TrashedSessionRecord[]>
+}
+
+/** 从废纸篓恢复若干会话。 */
+export function restoreCodexSessionsFromTrash(sessionIds: string[]): Promise<RestoreSummary> {
+  return app().LocalRestoreCodexSessionsFromTrash(sessionIds) as Promise<RestoreSummary>
+}
+
+// ── 数据迁移 bundle(备份/换机) ──
+// bundle 是版本化 JSON 文本;只打包/还原本地配置与实例库,绝不导出远程租号 / token 出口。
+
+/** 导出「配置 + 实例库」为版本化 JSON 文本。 */
+export function exportDataBundle(): Promise<string> {
+  return app().LocalExportDataBundle() as Promise<string>
+}
+
+/** 从 JSON 文本还原本地,返回导入的实例数。 */
+export function importDataBundle(bundleJson: string): Promise<number> {
+  return app().LocalImportDataBundle(bundleJson) as Promise<number>
+}
+
+// ── WebDAV 备份同步 ──
+// 仅同步本地配置/实例 bundle,与远程租号 / 网关出口物理隔离。
+
+/** WebDAV 同步配置(Password 明文落本地 0600)。 */
+export interface WebDAVConfig {
+  enabled: boolean
+  url: string
+  username: string
+  password: string
+  remoteDir: string
+}
+
+/** 读 WebDAV 同步配置(缺省回退默认:禁用)。 */
+export function getWebDAVConfig(): Promise<WebDAVConfig> {
+  return app().LocalGetWebDAVConfig() as Promise<WebDAVConfig>
+}
+
+/** 保存 WebDAV 同步配置,返回落盘后的值。 */
+export function setWebDAVConfig(cfg: WebDAVConfig): Promise<WebDAVConfig> {
+  return app().LocalSetWebDAVConfig(cfg) as Promise<WebDAVConfig>
+}
+
+/** 把当前本地 bundle 上传到 WebDAV。 */
+export function webdavUploadBackup(): Promise<void> {
+  return app().LocalWebDAVUploadBackup() as Promise<void>
+}
+
+/** 从 WebDAV 下载 bundle 并还原本地,返回导入的实例数。 */
+export function webdavDownloadBackup(): Promise<number> {
+  return app().LocalWebDAVDownloadBackup() as Promise<number>
+}
+
+// ── Antigravity 默认实例运行时控制 + 切号历史 ──
+// 运行时只控制本机 IDE 进程,切号历史只读写本地 JSON,均与远程租号 / 网关出口无关。
+
+/** 拉起 Antigravity 默认实例(已装 IDE)。 */
+export function antigravityStartDefault(): Promise<void> {
+  return app().LocalAntigravityStartDefault() as Promise<void>
+}
+
+/** 停掉 Antigravity 默认实例进程。 */
+export function antigravityStopDefault(): Promise<void> {
+  return app().LocalAntigravityStopDefault() as Promise<void>
+}
+
+/** 重启 Antigravity 默认实例(先停后起)。 */
+export function antigravityRestartDefault(): Promise<void> {
+  return app().LocalAntigravityRestartDefault() as Promise<void>
+}
+
+/** 把 Antigravity 默认实例窗口带到前台。 */
+export function antigravityFocusDefault(): Promise<void> {
+  return app().LocalAntigravityFocusDefault() as Promise<void>
+}
+
+/** 默认实例是否在运行。 */
+export function antigravityRuntimeStatus(): Promise<boolean> {
+  return app().LocalAntigravityRuntimeStatus() as Promise<boolean>
+}
+
+/** 一条 Antigravity 自动切号命中分组。 */
+export interface AntigravityAutoSwitchHitGroup {
+  groupId: string
+  groupName: string
+  percentage: number
+}
+
+/** Antigravity 自动切号命中详情。 */
+export interface AntigravityAutoSwitchReason {
+  rule: string
+  threshold: number
+  scopeMode: string
+  selectedGroupIds?: string[]
+  selectedGroupNames?: string[]
+  hitGroups?: AntigravityAutoSwitchHitGroup[]
+  candidateCount: number
+  selectedPolicy: string
+}
+
+/** 一条 Antigravity 切号历史。 */
+export interface AntigravitySwitchHistoryItem {
+  id: string
+  timestamp: number
+  accountId: string
+  targetEmail: string
+  triggerType: string
+  triggerSource: string
+  localOk: boolean
+  seamlessOk: boolean
+  success: boolean
+  localDurationMs: number
+  seamlessDurationMs?: number
+  totalDurationMs: number
+  errorStage?: string
+  errorCode?: string
+  errorMessage?: string
+  seamlessEffectiveMode?: string
+  seamlessFromEmail?: string
+  seamlessToEmail?: string
+  seamlessExecutionId?: string
+  seamlessFinishedAt?: string
+  autoSwitchReason?: AntigravityAutoSwitchReason
+}
+
+/** 读切号历史(降序;缺省/损坏返回空数组)。 */
+export function antigravitySwitchHistory(): Promise<AntigravitySwitchHistoryItem[]> {
+  return app().LocalAntigravitySwitchHistory() as Promise<AntigravitySwitchHistoryItem[]>
+}
+
+/** 追加一条切号历史(按 id 去重、降序、截断 200)。 */
+export function addAntigravitySwitchHistory(item: AntigravitySwitchHistoryItem): Promise<void> {
+  return app().LocalAddAntigravitySwitchHistory(item) as Promise<void>
+}
+
+/** 清空切号历史。 */
+export function clearAntigravitySwitchHistory(): Promise<void> {
+  return app().LocalClearAntigravitySwitchHistory() as Promise<void>
 }
