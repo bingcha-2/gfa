@@ -26,19 +26,25 @@ func ParseAuthJSON(raw []byte) (*account.Account, error) {
 		return nil, err
 	}
 
-	// apikey 形态:auth_mode=apikey 或仅有 OPENAI_API_KEY 字符串。
+	idToken, accessToken, refreshToken, accountID := extractTokens(v)
+
+	// apikey 形态:严格按 auth_mode==apikey 判定(对齐 cockpit),否则仅当无任何 OAuth token
+	// 时才回退当 apikey 号。否则「OAuth auth.json 顺带带了个 OPENAI_API_KEY」会被误判成
+	// API-Key 号、丢掉全部 OAuth token。
 	if key := apiKeyOf(v); key != "" {
-		return &account.Account{
-			Provider:    account.ProviderCodex,
-			Email:       firstString(v, "email", "account_email"),
-			AuthKind:    account.AuthAPIKey,
-			APIKey:      key,
-			PoolEnabled: true,
-			QuotaStatus: account.QuotaOK,
-		}, nil
+		authMode := strings.ToLower(strings.TrimSpace(firstString(v, "auth_mode", "authMode")))
+		if authMode == "apikey" || (accessToken == "" && refreshToken == "") {
+			return &account.Account{
+				Provider:    account.ProviderCodex,
+				Email:       firstString(v, "email", "account_email"),
+				AuthKind:    account.AuthAPIKey,
+				APIKey:      key,
+				PoolEnabled: true,
+				QuotaStatus: account.QuotaOK,
+			}, nil
+		}
 	}
 
-	idToken, accessToken, refreshToken, accountID := extractTokens(v)
 	if accessToken == "" && refreshToken == "" {
 		return nil, errors.New("codeximport: auth.json 既无 OPENAI_API_KEY 也无 access/refresh token")
 	}

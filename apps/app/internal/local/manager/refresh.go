@@ -76,16 +76,25 @@ func (m *Manager) refreshOne(a *account.Account) error {
 		return err
 	}
 
-	// 3) 回填并持久化。
-	a.HourlyPercent = res.HourlyPercent
-	a.WeeklyPercent = res.WeeklyPercent
-	a.HourlyResetAt = res.HourlyResetAt
-	a.WeeklyResetAt = res.WeeklyResetAt
+	// 3) 回填并持久化。仅当上游真给了该窗口才写,缺窗口 keep-prior——
+	// 绝不用伪造满血覆盖既有真实剩余(见 quota.parseQuotaFromUsage 注释)。
+	if res.HourlyKnown {
+		a.HourlyPercent = res.HourlyPercent
+		a.HourlyResetAt = res.HourlyResetAt
+	}
+	if res.WeeklyKnown {
+		a.WeeklyPercent = res.WeeklyPercent
+		a.WeeklyResetAt = res.WeeklyResetAt
+	}
 	if res.PlanType != "" {
 		a.PlanType = res.PlanType
 	}
-	a.QuotaStatus = account.QuotaOK
-	a.QuotaReason = ""
+	// 只有真拿到窗口数据才宣告 OK;全未知(如 antigravity 无窗口)则 keep-prior 状态,
+	// 避免每轮自动刷新把冷却/错误态清成 OK。
+	if res.HourlyKnown || res.WeeklyKnown {
+		a.QuotaStatus = account.QuotaOK
+		a.QuotaReason = ""
+	}
 	return m.acc.Update(a)
 }
 

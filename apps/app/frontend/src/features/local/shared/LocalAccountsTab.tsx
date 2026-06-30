@@ -551,7 +551,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     try {
       if (name !== (editing.name || '')) await api.rename(id, name)
       if (note !== (editing.note || '')) await api.setNote(id, note)
-      if (tags.join(' ') !== (editing.tags || []).join(' ')) await api.setTags(id, tags)
+      if (tags.join(',') !== (editing.tags || []).join(',')) await api.setTags(id, tags)
       if (editGroup !== prevGroup) {
         if (editGroup) await assignAccountsToGroup(editGroup, [id])
         else if (prevGroup) await removeAccountsFromGroup(prevGroup, [id])

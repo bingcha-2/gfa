@@ -43,7 +43,7 @@ func newMgrWithRefresher(t *testing.T, r Refresher) (*Manager, *account.Store) {
 }
 
 func TestRefreshQuota_PersistsResult(t *testing.T) {
-	r := &fakeRefresher{res: quota.Result{HourlyPercent: 65, WeeklyPercent: 40, HourlyResetAt: 111, WeeklyResetAt: 222, PlanType: "pro"}}
+	r := &fakeRefresher{res: quota.Result{HourlyPercent: 65, WeeklyPercent: 40, HourlyResetAt: 111, WeeklyResetAt: 222, HourlyKnown: true, WeeklyKnown: true, PlanType: "pro"}}
 	m, acc := newMgrWithRefresher(t, r)
 	a := &account.Account{Provider: account.ProviderCodex, Email: "q@x", AuthKind: account.AuthOAuth, PoolEnabled: true, QuotaStatus: account.QuotaError}
 	_ = acc.Add(a)
@@ -64,7 +64,7 @@ func TestRefreshQuota_PersistsResult(t *testing.T) {
 }
 
 func TestRefreshQuota_RefreshesExpiredTokenFirst(t *testing.T) {
-	r := &fakeRefresher{tokenExpired: true, res: quota.Result{HourlyPercent: 90, WeeklyPercent: 90}}
+	r := &fakeRefresher{tokenExpired: true, res: quota.Result{HourlyPercent: 90, WeeklyPercent: 90, HourlyKnown: true, WeeklyKnown: true}}
 	m, acc := newMgrWithRefresher(t, r)
 	a := &account.Account{Provider: account.ProviderCodex, Email: "e@x", AuthKind: account.AuthOAuth, RefreshToken: "rt", PoolEnabled: true}
 	_ = acc.Add(a)
@@ -97,7 +97,7 @@ func TestRefreshQuota_FetchErrorMarksStatus(t *testing.T) {
 }
 
 func TestRefreshQuota_APIKeyAccountSkipped(t *testing.T) {
-	r := &fakeRefresher{res: quota.Result{HourlyPercent: 10}}
+	r := &fakeRefresher{res: quota.Result{HourlyPercent: 10, HourlyKnown: true}}
 	m, acc := newMgrWithRefresher(t, r)
 	a := &account.Account{Provider: account.ProviderCodex, Email: "k@x", AuthKind: account.AuthAPIKey, APIKey: "sk", PoolEnabled: true}
 	_ = acc.Add(a)
@@ -108,7 +108,7 @@ func TestRefreshQuota_APIKeyAccountSkipped(t *testing.T) {
 }
 
 func TestRefreshAllQuotas_OnlyPoolEnabled(t *testing.T) {
-	r := &fakeRefresher{res: quota.Result{HourlyPercent: 50, WeeklyPercent: 50}}
+	r := &fakeRefresher{res: quota.Result{HourlyPercent: 50, WeeklyPercent: 50, HourlyKnown: true, WeeklyKnown: true}}
 	m, acc := newMgrWithRefresher(t, r)
 	in := &account.Account{Provider: account.ProviderCodex, Email: "in@x", AuthKind: account.AuthOAuth, PoolEnabled: true}
 	out := &account.Account{Provider: account.ProviderCodex, Email: "out@x", AuthKind: account.AuthOAuth, PoolEnabled: false}

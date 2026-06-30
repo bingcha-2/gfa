@@ -65,14 +65,15 @@ func toAuth(a *account.Account) *coreauth.Auth {
 	}
 }
 
-// accountRemainingPct 把账号的「已用百分比」(小时/周里更紧的那个)折成剩余额度
-// 百分比(0-100),对齐 cockpit quota = min(hourly_remaining, weekly_remaining)。
+// accountRemainingPct 取账号「更紧的那个窗口」的剩余额度百分比(0-100),
+// 对齐 cockpit quota = min(hourly_remaining, weekly_remaining)。
+// 注意:HourlyPercent/WeeklyPercent 本就是「剩余%」(quota.normalizeRemainingPercentage = 100-used),
+// 故取 min;旧实现把剩余当已用又用 max,双重反掉,会把流量打到快用尽的号。
 func accountRemainingPct(a *account.Account) int {
-	used := a.HourlyPercent
-	if a.WeeklyPercent > used {
-		used = a.WeeklyPercent
+	rem := a.HourlyPercent
+	if a.WeeklyPercent < rem {
+		rem = a.WeeklyPercent
 	}
-	rem := 100 - used
 	if rem < 0 {
 		rem = 0
 	}

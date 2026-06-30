@@ -67,7 +67,9 @@ func (r *AntigravityRefresher) RefreshToken(a *account.Account) error {
 	return nil
 }
 
-// FetchQuota 轻探:antigravity 无 5h/周窗口口径,返回满血(存活=满血占位)。
+// FetchQuota:antigravity 无 5h/周窗口口径,两窗口都报「未知」(Known=false)——
+// 调用方据此 keep-prior、不写、也不把 QuotaStatus 强刷成 OK,避免每轮自动刷新
+// 把 antigravity 号的状态(冷却/百分比)清掉(见 manager.refreshOne)。
 func (r *AntigravityRefresher) FetchQuota(a *account.Account) (Result, error) {
-	return Result{HourlyPercent: 100, WeeklyPercent: 100}, nil
+	return Result{}, nil
 }

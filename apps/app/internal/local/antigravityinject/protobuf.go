@@ -57,20 +57,32 @@ func readVarint(data []byte, offset int) (uint64, int, bool) {
 }
 
 // skipField 跳过一个 protobuf 字段,返回字段结束后的偏移。
+// 所有分支都校验结束偏移落在 data 内:截断/损坏的 topic(IDE 半写、schema 漂移)
+// 若返回越界 offset 且 ok=true,调用方(removeUnifiedTopicEntry)会 data[start:end] panic。
 func skipField(data []byte, offset int, wireType uint8) (int, bool) {
 	switch wireType {
 	case 0:
 		_, n, ok := readVarint(data, offset)
 		return n, ok
 	case 1:
+		if offset+8 > len(data) {
+			return 0, false
+		}
 		return offset + 8, true
 	case 2:
 		length, contentOffset, ok := readVarint(data, offset)
 		if !ok {
 			return 0, false
 		}
-		return contentOffset + int(length), true
+		end := contentOffset + int(length)
+		if length < 0 || end > len(data) {
+			return 0, false
+		}
+		return end, true
 	case 5:
+		if offset+4 > len(data) {
+			return 0, false
+		}
 		return offset + 4, true
 	default:
 		return 0, false

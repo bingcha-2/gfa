@@ -117,7 +117,28 @@ func (h *Hub) SyncAntigravityFromIDE() (int, error) {
 	return h.addAccountsDedup(account.ProviderAntigravity, []*account.Account{a})
 }
 
-// addAccountsDedup 把账号加入 store,按 email 去重(email 非空且已存在则跳过)。
+// dedupKey 去重键:优先 email;email 为空(API-key/无邮箱 auth)时退到 token/key/accountID,
+// 避免「无 email 的号每次导入都重复新增」。
+func dedupKey(a *account.Account) string {
+	if a.Email != "" {
+		return "email:" + a.Email
+	}
+	if a.RefreshToken != "" {
+		return "rt:" + a.RefreshToken
+	}
+	if a.AccessToken != "" {
+		return "at:" + a.AccessToken
+	}
+	if a.APIKey != "" {
+		return "key:" + a.APIKey
+	}
+	if a.AccountID != "" {
+		return "acc:" + a.AccountID
+	}
+	return ""
+}
+
+// addAccountsDedup 把账号加入 store,按 dedupKey 去重(已存在则跳过)。
 // 有新增则 reload 网关。返回新增数量。
 func (h *Hub) addAccountsDedup(p account.Provider, accs []*account.Account) (int, error) {
 	pc, err := h.ctx(p)
@@ -130,8 +151,8 @@ func (h *Hub) addAccountsDedup(p account.Provider, accs []*account.Account) (int
 	}
 	seen := map[string]bool{}
 	for _, a := range existing {
-		if a.Email != "" {
-			seen[a.Email] = true
+		if k := dedupKey(a); k != "" {
+			seen[k] = true
 		}
 	}
 	added := 0
@@ -139,15 +160,16 @@ func (h *Hub) addAccountsDedup(p account.Provider, accs []*account.Account) (int
 		if a == nil {
 			continue
 		}
-		if a.Email != "" && seen[a.Email] {
+		k := dedupKey(a)
+		if k != "" && seen[k] {
 			continue
 		}
 		a.Provider = p
 		if err := h.acc.Add(a); err != nil {
 			return added, err
 		}
-		if a.Email != "" {
-			seen[a.Email] = true
+		if k != "" {
+			seen[k] = true
 		}
 		added++
 	}

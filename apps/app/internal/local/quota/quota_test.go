@@ -103,8 +103,10 @@ func TestCodexFetchQuota_ParsesWindows(t *testing.T) {
 	}
 }
 
-// TestCodexFetchQuota_MissingWindowsFull:缺窗口=满血(100,reset 0)。
-func TestCodexFetchQuota_MissingWindowsFull(t *testing.T) {
+// TestCodexFetchQuota_MissingWindowsUnknown:缺窗口=未知(Known=false),不伪造满血。
+// 上游临时漏窗口时绝不能报 100,否则该号在 fair 路由里冒充满额抢流量
+//(memory codex-quota-window-unknown-parity 记录的已修坑)。
+func TestCodexFetchQuota_MissingWindowsUnknown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"plan_type": "free", "rate_limit": map[string]any{}})
 	}))
@@ -115,8 +117,11 @@ func TestCodexFetchQuota_MissingWindowsFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchQuota: %v", err)
 	}
-	if res.HourlyPercent != 100 || res.WeeklyPercent != 100 {
-		t.Fatalf("missing windows should be 100/100, got %d/%d", res.HourlyPercent, res.WeeklyPercent)
+	if res.HourlyKnown || res.WeeklyKnown {
+		t.Fatalf("missing windows must be Known=false, got hourly=%v weekly=%v", res.HourlyKnown, res.WeeklyKnown)
+	}
+	if res.HourlyPercent != 0 || res.WeeklyPercent != 0 {
+		t.Fatalf("missing windows must not fabricate 100; got %d/%d", res.HourlyPercent, res.WeeklyPercent)
 	}
 }
 

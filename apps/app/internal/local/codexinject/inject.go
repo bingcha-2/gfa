@@ -67,8 +67,22 @@ func InjectToHome(codexHome string, t Token) error {
 	if err != nil {
 		return fmt.Errorf("auth.json 序列化失败: %w", err)
 	}
-	if err := os.WriteFile(authPath, data, 0o600); err != nil {
+	if err := atomicWrite(authPath, data); err != nil {
 		return fmt.Errorf("写入 auth.json 失败: %w", err)
+	}
+	return nil
+}
+
+// atomicWrite 临时文件 + rename 原子落盘:进程被杀/断电也不会留下半截 auth.json
+//(半截 auth.json 会让真 codex CLI 启动解析失败、登录损坏)。对齐 cockpit write_string_atomic。
+func atomicWrite(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }
@@ -101,7 +115,7 @@ func RestoreHome(codexHome string) error {
 	authPath := filepath.Join(codexHome, authFileName)
 	backupPath := filepath.Join(codexHome, backupFileName)
 	if orig, err := os.ReadFile(backupPath); err == nil {
-		if werr := os.WriteFile(authPath, orig, 0o600); werr != nil {
+		if werr := atomicWrite(authPath, orig); werr != nil {
 			return fmt.Errorf("还原 auth.json 失败: %w", werr)
 		}
 		_ = os.Remove(backupPath)

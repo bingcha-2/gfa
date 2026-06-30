@@ -44,10 +44,12 @@ const (
 
 // Result 是一次额度查询的归一结果(回填进 account)。
 type Result struct {
-	HourlyPercent int    // 剩余百分比 0..100
-	WeeklyPercent int    // 剩余百分比 0..100
+	HourlyPercent int    // 剩余百分比 0..100(仅 HourlyKnown 时有效)
+	WeeklyPercent int    // 剩余百分比 0..100(仅 WeeklyKnown 时有效)
 	HourlyResetAt int64  // unix ms(0=未知)
 	WeeklyResetAt int64  // unix ms
+	HourlyKnown   bool   // 上游是否真给了 5h 窗口(false=未知,调用方应 keep-prior,绝不伪造满血)
+	WeeklyKnown   bool   // 上游是否真给了 周 窗口
 	PlanType      string // 上游返回的订阅档(可空)
 }
 
@@ -276,20 +278,24 @@ func normalizeResetTimeMs(w *windowInfo) int64 {
 	return 0
 }
 
-// parseQuotaFromUsage 照搬 cockpit parse_quota_from_usage:
-// primary_window=5小时,secondary_window=周;缺窗口=满血(100,reset 0)。
+// parseQuotaFromUsage:primary_window=5小时,secondary_window=周。
+// 缺窗口 = 未知(Known=false),由调用方 keep-prior —— 绝不伪造满血(100)。
+// 伪造满血会让缺窗口的号在 fair 路由里冒充满额、把流量吸过去,正是
+// memory codex-quota-window-unknown-parity 记录的已修坑,这里不能复现。
 func parseQuotaFromUsage(u *usageResponse) Result {
-	res := Result{HourlyPercent: 100, WeeklyPercent: 100, PlanType: u.PlanType}
+	res := Result{PlanType: u.PlanType}
 	if u.RateLimit == nil {
 		return res
 	}
 	if p := u.RateLimit.PrimaryWindow; p != nil {
 		res.HourlyPercent = normalizeRemainingPercentage(p)
 		res.HourlyResetAt = normalizeResetTimeMs(p)
+		res.HourlyKnown = true
 	}
 	if s := u.RateLimit.SecondaryWindow; s != nil {
 		res.WeeklyPercent = normalizeRemainingPercentage(s)
 		res.WeeklyResetAt = normalizeResetTimeMs(s)
+		res.WeeklyKnown = true
 	}
 	return res
 }

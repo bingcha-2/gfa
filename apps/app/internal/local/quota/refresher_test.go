@@ -72,15 +72,15 @@ func TestAntigravityRefresher_TokenExpired(t *testing.T) {
 	}
 }
 
-// TestAntigravityRefresher_FetchQuota_ProbesAndReturnsFull:轻探(刷 token 即视为存活),
-// 额度细项 antigravity 不暴露,返回满血占位(保活语义)。
-func TestAntigravityRefresher_FetchQuota_LightProbe(t *testing.T) {
+// TestAntigravityRefresher_FetchQuota_Unknown:antigravity 无 5h/周窗口口径,
+// 两窗口都报「未知」(Known=false),由调用方 keep-prior、不伪造满血、不清状态。
+func TestAntigravityRefresher_FetchQuota_Unknown(t *testing.T) {
 	r := NewAntigravityRefresher(AntigravityEndpoints{})
 	res, err := r.FetchQuota(&account.Account{AccessToken: "x"})
 	if err != nil {
 		t.Fatalf("FetchQuota: %v", err)
 	}
-	if res.HourlyPercent != 100 || res.WeeklyPercent != 100 {
-		t.Fatalf("light probe should return full, got %d/%d", res.HourlyPercent, res.WeeklyPercent)
+	if res.HourlyKnown || res.WeeklyKnown {
+		t.Fatalf("antigravity quota windows must be unknown, got hourly=%v weekly=%v", res.HourlyKnown, res.WeeklyKnown)
 	}
 }
