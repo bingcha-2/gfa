@@ -36,16 +36,27 @@ type AntigravityToken struct {
 	IsGCPTos     bool
 }
 
+// CodexToken 是注入 codex auth.json 的一份自有号登录态。
+type CodexToken struct {
+	AuthKind     string // "oauth" | "apikey"
+	IDToken      string
+	AccessToken  string
+	RefreshToken string
+	AccountID    string
+	APIKey       string
+}
+
 // Platform 抽象 package main 里的平台专有动作(接管注入 / app 检测 / 进程启停)。
 //
-// 接管模型(对齐 cockpit):
-//   - codex 'local' 经反代(网关):CodexInject(网关端口) 把 codex CLI 指向反代。
-//   - antigravity 'local' 不走网关:AntigravityInjectAccount 把自有号 token 直接
-//     写进 Antigravity IDE 的 state.vscdb。
+// 接管模型(对齐 cockpit)—— 接管都是「把号注入正版客户端」,与反代(cliproxy 网关)无关:
+//   - codex 'local':CodexInjectAccount 把自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI。
+//   - antigravity 'local':AntigravityInjectAccount 把自有号写进 IDE state.vscdb,真 IDE 直连 Google。
+// 反代(网关)是单独的附加功能,只 codex 有,由反代 tab 经 GatewayStart/Stop 独立开关。
 type Platform interface {
-	CodexInject(port int) error
-	CodexRestore() error
-	CodexInjected() bool
+	// CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json(注入式接管,不经网关)。
+	CodexInjectAccount(tok CodexToken) error
+	// CodexRestoreAccount 还原 codex 注入前的 auth.json。
+	CodexRestoreAccount() error
 	// AntigravityInjectAccount 把一份自有号 token 注入 Antigravity IDE(state.vscdb),不经网关。
 	AntigravityInjectAccount(tok AntigravityToken) error
 	// AntigravityRestoreAccount 移除 Antigravity IDE 的注入登录态。
@@ -328,16 +339,14 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 	if src == takeover.SourceLocal {
 		switch p {
 		case account.ProviderCodex:
-			// codex 'local' = 经反代:确保网关在跑(没跑则起)+ 把 codex CLI 指向反代。
-			// 接管不独占网关:网关由反代 tab 独立控制,这里只是「确保可用」。
-			port, err := h.gw.Start(gateway.DefaultGatewayPort)
+			// codex 'local' = 注入式接管:挑一个自有号直接写进 ~/.codex/auth.json,
+			// 真 codex CLI 直连 OpenAI。不碰反代网关(反代是单独功能,反代 tab 自开自关)。
+			tok, err := h.pickCodexToken()
 			if err != nil {
 				return err
 			}
-			if h.platform.CodexInjected() {
-				_ = h.platform.CodexRestore()
-			}
-			if err := h.platform.CodexInject(port); err != nil {
+			_ = h.platform.CodexRestoreAccount()
+			if err := h.platform.CodexInjectAccount(tok); err != nil {
 				return err
 			}
 		case account.ProviderAntigravity:
@@ -355,14 +364,38 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		// 还原:仅撤注入。网关生命周期与接管解耦——不在此处停网关(反代 tab 独立控制)。
 		switch p {
 		case account.ProviderCodex:
-			if h.platform.CodexInjected() {
-				_ = h.platform.CodexRestore()
-			}
+			_ = h.platform.CodexRestoreAccount()
 		case account.ProviderAntigravity:
 			_ = h.platform.AntigravityRestoreAccount()
 		}
 	}
 	return h.sources.Set(string(p), src)
+}
+
+// pickCodexToken 选要注入的 codex 自有号:优先级号,否则第一个进池号。
+func (h *Hub) pickCodexToken() (CodexToken, error) {
+	list, err := h.acc.ListPoolEnabled(account.ProviderCodex)
+	if err != nil {
+		return CodexToken{}, err
+	}
+	if len(list) == 0 {
+		return CodexToken{}, errors.New("hub: 没有可用的 codex 自有号(请先登录并进池)")
+	}
+	chosen := list[0]
+	for _, a := range list {
+		if a.Priority {
+			chosen = a
+			break
+		}
+	}
+	return CodexToken{
+		AuthKind:     string(chosen.AuthKind),
+		IDToken:      chosen.IDToken,
+		AccessToken:  chosen.AccessToken,
+		RefreshToken: chosen.RefreshToken,
+		AccountID:    chosen.AccountID,
+		APIKey:       chosen.APIKey,
+	}, nil
 }
 
 // pickAntigravityToken 选要注入的 antigravity 自有号:优先级号,否则第一个进池号。

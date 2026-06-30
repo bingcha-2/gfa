@@ -9,22 +9,22 @@ import (
 
 // fakePlatform 记录注入/检测调用,供 hub 单测(不碰真实 app/IDE)。
 type fakePlatform struct {
-	codexInjected   bool
-	codexInjectPort int
-	agInjectCount   int
-	agRestoreCount  int
-	agInjectedToken AntigravityToken
-	appPath         string
-	launchedArgs    []string
+	codexInjectCount   int
+	codexRestoreCount  int
+	codexInjectedToken CodexToken
+	agInjectCount      int
+	agRestoreCount     int
+	agInjectedToken    AntigravityToken
+	appPath            string
+	launchedArgs       []string
 }
 
-func (f *fakePlatform) CodexInject(port int) error {
-	f.codexInjectPort = port
-	f.codexInjected = true
+func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
+	f.codexInjectCount++
+	f.codexInjectedToken = tok
 	return nil
 }
-func (f *fakePlatform) CodexRestore() error { f.codexInjected = false; return nil }
-func (f *fakePlatform) CodexInjected() bool { return f.codexInjected }
+func (f *fakePlatform) CodexRestoreAccount() error { f.codexRestoreCount++; return nil }
 func (f *fakePlatform) AntigravityInjectAccount(tok AntigravityToken) error {
 	f.agInjectCount++
 	f.agInjectedToken = tok
@@ -62,13 +62,24 @@ func TestHub_AccountLifecycleByProvider(t *testing.T) {
 	}
 }
 
-func TestHub_SetSourceCodex_InjectsViaPlatform(t *testing.T) {
+// codex 'local' = 注入式接管(写 auth.json),不经反代网关。
+func TestHub_SetSourceCodex_InjectsAccountNotGateway(t *testing.T) {
 	h, fp := newHub(t)
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "cx@x.com",
+		AuthKind: account.AuthOAuth, AccessToken: "AT", RefreshToken: "RT", AccountID: "acc",
+		PoolEnabled: true, Priority: true})
 	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
 		t.Fatalf("SetSource local: %v", err)
 	}
-	if !fp.codexInjected || fp.codexInjectPort == 0 {
-		t.Fatalf("expected codex injected at gateway port, got injected=%v port=%d", fp.codexInjected, fp.codexInjectPort)
+	if fp.codexInjectCount != 1 {
+		t.Fatalf("expected codex account injected once, got %d", fp.codexInjectCount)
+	}
+	if fp.codexInjectedToken.AccessToken != "AT" || fp.codexInjectedToken.AccountID != "acc" {
+		t.Fatalf("injected codex token wrong: %+v", fp.codexInjectedToken)
+	}
+	// 接管不得启动反代网关(反代是单独功能)。
+	if h.GatewayStatusOf(account.ProviderCodex).Running {
+		t.Fatal("codex takeover must not start the reverse-proxy gateway")
 	}
 	if h.GetSource(account.ProviderCodex) != "local" {
 		t.Fatal("source should persist local")
@@ -76,8 +87,19 @@ func TestHub_SetSourceCodex_InjectsViaPlatform(t *testing.T) {
 	if err := h.SetSource(account.ProviderCodex, "remote"); err != nil {
 		t.Fatalf("SetSource remote: %v", err)
 	}
-	if fp.codexInjected {
-		t.Fatal("expected codex restored on remote")
+	if fp.codexRestoreCount < 1 {
+		t.Fatal("expected codex restore on remote")
+	}
+}
+
+// 反代网关独立于接管:GatewayStart 可单独开,与 SetSource 无关。
+func TestHub_GatewayIndependentOfTakeover(t *testing.T) {
+	h, _ := newHub(t)
+	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
+		t.Fatalf("GatewayStart: %v", err)
+	}
+	if !h.GatewayStatusOf(account.ProviderCodex).Running {
+		t.Fatal("gateway should run after explicit GatewayStart")
 	}
 }
 
@@ -128,6 +150,8 @@ func TestHub_SetSourceAntigravity_NoAccountErrors(t *testing.T) {
 // 接管与网关解耦:codex 'remote' 还原不应停掉反代 tab 起的网关。
 func TestHub_CodexRemote_DoesNotStopGateway(t *testing.T) {
 	h, fp := newHub(t)
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "cx@x.com",
+		AuthKind: account.AuthOAuth, AccessToken: "AT", PoolEnabled: true})
 	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
 		t.Fatalf("GatewayStart: %v", err)
 	}
@@ -138,7 +162,7 @@ func TestHub_CodexRemote_DoesNotStopGateway(t *testing.T) {
 	if err := h.SetSource(account.ProviderCodex, "remote"); err != nil {
 		t.Fatalf("SetSource codex remote: %v", err)
 	}
-	if fp.codexInjected {
+	if fp.codexRestoreCount < 1 {
 		t.Fatal("codex should be restored on remote")
 	}
 	if !h.GatewayStatusOf(account.ProviderCodex).Running {

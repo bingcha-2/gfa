@@ -64,7 +64,8 @@ describe('CodexSuitePage', () => {
   it('renders own accounts with quota and gateway status', async () => {
     render(<CodexSuitePage />)
     expect(await screen.findByText('yifan@example.com')).toBeInTheDocument()
-    expect(screen.getByText(/网关 127\.0\.0\.1:19528/)).toBeInTheDocument()
+    // source=local → 头部显示「本地接管中 · 已注入」(注入式接管,不再显示网关地址)
+    expect(screen.getByText(/本地接管中 · 已注入/)).toBeInTheDocument()
     expect(screen.getByText('仅自有号')).toBeInTheDocument()
     // 使用风险提示横幅常驻
     expect(screen.getByText('使用风险提示')).toBeInTheDocument()

@@ -37,6 +37,16 @@ describe('AntigravitySuitePage', () => {
     expect(screen.getByText('仅自有号')).toBeInTheDocument()
   })
 
+  // antigravity 走注入、没有反代 —— 不应有「反代」tab(只 codex 有)。
+  it('无「反代」tab(antigravity 不走反代)', async () => {
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    expect(screen.queryByRole('button', { name: '反代' })).toBeNull()
+    // 账号/统计/保活/实例 仍在
+    expect(screen.getByRole('button', { name: '账号' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '统计' })).toBeInTheDocument()
+  })
+
   // 接管模式(远程/本地)切换已上移至「接管中心」;suite 头部只读 + 去接管中心链接。
   it('suite 头部无接管模式段控,去接管中心链接可导航', async () => {
     const onNav = vi.fn()

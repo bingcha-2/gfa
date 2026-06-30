@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PlugZap, Lock, ArrowRight, AlertTriangle } from 'lucide-react'
-import { type LocalGatewayStatus, type ProviderLocalApi } from '@/services/localApi'
+import { type ProviderLocalApi } from '@/services/localApi'
 import type { PageId } from '@/types'
 import { cn } from '@/lib/utils'
 import { LocalAccountsTab } from './LocalAccountsTab'
@@ -22,19 +22,25 @@ export interface LocalProviderSuiteProps {
   title: string
   api: ProviderLocalApi
   onNavigate?: (p: PageId) => void
+  /** 是否有反代(cliproxy 网关 API 服务)。仅 codex;antigravity 走注入、无反代,不显示反代 tab。 */
+  hasGateway?: boolean
 }
 
-const TABS = [['accounts', '账号'], ['gateway', '反代'], ['stats', '统计'], ['wakeup', '保活'], ['instances', '实例']] as const
-type TabId = (typeof TABS)[number][0]
+type TabId = 'accounts' | 'gateway' | 'stats' | 'wakeup' | 'instances'
 
-export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuiteProps) {
-  const [gw, setGw] = useState<LocalGatewayStatus>({ running: false, addr: '', port: 0 })
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false }: LocalProviderSuiteProps) {
+  const tabs: [TabId, string][] = [
+    ['accounts', '账号'],
+    ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
+    ['stats', '统计'],
+    ['wakeup', '保活'],
+    ['instances', '实例'],
+  ]
   const [source, setSource] = useState<'remote' | 'local'>('remote')
   const [tab, setTab] = useState<TabId>('accounts')
 
   const refresh = useCallback(async () => {
     try {
-      setGw(await api.gatewayStatus())
       if (api.getSource) {
         const src = await api.getSource()
         setSource(src === 'local' ? 'local' : 'remote')
@@ -65,8 +71,8 @@ export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuit
             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[var(--text-secondary)]">
               <span className="px-2 py-0.5 rounded-full bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold">本地自有号</span>
               <span className="inline-flex items-center gap-1.5">
-                <span className={cn('w-1.5 h-1.5 rounded-full', localActive && gw.running ? 'bg-[var(--success)] dot-pulse' : 'bg-[var(--text-muted)]')} />
-                {localActive ? (gw.running ? `本地接管中 · 网关 ${gw.addr}` : '本地已接管') : '远程托管(接管中心切换)'}
+                <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)] dot-pulse' : 'bg-[var(--text-muted)]')} />
+                {localActive ? '本地接管中 · 已注入' : '远程托管(接管中心切换)'}
               </span>
               <span className="inline-flex items-center gap-1 text-[var(--success)]"><Lock size={11} /> 仅自有号</span>
             </div>
@@ -90,7 +96,7 @@ export function LocalProviderSuite({ title, api, onNavigate }: LocalProviderSuit
 
       {/* tab 栏 */}
       <div className="flex gap-5 border-b border-[var(--border-light)]">
-        {TABS.map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}

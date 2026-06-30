@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"bcai-wails/internal/local/antigravityinject"
+	"bcai-wails/internal/local/codexinject"
 	"bcai-wails/internal/local/hub"
 )
 
@@ -16,20 +17,23 @@ import (
 // 进程启停桥给 internal/local/hub。这是本地接管唯一需要留在 package main 的平台胶水。
 type localPlatform struct{}
 
-func (localPlatform) CodexInject(port int) error {
-	if err := InjectCodexSettings(port); err != nil {
-		return err
-	}
-	return InjectFakeCodexAuth()
+// CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI(注入式接管)。
+// 这与反代(cliproxy 网关)无关——反代是单独功能,由反代 tab 独立开关。
+func (localPlatform) CodexInjectAccount(tok hub.CodexToken) error {
+	return codexinject.InjectToHome(codexHomeDir(), codexinject.Token{
+		AuthKind:     tok.AuthKind,
+		IDToken:      tok.IDToken,
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		AccountID:    tok.AccountID,
+		APIKey:       tok.APIKey,
+	})
 }
 
-func (localPlatform) CodexRestore() error {
-	_ = RestoreCodexSettings()
-	_ = RestoreFakeCodexAuth()
-	return nil
+// CodexRestoreAccount 还原 codex 注入前的 auth.json。
+func (localPlatform) CodexRestoreAccount() error {
+	return codexinject.RestoreHome(codexHomeDir())
 }
-
-func (localPlatform) CodexInjected() bool { return IsCodexInjected() }
 
 // AntigravityInjectAccount 把一份自有号 token 直接写进 Antigravity IDE 的
 // state.vscdb(对齐 cockpit),让 IDE 以该号官方登录态运行——不经任何网关。

@@ -160,26 +160,26 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     })
   })
 
-  // ── 本地语义文案:codex=指向反代,antigravity=注入直连(区分接管 vs 反代) ──
-  it('Codex 本地段文案点明「指向本地反代 + 需在反代 tab 开网关」', async () => {
+  // ── 本地语义文案:codex 与 antigravity 都是注入式接管(直连官方),反代是另一回事 ──
+  it('Codex 本地段文案点明「注入 auth.json + 无反代」(反代是单独功能)', async () => {
     setPlatform('MacIntel')
     render(<TakeoverCenterPage />)
     const codex = screen.getByRole('region', { name: 'Codex' })
     fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
     await within(codex).findByRole('button', { name: '接管' })
-    expect(within(codex).getByText(/指向本地反代/)).toBeInTheDocument()
-    expect(within(codex).getByText(/反代 tab 开网关/)).toBeInTheDocument()
-    // 不应出现 antigravity 的「注入」语义
-    expect(within(codex).queryByText(/注入/)).toBeNull()
+    expect(within(codex).getByText(/注入.*auth\.json/)).toBeInTheDocument()
+    expect(within(codex).getByText(/无反代/)).toBeInTheDocument()
+    // 接管不再是「指向反代」
+    expect(within(codex).queryByText(/指向本地反代/)).toBeNull()
   })
 
-  it('Codex 本地接管运行时显示反代地址(指向本地反代 127.0.0.1:8317)', async () => {
+  it('Codex 已本地接管时显示「已注入 · 直连官方」(注入式,不显示网关地址)', async () => {
     setPlatform('MacIntel')
     codexApi.getSource.mockResolvedValue('local')
-    codexApi.gatewayStatus.mockResolvedValue({ running: true, addr: '127.0.0.1:8317', port: 8317 })
     render(<TakeoverCenterPage />)
     const codex = screen.getByRole('region', { name: 'Codex' })
-    expect(await within(codex).findByText(/指向本地反代 127\.0\.0\.1:8317/)).toBeInTheDocument()
+    expect(await within(codex).findByText(/已注入 · 直连官方/)).toBeInTheDocument()
+    expect(within(codex).queryByText(/127\.0\.0\.1/)).toBeNull()
   })
 
   it('Antigravity 本地段文案点明「注入号、直连官方、无反代/不池化」且不提网关地址', async () => {

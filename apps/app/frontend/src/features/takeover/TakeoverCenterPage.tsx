@@ -7,7 +7,7 @@ import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
 import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
-import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, type LocalGatewayStatus } from '@/services/localApi'
+import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import type { PageId } from '@/types'
 import { Lock, ArrowRight, Users } from 'lucide-react'
@@ -114,18 +114,17 @@ function ProductCard({ name, provider, note, mode, onModeChange, children }: {
 }
 
 /**
- * 本地自有号语义:
- *   'gateway' = 指向本地反代网关(Codex),需在反代 tab 开网关;
- *   'inject'  = 注入号直连官方(Antigravity),无反代 / 无池化。
+ * Codex / Antigravity 卡:远程/本地两模式互斥。
+ * 本地自有号 = 注入式接管(把选中号写进正版客户端凭证,直连官方)——
+ * codex 写 ~/.codex/auth.json,antigravity 写 IDE state.vscdb。两者都不经反代。
+ * 反代(cliproxy 网关)是单独功能,在各 suite 的「反代」tab 自开自关,与此处接管无关。
+ * localDesc 描述该产品注入到哪。
  */
-type LocalKind = 'gateway' | 'inject'
-
-/** Codex / Antigravity 卡:远程/本地两模式互斥。 */
-function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onManageAccounts }: {
+function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk, onManageAccounts }: {
   name: string
   provider: string
   note?: string
-  kind: LocalKind
+  localDesc: string
   api: ProviderLocalApi
   remoteRows: RemoteRowSpec[]
   tk: Tk
@@ -133,18 +132,16 @@ function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onM
 }) {
   const [source, setSource] = useState<Mode>('remote')
   const [mode, setMode] = useState<Mode>('remote')
-  const [gw, setGw] = useState<LocalGatewayStatus>({ running: false, addr: '', port: 0 })
   const [accounts, setAccounts] = useState(0)
   const [busyLocal, setBusyLocal] = useState(false)
   const [err, setErr] = useState('')
 
-  // 刷新实际态(source/网关/账号数)。不动 mode —— 段控只反映用户选择,实际态由 source 承载,
+  // 刷新实际态(source/账号数)。不动 mode —— 段控只反映用户选择,实际态由 source 承载,
   // 避免异步刷新把用户刚切的段顶回去。
   const refresh = useCallback(async () => {
     try {
       const src = (await api.getSource?.()) === 'local' ? 'local' : 'remote'
       setSource(src)
-      setGw(await api.gatewayStatus())
       const list = await api.listAccounts()
       setAccounts(list.length)
     } catch (e) {
@@ -159,7 +156,6 @@ function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onM
       setSource(src)
       if (src === 'local') setMode('local')
       try {
-        setGw(await api.gatewayStatus())
         const list = await api.listAccounts()
         setAccounts(list.length)
       } catch (e) {
@@ -168,8 +164,8 @@ function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onM
     })()
   }, [api])
 
-  // 本地接管/停止:setSource('local')/setSource('remote')。后端按产品决定语义——
-  // gateway 指向反代,inject 直写 IDE。前端只切 source、刷新实际态。
+  // 本地接管/停止:setSource('local')/setSource('remote')。后端把选中号注入正版客户端
+  //(codex auth.json / antigravity state.vscdb),前端只切 source、刷新实际态。
   const onToggleLocal = async () => {
     setBusyLocal(true)
     setErr('')
@@ -206,30 +202,13 @@ function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onM
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-[11px]">
-              {/* 状态点:gateway 看网关在不在跑;inject 直连官方,只看是否已接管 */}
-              <span
-                className={cn(
-                  'w-1.5 h-1.5 rounded-full',
-                  localActive && (kind === 'inject' || gw.running) ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]',
-                )}
-              />
-              <span className="text-[var(--text-secondary)]">
-                {localActive
-                  ? kind === 'inject'
-                    ? '已注入 · 直连官方'
-                    : gw.running
-                      ? `指向本地反代 ${gw.addr}`
-                      : '已指向本地反代'
-                  : '未接管'}
-              </span>
+              {/* 注入式接管:直连官方,只看是否已接管 */}
+              <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
+              <span className="text-[var(--text-secondary)]">{localActive ? '已注入 · 直连官方' : '未接管'}</span>
               <span className="inline-flex items-center gap-1 text-[var(--success)]"><Lock size={10} /> 仅自有号</span>
             </div>
-            {/* 区分接管语义 vs 反代:点明本地号怎么用 */}
-            <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-tight">
-              {kind === 'inject'
-                ? '把选中号注入 IDE,直连官方 —— 无反代、不池化'
-                : 'codex CLI 指向本地反代;需在反代 tab 开网关对外提供 API'}
-            </div>
+            {/* 点明注入到哪;反代是另一回事(在 suite 的反代 tab) */}
+            <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-tight">{localDesc}</div>
             <button
               onClick={onManageAccounts}
               className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)]"
@@ -321,7 +300,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Codex"
           provider="codex"
           note={t('takeover.codexNote')}
-          kind="gateway"
+          localDesc="把选中号注入 ~/.codex/auth.json,真 codex CLI 直连 OpenAI —— 无反代、不池化(反代见 suite 的反代 tab)"
           api={codexLocalApi}
           remoteRows={codexRows}
           tk={tk}
@@ -333,7 +312,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Antigravity"
           provider="antigravity"
           note={t('takeover.agNote')}
-          kind="inject"
+          localDesc="把选中号注入 IDE 的 state.vscdb,真 IDE 直连官方 —— 无反代、不池化"
           api={antigravityLocalApi}
           remoteRows={agRows}
           tk={tk}
