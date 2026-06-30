@@ -5,6 +5,7 @@ import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { FaqPage } from '@/pages/FaqPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { TakeoverCenterPage } from '@/features/takeover/TakeoverCenterPage'
 import { CodexSuitePage } from '@/features/local/codex/CodexSuitePage'
 import { AntigravitySuitePage } from '@/features/local/antigravity/AntigravitySuitePage'
 import { ToastHost } from '@/components/ToastHost'
@@ -16,7 +17,7 @@ import { Loader2 } from 'lucide-react'
 import type { PageId } from '@/types'
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<PageId>('home')
+  const [currentPage, setCurrentPage] = useState<PageId>('takeover')
   // 语言切换时以 key 整树重挂,保证所有文案(含非订阅的 t() 调用)立即刷新。
   const locale = useLocale()
 
@@ -78,12 +79,13 @@ export default function App() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'home': return <DashboardPage />
+      case 'takeover': return <TakeoverCenterPage onNavigate={setCurrentPage} />
+      case 'remote': return <DashboardPage />
       case 'logs': return <LogsPage />
       case 'faq': return <FaqPage />
       case 'settings': return <SettingsPage />
-      case 'local_codex': return <CodexSuitePage />
-      case 'local_antigravity': return <AntigravitySuitePage />
+      case 'local_codex': return <CodexSuitePage onNavigate={setCurrentPage} />
+      case 'local_antigravity': return <AntigravitySuitePage onNavigate={setCurrentPage} />
     }
   }
 

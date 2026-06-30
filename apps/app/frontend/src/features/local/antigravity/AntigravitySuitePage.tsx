@@ -1,7 +1,8 @@
 import { LocalProviderSuite } from '@/features/local/shared/LocalProviderSuite'
 import { antigravityLocalApi } from '@/services/localApi'
+import type { PageId } from '@/types'
 
-/** 本地自有号 · Antigravity。账号管理 + 网关 + 统计 + 接管号源切换(IDE settings 指向本地网关)。 */
-export function AntigravitySuitePage() {
-  return <LocalProviderSuite title="Antigravity" api={antigravityLocalApi} supportsSource />
+/** 本地自有号 · Antigravity。账号管理 + 统计 + 保活 + 实例。接管模式切换在「接管中心」。 */
+export function AntigravitySuitePage({ onNavigate }: { onNavigate?: (p: PageId) => void } = {}) {
+  return <LocalProviderSuite title="Antigravity" api={antigravityLocalApi} onNavigate={onNavigate} />
 }

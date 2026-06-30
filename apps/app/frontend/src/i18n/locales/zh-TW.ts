@@ -20,7 +20,8 @@ export const zhTW: DeepPartialDict = {
   },
 
   nav: {
-    home: '控制台',
+    home: '遠程',
+    takeover: '接管中心',
     faq: '使用指南',
     logs: '日誌',
     settings: '設定',

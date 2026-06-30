@@ -34,16 +34,17 @@ describe('AntigravitySuitePage', () => {
     render(<AntigravitySuitePage />)
     expect(await screen.findByText('me@gmail.com')).toBeInTheDocument()
     expect(screen.getByText('Antigravity')).toBeInTheDocument()
-    expect(screen.getByText(/网关 127\.0\.0\.1:19529/)).toBeInTheDocument()
+    expect(screen.getByText('仅自有号')).toBeInTheDocument()
   })
 
-  it('shows the source toggle and can switch to local (IDE settings → local gateway)', async () => {
-    const app = installApp()
-    render(<AntigravitySuitePage />)
+  // 接管模式(远程/本地)切换已上移至「接管中心」;suite 头部只读 + 去接管中心链接。
+  it('suite 头部无接管模式段控,去接管中心链接可导航', async () => {
+    const onNav = vi.fn()
+    render(<AntigravitySuitePage onNavigate={onNav} />)
     await screen.findByText('me@gmail.com')
-    expect(screen.getByText('接管模式')).toBeInTheDocument()
-    const { fireEvent, waitFor } = await import('@testing-library/react')
-    fireEvent.click(screen.getByRole('button', { name: '本地自有号' }))
-    await waitFor(() => expect(app.LocalSetAntigravitySource).toHaveBeenCalledWith('local'))
+    expect(screen.queryByText('接管模式')).toBeNull()
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.click(screen.getByRole('button', { name: /去接管中心/ }))
+    expect(onNav).toHaveBeenCalledWith('takeover')
   })
 })

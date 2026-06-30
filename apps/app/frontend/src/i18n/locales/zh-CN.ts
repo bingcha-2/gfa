@@ -21,7 +21,8 @@ export const zhCN = {
   },
 
   nav: {
-    home: '控制台',
+    home: '远程',
+    takeover: '接管中心',
     faq: '使用指南',
     logs: '日志',
     settings: '设置',

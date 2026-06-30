@@ -1,7 +1,8 @@
 import { LocalProviderSuite } from '@/features/local/shared/LocalProviderSuite'
 import { codexLocalApi } from '@/services/localApi'
+import type { PageId } from '@/types'
 
-/** 本地自有号 · Codex。账号管理 + 网关 + 统计 + 接管号源切换(codex 支持)。 */
-export function CodexSuitePage() {
-  return <LocalProviderSuite title="Codex" api={codexLocalApi} supportsSource />
+/** 本地自有号 · Codex。账号管理 + 统计 + 保活 + 实例。接管模式切换在「接管中心」。 */
+export function CodexSuitePage({ onNavigate }: { onNavigate?: (p: PageId) => void } = {}) {
+  return <LocalProviderSuite title="Codex" api={codexLocalApi} onNavigate={onNavigate} />
 }

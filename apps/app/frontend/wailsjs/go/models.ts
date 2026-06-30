@@ -1,3 +1,59 @@
+export namespace hub {
+	
+	export class GatewayStatus {
+	    running: boolean;
+	    addr: string;
+	    port: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GatewayStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.addr = source["addr"];
+	        this.port = source["port"];
+	    }
+	}
+
+}
+
+export namespace instance {
+	
+	export class Profile {
+	    id: string;
+	    provider: string;
+	    name: string;
+	    userDataDir: string;
+	    workingDir?: string;
+	    extraArgs?: string;
+	    bindAccountId?: string;
+	    createdAt: number;
+	    lastLaunchedAt?: number;
+	    pid?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Profile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.name = source["name"];
+	        this.userDataDir = source["userDataDir"];
+	        this.workingDir = source["workingDir"];
+	        this.extraArgs = source["extraArgs"];
+	        this.bindAccountId = source["bindAccountId"];
+	        this.createdAt = source["createdAt"];
+	        this.lastLaunchedAt = source["lastLaunchedAt"];
+	        this.pid = source["pid"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class ProductQuotaWindow {
@@ -242,6 +298,189 @@ export namespace main {
 	        this.percent = source["percent"];
 	        this.error = source["error"];
 	        this.canSkip = source["canSkip"];
+	    }
+	}
+
+}
+
+export namespace manager {
+	
+	export class AccountView {
+	    id: string;
+	    email: string;
+	    provider: string;
+	    authKind: string;
+	    planType: string;
+	    quotaStatus: string;
+	    tags: string[];
+	    poolEnabled: boolean;
+	    priority: boolean;
+	    hourlyPercent: number;
+	    weeklyPercent: number;
+	    hourlyResetAt: number;
+	    weeklyResetAt: number;
+	    lastUsedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AccountView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.email = source["email"];
+	        this.provider = source["provider"];
+	        this.authKind = source["authKind"];
+	        this.planType = source["planType"];
+	        this.quotaStatus = source["quotaStatus"];
+	        this.tags = source["tags"];
+	        this.poolEnabled = source["poolEnabled"];
+	        this.priority = source["priority"];
+	        this.hourlyPercent = source["hourlyPercent"];
+	        this.weeklyPercent = source["weeklyPercent"];
+	        this.hourlyResetAt = source["hourlyResetAt"];
+	        this.weeklyResetAt = source["weeklyResetAt"];
+	        this.lastUsedAt = source["lastUsedAt"];
+	    }
+	}
+
+}
+
+export namespace stats {
+	
+	export class AccountStat {
+	    authId: string;
+	    email: string;
+	    requests: number;
+	    totalTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AccountStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.authId = source["authId"];
+	        this.email = source["email"];
+	        this.requests = source["requests"];
+	        this.totalTokens = source["totalTokens"];
+	    }
+	}
+	export class ModelStat {
+	    model: string;
+	    requests: number;
+	    totalTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.requests = source["requests"];
+	        this.totalTokens = source["totalTokens"];
+	    }
+	}
+	export class RequestEntry {
+	    atMs: number;
+	    authId: string;
+	    model: string;
+	    failed: boolean;
+	    latencyMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.atMs = source["atMs"];
+	        this.authId = source["authId"];
+	        this.model = source["model"];
+	        this.failed = source["failed"];
+	        this.latencyMs = source["latencyMs"];
+	    }
+	}
+	export class Snapshot {
+	    totalRequests: number;
+	    totalFailed: number;
+	    totalInputTokens: number;
+	    totalOutputTokens: number;
+	    byAccount: AccountStat[];
+	    byModel: ModelStat[];
+	    recent: RequestEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Snapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.totalRequests = source["totalRequests"];
+	        this.totalFailed = source["totalFailed"];
+	        this.totalInputTokens = source["totalInputTokens"];
+	        this.totalOutputTokens = source["totalOutputTokens"];
+	        this.byAccount = this.convertValues(source["byAccount"], AccountStat);
+	        this.byModel = this.convertValues(source["byModel"], ModelStat);
+	        this.recent = this.convertValues(source["recent"], RequestEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace wakeup {
+	
+	export class Config {
+	    enabled: boolean;
+	    intervalMinutes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.intervalMinutes = source["intervalMinutes"];
+	    }
+	}
+	export class RunEntry {
+	    atMs: number;
+	    accountId: string;
+	    email: string;
+	    ok: boolean;
+	    err?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.atMs = source["atMs"];
+	        this.accountId = source["accountId"];
+	        this.email = source["email"];
+	        this.ok = source["ok"];
+	        this.err = source["err"];
 	    }
 	}
 

@@ -94,6 +94,170 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function LocalAntigravityGatewayStart() {
+  return window['go']['main']['App']['LocalAntigravityGatewayStart']();
+}
+
+export function LocalAntigravityGatewayStatus() {
+  return window['go']['main']['App']['LocalAntigravityGatewayStatus']();
+}
+
+export function LocalAntigravityGatewayStop() {
+  return window['go']['main']['App']['LocalAntigravityGatewayStop']();
+}
+
+export function LocalAntigravityStats() {
+  return window['go']['main']['App']['LocalAntigravityStats']();
+}
+
+export function LocalAntigravityWakeupConfig() {
+  return window['go']['main']['App']['LocalAntigravityWakeupConfig']();
+}
+
+export function LocalAntigravityWakeupHistory() {
+  return window['go']['main']['App']['LocalAntigravityWakeupHistory']();
+}
+
+export function LocalAntigravityWakeupRunNow() {
+  return window['go']['main']['App']['LocalAntigravityWakeupRunNow']();
+}
+
+export function LocalCodexStats() {
+  return window['go']['main']['App']['LocalCodexStats']();
+}
+
+export function LocalCodexWakeupConfig() {
+  return window['go']['main']['App']['LocalCodexWakeupConfig']();
+}
+
+export function LocalCodexWakeupHistory() {
+  return window['go']['main']['App']['LocalCodexWakeupHistory']();
+}
+
+export function LocalCodexWakeupRunNow() {
+  return window['go']['main']['App']['LocalCodexWakeupRunNow']();
+}
+
+export function LocalDeleteAccount(arg1) {
+  return window['go']['main']['App']['LocalDeleteAccount'](arg1);
+}
+
+export function LocalDeleteAccounts(arg1) {
+  return window['go']['main']['App']['LocalDeleteAccounts'](arg1);
+}
+
+export function LocalExportAntigravityAccounts(arg1) {
+  return window['go']['main']['App']['LocalExportAntigravityAccounts'](arg1);
+}
+
+export function LocalExportCodexAccounts(arg1) {
+  return window['go']['main']['App']['LocalExportCodexAccounts'](arg1);
+}
+
+export function LocalGatewayStart() {
+  return window['go']['main']['App']['LocalGatewayStart']();
+}
+
+export function LocalGatewayStatus() {
+  return window['go']['main']['App']['LocalGatewayStatus']();
+}
+
+export function LocalGatewayStop() {
+  return window['go']['main']['App']['LocalGatewayStop']();
+}
+
+export function LocalGetAntigravitySource() {
+  return window['go']['main']['App']['LocalGetAntigravitySource']();
+}
+
+export function LocalGetCodexSource() {
+  return window['go']['main']['App']['LocalGetCodexSource']();
+}
+
+export function LocalImportAntigravityFromJSON(arg1) {
+  return window['go']['main']['App']['LocalImportAntigravityFromJSON'](arg1);
+}
+
+export function LocalImportCodexFromJSON(arg1) {
+  return window['go']['main']['App']['LocalImportCodexFromJSON'](arg1);
+}
+
+export function LocalInstanceCreate(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['LocalInstanceCreate'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function LocalInstanceDelete(arg1) {
+  return window['go']['main']['App']['LocalInstanceDelete'](arg1);
+}
+
+export function LocalInstanceLaunch(arg1) {
+  return window['go']['main']['App']['LocalInstanceLaunch'](arg1);
+}
+
+export function LocalInstanceList(arg1) {
+  return window['go']['main']['App']['LocalInstanceList'](arg1);
+}
+
+export function LocalInstanceStop(arg1) {
+  return window['go']['main']['App']['LocalInstanceStop'](arg1);
+}
+
+export function LocalInstanceUpdate(arg1) {
+  return window['go']['main']['App']['LocalInstanceUpdate'](arg1);
+}
+
+export function LocalListAntigravityAccounts() {
+  return window['go']['main']['App']['LocalListAntigravityAccounts']();
+}
+
+export function LocalListCodexAccounts() {
+  return window['go']['main']['App']['LocalListCodexAccounts']();
+}
+
+export function LocalSetAntigravityPriority(arg1) {
+  return window['go']['main']['App']['LocalSetAntigravityPriority'](arg1);
+}
+
+export function LocalSetAntigravitySource(arg1) {
+  return window['go']['main']['App']['LocalSetAntigravitySource'](arg1);
+}
+
+export function LocalSetAntigravityWakeupConfig(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetAntigravityWakeupConfig'](arg1, arg2);
+}
+
+export function LocalSetCodexPriority(arg1) {
+  return window['go']['main']['App']['LocalSetCodexPriority'](arg1);
+}
+
+export function LocalSetCodexSource(arg1) {
+  return window['go']['main']['App']['LocalSetCodexSource'](arg1);
+}
+
+export function LocalSetCodexWakeupConfig(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetCodexWakeupConfig'](arg1, arg2);
+}
+
+export function LocalSetPoolEnabled(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetPoolEnabled'](arg1, arg2);
+}
+
+export function LocalStartAntigravityLogin() {
+  return window['go']['main']['App']['LocalStartAntigravityLogin']();
+}
+
+export function LocalStartCodexLogin() {
+  return window['go']['main']['App']['LocalStartCodexLogin']();
+}
+
+export function LocalWaitAntigravityLogin(arg1) {
+  return window['go']['main']['App']['LocalWaitAntigravityLogin'](arg1);
+}
+
+export function LocalWaitCodexLogin(arg1) {
+  return window['go']['main']['App']['LocalWaitCodexLogin'](arg1);
+}
+
 export function OpenCACertForTrust() {
   return window['go']['main']['App']['OpenCACertForTrust']();
 }

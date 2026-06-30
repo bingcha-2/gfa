@@ -72,13 +72,15 @@ describe('CodexSuitePage', () => {
     expect(await screen.findByText('还没有本地账号')).toBeInTheDocument()
   })
 
-  it('switches account source via the segmented control', async () => {
-    const app = installApp({ LocalGetCodexSource: vi.fn().mockResolvedValue('remote') })
-    render(<CodexSuitePage />)
-    // 等加载完成(远程态)
+  // 接管模式切换已上移至「接管中心」:suite 头部只读 + 去接管中心链接,不再有段控。
+  it('suite 头部只读、无接管模式段控,去接管中心链接可导航', async () => {
+    const onNav = vi.fn()
+    installApp({ LocalGetCodexSource: vi.fn().mockResolvedValue('remote') })
+    render(<CodexSuitePage onNavigate={onNav} />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '本地自有号' }))
-    await waitFor(() => expect(app.LocalSetCodexSource).toHaveBeenCalledWith('local'))
+    expect(screen.queryByText('接管模式')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /去接管中心/ }))
+    expect(onNav).toHaveBeenCalledWith('takeover')
   })
 
   it('shows the stats tab with gateway usage', async () => {

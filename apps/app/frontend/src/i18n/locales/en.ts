@@ -20,7 +20,8 @@ export const en: DeepPartialDict = {
   },
 
   nav: {
-    home: 'Dashboard',
+    home: 'Remote',
+    takeover: 'Takeover',
     faq: 'Guide',
     logs: 'Logs',
     settings: 'Settings',
