@@ -32,6 +32,9 @@ const STRATEGIES: [RoutingStrategy, string, string][] = [
   ['round-robin', '轮询', '在池号间均匀轮转'],
   ['priority', '优先', '优先号先用,用尽再降级'],
   ['fair', '公平分摊', '剩余额度高者优先'],
+  ['quota-low-first', '低额优先', '先用尽剩余少的号,再换下一个'],
+  ['plan-high-first', '高档优先', '高档套餐(team/pro)先用'],
+  ['plan-low-first', '低档优先', '低档套餐先用,省着高档号'],
 ]
 
 const LOG_PAGE_SIZE = 20
@@ -368,7 +371,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
         <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide mb-2 inline-flex items-center gap-1.5">
           <Route size={12} /> 路由策略(在池号怎么选)
         </div>
-        <div className="inline-flex rounded-[10px] bg-[var(--bg-tertiary)] p-0.5">
+        <div className="flex flex-wrap gap-0.5 rounded-[10px] bg-[var(--bg-tertiary)] p-0.5">
           {STRATEGIES.map(([id, label]) => {
             const active = strategy === id
             return (

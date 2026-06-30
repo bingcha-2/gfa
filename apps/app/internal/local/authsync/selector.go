@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 
 	"bcai-wails/internal/local/routingcfg"
@@ -55,9 +56,98 @@ func (s *Selector) Pick(ctx context.Context, provider, model string, opts clipro
 	switch strategy {
 	case routingcfg.StrategyFair:
 		return pickFair(auths), nil
+	case routingcfg.StrategyQuotaLowFirst:
+		return pickQuotaLowFirst(auths), nil
+	case routingcfg.StrategyPlanHighFirst:
+		return pickPlanHighFirst(auths), nil
+	case routingcfg.StrategyPlanLowFirst:
+		return pickPlanLowFirst(auths), nil
 	default: // priority
 		return pickPriority(auths), nil
 	}
+}
+
+// pickBest 返回首个「严格更优」者(平手保持输入顺序,稳定)。
+func pickBest(auths []*coreauth.Auth, better func(a, b *coreauth.Auth) bool) *coreauth.Auth {
+	best := auths[0]
+	for _, a := range auths[1:] {
+		if better(a, best) {
+			best = a
+		}
+	}
+	return best
+}
+
+// pickQuotaLowFirst 先用剩余额度少的号(集中用尽再换);平手时高档套餐优先。
+// 未知额度(-1)不参与「先用尽」,视为最高,排到最后(对齐 cockpit nil-last)。
+func pickQuotaLowFirst(auths []*coreauth.Auth) *coreauth.Auth {
+	return pickBest(auths, func(a, b *coreauth.Auth) bool {
+		qa, qb := remainingPctLowBias(a), remainingPctLowBias(b)
+		if qa != qb {
+			return qa < qb
+		}
+		return planRank(a) > planRank(b)
+	})
+}
+
+// pickPlanHighFirst 高档套餐优先(cockpit auto 默认语义);平手时剩余额度高者优先。
+func pickPlanHighFirst(auths []*coreauth.Auth) *coreauth.Auth {
+	return pickBest(auths, func(a, b *coreauth.Auth) bool {
+		ra, rb := planRank(a), planRank(b)
+		if ra != rb {
+			return ra > rb
+		}
+		return remainingPct(a) > remainingPct(b)
+	})
+}
+
+// pickPlanLowFirst 低档套餐优先(省着高档号用);平手时剩余额度高者优先。
+// 未知套餐不参与「先用低档」,视为最高档,排到最后。
+func pickPlanLowFirst(auths []*coreauth.Auth) *coreauth.Auth {
+	return pickBest(auths, func(a, b *coreauth.Auth) bool {
+		ra, rb := planRankLowBias(a), planRankLowBias(b)
+		if ra != rb {
+			return ra < rb
+		}
+		return remainingPct(a) > remainingPct(b)
+	})
+}
+
+// planRank 把套餐档位映射为可比整数(越大越高档);未知=0(最低)。
+func planRank(a *coreauth.Auth) int {
+	if a.Attributes == nil {
+		return 0
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Attributes["plan_type"])) {
+	case "free":
+		return 1
+	case "plus":
+		return 2
+	case "pro":
+		return 3
+	case "team", "business":
+		return 4
+	case "enterprise", "edu", "enterprise_edu":
+		return 5
+	default:
+		return 0
+	}
+}
+
+// planRankLowBias 给「低档优先」用:未知套餐(0)记为最高档,避免被当成最低档先用掉。
+func planRankLowBias(a *coreauth.Auth) int {
+	if r := planRank(a); r > 0 {
+		return r
+	}
+	return 100
+}
+
+// remainingPctLowBias 给「低额优先」用:未知额度(-1)记为最高,排到最后。
+func remainingPctLowBias(a *coreauth.Auth) int {
+	if p := remainingPct(a); p >= 0 {
+		return p
+	}
+	return 101
 }
 
 // pickPriority 返回优先号(Attributes["priority"]=="1"),否则第一个。

@@ -19,21 +19,31 @@ import (
 type Strategy string
 
 const (
-	StrategyPriority   Strategy = "priority"
-	StrategyRoundRobin Strategy = "round-robin"
-	StrategyFair       Strategy = "fair"
+	StrategyPriority      Strategy = "priority"
+	StrategyRoundRobin    Strategy = "round-robin"
+	StrategyFair          Strategy = "fair"            // = cockpit quota_high_first
+	StrategyQuotaLowFirst Strategy = "quota-low-first" // 先消耗剩余少的号(集中用尽)
+	StrategyPlanHighFirst Strategy = "plan-high-first" // 高档套餐优先(cockpit auto 默认)
+	StrategyPlanLowFirst  Strategy = "plan-low-first"  // 低档套餐优先(省高档)
 
 	defaultStrategy = StrategyPriority
 	fileName        = "routing-config.json"
 )
 
 // Normalize 把外部输入(可能是别名/空/未知)归一到合法策略,未知回退默认。
+// 同时认 cockpit 的 snake_case 取值,便于跨端配置互通。
 func Normalize(s string) Strategy {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "round-robin", "roundrobin", "rr":
 		return StrategyRoundRobin
-	case "fair", "quota-high-first", "quotahighfirst":
+	case "fair", "quota-high-first", "quotahighfirst", "quota_high_first":
 		return StrategyFair
+	case "quota-low-first", "quotalowfirst", "quota_low_first":
+		return StrategyQuotaLowFirst
+	case "plan-high-first", "planhighfirst", "plan_high_first":
+		return StrategyPlanHighFirst
+	case "plan-low-first", "planlowfirst", "plan_low_first":
+		return StrategyPlanLowFirst
 	case "priority", "":
 		return StrategyPriority
 	default:
@@ -45,7 +55,10 @@ func Normalize(s string) Strategy {
 func IsKnown(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "round-robin", "roundrobin", "rr",
-		"fair", "quota-high-first", "quotahighfirst",
+		"fair", "quota-high-first", "quotahighfirst", "quota_high_first",
+		"quota-low-first", "quotalowfirst", "quota_low_first",
+		"plan-high-first", "planhighfirst", "plan_high_first",
+		"plan-low-first", "planlowfirst", "plan_low_first",
 		"priority":
 		return true
 	default:
@@ -55,7 +68,8 @@ func IsKnown(s string) bool {
 
 func valid(s Strategy) bool {
 	switch s {
-	case StrategyPriority, StrategyRoundRobin, StrategyFair:
+	case StrategyPriority, StrategyRoundRobin, StrategyFair,
+		StrategyQuotaLowFirst, StrategyPlanHighFirst, StrategyPlanLowFirst:
 		return true
 	default:
 		return false

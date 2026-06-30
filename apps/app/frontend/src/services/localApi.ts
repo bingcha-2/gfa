@@ -54,8 +54,22 @@ export interface RefreshConfig { quotaMinutes: number; currentMinutes: number }
 
 // ── 反代(codex 网关)运营 ──
 
-/** 路由(选号)策略:priority=优先号优先 / round-robin=轮询 / fair=剩余额度高者优先。 */
-export type RoutingStrategy = 'priority' | 'round-robin' | 'fair'
+/**
+ * 路由(选号)策略,与后端 routingcfg 对齐:
+ *  - priority:优先号优先,否则第一个;
+ *  - round-robin:在池号间轮询;
+ *  - fair:剩余额度高者优先(= cockpit quota_high_first);
+ *  - quota-low-first:剩余额度低者优先(集中用尽);
+ *  - plan-high-first:高档套餐优先;
+ *  - plan-low-first:低档套餐优先。
+ */
+export type RoutingStrategy =
+  | 'priority'
+  | 'round-robin'
+  | 'fair'
+  | 'quota-low-first'
+  | 'plan-high-first'
+  | 'plan-low-first'
 
 /** 网关访问范围:local=仅本机(127.0.0.1) / lan=局域网(0.0.0.0)。默认仅本机。 */
 export type GatewayAccessScope = 'local' | 'lan'

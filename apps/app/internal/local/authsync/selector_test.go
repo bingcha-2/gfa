@@ -84,6 +84,52 @@ func TestSelector_FairPicksHighestRemainingQuota(t *testing.T) {
 	}
 }
 
+func mkAuthPlan(id, plan string, remainingPct int) *coreauth.Auth {
+	return &coreauth.Auth{
+		ID: id,
+		Attributes: map[string]string{
+			"priority":      "0",
+			"plan_type":     plan,
+			"remaining_pct": itoa(remainingPct),
+		},
+	}
+}
+
+func pickID(t *testing.T, s *Selector, auths []*coreauth.Auth) string {
+	t.Helper()
+	got, err := s.Pick(context.Background(), "codex", "m", opts(), auths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got.ID
+}
+
+func TestSelector_QuotaLowFirstDrainsLowestKnown(t *testing.T) {
+	s := NewSelector(routingcfg.StrategyQuotaLowFirst)
+	// b 剩 5(最低)应先用;c 未知额度(-1)不当成最低,排最后。
+	auths := []*coreauth.Auth{mkAuthPlan("a", "pro", 40), mkAuthPlan("b", "pro", 5), mkAuthPlan("c", "pro", -1)}
+	if got := pickID(t, s, auths); got != "b" {
+		t.Fatalf("quota-low-first = %s, want b(剩 5 最低)", got)
+	}
+}
+
+func TestSelector_PlanHighFirstPrefersHigherTier(t *testing.T) {
+	s := NewSelector(routingcfg.StrategyPlanHighFirst)
+	auths := []*coreauth.Auth{mkAuthPlan("a", "plus", 90), mkAuthPlan("b", "team", 10), mkAuthPlan("c", "pro", 50)}
+	if got := pickID(t, s, auths); got != "b" {
+		t.Fatalf("plan-high-first = %s, want b(team 最高档)", got)
+	}
+}
+
+func TestSelector_PlanLowFirstPrefersLowerTierUnknownLast(t *testing.T) {
+	s := NewSelector(routingcfg.StrategyPlanLowFirst)
+	// a free(最低档)应先用;c 未知套餐不当成最低档,排最后。
+	auths := []*coreauth.Auth{mkAuthPlan("c", "", 90), mkAuthPlan("a", "free", 10), mkAuthPlan("b", "pro", 50)}
+	if got := pickID(t, s, auths); got != "a" {
+		t.Fatalf("plan-low-first = %s, want a(free 最低档)", got)
+	}
+}
+
 func TestSelector_RoundRobinRotates(t *testing.T) {
 	s := NewSelector(routingcfg.StrategyRoundRobin)
 	auths := []*coreauth.Auth{mkAuth("a", false, 0), mkAuth("b", false, 0), mkAuth("c", false, 0)}
