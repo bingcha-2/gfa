@@ -19,9 +19,13 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+// DefaultGatewayPort 是共享网关的固定默认端口(被占用则回退到下一个空闲端口)。
+const DefaultGatewayPort = 8317
+
 type Gateway struct {
 	acc      *account.Store
 	provider account.Provider
+	shared   bool // true:共享网关,喂全部 provider 进池号
 	dataDir  string
 
 	mu     sync.Mutex
@@ -35,6 +39,18 @@ type Gateway struct {
 
 func New(acc *account.Store, p account.Provider, dataDir string) *Gateway {
 	return &Gateway{acc: acc, provider: p, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
+}
+
+// NewShared 构建共享网关:单实例、单 auth Store(跨 provider 喂号)、单 Service。
+func NewShared(acc *account.Store, dataDir string) *Gateway {
+	return &Gateway{acc: acc, shared: true, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
+}
+
+func (g *Gateway) newAuthStore() coreauth.Store {
+	if g.shared {
+		return authsync.NewSharedStore(g.acc)
+	}
+	return authsync.NewStore(g.acc, g.provider)
 }
 
 // Stats 返回网关用量快照(本地统计)。
@@ -61,6 +77,13 @@ func (g *Gateway) Start(port int) (int, error) {
 			return 0, err
 		}
 		port = p
+	} else if !portFree(port) {
+		// 指定端口(如固定默认 8317)被占用 → 回退到下一个空闲端口。
+		p, err := freePort()
+		if err != nil {
+			return 0, err
+		}
+		port = p
 	}
 
 	authDir := filepath.Join(g.dataDir, "auth")
@@ -80,7 +103,7 @@ func (g *Gateway) Start(port int) (int, error) {
 		return 0, err
 	}
 
-	mgr := coreauth.NewManager(authsync.NewStore(g.acc, g.provider), authsync.Selector{}, nil)
+	mgr := coreauth.NewManager(g.newAuthStore(), authsync.Selector{}, nil)
 	// Service.Run 不会自动 Load 注入的 manager。用 OnAfterStart 在 server 就绪
 	//(executor 已注册)后 Load,确保自有号能正确绑定 codex executor。
 	svc, err := cliproxy.NewBuilder().
@@ -131,6 +154,25 @@ func (g *Gateway) Reload() error {
 	return mgr.Load(context.Background())
 }
 
+// SetPort 改反代端口并重启网关(若在运行)。返回实际生效端口
+//(指定端口被占用时回退到下一个空闲端口)。
+func (g *Gateway) SetPort(port int) (int, error) {
+	wasRunning := g.Running()
+	if wasRunning {
+		if err := g.Stop(); err != nil {
+			return 0, err
+		}
+	}
+	if !wasRunning {
+		// 未运行时只记录期望端口,下次 Start 生效。
+		g.mu.Lock()
+		g.port = port
+		g.mu.Unlock()
+		return port, nil
+	}
+	return g.Start(port)
+}
+
 // LoadedAuthCount 返回网关 auth manager 当前已加载的 auth 数(测试/诊断用)。
 func (g *Gateway) LoadedAuthCount() int {
 	g.mu.Lock()
@@ -155,4 +197,14 @@ func freePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// portFree 探测某端口在 127.0.0.1 上是否可绑定。
+func portFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
 }

@@ -61,11 +61,45 @@ func TestStore_UpdateRoundTrip(t *testing.T) {
 	a.Priority = true
 	a.QuotaStatus = QuotaOK
 	a.ProjectID = "gcp-proj-1"
+	a.Name = "我的主号"
 	if err := s.Update(a); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got, _ := s.Get(a.ID)
-	if got.PlanType != "pro" || got.HourlyPercent != 42 || !got.Priority || got.QuotaStatus != QuotaOK || len(got.Tags) != 1 || got.Tags[0] != "主力" || got.ProjectID != "gcp-proj-1" {
+	if got.PlanType != "pro" || got.HourlyPercent != 42 || !got.Priority || got.QuotaStatus != QuotaOK || len(got.Tags) != 1 || got.Tags[0] != "主力" || got.ProjectID != "gcp-proj-1" || got.Name != "我的主号" {
 		t.Fatalf("update round-trip wrong: %+v", got)
+	}
+}
+
+func TestStore_NamePersistsOnAdd(t *testing.T) {
+	s := newTestStore(t)
+	a := &Account{Provider: ProviderCodex, Email: "n@y.com", Name: "显示名", PoolEnabled: true}
+	if err := s.Add(a); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, _ := s.Get(a.ID)
+	if got.Name != "显示名" {
+		t.Fatalf("name not persisted: %+v", got)
+	}
+}
+
+func TestStore_ListAllPoolEnabled_CrossProvider(t *testing.T) {
+	s := newTestStore(t)
+	_ = s.Add(&Account{Provider: ProviderCodex, Email: "c@y.com", PoolEnabled: true})
+	_ = s.Add(&Account{Provider: ProviderAntigravity, Email: "a@y.com", PoolEnabled: true})
+	_ = s.Add(&Account{Provider: ProviderCodex, Email: "off@y.com", PoolEnabled: false})
+	all, err := s.ListAllPoolEnabled()
+	if err != nil {
+		t.Fatalf("ListAllPoolEnabled: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 cross-provider pool accounts, got %d", len(all))
+	}
+	seen := map[Provider]bool{}
+	for _, a := range all {
+		seen[a.Provider] = true
+	}
+	if !seen[ProviderCodex] || !seen[ProviderAntigravity] {
+		t.Fatalf("expected both providers, got %v", seen)
 	}
 }

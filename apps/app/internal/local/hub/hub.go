@@ -46,7 +46,6 @@ type GatewayStatus struct {
 }
 
 type providerCtx struct {
-	gw    *gateway.Gateway
 	mgr   *manager.Manager
 	wk    *wakeup.Scheduler
 	wkCfg *wakeup.ConfigStore
@@ -55,13 +54,15 @@ type providerCtx struct {
 type Hub struct {
 	dir       string
 	acc       *account.Store
+	gw        *gateway.Gateway // 共享网关:codex + antigravity 自有号同喂同一实例
 	sources   *takeover.SourceStore
 	instances *instance.Store
 	platform  Platform
 	providers map[account.Provider]*providerCtx
 }
 
-// New 打开账号 DB,构建 codex/antigravity 两套 gateway+manager+wakeup(各自启动保活循环)。
+// New 打开账号 DB,构建【单个共享网关】+ codex/antigravity 两套 manager+wakeup
+//(各自启动保活循环,但都打向共享网关)。
 func New(dir string, platform Platform) (*Hub, error) {
 	acc, err := account.OpenStore(filepath.Join(dir, "accounts.db"))
 	if err != nil {
@@ -70,6 +71,7 @@ func New(dir string, platform Platform) (*Hub, error) {
 	h := &Hub{
 		dir:       dir,
 		acc:       acc,
+		gw:        gateway.NewShared(acc, filepath.Join(dir, "gateway")),
 		sources:   takeover.NewSourceStore(dir),
 		instances: instance.NewStore(dir),
 		platform:  platform,
@@ -81,13 +83,12 @@ func New(dir string, platform Platform) (*Hub, error) {
 }
 
 func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc) *providerCtx {
-	gw := gateway.New(h.acc, p, filepath.Join(h.dir, string(p)))
-	// 保活 ping:对本 provider 的网关做一次 /v1/models 触达(网关级 keep-warm)。
+	// 保活 ping:对共享网关做一次 /v1/models 触达(网关级 keep-warm)。
 	ping := func(ctx context.Context, _ string) error {
-		if !gw.Running() {
+		if !h.gw.Running() {
 			return errors.New("gateway not running")
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+gw.Addr()+"/v1/models", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+h.gw.Addr()+"/v1/models", nil)
 		if err != nil {
 			return err
 		}
@@ -106,7 +107,7 @@ func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc) *providerC
 	wkCfg := wakeup.NewConfigStore(h.dir, string(p))
 	wk.SetConfig(wkCfg.Load())
 	wk.Start(context.Background(), time.Minute)
-	return &providerCtx{gw: gw, mgr: manager.New(h.acc, gw, p, login), wk: wk, wkCfg: wkCfg}
+	return &providerCtx{mgr: manager.New(h.acc, h.gw, p, login), wk: wk, wkCfg: wkCfg}
 }
 
 func (h *Hub) ctx(p account.Provider) (*providerCtx, error) {
@@ -152,6 +153,31 @@ func (h *Hub) DeleteAccounts(ids []string) error {
 	return nil
 }
 
+// RenameAccount/SetAccountNote/SetAccountTags 是账号级编辑(按 id,provider 无关)。
+func (h *Hub) RenameAccount(id, name string) error {
+	return h.editByID(id, func(m *manager.Manager) error { return m.Rename(id, name) })
+}
+
+func (h *Hub) SetAccountNote(id, note string) error {
+	return h.editByID(id, func(m *manager.Manager) error { return m.SetNote(id, note) })
+}
+
+func (h *Hub) SetAccountTags(id string, tags []string) error {
+	return h.editByID(id, func(m *manager.Manager) error { return m.SetTags(id, tags) })
+}
+
+func (h *Hub) editByID(id string, fn func(*manager.Manager) error) error {
+	a, err := h.acc.Get(id)
+	if err != nil {
+		return err
+	}
+	pc, err := h.ctx(a.Provider)
+	if err != nil {
+		return err
+	}
+	return fn(pc.mgr)
+}
+
 // ── 账号管理(provider 显式) ──
 
 func (h *Hub) ListAccounts(p account.Provider) ([]manager.AccountView, error) {
@@ -178,6 +204,22 @@ func (h *Hub) WaitLogin(p account.Provider, id string) (manager.AccountView, err
 	return pc.mgr.WaitLogin(id)
 }
 
+func (h *Hub) AddByToken(p account.Provider, refreshToken, accessToken, email string) (manager.AccountView, error) {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return manager.AccountView{}, err
+	}
+	return pc.mgr.AddByToken(refreshToken, accessToken, email)
+}
+
+func (h *Hub) AddByAPIKey(p account.Provider, apiKey, baseURL, email string) (manager.AccountView, error) {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return manager.AccountView{}, err
+	}
+	return pc.mgr.AddByAPIKey(apiKey, baseURL, email)
+}
+
 func (h *Hub) SetPriority(p account.Provider, id string) error {
 	pc, err := h.ctx(p)
 	if err != nil {
@@ -202,45 +244,49 @@ func (h *Hub) Import(p account.Provider, jsonStr string) (int, error) {
 	return pc.mgr.ImportJSON(jsonStr)
 }
 
-// ── 网关 + 统计 ──
+// ── 网关 + 统计(共享网关:按 provider 查询但返回同一个实例的地址) ──
 
-func (h *Hub) gwStatus(pc *providerCtx) GatewayStatus {
-	return GatewayStatus{Running: pc.gw.Running(), Addr: pc.gw.Addr(), Port: pc.gw.Port()}
+func (h *Hub) gwStatus() GatewayStatus {
+	return GatewayStatus{Running: h.gw.Running(), Addr: h.gw.Addr(), Port: h.gw.Port()}
 }
 
 func (h *Hub) GatewayStart(p account.Provider) (GatewayStatus, error) {
-	pc, err := h.ctx(p)
-	if err != nil {
+	if _, err := h.ctx(p); err != nil {
 		return GatewayStatus{}, err
 	}
-	if _, err := pc.gw.Start(0); err != nil {
+	if _, err := h.gw.Start(gateway.DefaultGatewayPort); err != nil {
 		return GatewayStatus{}, err
 	}
-	return h.gwStatus(pc), nil
+	return h.gwStatus(), nil
 }
 
 func (h *Hub) GatewayStop(p account.Provider) error {
-	pc, err := h.ctx(p)
-	if err != nil {
+	if _, err := h.ctx(p); err != nil {
 		return err
 	}
-	return pc.gw.Stop()
+	return h.gw.Stop()
 }
 
 func (h *Hub) GatewayStatusOf(p account.Provider) GatewayStatus {
-	pc, err := h.ctx(p)
-	if err != nil {
+	if _, err := h.ctx(p); err != nil {
 		return GatewayStatus{}
 	}
-	return h.gwStatus(pc)
+	return h.gwStatus()
+}
+
+// SetGatewayPort 改共享反代端口并重启网关。
+func (h *Hub) SetGatewayPort(port int) (GatewayStatus, error) {
+	if _, err := h.gw.SetPort(port); err != nil {
+		return GatewayStatus{}, err
+	}
+	return h.gwStatus(), nil
 }
 
 func (h *Hub) Stats(p account.Provider) (stats.Snapshot, error) {
-	pc, err := h.ctx(p)
-	if err != nil {
+	if _, err := h.ctx(p); err != nil {
 		return stats.Snapshot{}, err
 	}
-	snap := pc.gw.Stats()
+	snap := h.gw.Stats()
 	list, _ := h.acc.List(p)
 	emails := make(map[string]string, len(list))
 	for _, ac := range list {
@@ -257,13 +303,13 @@ func (h *Hub) GetSource(p account.Provider) string {
 }
 
 func (h *Hub) SetSource(p account.Provider, source string) error {
-	pc, err := h.ctx(p)
-	if err != nil {
+	if _, err := h.ctx(p); err != nil {
 		return err
 	}
 	src := takeover.Normalize(source)
 	if src == takeover.SourceLocal {
-		port, err := pc.gw.Start(0)
+		// 共享网关:两个 provider 都指向同一个固定默认端口(被占用回退)。
+		port, err := h.gw.Start(gateway.DefaultGatewayPort)
 		if err != nil {
 			return err
 		}
@@ -290,9 +336,25 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		case account.ProviderAntigravity:
 			_ = h.platform.AntigravityIDERestore()
 		}
-		_ = pc.gw.Stop()
+		// 共享网关:仅当另一个 provider 也不是 local 时才停网关。
+		if !h.anyOtherLocal(p) {
+			_ = h.gw.Stop()
+		}
 	}
 	return h.sources.Set(string(p), src)
+}
+
+// anyOtherLocal 判断除 except 外是否还有 provider 处于 local 号源。
+func (h *Hub) anyOtherLocal(except account.Provider) bool {
+	for p := range h.providers {
+		if p == except {
+			continue
+		}
+		if takeover.Normalize(h.GetSource(p)) == takeover.SourceLocal {
+			return true
+		}
+	}
+	return false
 }
 
 // ── 保活 ──

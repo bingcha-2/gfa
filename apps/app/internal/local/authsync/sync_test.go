@@ -35,6 +35,36 @@ func TestStore_ListOnlyOwnPoolAccounts(t *testing.T) {
 	}
 }
 
+// 共享网关:一个 Store 同时喂 codex + antigravity 的进池自有号,
+// 每个 auth 仍带自己的 Provider(执行器据此路由),远程租号永不在内。
+func TestSharedStore_ListsAllProvidersPoolAccounts(t *testing.T) {
+	dir := t.TempDir()
+	acc, err := account.OpenStore(dir + "/a.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer acc.Close()
+	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "c@y.com", AuthKind: account.AuthOAuth, RefreshToken: "rc", PoolEnabled: true})
+	_ = acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "a@y.com", AuthKind: account.AuthOAuth, RefreshToken: "ra", PoolEnabled: true})
+	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "off@y.com", PoolEnabled: false})
+
+	st := NewSharedStore(acc)
+	auths, err := st.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(auths) != 2 {
+		t.Fatalf("expected 2 cross-provider auths, got %d", len(auths))
+	}
+	prov := map[string]bool{}
+	for _, a := range auths {
+		prov[a.Provider] = true
+	}
+	if !prov["codex"] || !prov["antigravity"] {
+		t.Fatalf("expected both providers in shared store, got %v", prov)
+	}
+}
+
 func TestSelector_PrefersPriority(t *testing.T) {
 	a1 := &coreauth.Auth{ID: "1", Attributes: map[string]string{"priority": "0"}}
 	a2 := &coreauth.Auth{ID: "2", Attributes: map[string]string{"priority": "1"}}

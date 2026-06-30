@@ -58,6 +58,36 @@ func (a *App) LocalDeleteAccounts(ids []string) error {
 	return localHub.DeleteAccounts(ids)
 }
 
+// 账号级编辑(按 ID,provider 无关)。
+func (a *App) LocalRenameAccount(id, name string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localHub.RenameAccount(id, name)
+}
+
+func (a *App) LocalSetAccountNote(id, note string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localHub.SetAccountNote(id, note)
+}
+
+func (a *App) LocalSetAccountTags(id string, tags []string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localHub.SetAccountTags(id, tags)
+}
+
+// 共享反代端口设置(改端口并重启共享网关)。
+func (a *App) LocalSetGatewayPort(port int) (hub.GatewayStatus, error) {
+	if err := ensureLocal(); err != nil {
+		return hub.GatewayStatus{}, err
+	}
+	return localHub.SetGatewayPort(port)
+}
+
 // ── Codex ──
 
 func (a *App) LocalListCodexAccounts() ([]manager.AccountView, error) {
@@ -86,6 +116,20 @@ func (a *App) LocalSetCodexPriority(id string) error {
 		return err
 	}
 	return localHub.SetPriority(account.ProviderCodex, id)
+}
+
+func (a *App) LocalAddCodexToken(refreshToken, accessToken, email string) (manager.AccountView, error) {
+	if err := ensureLocal(); err != nil {
+		return manager.AccountView{}, err
+	}
+	return localHub.AddByToken(account.ProviderCodex, refreshToken, accessToken, email)
+}
+
+func (a *App) LocalAddCodexApiKey(apiKey, baseURL, email string) (manager.AccountView, error) {
+	if err := ensureLocal(); err != nil {
+		return manager.AccountView{}, err
+	}
+	return localHub.AddByAPIKey(account.ProviderCodex, apiKey, baseURL, email)
 }
 
 func (a *App) LocalGatewayStart() (hub.GatewayStatus, error) {
@@ -200,6 +244,20 @@ func (a *App) LocalSetAntigravityPriority(id string) error {
 		return err
 	}
 	return localHub.SetPriority(account.ProviderAntigravity, id)
+}
+
+func (a *App) LocalAddAntigravityToken(refreshToken, accessToken, email string) (manager.AccountView, error) {
+	if err := ensureLocal(); err != nil {
+		return manager.AccountView{}, err
+	}
+	return localHub.AddByToken(account.ProviderAntigravity, refreshToken, accessToken, email)
+}
+
+func (a *App) LocalAddAntigravityApiKey(apiKey, baseURL, email string) (manager.AccountView, error) {
+	if err := ensureLocal(); err != nil {
+		return manager.AccountView{}, err
+	}
+	return localHub.AddByAPIKey(account.ProviderAntigravity, apiKey, baseURL, email)
 }
 
 func (a *App) LocalAntigravityGatewayStart() (hub.GatewayStatus, error) {

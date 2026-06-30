@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Power, Copy, Check, Loader2, Globe, Lock } from 'lucide-react'
+import { Power, Copy, Check, Loader2, Globe, Lock, Plug } from 'lucide-react'
 import { type LocalGatewayStatus, type LocalStatRecent, type ProviderLocalApi } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -16,10 +16,14 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
+  const [portInput, setPortInput] = useState('')
+  const [portBusy, setPortBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      setGw(await api.gatewayStatus())
+      const status = await api.gatewayStatus()
+      setGw(status)
+      setPortInput((prev) => (prev === '' && status.port > 0 ? String(status.port) : prev))
       const list = await api.listAccounts()
       setAccounts((list || []).length)
       const s = await api.stats()
@@ -60,6 +64,29 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     } catch { /* 忽略:剪贴板不可用时不阻断 */ }
   }
 
+  const onApplyPort = async () => {
+    const port = Number(portInput)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setErr('端口需为 1–65535 的整数')
+      return
+    }
+    if (port === gw.port) return
+    setPortBusy(true)
+    setErr('')
+    try {
+      const status = await api.setGatewayPort(port)
+      setGw(status)
+      setPortInput(status.port > 0 ? String(status.port) : portInput)
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setPortBusy(false)
+    }
+  }
+
+  const portDirty = portInput !== '' && Number(portInput) !== gw.port
+
   return (
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
@@ -94,6 +121,35 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
           {gw.running ? '停止' : '启动'}
         </button>
+      </div>
+
+      {/* 端口设置 */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4">
+        <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide mb-2 inline-flex items-center gap-1.5">
+          <Plug size={12} /> 反代端口(共享网关 · codex/antigravity 同口)
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={portInput}
+            onChange={(e) => setPortInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && portDirty && !portBusy) void onApplyPort() }}
+            placeholder="8317"
+            disabled={portBusy}
+            className="w-[120px] rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)] tabular-nums outline-none focus:border-[var(--primary)] disabled:opacity-50"
+          />
+          <button
+            onClick={onApplyPort}
+            disabled={portBusy || !portDirty}
+            className="text-[12px] font-semibold px-3 h-[34px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+          >
+            {portBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            应用并重启
+          </button>
+        </div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-1.5">改端口会重启网关;若端口被占用,系统会回退到下一个空闲端口。</div>
       </div>
 
       {/* base URL */}

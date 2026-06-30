@@ -71,6 +71,85 @@ func TestHub_SetSourceCodex_InjectsViaPlatform(t *testing.T) {
 	}
 }
 
+// 共享网关:codex 与 antigravity 的网关地址相同(同一实例)。
+func TestHub_SharedGateway_SameAddrAcrossProviders(t *testing.T) {
+	h, _ := newHub(t)
+	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
+		t.Fatalf("GatewayStart: %v", err)
+	}
+	defer h.GatewayStop(account.ProviderCodex)
+	cs := h.GatewayStatusOf(account.ProviderCodex)
+	as := h.GatewayStatusOf(account.ProviderAntigravity)
+	if !cs.Running || !as.Running {
+		t.Fatalf("expected both running, got codex=%v ag=%v", cs.Running, as.Running)
+	}
+	if cs.Addr != as.Addr || cs.Port != as.Port {
+		t.Fatalf("expected shared gateway addr, codex=%s ag=%s", cs.Addr, as.Addr)
+	}
+}
+
+// SetSource('local') 对两个 provider 注入同一个共享端口。
+func TestHub_SetSourceLocal_BothProvidersSamePort(t *testing.T) {
+	h, fp := newHub(t)
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("SetSource codex local: %v", err)
+	}
+	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
+		t.Fatalf("SetSource ag local: %v", err)
+	}
+	if fp.codexInjectPort == 0 || fp.ideInjectPort == 0 || fp.codexInjectPort != fp.ideInjectPort {
+		t.Fatalf("expected same shared inject port, codex=%d ag=%d", fp.codexInjectPort, fp.ideInjectPort)
+	}
+}
+
+func TestHub_AddByToken_And_Edit(t *testing.T) {
+	h, _ := newHub(t)
+	v, err := h.AddByToken(account.ProviderCodex, "rt", "at", "m@x.com")
+	if err != nil {
+		t.Fatalf("AddByToken: %v", err)
+	}
+	if err := h.RenameAccount(v.ID, "主号"); err != nil {
+		t.Fatalf("RenameAccount: %v", err)
+	}
+	if err := h.SetAccountNote(v.ID, "n"); err != nil {
+		t.Fatalf("SetAccountNote: %v", err)
+	}
+	if err := h.SetAccountTags(v.ID, []string{"t1"}); err != nil {
+		t.Fatalf("SetAccountTags: %v", err)
+	}
+	views, _ := h.ListAccounts(account.ProviderCodex)
+	if len(views) != 1 || views[0].Name != "主号" || views[0].Note != "n" || len(views[0].Tags) != 1 {
+		t.Fatalf("edit not applied: %+v", views)
+	}
+}
+
+func TestHub_AddByAPIKey(t *testing.T) {
+	h, _ := newHub(t)
+	v, err := h.AddByAPIKey(account.ProviderAntigravity, "sk", "https://b", "k@x.com")
+	if err != nil {
+		t.Fatalf("AddByAPIKey: %v", err)
+	}
+	if v.AuthKind != "apikey" {
+		t.Fatalf("authKind wrong: %+v", v)
+	}
+}
+
+func TestHub_SetGatewayPort(t *testing.T) {
+	h, _ := newHub(t)
+	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
+		t.Fatalf("GatewayStart: %v", err)
+	}
+	defer h.GatewayStop(account.ProviderCodex)
+	want := h.GatewayStatusOf(account.ProviderCodex).Port + 1
+	st, err := h.SetGatewayPort(want)
+	if err != nil {
+		t.Fatalf("SetGatewayPort: %v", err)
+	}
+	if st.Port == 0 {
+		t.Fatalf("expected a port, got %+v", st)
+	}
+}
+
 func TestHub_InstanceLaunch_UsesPlatform(t *testing.T) {
 	h, fp := newHub(t)
 	fp.appPath = "/Applications/Codex.app"

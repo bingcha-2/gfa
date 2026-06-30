@@ -165,6 +165,69 @@ func TestExportImport_RoundTripAndDedup(t *testing.T) {
 	}
 }
 
+func TestAddByToken_OAuth(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	v, err := m.AddByToken("rt-1", "at-1", "me@x.com")
+	if err != nil {
+		t.Fatalf("AddByToken: %v", err)
+	}
+	if v.Email != "me@x.com" || v.AuthKind != "oauth" || !v.PoolEnabled {
+		t.Fatalf("view wrong: %+v", v)
+	}
+	got, _ := acc.Get(v.ID)
+	if got.RefreshToken != "rt-1" || got.AccessToken != "at-1" || got.AuthKind != account.AuthOAuth || got.Provider != account.ProviderCodex {
+		t.Fatalf("account wrong: %+v", got)
+	}
+	if fr.n == 0 {
+		t.Fatal("expected reload after AddByToken")
+	}
+}
+
+func TestAddByAPIKey(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	v, err := m.AddByAPIKey("sk-xyz", "https://api.example.com", "k@x.com")
+	if err != nil {
+		t.Fatalf("AddByAPIKey: %v", err)
+	}
+	if v.AuthKind != "apikey" {
+		t.Fatalf("view authKind wrong: %+v", v)
+	}
+	got, _ := acc.Get(v.ID)
+	if got.APIKey != "sk-xyz" || got.APIBaseURL != "https://api.example.com" || got.AuthKind != account.AuthAPIKey {
+		t.Fatalf("account wrong: %+v", got)
+	}
+	if fr.n == 0 {
+		t.Fatal("expected reload after AddByAPIKey")
+	}
+}
+
+func TestRename_SetNote_SetTags(t *testing.T) {
+	m, acc, fr := newMgr(t)
+	a := &account.Account{Provider: account.ProviderCodex, Email: "e@x", PoolEnabled: true}
+	_ = acc.Add(a)
+	if err := m.Rename(a.ID, "新名"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if err := m.SetNote(a.ID, "备注内容"); err != nil {
+		t.Fatalf("SetNote: %v", err)
+	}
+	if err := m.SetTags(a.ID, []string{"x", "y"}); err != nil {
+		t.Fatalf("SetTags: %v", err)
+	}
+	got, _ := acc.Get(a.ID)
+	if got.Name != "新名" || got.Note != "备注内容" || len(got.Tags) != 2 {
+		t.Fatalf("edit round-trip wrong: %+v", got)
+	}
+	if fr.n == 0 {
+		t.Fatal("expected reload after edits")
+	}
+	// AccountView 带上 name
+	views, _ := m.ListAccounts()
+	if len(views) != 1 || views[0].Name != "新名" {
+		t.Fatalf("view name wrong: %+v", views)
+	}
+}
+
 func TestDeleteAccounts_Batch(t *testing.T) {
 	m, acc, fr := newMgr(t)
 	a1 := &account.Account{Provider: account.ProviderCodex, Email: "1@x"}

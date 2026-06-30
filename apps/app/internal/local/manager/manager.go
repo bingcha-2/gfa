@@ -23,8 +23,10 @@ type Reloader interface{ Reload() error }
 type AccountView struct {
 	ID            string   `json:"id"`
 	Email         string   `json:"email"`
+	Name          string   `json:"name"`
 	Provider      string   `json:"provider"`
 	AuthKind      string   `json:"authKind"`
+	Note          string   `json:"note"`
 	PlanType      string   `json:"planType"`
 	QuotaStatus   string   `json:"quotaStatus"`
 	Tags          []string `json:"tags"`
@@ -39,8 +41,8 @@ type AccountView struct {
 
 func toView(a *account.Account) AccountView {
 	return AccountView{
-		ID: a.ID, Email: a.Email, Provider: string(a.Provider), AuthKind: string(a.AuthKind),
-		PlanType: a.PlanType, QuotaStatus: string(a.QuotaStatus), Tags: a.Tags,
+		ID: a.ID, Email: a.Email, Name: a.Name, Provider: string(a.Provider), AuthKind: string(a.AuthKind),
+		Note: a.Note, PlanType: a.PlanType, QuotaStatus: string(a.QuotaStatus), Tags: a.Tags,
 		PoolEnabled: a.PoolEnabled, Priority: a.Priority,
 		HourlyPercent: a.HourlyPercent, WeeklyPercent: a.WeeklyPercent,
 		HourlyResetAt: a.HourlyResetAt, WeeklyResetAt: a.WeeklyResetAt, LastUsedAt: a.LastUsedAt,
@@ -163,9 +165,66 @@ func (m *Manager) StartLogin() string {
 	return id
 }
 
+// AddByToken 手动加一个 OAuth 自有号(用户自备 refresh/access token)。
+func (m *Manager) AddByToken(refreshToken, accessToken, email string) (AccountView, error) {
+	acc := &account.Account{
+		Provider: m.provider, Email: email, AuthKind: account.AuthOAuth,
+		RefreshToken: refreshToken, AccessToken: accessToken,
+		PoolEnabled: true, QuotaStatus: account.QuotaOK,
+	}
+	if err := m.acc.Add(acc); err != nil {
+		return AccountView{}, err
+	}
+	m.reload()
+	return toView(acc), nil
+}
+
+// AddByAPIKey 手动加一个自备 API Key 自有号。
+func (m *Manager) AddByAPIKey(apiKey, baseURL, email string) (AccountView, error) {
+	acc := &account.Account{
+		Provider: m.provider, Email: email, AuthKind: account.AuthAPIKey,
+		APIKey: apiKey, APIBaseURL: baseURL,
+		PoolEnabled: true, QuotaStatus: account.QuotaOK,
+	}
+	if err := m.acc.Add(acc); err != nil {
+		return AccountView{}, err
+	}
+	m.reload()
+	return toView(acc), nil
+}
+
+// Rename 改账号显示名(provider 无关,按 id)。
+func (m *Manager) Rename(id, name string) error {
+	return m.editField(id, func(a *account.Account) { a.Name = name })
+}
+
+// SetNote 改账号备注。
+func (m *Manager) SetNote(id, note string) error {
+	return m.editField(id, func(a *account.Account) { a.Note = note })
+}
+
+// SetTags 改账号标签。
+func (m *Manager) SetTags(id string, tags []string) error {
+	return m.editField(id, func(a *account.Account) { a.Tags = tags })
+}
+
+func (m *Manager) editField(id string, mut func(*account.Account)) error {
+	a, err := m.acc.Get(id)
+	if err != nil {
+		return err
+	}
+	mut(a)
+	if err := m.acc.Update(a); err != nil {
+		return err
+	}
+	m.reload()
+	return nil
+}
+
 // ExportRecord 是导出/导入的账号载荷(含 token,因为是用户自己的号,用于备份/迁移)。
 type ExportRecord struct {
 	Email        string   `json:"email"`
+	Name         string   `json:"name,omitempty"`
 	AuthKind     string   `json:"authKind"`
 	IDToken      string   `json:"idToken,omitempty"`
 	AccessToken  string   `json:"accessToken,omitempty"`
@@ -194,7 +253,7 @@ func (m *Manager) Export(ids []string) (string, error) {
 			continue
 		}
 		recs = append(recs, ExportRecord{
-			Email: a.Email, AuthKind: string(a.AuthKind), IDToken: a.IDToken, AccessToken: a.AccessToken,
+			Email: a.Email, Name: a.Name, AuthKind: string(a.AuthKind), IDToken: a.IDToken, AccessToken: a.AccessToken,
 			RefreshToken: a.RefreshToken, APIKey: a.APIKey, APIBaseURL: a.APIBaseURL, AccountID: a.AccountID,
 			PlanType: a.PlanType, Note: a.Note, Tags: a.Tags,
 		})
@@ -232,7 +291,7 @@ func (m *Manager) ImportJSON(jsonStr string) (int, error) {
 			kind = account.AuthOAuth
 		}
 		if err := m.acc.Add(&account.Account{
-			Provider: m.provider, Email: r.Email, AuthKind: kind, IDToken: r.IDToken, AccessToken: r.AccessToken,
+			Provider: m.provider, Email: r.Email, Name: r.Name, AuthKind: kind, IDToken: r.IDToken, AccessToken: r.AccessToken,
 			RefreshToken: r.RefreshToken, APIKey: r.APIKey, APIBaseURL: r.APIBaseURL, AccountID: r.AccountID,
 			PlanType: r.PlanType, Note: r.Note, Tags: r.Tags, PoolEnabled: true, QuotaStatus: account.QuotaOK,
 		}); err != nil {

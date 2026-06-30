@@ -32,6 +32,7 @@ type Account struct {
 	ID            string
 	Provider      Provider
 	Email         string
+	Name          string // 显示名(可空,用户自定义)
 	AuthKind      AuthKind
 	IDToken       string
 	AccessToken   string

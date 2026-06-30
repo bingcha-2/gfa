@@ -6,7 +6,7 @@ import type { LocalAccountView } from '@/services/localApi'
 
 function fakeAccount(over: Partial<LocalAccountView> = {}): LocalAccountView {
   return {
-    id: 'a1', email: 'yifan@example.com', provider: 'codex', authKind: 'oauth',
+    id: 'a1', email: 'yifan@example.com', name: '', provider: 'codex', authKind: 'oauth', note: '',
     planType: 'pro', quotaStatus: 'ok', tags: ['主力'], poolEnabled: true, priority: true,
     hourlyPercent: 34, weeklyPercent: 61, hourlyResetAt: 0, weeklyResetAt: 0, lastUsedAt: 0,
     ...over,
@@ -35,6 +35,11 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalExportCodexAccounts: vi.fn().mockResolvedValue('[]'),
     LocalImportCodexFromJSON: vi.fn().mockResolvedValue(1),
     LocalDeleteAccounts: vi.fn().mockResolvedValue(undefined),
+    LocalAddCodexToken: vi.fn().mockResolvedValue(fakeAccount({ id: 'a2', email: 'tok@x.com' })),
+    LocalAddCodexApiKey: vi.fn().mockResolvedValue(fakeAccount({ id: 'a3', email: 'key@x.com', authKind: 'apikey' })),
+    LocalRenameAccount: vi.fn().mockResolvedValue(undefined),
+    LocalSetAccountNote: vi.fn().mockResolvedValue(undefined),
+    LocalSetAccountTags: vi.fn().mockResolvedValue(undefined),
     LocalCodexWakeupConfig: vi.fn().mockResolvedValue({ enabled: false, intervalMinutes: 240 }),
     LocalSetCodexWakeupConfig: vi.fn().mockResolvedValue(undefined),
     LocalCodexWakeupRunNow: vi.fn().mockResolvedValue([]),
@@ -160,5 +165,74 @@ describe('CodexSuitePage', () => {
     // 改绑账号(内联下拉)
     fireEvent.change(screen.getByLabelText('改绑账号'), { target: { value: 'a1' } })
     await waitFor(() => expect(app.LocalInstanceUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'i1', bindAccountId: 'a1' })))
+  })
+
+  it('加号菜单可粘贴 token 加号(调 addByToken)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /粘贴 token/ }))
+    fireEvent.change(await screen.findByLabelText('Refresh Token'), { target: { value: 'rt-1' } })
+    fireEvent.change(screen.getByLabelText('Access Token'), { target: { value: 'at-1' } })
+    fireEvent.change(screen.getByLabelText('邮箱(可选)'), { target: { value: 'me@x.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加账号' }))
+    await waitFor(() => expect(app.LocalAddCodexToken).toHaveBeenCalledWith('rt-1', 'at-1', 'me@x.com'))
+  })
+
+  it('加号菜单可粘贴 API Key 加号(调 addByApiKey)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /粘贴 API Key/ }))
+    fireEvent.change(await screen.findByLabelText('API Key'), { target: { value: 'sk-1' } })
+    fireEvent.change(screen.getByLabelText('Base URL(可选)'), { target: { value: 'https://api.x.com' } })
+    fireEvent.change(screen.getByLabelText('邮箱(可选)'), { target: { value: 'k@x.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加账号' }))
+    await waitFor(() => expect(app.LocalAddCodexApiKey).toHaveBeenCalledWith('sk-1', 'https://api.x.com', 'k@x.com'))
+  })
+
+  it('加号菜单第一项仍是浏览器登录(沿用 onLogin)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+    await waitFor(() => expect(app.LocalStartCodexLogin).toHaveBeenCalled())
+  })
+
+  it('账号行有 name 时标题显示 name', async () => {
+    installApp({ LocalListCodexAccounts: vi.fn().mockResolvedValue([fakeAccount({ name: '我的主号' })]) })
+    render(<CodexSuitePage />)
+    expect(await screen.findByText('我的主号')).toBeInTheDocument()
+  })
+
+  it('账号行无 name 时标题回退到 email', async () => {
+    installApp({ LocalListCodexAccounts: vi.fn().mockResolvedValue([fakeAccount({ name: '' })]) })
+    render(<CodexSuitePage />)
+    expect(await screen.findByText('yifan@example.com')).toBeInTheDocument()
+  })
+
+  it('账号行可重命名(调 rename)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    fireEvent.change(await screen.findByLabelText('名称'), { target: { value: '新名字' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(app.LocalRenameAccount).toHaveBeenCalledWith('a1', '新名字'))
+  })
+
+  it('账号行可改备注与标签(调 setNote/setTags)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    fireEvent.change(await screen.findByLabelText('备注'), { target: { value: '这是备注' } })
+    fireEvent.change(screen.getByLabelText('标签(逗号分隔)'), { target: { value: 'a, b ,c' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(app.LocalSetAccountNote).toHaveBeenCalledWith('a1', '这是备注'))
+    await waitFor(() => expect(app.LocalSetAccountTags).toHaveBeenCalledWith('a1', ['a', 'b', 'c']))
   })
 })
