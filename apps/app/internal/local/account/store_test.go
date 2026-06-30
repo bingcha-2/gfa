@@ -71,6 +71,27 @@ func TestStore_UpdateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStore_ExpiryAndGCPTosPersist(t *testing.T) {
+	s := newTestStore(t)
+	a := &Account{Provider: ProviderAntigravity, Email: "ent@corp.com", PoolEnabled: true, Expiry: 1893456000, IsGCPTos: true}
+	if err := s.Add(a); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, _ := s.Get(a.ID)
+	if got.Expiry != 1893456000 || !got.IsGCPTos {
+		t.Fatalf("expiry/is_gcp_tos not persisted on add: %+v", got)
+	}
+	got.Expiry = 1900000000
+	got.IsGCPTos = false
+	if err := s.Update(got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	again, _ := s.Get(a.ID)
+	if again.Expiry != 1900000000 || again.IsGCPTos {
+		t.Fatalf("expiry/is_gcp_tos not updated: %+v", again)
+	}
+}
+
 func TestStore_NamePersistsOnAdd(t *testing.T) {
 	s := newTestStore(t)
 	a := &Account{Provider: ProviderCodex, Email: "n@y.com", Name: "显示名", PoolEnabled: true}

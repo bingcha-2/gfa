@@ -32,6 +32,8 @@ type AntigravityToken struct {
 	IDToken      string
 	Email        string
 	ProjectID    string
+	Expiry       int64 // access_token 过期时刻,unix 秒(0=未知)
+	IsGCPTos     bool
 }
 
 // Platform 抽象 package main 里的平台专有动作(接管注入 / app 检测 / 进程启停)。
@@ -385,6 +387,8 @@ func (h *Hub) pickAntigravityToken() (AntigravityToken, error) {
 		IDToken:      chosen.IDToken,
 		Email:        chosen.Email,
 		ProjectID:    chosen.ProjectID,
+		Expiry:       chosen.Expiry,
+		IsGCPTos:     chosen.IsGCPTos,
 	}, nil
 }
 

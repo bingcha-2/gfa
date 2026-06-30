@@ -41,6 +41,8 @@ type Account struct {
 	APIBaseURL    string // 自备 API Key 号
 	AccountID     string // upstream account id
 	ProjectID     string // Google Cloud project(antigravity 用)
+	Expiry        int64  // access_token 过期时刻,unix 秒(antigravity 注入需真值,0=未知)
+	IsGCPTos      bool   // 是否已接受 GCP 服务条款(antigravity 企业号;gmail 恒为 false)
 	PlanType      string // pro/plus/team/free
 	Tags          []string
 	Note          string

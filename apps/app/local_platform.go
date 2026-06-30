@@ -44,7 +44,8 @@ func (localPlatform) AntigravityInjectAccount(tok hub.AntigravityToken) error {
 		IDToken:      tok.IDToken,
 		Email:        tok.Email,
 		ProjectID:    tok.ProjectID,
-		// Expiry/IsGCPTos 暂无源数据:expiry=0(IDE 会按需刷新),个人/企业由 ProjectID 决定。
+		Expiry:       tok.Expiry,   // 登录时从 SDK Metadata 捕获的真实过期时刻(0=未知)
+		IsGCPTos:     tok.IsGCPTos, // gmail 在注入侧恒置 false
 	})
 }
 

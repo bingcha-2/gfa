@@ -87,7 +87,8 @@ func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
 	h, fp := newHub(t)
 	// 造一个进池 antigravity 自有号(优先级)。
 	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com",
-		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", PoolEnabled: true, Priority: true})
+		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", Expiry: 1893456000, IsGCPTos: true,
+		PoolEnabled: true, Priority: true})
 	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
 		t.Fatalf("SetSource ag local: %v", err)
 	}
@@ -96,6 +97,10 @@ func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
 	}
 	if fp.agInjectedToken.Email != "ag@x.com" || fp.agInjectedToken.AccessToken != "AT" || fp.agInjectedToken.ProjectID != "proj" {
 		t.Fatalf("injected token wrong: %+v", fp.agInjectedToken)
+	}
+	// 真实过期时刻与 GCP ToS 位要一路贯通到注入 token(否则 IDE 启动即强制刷新)。
+	if fp.agInjectedToken.Expiry != 1893456000 || !fp.agInjectedToken.IsGCPTos {
+		t.Fatalf("expiry/is_gcp_tos not threaded into injected token: %+v", fp.agInjectedToken)
 	}
 	if h.GatewayStatusOf(account.ProviderAntigravity).Running {
 		t.Fatal("antigravity takeover must not start the reverse-proxy gateway")
