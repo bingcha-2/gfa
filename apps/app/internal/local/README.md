@@ -37,7 +37,7 @@ Wakeup(调度/配置/历史/后台循环)、多实例(CRUD + 启停 + 改绑)、
 ## 需真机/真号验证(自动化只到「auth 入池 + /v1 可达」)
 
 - **真实上游 200 出口**:需真 ChatGPT/Google 号;executor 取 `Metadata.access_token` 已核源。
-- **Antigravity IDE 本地注入**:把 IDE 指向本地网关(钥匙串/state.vscdb/ASAR + 可能的 gRPC MITM)——最难,目前 antigravity 仅账号管理,无号源切换。
+- **Antigravity IDE 本地注入**:号源切换已实现(`LocalSetAntigravitySource` → `InjectIDESettings(网关端口)`,同 codex 模式),但 IDE 经本地网关能否真正出口需真机验证(IDE↔网关协议、可能的 gRPC MITM 细节)。
 - **实例启动**:`launchInstance` 用既有 `detectCodexGUIPath`/`detectAntigravityIDEPathCached` + `open -n -a`/exec,需装目标 app;macOS 经 open 拉起的精确停止待用 pgrep 细化。
 - **Wakeup 按号精度**:当前为网关级 keep-warm(ping /v1/models);按号 token 刷新待接入。
 
