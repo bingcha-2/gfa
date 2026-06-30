@@ -75,6 +75,14 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     }),
     LocalClearGatewayStats: vi.fn().mockResolvedValue(undefined),
     LocalGatewayConnTest: vi.fn().mockResolvedValue({ ok: true, status: 200, latencyMs: 42, err: '' }),
+    // ── 自定义模型供应商(Wave F)──
+    LocalListModelProviders: vi.fn().mockResolvedValue([
+      { id: 'p1', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-prov-abcd1234efgh', wireApi: 'chat_completions', modelCatalog: ['deepseek-chat', 'deepseek-reasoner'], createdAt: 1700000000000 },
+    ]),
+    LocalSaveModelProvider: vi.fn().mockResolvedValue({ id: 'p2', name: '新供应商', baseURL: 'https://api.x.com/v1', apiKey: 'sk-new', wireApi: 'responses', modelCatalog: [], createdAt: 1700000100000 }),
+    LocalDeleteModelProvider: vi.fn().mockResolvedValue(undefined),
+    LocalTestModelProvider: vi.fn().mockResolvedValue({ ok: true, status: 200, latencyMs: 88, err: '', model: 'deepseek-chat' }),
+    LocalListModelProviderModels: vi.fn().mockResolvedValue({ models: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }], latencyMs: 120 }),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -427,5 +435,82 @@ describe('CodexSuitePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /加号/ }))
     await screen.findByRole('menuitem', { name: /浏览器登录/ })
     expect(screen.queryByRole('menuitem', { name: /从已装 IDE 同步/ })).toBeNull()
+  })
+
+  // ── 自定义模型供应商 tab(Wave F · codex-only)──
+
+  async function openProviders(app: ReturnType<typeof installApp>) {
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '供应商' }))
+    await waitFor(() => expect(app.LocalListModelProviders).toHaveBeenCalled())
+  }
+
+  it('codex 有「供应商」tab,列出供应商(名称/baseURL/模型数,apiKey 掩码不暴露)', async () => {
+    const app = installApp()
+    await openProviders(app)
+    expect(await screen.findByText('DeepSeek')).toBeInTheDocument()
+    expect(screen.getByText('https://api.deepseek.com/v1')).toBeInTheDocument()
+    // 模型数 = 2(modelCatalog 长度)
+    expect(screen.getByText(/2 个模型/)).toBeInTheDocument()
+    // apiKey 不以明文暴露
+    expect(screen.queryByText('sk-prov-abcd1234efgh')).toBeNull()
+  })
+
+  it('供应商 tab 新建弹窗:填名称/baseURL/apiKey/wireApi/模型目录后调 saveModelProvider', async () => {
+    const app = installApp()
+    await openProviders(app)
+    fireEvent.click(screen.getByRole('button', { name: /新建供应商/ }))
+    fireEvent.change(await screen.findByLabelText('供应商名称'), { target: { value: '新供应商' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.x.com/v1' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-new' } })
+    fireEvent.change(screen.getByLabelText('模型目录(逗号分隔)'), { target: { value: 'gpt-4o, o1' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(app.LocalSaveModelProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '新供应商', baseURL: 'https://api.x.com/v1', apiKey: 'sk-new', modelCatalog: ['gpt-4o', 'o1'] }),
+    ))
+  })
+
+  it('供应商 tab apiKey 输入掩码展示(type=password)', async () => {
+    const app = installApp()
+    await openProviders(app)
+    fireEvent.click(screen.getByRole('button', { name: /新建供应商/ }))
+    const keyInput = await screen.findByLabelText('API Key') as HTMLInputElement
+    expect(keyInput.type).toBe('password')
+  })
+
+  it('供应商 tab 拉取模型列表调 listModelProviderModels(回填模型目录)', async () => {
+    const app = installApp()
+    await openProviders(app)
+    await screen.findByText('DeepSeek')
+    fireEvent.click(screen.getByRole('button', { name: '拉取模型列表' }))
+    await waitFor(() => expect(app.LocalListModelProviderModels).toHaveBeenCalledWith('p1'))
+  })
+
+  it('供应商 tab 连通测试调 testModelProvider 并显示结果', async () => {
+    const app = installApp()
+    await openProviders(app)
+    await screen.findByText('DeepSeek')
+    fireEvent.click(screen.getByRole('button', { name: '连通测试' }))
+    await waitFor(() => expect(app.LocalTestModelProvider).toHaveBeenCalledWith('p1'))
+    const result = await screen.findByText(/连通正常/)
+    expect(result.textContent).toMatch(/200/)
+    expect(result.textContent).toMatch(/88/)
+  })
+
+  it('供应商 tab 删除调 deleteModelProvider 并重拉列表', async () => {
+    const app = installApp()
+    await openProviders(app)
+    await screen.findByText('DeepSeek')
+    expect(app.LocalListModelProviders).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '删除供应商' }))
+    await waitFor(() => expect(app.LocalDeleteModelProvider).toHaveBeenCalledWith('p1'))
+    await waitFor(() => expect(app.LocalListModelProviders).toHaveBeenCalledTimes(2))
+  })
+
+  it('供应商 tab 空态:无供应商时给空态文案', async () => {
+    const app = installApp({ LocalListModelProviders: vi.fn().mockResolvedValue([]) })
+    await openProviders(app)
+    expect(await screen.findByText(/还没有自定义供应商/)).toBeInTheDocument()
   })
 })

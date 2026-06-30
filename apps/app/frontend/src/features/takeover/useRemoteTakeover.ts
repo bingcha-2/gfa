@@ -16,7 +16,7 @@ import { useT } from '@/i18n'
  */
 
 // 产品 id → 接管 target(后端 InjectSelected/RestoreSelected 用)。
-export function idToTarget(id: string): string {
+function idToTarget(id: string): string {
   if (id === 'antigravity_ide') return 'ide'
   if (id === 'codex') return 'codex'
   if (id === 'claude_code') return 'claude'
@@ -24,7 +24,7 @@ export function idToTarget(id: string): string {
   return 'hub'
 }
 
-export const CLAUDE_STANDALONE_WIN_DOWNLOAD_URL = 'https://claude.ai/api/desktop/win32/x64/exe/latest/redirect'
+const CLAUDE_STANDALONE_WIN_DOWNLOAD_URL = 'https://claude.ai/api/desktop/win32/x64/exe/latest/redirect'
 
 export function useRemoteTakeover() {
   const t = useT()

@@ -49,6 +49,13 @@ describe('AntigravitySuitePage', () => {
     expect(screen.getByRole('button', { name: '统计' })).toBeInTheDocument()
   })
 
+  // antigravity 没有自定义模型供应商(只 codex 有 OpenAI 兼容供应商喂号)。
+  it('无「供应商」tab(antigravity 不支持自定义模型供应商)', async () => {
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    expect(screen.queryByRole('button', { name: '供应商' })).toBeNull()
+  })
+
   // 接管模式(远程/本地)切换已上移至「接管中心」;suite 头部只读 + 去接管中心链接。
   it('suite 头部无接管模式段控,去接管中心链接可导航', async () => {
     const onNav = vi.fn()

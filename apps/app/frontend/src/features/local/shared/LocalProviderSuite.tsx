@@ -8,6 +8,7 @@ import { LocalStatsTab } from './LocalStatsTab'
 import { LocalWakeupTab } from './LocalWakeupTab'
 import { LocalInstancesTab } from './LocalInstancesTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
+import { LocalModelProvidersTab } from './LocalModelProvidersTab'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
@@ -24,14 +25,17 @@ export interface LocalProviderSuiteProps {
   onNavigate?: (p: PageId) => void
   /** 是否有反代(cliproxy 网关 API 服务)。仅 codex;antigravity 走注入、无反代,不显示反代 tab。 */
   hasGateway?: boolean
+  /** 是否有自定义模型供应商(OpenAI 兼容供应商喂号 + 动态目录)。仅 codex;antigravity 不显示供应商 tab。 */
+  hasModelProviders?: boolean
 }
 
-type TabId = 'accounts' | 'gateway' | 'stats' | 'wakeup' | 'instances'
+type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances'
 
-export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false }: LocalProviderSuiteProps) {
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false }: LocalProviderSuiteProps) {
   const tabs: [TabId, string][] = [
     ['accounts', '账号'],
     ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
+    ...(hasModelProviders ? ([['providers', '供应商']] as [TabId, string][]) : []),
     ['stats', '统计'],
     ['wakeup', '保活'],
     ['instances', '实例'],
@@ -112,6 +116,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false 
 
       {tab === 'accounts' && <LocalAccountsTab title={title} api={api} />}
       {tab === 'gateway' && <LocalGatewayTab api={api} />}
+      {tab === 'providers' && <LocalModelProvidersTab />}
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
       {tab === 'instances' && <LocalInstancesTab api={api} />}

@@ -298,3 +298,78 @@ export function clearGatewayStats(): Promise<void> {
 export function gatewayConnTest(): Promise<GatewayConnTestResult> {
   return app().LocalGatewayConnTest() as Promise<GatewayConnTestResult>
 }
+
+// ── 自定义模型供应商(codex OpenAI 兼容供应商)+ 动态模型目录 ──
+// 自包含:类型与函数均独立,移植自 cockpit codex_model_provider。
+// 红线:这是自定义供应商喂号路径,与远程租号无关。
+
+/** 协议线格式:responses=OpenAI Responses(codex 原生)/ chat_completions=OpenAI 兼容。 */
+export type ModelProviderWireApi = 'responses' | 'chat_completions'
+
+/** 一条自定义模型供应商。 */
+export interface ModelProvider {
+  id: string
+  name: string
+  baseURL: string
+  apiKey: string
+  wireApi: ModelProviderWireApi
+  modelCatalog: string[]
+  createdAt: number
+}
+
+/** 新建/更新供应商的入参(id 为空表示新建;wireApi 留空由后端按 baseURL 归一)。 */
+export interface ModelProviderInput {
+  id?: string
+  name: string
+  baseURL: string
+  apiKey: string
+  wireApi?: ModelProviderWireApi | ''
+  modelCatalog?: string[]
+  createdAt?: number
+}
+
+/** 供应商连通测试结果(形状对齐网关 ConnTest)。 */
+export interface ModelProviderConnTestResult {
+  ok: boolean
+  status: number
+  latencyMs: number
+  err: string
+  model: string
+}
+
+/** 动态目录里的一条模型。 */
+export interface ModelProviderModel {
+  id: string
+  displayName?: string
+}
+
+/** ListModels 返回:目录 + 时延。 */
+export interface ModelProviderModelsResult {
+  models: ModelProviderModel[]
+  latencyMs: number
+}
+
+/** 列出全部自定义模型供应商(按 createdAt 升序)。 */
+export function listModelProviders(): Promise<ModelProvider[]> {
+  return app().LocalListModelProviders() as Promise<ModelProvider[]>
+}
+
+/** 新增/更新一条供应商(按 id upsert),返回落盘后的记录。 */
+export function saveModelProvider(p: ModelProviderInput): Promise<ModelProvider> {
+  return app().LocalSaveModelProvider(p) as Promise<ModelProvider>
+}
+
+/** 按 id 删除一条供应商(幂等)。 */
+export function deleteModelProvider(id: string): Promise<void> {
+  return app().LocalDeleteModelProvider(id) as Promise<void>
+}
+
+/** 对某供应商 /models 端点发最小真请求,返回连通结果。 */
+export function testModelProvider(id: string): Promise<ModelProviderConnTestResult> {
+  return app().LocalTestModelProvider(id) as Promise<ModelProviderConnTestResult>
+}
+
+/** 拉某供应商动态模型目录(后端会回写到 provider.modelCatalog)。 */
+export function listModelProviderModels(id: string): Promise<ModelProviderModelsResult> {
+  return app().LocalListModelProviderModels(id) as Promise<ModelProviderModelsResult>
+}

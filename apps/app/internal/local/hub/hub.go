@@ -23,6 +23,7 @@ import (
 	"bcai-wails/internal/local/gatewaykeys"
 	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
+	"bcai-wails/internal/local/modelprovider"
 	"bcai-wails/internal/local/quota"
 	"bcai-wails/internal/local/refreshcfg"
 	"bcai-wails/internal/local/routingcfg"
@@ -105,6 +106,7 @@ type Hub struct {
 	routingCfg  *routingcfg.Store
 	gwKeys      *gatewaykeys.Store
 	gwScope     *gatewaycfg.Store
+	modelProv   *modelprovider.Store
 	autoRefresh *autoRefresher
 }
 
@@ -127,6 +129,7 @@ func New(dir string, platform Platform) (*Hub, error) {
 		platform:   platform,
 		providers:  map[account.Provider]*providerCtx{},
 		refreshCfg: refreshcfg.NewStore(dir),
+		modelProv:  modelprovider.NewStore(dir),
 	}
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
