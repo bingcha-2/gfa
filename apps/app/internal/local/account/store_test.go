@@ -83,23 +83,17 @@ func TestStore_NamePersistsOnAdd(t *testing.T) {
 	}
 }
 
-func TestStore_ListAllPoolEnabled_CrossProvider(t *testing.T) {
+// 网关只喂 codex:ListPoolEnabled(codex) 不应混入 antigravity 进池号。
+func TestStore_ListPoolEnabled_ProviderScoped(t *testing.T) {
 	s := newTestStore(t)
 	_ = s.Add(&Account{Provider: ProviderCodex, Email: "c@y.com", PoolEnabled: true})
 	_ = s.Add(&Account{Provider: ProviderAntigravity, Email: "a@y.com", PoolEnabled: true})
 	_ = s.Add(&Account{Provider: ProviderCodex, Email: "off@y.com", PoolEnabled: false})
-	all, err := s.ListAllPoolEnabled()
+	codex, err := s.ListPoolEnabled(ProviderCodex)
 	if err != nil {
-		t.Fatalf("ListAllPoolEnabled: %v", err)
+		t.Fatalf("ListPoolEnabled: %v", err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("expected 2 cross-provider pool accounts, got %d", len(all))
-	}
-	seen := map[Provider]bool{}
-	for _, a := range all {
-		seen[a.Provider] = true
-	}
-	if !seen[ProviderCodex] || !seen[ProviderAntigravity] {
-		t.Fatalf("expected both providers, got %v", seen)
+	if len(codex) != 1 || codex[0].Email != "c@y.com" {
+		t.Fatalf("expected only the codex pool account, got %+v", codex)
 	}
 }

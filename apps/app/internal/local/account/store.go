@@ -114,17 +114,6 @@ func (s *Store) ListPoolEnabled(p Provider) ([]*Account, error) {
 	return scan(rows)
 }
 
-// ListAllPoolEnabled 返回所有 provider 进池的自有号(共享网关喂号用)。
-// 安全不变式仍成立:只读 pool_enabled 的自有号,远程租号不在此表。
-func (s *Store) ListAllPoolEnabled() ([]*Account, error) {
-	rows, err := s.db.Query(`SELECT ` + allCols + ` FROM local_accounts WHERE pool_enabled=1 ORDER BY created_at`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scan(rows)
-}
-
 func (s *Store) Delete(id string) error {
 	_, err := s.db.Exec(`DELETE FROM local_accounts WHERE id=?`, id)
 	return err

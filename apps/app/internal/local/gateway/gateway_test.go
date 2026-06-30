@@ -38,8 +38,8 @@ func TestGateway_StartStop(t *testing.T) {
 	}
 }
 
-// 共享网关:同一实例同时喂 codex + antigravity 进池号。
-func TestGateway_SharedServesBothProviders(t *testing.T) {
+// 反代网关只喂 codex 进池号(antigravity 接管走 IDE 注入,不进网关)。
+func TestGateway_SharedServesCodexOnly(t *testing.T) {
 	dir := t.TempDir()
 	acc, err := account.OpenStore(dir + "/a.db")
 	if err != nil {
@@ -61,14 +61,14 @@ func TestGateway_SharedServesBothProviders(t *testing.T) {
 	}
 	loaded := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if g.LoadedAuthCount() == 2 {
+		if g.LoadedAuthCount() == 1 {
 			loaded = true
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	if !loaded {
-		t.Fatalf("expected 2 cross-provider accounts loaded, got %d", g.LoadedAuthCount())
+		t.Fatalf("expected only the 1 codex account loaded (antigravity excluded), got %d", g.LoadedAuthCount())
 	}
 }
 

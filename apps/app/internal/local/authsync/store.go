@@ -13,31 +13,18 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-// Store 实现 coreauth.Store(v7.2.47:List/Save/Delete)。
-// shared=true 时跨 provider 喂号(共享网关),否则只喂单个 provider。
+// Store 实现 coreauth.Store(v7.2.47:List/Save/Delete),只喂单个 provider 的进池自有号。
 type Store struct {
 	acc      *account.Store
 	provider account.Provider
-	shared   bool
 }
 
 func NewStore(acc *account.Store, p account.Provider) *Store {
 	return &Store{acc: acc, provider: p}
 }
 
-// NewSharedStore 返回喂全部 provider 进池自有号的共享 Store(单一共享网关用)。
-func NewSharedStore(acc *account.Store) *Store {
-	return &Store{acc: acc, shared: true}
-}
-
 func (s *Store) List(ctx context.Context) ([]*coreauth.Auth, error) {
-	var list []*account.Account
-	var err error
-	if s.shared {
-		list, err = s.acc.ListAllPoolEnabled()
-	} else {
-		list, err = s.acc.ListPoolEnabled(s.provider)
-	}
+	list, err := s.acc.ListPoolEnabled(s.provider)
 	if err != nil {
 		return nil, err
 	}

@@ -11,16 +11,26 @@ import (
 type fakePlatform struct {
 	codexInjected   bool
 	codexInjectPort int
-	ideInjectPort   int
+	agInjectCount   int
+	agRestoreCount  int
+	agInjectedToken AntigravityToken
 	appPath         string
 	launchedArgs    []string
 }
 
-func (f *fakePlatform) CodexInject(port int) error { f.codexInjectPort = port; f.codexInjected = true; return nil }
-func (f *fakePlatform) CodexRestore() error        { f.codexInjected = false; return nil }
-func (f *fakePlatform) CodexInjected() bool        { return f.codexInjected }
-func (f *fakePlatform) AntigravityIDEInject(port int) error { f.ideInjectPort = port; return nil }
-func (f *fakePlatform) AntigravityIDERestore() error        { return nil }
+func (f *fakePlatform) CodexInject(port int) error {
+	f.codexInjectPort = port
+	f.codexInjected = true
+	return nil
+}
+func (f *fakePlatform) CodexRestore() error { f.codexInjected = false; return nil }
+func (f *fakePlatform) CodexInjected() bool { return f.codexInjected }
+func (f *fakePlatform) AntigravityInjectAccount(tok AntigravityToken) error {
+	f.agInjectCount++
+	f.agInjectedToken = tok
+	return nil
+}
+func (f *fakePlatform) AntigravityRestoreAccount() error     { f.agRestoreCount++; return nil }
 func (f *fakePlatform) DetectAppPath(provider string) string { return f.appPath }
 func (f *fakePlatform) LaunchApp(appPath, workingDir string, args []string) (int, error) {
 	f.launchedArgs = args
@@ -71,34 +81,63 @@ func TestHub_SetSourceCodex_InjectsViaPlatform(t *testing.T) {
 	}
 }
 
-// 共享网关:codex 与 antigravity 的网关地址相同(同一实例)。
-func TestHub_SharedGateway_SameAddrAcrossProviders(t *testing.T) {
-	h, _ := newHub(t)
+// antigravity 'local' = 注入 IDE(不走网关):调 AntigravityInjectAccount,
+// 且网关不应因接管 antigravity 而启动。
+func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
+	h, fp := newHub(t)
+	// 造一个进池 antigravity 自有号(优先级)。
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com",
+		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", PoolEnabled: true, Priority: true})
+	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
+		t.Fatalf("SetSource ag local: %v", err)
+	}
+	if fp.agInjectCount != 1 {
+		t.Fatalf("expected antigravity account injected once, got %d", fp.agInjectCount)
+	}
+	if fp.agInjectedToken.Email != "ag@x.com" || fp.agInjectedToken.AccessToken != "AT" || fp.agInjectedToken.ProjectID != "proj" {
+		t.Fatalf("injected token wrong: %+v", fp.agInjectedToken)
+	}
+	if h.GatewayStatusOf(account.ProviderAntigravity).Running {
+		t.Fatal("antigravity takeover must not start the reverse-proxy gateway")
+	}
+	// 还原:调 AntigravityRestoreAccount。
+	if err := h.SetSource(account.ProviderAntigravity, "remote"); err != nil {
+		t.Fatalf("SetSource ag remote: %v", err)
+	}
+	if fp.agRestoreCount < 1 {
+		t.Fatal("expected antigravity restored on remote")
+	}
+}
+
+// antigravity 'local' 无可用号时报错(且不注入)。
+func TestHub_SetSourceAntigravity_NoAccountErrors(t *testing.T) {
+	h, fp := newHub(t)
+	if err := h.SetSource(account.ProviderAntigravity, "local"); err == nil {
+		t.Fatal("expected error when no antigravity pool account")
+	}
+	if fp.agInjectCount != 0 {
+		t.Fatal("must not inject when no account available")
+	}
+}
+
+// 接管与网关解耦:codex 'remote' 还原不应停掉反代 tab 起的网关。
+func TestHub_CodexRemote_DoesNotStopGateway(t *testing.T) {
+	h, fp := newHub(t)
 	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
 		t.Fatalf("GatewayStart: %v", err)
 	}
 	defer h.GatewayStop(account.ProviderCodex)
-	cs := h.GatewayStatusOf(account.ProviderCodex)
-	as := h.GatewayStatusOf(account.ProviderAntigravity)
-	if !cs.Running || !as.Running {
-		t.Fatalf("expected both running, got codex=%v ag=%v", cs.Running, as.Running)
-	}
-	if cs.Addr != as.Addr || cs.Port != as.Port {
-		t.Fatalf("expected shared gateway addr, codex=%s ag=%s", cs.Addr, as.Addr)
-	}
-}
-
-// SetSource('local') 对两个 provider 注入同一个共享端口。
-func TestHub_SetSourceLocal_BothProvidersSamePort(t *testing.T) {
-	h, fp := newHub(t)
 	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
 		t.Fatalf("SetSource codex local: %v", err)
 	}
-	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
-		t.Fatalf("SetSource ag local: %v", err)
+	if err := h.SetSource(account.ProviderCodex, "remote"); err != nil {
+		t.Fatalf("SetSource codex remote: %v", err)
 	}
-	if fp.codexInjectPort == 0 || fp.ideInjectPort == 0 || fp.codexInjectPort != fp.ideInjectPort {
-		t.Fatalf("expected same shared inject port, codex=%d ag=%d", fp.codexInjectPort, fp.ideInjectPort)
+	if fp.codexInjected {
+		t.Fatal("codex should be restored on remote")
+	}
+	if !h.GatewayStatusOf(account.ProviderCodex).Running {
+		t.Fatal("gateway controlled by reverse-proxy tab must stay running after codex takeover restore")
 	}
 }
 

@@ -159,4 +159,50 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
       expect(codexApi.setSource).toHaveBeenCalledWith('remote')
     })
   })
+
+  // ── 本地语义文案:codex=指向反代,antigravity=注入直连(区分接管 vs 反代) ──
+  it('Codex 本地段文案点明「指向本地反代 + 需在反代 tab 开网关」', async () => {
+    setPlatform('MacIntel')
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+    await within(codex).findByRole('button', { name: '接管' })
+    expect(within(codex).getByText(/指向本地反代/)).toBeInTheDocument()
+    expect(within(codex).getByText(/反代 tab 开网关/)).toBeInTheDocument()
+    // 不应出现 antigravity 的「注入」语义
+    expect(within(codex).queryByText(/注入/)).toBeNull()
+  })
+
+  it('Codex 本地接管运行时显示反代地址(指向本地反代 127.0.0.1:8317)', async () => {
+    setPlatform('MacIntel')
+    codexApi.getSource.mockResolvedValue('local')
+    codexApi.gatewayStatus.mockResolvedValue({ running: true, addr: '127.0.0.1:8317', port: 8317 })
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    expect(await within(codex).findByText(/指向本地反代 127\.0\.0\.1:8317/)).toBeInTheDocument()
+  })
+
+  it('Antigravity 本地段文案点明「注入号、直连官方、无反代/不池化」且不提网关地址', async () => {
+    setPlatform('MacIntel')
+    render(<TakeoverCenterPage />)
+    const ag = screen.getByRole('region', { name: 'Antigravity' })
+    fireEvent.click(within(ag).getByRole('button', { name: '本地自有号' }))
+    await within(ag).findByRole('button', { name: '接管' })
+    expect(within(ag).getByText(/注入.*IDE.*直连官方/)).toBeInTheDocument()
+    expect(within(ag).getByText(/无反代.*不池化/)).toBeInTheDocument()
+    // 接管语义不应再写「网关 127.0.0.1」/「指向本地反代」
+    expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
+    expect(within(ag).queryByText(/指向本地反代/)).toBeNull()
+  })
+
+  it('Antigravity 已本地接管时显示「已注入 · 直连官方」(不显示网关地址)', async () => {
+    setPlatform('MacIntel')
+    antigravityApi.getSource.mockResolvedValue('local')
+    // 即便 gatewayStatus 谎报 running,也不该显示网关地址(inject 不走网关)
+    antigravityApi.gatewayStatus.mockResolvedValue({ running: true, addr: '127.0.0.1:9999', port: 9999 })
+    render(<TakeoverCenterPage />)
+    const ag = screen.getByRole('region', { name: 'Antigravity' })
+    expect(await within(ag).findByText(/已注入 · 直连官方/)).toBeInTheDocument()
+    expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
+  })
 })

@@ -35,9 +35,9 @@ func TestStore_ListOnlyOwnPoolAccounts(t *testing.T) {
 	}
 }
 
-// 共享网关:一个 Store 同时喂 codex + antigravity 的进池自有号,
-// 每个 auth 仍带自己的 Provider(执行器据此路由),远程租号永不在内。
-func TestSharedStore_ListsAllProvidersPoolAccounts(t *testing.T) {
+// 反代网关只喂 codex:antigravity 进池号不应出现在 codex auth store 里
+//(antigravity 接管走 IDE 注入,见 internal/local/antigravityinject)。
+func TestStore_CodexScoped_ExcludesAntigravity(t *testing.T) {
 	dir := t.TempDir()
 	acc, err := account.OpenStore(dir + "/a.db")
 	if err != nil {
@@ -46,22 +46,14 @@ func TestSharedStore_ListsAllProvidersPoolAccounts(t *testing.T) {
 	defer acc.Close()
 	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "c@y.com", AuthKind: account.AuthOAuth, RefreshToken: "rc", PoolEnabled: true})
 	_ = acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "a@y.com", AuthKind: account.AuthOAuth, RefreshToken: "ra", PoolEnabled: true})
-	_ = acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "off@y.com", PoolEnabled: false})
 
-	st := NewSharedStore(acc)
+	st := NewStore(acc, account.ProviderCodex)
 	auths, err := st.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(auths) != 2 {
-		t.Fatalf("expected 2 cross-provider auths, got %d", len(auths))
-	}
-	prov := map[string]bool{}
-	for _, a := range auths {
-		prov[a.Provider] = true
-	}
-	if !prov["codex"] || !prov["antigravity"] {
-		t.Fatalf("expected both providers in shared store, got %v", prov)
+	if len(auths) != 1 || auths[0].Provider != "codex" {
+		t.Fatalf("expected only codex auth, got %+v", auths)
 	}
 }
 

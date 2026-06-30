@@ -19,7 +19,14 @@ import { Lock, ArrowRight, Users } from 'lucide-react'
  *   Claude(Anthropic):仅远程托管(MITM)。Claude Code(CLI+VSCode)+ Claude Desktop 两行。
  *   Codex / Antigravity:模式段控〔远程托管 | 本地自有号〕。
  *     远程托管 = 通行证租号(injectSelected,复用 useRemoteTakeover 全部分支语义);
- *     本地自有号 = 指向本地网关(localApi.setSource('local'),后端自动启网关+注入)。
+ *     本地自有号 —— 两种产品语义不同:
+ *       · Codex(kind='gateway'):指向本地反代网关(localApi.setSource('local'),
+ *         codex CLI 指向反代)。需在该 suite 的「反代」tab 把网关开起来。
+ *       · Antigravity(kind='inject'):直接把选中自有号 token 注入 IDE 的 state.vscdb,
+ *         直连官方,**不走反代、不池化**(localApi.setSource('local') 内部直写)。
+ *
+ * 「接管」(指向/注入)与「反代」(API 服务,在各 suite 的反代 tab)是两件事:
+ * 接管只决定本机 IDE/CLI 用谁的号;反代是对外提供 API 网关。
  *
  * 数据/账号管理仍在各本地 suite,二者解耦;这里只是控制面。
  * 安全不变式不变:远程租号绝不经本地网关出口。
@@ -106,11 +113,19 @@ function ProductCard({ name, provider, note, mode, onModeChange, children }: {
   )
 }
 
+/**
+ * 本地自有号语义:
+ *   'gateway' = 指向本地反代网关(Codex),需在反代 tab 开网关;
+ *   'inject'  = 注入号直连官方(Antigravity),无反代 / 无池化。
+ */
+type LocalKind = 'gateway' | 'inject'
+
 /** Codex / Antigravity 卡:远程/本地两模式互斥。 */
-function LocalCapableCard({ name, provider, note, api, remoteRows, tk, onManageAccounts }: {
+function LocalCapableCard({ name, provider, note, kind, api, remoteRows, tk, onManageAccounts }: {
   name: string
   provider: string
   note?: string
+  kind: LocalKind
   api: ProviderLocalApi
   remoteRows: RemoteRowSpec[]
   tk: Tk
@@ -153,7 +168,8 @@ function LocalCapableCard({ name, provider, note, api, remoteRows, tk, onManageA
     })()
   }, [api])
 
-  // 本地接管/停止:setSource('local') 启网关+注入;setSource('remote') 还原+停网关。
+  // 本地接管/停止:setSource('local')/setSource('remote')。后端按产品决定语义——
+  // gateway 指向反代,inject 直写 IDE。前端只切 source、刷新实际态。
   const onToggleLocal = async () => {
     setBusyLocal(true)
     setErr('')
@@ -190,11 +206,29 @@ function LocalCapableCard({ name, provider, note, api, remoteRows, tk, onManageA
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-[11px]">
-              <span className={cn('w-1.5 h-1.5 rounded-full', localActive && gw.running ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
+              {/* 状态点:gateway 看网关在不在跑;inject 直连官方,只看是否已接管 */}
+              <span
+                className={cn(
+                  'w-1.5 h-1.5 rounded-full',
+                  localActive && (kind === 'inject' || gw.running) ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]',
+                )}
+              />
               <span className="text-[var(--text-secondary)]">
-                {localActive ? (gw.running ? `网关 ${gw.addr}` : '本地已接管') : '未接管'}
+                {localActive
+                  ? kind === 'inject'
+                    ? '已注入 · 直连官方'
+                    : gw.running
+                      ? `指向本地反代 ${gw.addr}`
+                      : '已指向本地反代'
+                  : '未接管'}
               </span>
               <span className="inline-flex items-center gap-1 text-[var(--success)]"><Lock size={10} /> 仅自有号</span>
+            </div>
+            {/* 区分接管语义 vs 反代:点明本地号怎么用 */}
+            <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-tight">
+              {kind === 'inject'
+                ? '把选中号注入 IDE,直连官方 —— 无反代、不池化'
+                : 'codex CLI 指向本地反代;需在反代 tab 开网关对外提供 API'}
             </div>
             <button
               onClick={onManageAccounts}
@@ -287,6 +321,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Codex"
           provider="codex"
           note={t('takeover.codexNote')}
+          kind="gateway"
           api={codexLocalApi}
           remoteRows={codexRows}
           tk={tk}
@@ -298,6 +333,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Antigravity"
           provider="antigravity"
           note={t('takeover.agNote')}
+          kind="inject"
           api={antigravityLocalApi}
           remoteRows={agRows}
           tk={tk}

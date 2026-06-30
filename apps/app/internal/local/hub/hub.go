@@ -25,13 +25,29 @@ import (
 	"bcai-wails/internal/local/wakeup"
 )
 
+// AntigravityToken 是注入 Antigravity IDE 所需的一份自有号登录态(不经网关)。
+type AntigravityToken struct {
+	AccessToken  string
+	RefreshToken string
+	IDToken      string
+	Email        string
+	ProjectID    string
+}
+
 // Platform 抽象 package main 里的平台专有动作(接管注入 / app 检测 / 进程启停)。
+//
+// 接管模型(对齐 cockpit):
+//   - codex 'local' 经反代(网关):CodexInject(网关端口) 把 codex CLI 指向反代。
+//   - antigravity 'local' 不走网关:AntigravityInjectAccount 把自有号 token 直接
+//     写进 Antigravity IDE 的 state.vscdb。
 type Platform interface {
 	CodexInject(port int) error
 	CodexRestore() error
 	CodexInjected() bool
-	AntigravityIDEInject(port int) error
-	AntigravityIDERestore() error
+	// AntigravityInjectAccount 把一份自有号 token 注入 Antigravity IDE(state.vscdb),不经网关。
+	AntigravityInjectAccount(tok AntigravityToken) error
+	// AntigravityRestoreAccount 移除 Antigravity IDE 的注入登录态。
+	AntigravityRestoreAccount() error
 
 	DetectAppPath(provider string) string
 	LaunchApp(appPath, workingDir string, args []string) (int, error)
@@ -54,15 +70,15 @@ type providerCtx struct {
 type Hub struct {
 	dir       string
 	acc       *account.Store
-	gw        *gateway.Gateway // 共享网关:codex + antigravity 自有号同喂同一实例
+	gw        *gateway.Gateway // 反代网关:只喂 codex 自有号(antigravity 接管走 IDE 注入)
 	sources   *takeover.SourceStore
 	instances *instance.Store
 	platform  Platform
 	providers map[account.Provider]*providerCtx
 }
 
-// New 打开账号 DB,构建【单个共享网关】+ codex/antigravity 两套 manager+wakeup
-//(各自启动保活循环,但都打向共享网关)。
+// New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
+// manager+wakeup(各自启动保活循环;antigravity 接管不经网关,走 IDE 注入)。
 func New(dir string, platform Platform) (*Hub, error) {
 	acc, err := account.OpenStore(filepath.Join(dir, "accounts.db"))
 	if err != nil {
@@ -308,13 +324,14 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 	}
 	src := takeover.Normalize(source)
 	if src == takeover.SourceLocal {
-		// 共享网关:两个 provider 都指向同一个固定默认端口(被占用回退)。
-		port, err := h.gw.Start(gateway.DefaultGatewayPort)
-		if err != nil {
-			return err
-		}
 		switch p {
 		case account.ProviderCodex:
+			// codex 'local' = 经反代:确保网关在跑(没跑则起)+ 把 codex CLI 指向反代。
+			// 接管不独占网关:网关由反代 tab 独立控制,这里只是「确保可用」。
+			port, err := h.gw.Start(gateway.DefaultGatewayPort)
+			if err != nil {
+				return err
+			}
 			if h.platform.CodexInjected() {
 				_ = h.platform.CodexRestore()
 			}
@@ -322,39 +339,53 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 				return err
 			}
 		case account.ProviderAntigravity:
-			_ = h.platform.AntigravityIDERestore()
-			if err := h.platform.AntigravityIDEInject(port); err != nil {
+			// antigravity 'local' = 不走网关:挑一个自有号直接注入 IDE 的 state.vscdb。
+			tok, err := h.pickAntigravityToken()
+			if err != nil {
+				return err
+			}
+			_ = h.platform.AntigravityRestoreAccount()
+			if err := h.platform.AntigravityInjectAccount(tok); err != nil {
 				return err
 			}
 		}
 	} else {
+		// 还原:仅撤注入。网关生命周期与接管解耦——不在此处停网关(反代 tab 独立控制)。
 		switch p {
 		case account.ProviderCodex:
 			if h.platform.CodexInjected() {
 				_ = h.platform.CodexRestore()
 			}
 		case account.ProviderAntigravity:
-			_ = h.platform.AntigravityIDERestore()
-		}
-		// 共享网关:仅当另一个 provider 也不是 local 时才停网关。
-		if !h.anyOtherLocal(p) {
-			_ = h.gw.Stop()
+			_ = h.platform.AntigravityRestoreAccount()
 		}
 	}
 	return h.sources.Set(string(p), src)
 }
 
-// anyOtherLocal 判断除 except 外是否还有 provider 处于 local 号源。
-func (h *Hub) anyOtherLocal(except account.Provider) bool {
-	for p := range h.providers {
-		if p == except {
-			continue
-		}
-		if takeover.Normalize(h.GetSource(p)) == takeover.SourceLocal {
-			return true
+// pickAntigravityToken 选要注入的 antigravity 自有号:优先级号,否则第一个进池号。
+func (h *Hub) pickAntigravityToken() (AntigravityToken, error) {
+	list, err := h.acc.ListPoolEnabled(account.ProviderAntigravity)
+	if err != nil {
+		return AntigravityToken{}, err
+	}
+	if len(list) == 0 {
+		return AntigravityToken{}, errors.New("hub: 没有可用的 antigravity 自有号(请先登录并进池)")
+	}
+	chosen := list[0]
+	for _, a := range list {
+		if a.Priority {
+			chosen = a
+			break
 		}
 	}
-	return false
+	return AntigravityToken{
+		AccessToken:  chosen.AccessToken,
+		RefreshToken: chosen.RefreshToken,
+		IDToken:      chosen.IDToken,
+		Email:        chosen.Email,
+		ProjectID:    chosen.ProjectID,
+	}, nil
 }
 
 // ── 保活 ──

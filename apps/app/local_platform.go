@@ -1,10 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+
+	"bcai-wails/internal/local/antigravityinject"
+	"bcai-wails/internal/local/hub"
 )
 
 // localPlatform 实现 hub.Platform —— 把 package main 的接管注入 / app 检测 /
@@ -26,11 +31,53 @@ func (localPlatform) CodexRestore() error {
 
 func (localPlatform) CodexInjected() bool { return IsCodexInjected() }
 
-func (localPlatform) AntigravityIDEInject(port int) error { return InjectIDESettings(port) }
+// AntigravityInjectAccount 把一份自有号 token 直接写进 Antigravity IDE 的
+// state.vscdb(对齐 cockpit),让 IDE 以该号官方登录态运行——不经任何网关。
+func (localPlatform) AntigravityInjectAccount(tok hub.AntigravityToken) error {
+	dbPath, err := antigravityStateDBPath()
+	if err != nil {
+		return err
+	}
+	return antigravityinject.InjectToPath(dbPath, antigravityinject.Token{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		IDToken:      tok.IDToken,
+		Email:        tok.Email,
+		ProjectID:    tok.ProjectID,
+		// Expiry/IsGCPTos 暂无源数据:expiry=0(IDE 会按需刷新),个人/企业由 ProjectID 决定。
+	})
+}
 
-func (localPlatform) AntigravityIDERestore() error {
-	_ = RestoreIDESettings()
-	return nil
+// AntigravityRestoreAccount 移除 IDE 的注入登录态(state.vscdb)。
+func (localPlatform) AntigravityRestoreAccount() error {
+	dbPath, err := antigravityStateDBPath()
+	if err != nil {
+		// IDE 未安装或库不存在时,还原视为无操作。
+		return nil
+	}
+	return antigravityinject.RestorePath(dbPath)
+}
+
+// antigravityStateDBPath 返回 Antigravity IDE globalStorage 下的 state.vscdb 路径。
+func antigravityStateDBPath() (string, error) {
+	var base string
+	switch runtime.GOOS {
+	case "darwin":
+		base = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Antigravity IDE", "User", "globalStorage")
+	case "windows":
+		appdata := os.Getenv("APPDATA")
+		if appdata == "" {
+			appdata = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
+		}
+		base = filepath.Join(appdata, "Antigravity IDE", "User", "globalStorage")
+	default:
+		base = filepath.Join(os.Getenv("HOME"), ".config", "Antigravity IDE", "User", "globalStorage")
+	}
+	path := filepath.Join(base, "state.vscdb")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("Antigravity IDE 数据库不存在: %s", path)
+	}
+	return path, nil
 }
 
 func (localPlatform) DetectAppPath(provider string) string {
