@@ -40,7 +40,8 @@ func (r *CodexRefresher) FetchQuota(a *account.Account) (Result, error) {
 }
 
 // AntigravityRefresher 适配 antigravity。antigravity 上游不暴露 5h/周额度细项,
-// FetchQuota 走「轻探」:用 access_token 刷新即视为存活,返回满血占位(保活语义)。
+// 保活靠 RefreshToken(刷 access_token 即视为存活);FetchQuota 两窗口都报「未知」,
+// 绝不伪造满血(否则 fair-share 血条卡死,见 codex-quota-window-unknown-parity)。
 type AntigravityRefresher struct{ f *AntigravityFetcher }
 
 func NewAntigravityRefresher(ep AntigravityEndpoints) *AntigravityRefresher {
