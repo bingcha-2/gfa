@@ -61,8 +61,8 @@ describe('CodexSuitePage', () => {
     expect(await screen.findByText('yifan@example.com')).toBeInTheDocument()
     expect(screen.getByText(/网关 127\.0\.0\.1:19528/)).toBeInTheDocument()
     expect(screen.getByText('仅自有号')).toBeInTheDocument()
-    // 封号风险横幅常驻
-    expect(screen.getByText('封号风险自负')).toBeInTheDocument()
+    // 使用风险提示横幅常驻
+    expect(screen.getByText('使用风险提示')).toBeInTheDocument()
     // 配额百分比展示
     expect(screen.getByText('34%')).toBeInTheDocument()
     expect(screen.getByText('61%')).toBeInTheDocument()
