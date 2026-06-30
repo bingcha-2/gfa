@@ -105,6 +105,9 @@ func TestHub_GatewayIndependentOfTakeover(t *testing.T) {
 	if _, err := h.GatewayStart(account.ProviderCodex); err != nil {
 		t.Fatalf("GatewayStart: %v", err)
 	}
+	// 必须在 TempDir 清理前停网关:否则其后台 goroutine 会在 cleanup 时
+	// 往临时目录写 gateway/auth,触发「directory not empty」清理竞态(flaky)。
+	defer h.GatewayStop(account.ProviderCodex)
 	if !h.GatewayStatusOf(account.ProviderCodex).Running {
 		t.Fatal("gateway should run after explicit GatewayStart")
 	}

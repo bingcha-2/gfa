@@ -9,6 +9,7 @@ import { LocalWakeupTab } from './LocalWakeupTab'
 import { LocalInstancesTab } from './LocalInstancesTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
 import { LocalModelProvidersTab } from './LocalModelProvidersTab'
+import { LocalSettingsTab } from './LocalSettingsTab'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
@@ -27,11 +28,13 @@ export interface LocalProviderSuiteProps {
   hasGateway?: boolean
   /** 是否有自定义模型供应商(OpenAI 兼容供应商喂号 + 动态目录)。仅 codex;antigravity 不显示供应商 tab。 */
   hasModelProviders?: boolean
+  /** 是否有「Codex 设置」面板(本地 Codex 设置 + config.toml 快捷配置)。仅 codex。 */
+  hasSettings?: boolean
 }
 
-type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances'
+type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances' | 'settings'
 
-export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false }: LocalProviderSuiteProps) {
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false }: LocalProviderSuiteProps) {
   const tabs: [TabId, string][] = [
     ['accounts', '账号'],
     ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
@@ -39,6 +42,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
     ['stats', '统计'],
     ['wakeup', '保活'],
     ['instances', '实例'],
+    ...(hasSettings ? ([['settings', '设置']] as [TabId, string][]) : []),
   ]
   const [source, setSource] = useState<'remote' | 'local'>('remote')
   const [tab, setTab] = useState<TabId>('accounts')
@@ -120,6 +124,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
       {tab === 'instances' && <LocalInstancesTab api={api} />}
+      {tab === 'settings' && <LocalSettingsTab onNavigate={(p) => { if (p === 'wakeup') setTab('wakeup'); else onNavigate?.(p) }} />}
     </div>
   )
 }

@@ -18,6 +18,8 @@ import (
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/antigravityauth"
 	"bcai-wails/internal/local/codexauth"
+	"bcai-wails/internal/local/codexsettings"
+	"bcai-wails/internal/local/economy"
 	"bcai-wails/internal/local/gateway"
 	"bcai-wails/internal/local/gatewaycfg"
 	"bcai-wails/internal/local/gatewaykeys"
@@ -108,6 +110,13 @@ type Hub struct {
 	gwScope     *gatewaycfg.Store
 	modelProv   *modelprovider.Store
 	autoRefresh *autoRefresher
+
+	// 经济与自动化(① 超额预警 ② 自动切号 ③ 速度档):纯逻辑 + JSON 持久化。
+	alertStore  *economy.AlertStore
+	switchStore *switchConfigStore
+	speedStore  *economy.SpeedStore
+	// codexSettings 是「Codex 设置」面板的本地持久化。
+	codexSettings *codexsettings.Store
 }
 
 // New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
@@ -130,6 +139,11 @@ func New(dir string, platform Platform) (*Hub, error) {
 		providers:  map[account.Provider]*providerCtx{},
 		refreshCfg: refreshcfg.NewStore(dir),
 		modelProv:  modelprovider.NewStore(dir),
+
+		alertStore:    economy.NewAlertStore(dir),
+		switchStore:   newSwitchConfigStore(dir),
+		speedStore:    economy.NewSpeedStore(dir),
+		codexSettings: codexsettings.NewStore(dir),
 	}
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
@@ -582,16 +596,27 @@ func (h *Hub) RefreshAccountQuota(id string) error {
 	if err != nil {
 		return err
 	}
-	return pc.mgr.RefreshQuota(id)
+	if err := pc.mgr.RefreshQuota(id); err != nil {
+		return err
+	}
+	if a.Provider == account.ProviderCodex {
+		h.maybeAutoSwitchCodex()
+	}
+	return nil
 }
 
 // RefreshAllQuotas 刷新某 provider 的所有 pool_enabled 自有号额度,返回成功数量。
+// codex 刷完后顺带触发一次自动切号评估(超额则切到更空闲的号 + 重注入)。
 func (h *Hub) RefreshAllQuotas(p account.Provider) (int, error) {
 	pc, err := h.ctx(p)
 	if err != nil {
 		return 0, err
 	}
-	return pc.mgr.RefreshAllQuotas()
+	n, err := pc.mgr.RefreshAllQuotas()
+	if p == account.ProviderCodex {
+		h.maybeAutoSwitchCodex()
+	}
+	return n, err
 }
 
 // ── 自动刷新间隔(配额自动刷新 / 当前账号刷新,分钟) ──

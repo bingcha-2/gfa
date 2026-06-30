@@ -373,3 +373,239 @@ export function testModelProvider(id: string): Promise<ModelProviderConnTestResu
 export function listModelProviderModels(id: string): Promise<ModelProviderModelsResult> {
   return app().LocalListModelProviderModels(id) as Promise<ModelProviderModelsResult>
 }
+
+// ── 经济与自动化(① 超额预警 ② 自动切号 ③ 速度档) ──
+// 自包含:类型与函数均独立,移植自 cockpit codex_account / codex_speed。
+// 红线:自动切号只动 codex 自有号优先级与本机注入,与远程租号无关。
+
+/** ① 超额预警配置:thresholdPct 为「剩余」百分比阈值(0..100),当前号任一窗口剩余 <= 阈值即报。 */
+export interface AlertConfig {
+  enabled: boolean
+  thresholdPct: number
+}
+
+/** 超额预警判定结果(纯判定,前端负责派发/节流)。 */
+export interface AlertResult {
+  Alert: boolean
+  LowestPercentage: number
+  LowModels: string[] | null
+}
+
+/** ② 自动切号监控范围:all=全部号 / selected=仅选中的号。 */
+export type SwitchScopeMode = 'all' | 'selected'
+
+/** 自动切号配置:命中阈值/冷却即切到「所有窗口剩余 > 阈值且未冷却」的更空闲号。 */
+export interface SwitchConfig {
+  enabled: boolean
+  thresholdPct: number
+  scopeMode: SwitchScopeMode
+  selectedAccountIds: string[] | null
+}
+
+/** ③ 上下文窗口/压缩阈值预设。 */
+export type ContextPreset = 'default' | 'preset_516k' | 'preset_1m' | 'custom'
+
+/** 官方 App 推理速度档:standard=默认(删 service tier 键) / fast=priority。 */
+export type ServiceTier = 'standard' | 'fast'
+
+/** 统一速度档配置:上下文预设(+ 自定义值)+ service tier。 */
+export interface AppSpeed {
+  contextPreset: ContextPreset
+  tier: ServiceTier
+  customContextWindow?: number
+  customAutoCompact?: number
+}
+
+/** 读取超额预警配置。 */
+export function getAlertConfig(): Promise<AlertConfig> {
+  return app().LocalGetAlertConfig() as Promise<AlertConfig>
+}
+
+/** 保存超额预警配置,返回 clamp 后的实际值。 */
+export function setAlertConfig(cfg: AlertConfig): Promise<AlertConfig> {
+  return app().LocalSetAlertConfig(cfg) as Promise<AlertConfig>
+}
+
+/** 对 codex 当前(优先级)号求一次预警判定(纯判定,不派发)。 */
+export function evaluateCodexAlert(): Promise<AlertResult> {
+  return app().LocalEvaluateCodexAlert() as Promise<AlertResult>
+}
+
+/** 读取自动切号配置。 */
+export function getSwitchConfig(): Promise<SwitchConfig> {
+  return app().LocalGetSwitchConfig() as Promise<SwitchConfig>
+}
+
+/** 保存自动切号配置,返回落盘后的值。 */
+export function setSwitchConfig(cfg: SwitchConfig): Promise<SwitchConfig> {
+  return app().LocalSetSwitchConfig(cfg) as Promise<SwitchConfig>
+}
+
+/** 读取速度档配置。 */
+export function getAppSpeed(): Promise<AppSpeed> {
+  return app().LocalGetAppSpeed() as Promise<AppSpeed>
+}
+
+/** 保存速度档配置,返回落盘后的值。 */
+export function setAppSpeed(s: AppSpeed): Promise<AppSpeed> {
+  return app().LocalSetAppSpeed(s) as Promise<AppSpeed>
+}
+
+// ── codex 上游业务(① 订阅 ② 主动重置次数 ③ 邀请返利) ──
+// codex 自有号查自己的订阅/返利,等同额度刷新路径;不碰远程租号 / 网关出口。
+
+/** ① 订阅快照。 */
+export interface CodexSubscriptionSnapshot {
+  AccountID: string
+  PlanType: string
+  SubscriptionActiveUntil: string
+}
+
+/** ② 一条主动重置次数明细。 */
+export interface CodexResetCredit {
+  id?: string
+  status?: string
+  reset_type?: string
+  granted_at?: number
+  expires_at?: number
+  redeemed_at?: number
+  raw_status?: string
+}
+
+/** 主动重置次数快照。 */
+export interface CodexResetCreditsSnapshot {
+  available_count?: number
+  credits: CodexResetCredit[] | null
+  next_expires_at?: number
+}
+
+/** ③ 邀请返利资格。 */
+export interface CodexReferralInviteEligibility {
+  should_show: boolean
+  remaining_referrals?: number
+  ineligible_reason_code?: string
+  grant_action?: string
+  grant_amount?: number
+  referral_key: string
+}
+
+/** 邀请返利时间窗规则。 */
+export interface CodexReferralTimeFrameRule {
+  type: string
+  invites_sent: number
+  invites_total: number
+}
+
+/** 邀请返利规则集。 */
+export interface CodexReferralEligibilityRules {
+  requires_explicit_confirmation: boolean | null
+  rules: string[] | null
+  time_frame_rules: CodexReferralTimeFrameRule[] | null
+}
+
+/** 一条已发邀请。 */
+export interface CodexReferralInvite {
+  email: string
+}
+
+/** 发邀请响应。 */
+export interface CodexReferralInviteResponse {
+  invites: CodexReferralInvite[] | null
+}
+
+/** 拉某 codex 自有号的订阅快照(accounts/check → subscriptions 回退)。 */
+export function refreshCodexSubscription(id: string): Promise<CodexSubscriptionSnapshot> {
+  return app().LocalRefreshCodexSubscription(id) as Promise<CodexSubscriptionSnapshot>
+}
+
+/** 拉某 codex 自有号的主动重置次数明细。 */
+export function getCodexResetCredits(id: string): Promise<CodexResetCreditsSnapshot> {
+  return app().LocalGetCodexResetCredits(id) as Promise<CodexResetCreditsSnapshot>
+}
+
+/** 消费一次主动重置;redeemRequestID 传空串时后端自动生成 UUID。 */
+export function consumeCodexResetCredit(id: string, redeemRequestId = ''): Promise<void> {
+  return app().LocalConsumeCodexResetCredit(id, redeemRequestId) as Promise<void>
+}
+
+/** 查某 codex 自有号的邀请返利资格(referralKey 空则用后端默认 key)。 */
+export function codexReferralEligibility(id: string, referralKey = ''): Promise<CodexReferralInviteEligibility> {
+  return app().LocalCodexReferralEligibility(id, referralKey) as Promise<CodexReferralInviteEligibility>
+}
+
+/** 查某 codex 自有号的邀请返利规则。 */
+export function codexReferralRules(id: string, referralKey = ''): Promise<CodexReferralEligibilityRules> {
+  return app().LocalCodexReferralRules(id, referralKey) as Promise<CodexReferralEligibilityRules>
+}
+
+/** 给某 codex 自有号发邀请(emails 1..=5,后端 trim/去空/校验)。 */
+export function sendCodexReferralInvites(
+  id: string,
+  emails: string[],
+  referralKey = '',
+): Promise<CodexReferralInviteResponse> {
+  return app().LocalSendCodexReferralInvites(id, referralKey, emails) as Promise<CodexReferralInviteResponse>
+}
+
+// ── Codex 设置面板 + config.toml 快捷配置 ──
+// 只读写本地 Codex 设置与 config.toml,与远程租号 / 网关出口无关。
+
+/** 「Codex 设置」面板的全部持久化项。 */
+export interface CodexSettings {
+  codexAppPath: string
+  launchOnSwitch: boolean
+  restartAppOnSwitch: boolean
+  restartAppPath: string
+  showApiEntry: boolean
+  filterMemory: boolean
+  showCodeReviewQuota: boolean
+}
+
+/** config.toml 快捷配置视图。 */
+export interface CodexQuickConfig {
+  contextWindow1m: boolean
+  autoCompactTokenLimit: number
+  detectedModelContextWindow?: number
+  detectedAutoCompactTokenLimit?: number
+}
+
+/** 读取「Codex 设置」面板项(缺省回退默认)。 */
+export function getCodexSettings(): Promise<CodexSettings> {
+  return app().LocalGetCodexSettings() as Promise<CodexSettings>
+}
+
+/** 保存「Codex 设置」面板项,返回落盘后的值。 */
+export function saveCodexSettings(s: CodexSettings): Promise<CodexSettings> {
+  return app().LocalSaveCodexSettings(s) as Promise<CodexSettings>
+}
+
+/** 读 ~/.codex/config.toml 的快捷配置。 */
+export function getCodexQuickConfig(): Promise<CodexQuickConfig> {
+  return app().LocalGetCodexQuickConfig() as Promise<CodexQuickConfig>
+}
+
+/**
+ * 结构保留地改写 config.toml 两个顶层整数键,回读返回。
+ * 传 null 表示删除该键;传正整数表示写入(必须 > 0)。
+ */
+export function saveCodexQuickConfig(
+  modelContextWindow: number | null,
+  autoCompactTokenLimit: number | null,
+): Promise<CodexQuickConfig> {
+  return app().LocalSaveCodexQuickConfig(modelContextWindow, autoCompactTokenLimit) as Promise<CodexQuickConfig>
+}
+
+/** 打开系统文件对话框选路径(应用/可执行),取消返回空串。 */
+export function browseForPath(title: string): Promise<string> {
+  return app().LocalBrowseForPath(title) as Promise<string>
+}
+
+/** 自动检测本机 Codex App 路径(未装返回空串)。 */
+export function detectCodexAppPath(): Promise<string> {
+  return app().LocalDetectCodexAppPath() as Promise<string>
+}
+
+/** 用系统默认编辑器打开 ~/.codex/config.toml。 */
+export function openCodexConfigToml(): Promise<void> {
+  return app().LocalOpenCodexConfigToml() as Promise<void>
+}

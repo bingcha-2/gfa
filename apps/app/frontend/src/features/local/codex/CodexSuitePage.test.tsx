@@ -83,6 +83,31 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalDeleteModelProvider: vi.fn().mockResolvedValue(undefined),
     LocalTestModelProvider: vi.fn().mockResolvedValue({ ok: true, status: 200, latencyMs: 88, err: '', model: 'deepseek-chat' }),
     LocalListModelProviderModels: vi.fn().mockResolvedValue({ models: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }], latencyMs: 120 }),
+    // ── 经济与自动化(Wave G · codex-only)──
+    LocalGetAlertConfig: vi.fn().mockResolvedValue({ enabled: false, thresholdPct: 10 }),
+    LocalSetAlertConfig: vi.fn().mockResolvedValue({ enabled: true, thresholdPct: 20 }),
+    LocalGetSwitchConfig: vi.fn().mockResolvedValue({ enabled: false, thresholdPct: 5, scopeMode: 'all', selectedAccountIds: null }),
+    LocalSetSwitchConfig: vi.fn().mockResolvedValue({ enabled: true, thresholdPct: 5, scopeMode: 'all', selectedAccountIds: null }),
+    LocalGetAppSpeed: vi.fn().mockResolvedValue({ contextPreset: 'default', tier: 'standard' }),
+    LocalSetAppSpeed: vi.fn().mockResolvedValue({ contextPreset: 'preset_1m', tier: 'fast' }),
+    // ── codex 上游业务(Wave G · codex-only)──
+    LocalRefreshCodexSubscription: vi.fn().mockResolvedValue({ AccountID: 'a1', PlanType: 'pro', SubscriptionActiveUntil: '2026-12-31' }),
+    LocalGetCodexResetCredits: vi.fn().mockResolvedValue({ available_count: 2, credits: [], next_expires_at: 0 }),
+    LocalConsumeCodexResetCredit: vi.fn().mockResolvedValue(undefined),
+    LocalCodexReferralEligibility: vi.fn().mockResolvedValue({ should_show: true, remaining_referrals: 3, referral_key: 'rk' }),
+    LocalCodexReferralRules: vi.fn().mockResolvedValue({ requires_explicit_confirmation: false, rules: [], time_frame_rules: [] }),
+    LocalSendCodexReferralInvites: vi.fn().mockResolvedValue({ invites: [{ email: 'friend@x.com' }] }),
+    // ── Codex 设置面板(Wave H · codex-only)──
+    LocalGetCodexSettings: vi.fn().mockResolvedValue({
+      codexAppPath: '', launchOnSwitch: false, restartAppOnSwitch: false, restartAppPath: '',
+      showApiEntry: true, filterMemory: false, showCodeReviewQuota: false,
+    }),
+    LocalSaveCodexSettings: vi.fn().mockImplementation((s: unknown) => Promise.resolve(s)),
+    LocalGetCodexQuickConfig: vi.fn().mockResolvedValue({ contextWindow1m: false, autoCompactTokenLimit: 0 }),
+    LocalSaveCodexQuickConfig: vi.fn().mockResolvedValue({ contextWindow1m: false, autoCompactTokenLimit: 0 }),
+    LocalBrowseForPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
+    LocalDetectCodexAppPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
+    LocalOpenCodexConfigToml: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -512,5 +537,135 @@ describe('CodexSuitePage', () => {
     const app = installApp({ LocalListModelProviders: vi.fn().mockResolvedValue([]) })
     await openProviders(app)
     expect(await screen.findByText(/还没有自定义供应商/)).toBeInTheDocument()
+  })
+
+  // ── 经济与自动化 UI(Wave G · codex-only,不污染 antigravity)──
+
+  it('账号 tab 顶部读取 alert/switch/speed 当前值', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    await waitFor(() => expect(app.LocalGetAlertConfig).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalGetSwitchConfig).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalGetAppSpeed).toHaveBeenCalled())
+    // 当前 default 速度档 → 「默认」段控高亮
+    expect((await screen.findByRole('button', { name: '默认' })).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('超额预警开关 off→on 调 setAlertConfig(带当前阈值)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    const sw = await screen.findByRole('switch', { name: /超额预警/ })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(sw)
+    await waitFor(() => expect(app.LocalSetAlertConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, thresholdPct: 10 })))
+  })
+
+  it('改预警阈值输入框失焦调 setAlertConfig(带新阈值)', async () => {
+    const app = installApp({ LocalGetAlertConfig: vi.fn().mockResolvedValue({ enabled: true, thresholdPct: 10 }) })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    const input = await screen.findByLabelText('预警阈值') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '25' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(app.LocalSetAlertConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, thresholdPct: 25 })))
+  })
+
+  it('自动切号开关 off→on 调 setSwitchConfig', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    const sw = await screen.findByRole('switch', { name: /自动切号/ })
+    fireEvent.click(sw)
+    await waitFor(() => expect(app.LocalSetSwitchConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: true })))
+  })
+
+  it('速度档段控点「快速」调 setAppSpeed(tier=fast)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(await screen.findByRole('button', { name: '快速' }))
+    await waitFor(() => expect(app.LocalSetAppSpeed).toHaveBeenCalledWith(expect.objectContaining({ tier: 'fast' })))
+  })
+
+  it('速度档选「自定义」露出上下文阈值输入,改值调 setAppSpeed(custom)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(await screen.findByRole('button', { name: '自定义' }))
+    const ctx = await screen.findByLabelText('自定义上下文窗口') as HTMLInputElement
+    fireEvent.change(ctx, { target: { value: '516000' } })
+    fireEvent.blur(ctx)
+    await waitFor(() => expect(app.LocalSetAppSpeed).toHaveBeenCalledWith(
+      expect.objectContaining({ contextPreset: 'custom', customContextWindow: 516000 }),
+    ))
+  })
+
+  it('账号行「刷新订阅」调 refreshCodexSubscription(id) 并显示 plan', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    fireEvent.click(await screen.findByRole('button', { name: '刷新订阅' }))
+    await waitFor(() => expect(app.LocalRefreshCodexSubscription).toHaveBeenCalledWith('a1'))
+    expect(await screen.findByText(/2026-12-31/)).toBeInTheDocument()
+  })
+
+  it('账号行展开后读取 reset 次数(显示可用次数),消费调 consumeCodexResetCredit', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await waitFor(() => expect(app.LocalGetCodexResetCredits).toHaveBeenCalledWith('a1'))
+    expect(await screen.findByText(/可用 2 次/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /消费一次/ }))
+    await waitFor(() => expect(app.LocalConsumeCodexResetCredit).toHaveBeenCalledWith('a1', ''))
+  })
+
+  it('账号行邀请返利:查资格→填邮箱→发送调 sendCodexReferralInvites', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    fireEvent.click(await screen.findByRole('button', { name: /邀请返利/ }))
+    await waitFor(() => expect(app.LocalCodexReferralEligibility).toHaveBeenCalledWith('a1', ''))
+    expect(await screen.findByText(/剩余 3/)).toBeInTheDocument()
+    fireEvent.change(await screen.findByLabelText('邀请邮箱'), { target: { value: 'friend@x.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送邀请' }))
+    await waitFor(() => expect(app.LocalSendCodexReferralInvites).toHaveBeenCalledWith('a1', '', ['friend@x.com']))
+  })
+
+  // ── Codex 设置 tab(Wave H · codex-only,不污染 antigravity)──
+
+  it('codex 有「设置」tab(hasSettings),打开后加载 codex 设置面板', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await waitFor(() => expect(app.LocalGetCodexSettings).toHaveBeenCalled())
+    expect(await screen.findByLabelText('Codex app 路径')).toBeInTheDocument()
+  })
+
+  it('设置 tab 切「显示 API 服务入口」开关调 saveCodexSettings', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const sw = await screen.findByRole('switch', { name: /显示 API 服务入口/ })
+    fireEvent.click(sw)
+    await waitFor(() =>
+      expect(app.LocalSaveCodexSettings).toHaveBeenCalledWith(expect.objectContaining({ showApiEntry: false })),
+    )
+  })
+
+  it('设置 tab「去保活设置」切到 suite 内「保活」tab', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(await screen.findByRole('button', { name: /去保活设置/ }))
+    // 切到保活 tab:保活 tab 会拉 wakeupConfig
+    await waitFor(() => expect(app.LocalCodexWakeupConfig).toHaveBeenCalled())
   })
 })
