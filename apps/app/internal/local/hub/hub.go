@@ -94,6 +94,10 @@ type Platform interface {
 
 	// CodexRestartApp 重启常驻 Codex GUI app(切号后重读 auth.json);未装则 no-op。
 	CodexRestartApp() error
+
+	// RestartSpecifiedApp 杀掉并重启用户在「Codex 设置」里指定的联动应用(切号后)。
+	// 对齐 cockpit codex_restart_specified_app_on_switch / codex_specified_app_path。
+	RestartSpecifiedApp(appPath string) error
 }
 
 // GatewayStatus 网关状态视图(前端用)。
@@ -633,8 +637,13 @@ func (h *Hub) restartClientAfterSwitch(p account.Provider) {
 			_ = h.platform.AntigravityStartDefault()
 		}
 	case account.ProviderCodex:
-		if h.GetCodexSettings().LaunchOnSwitch {
+		cs := h.GetCodexSettings()
+		if cs.LaunchOnSwitch {
 			_ = h.platform.CodexRestartApp()
+		}
+		// 切号后联动重启用户指定的应用(如自建 IDE/编辑器);未开或未配路径则跳过。
+		if cs.RestartAppOnSwitch && strings.TrimSpace(cs.RestartAppPath) != "" {
+			_ = h.platform.RestartSpecifiedApp(cs.RestartAppPath)
 		}
 	}
 }

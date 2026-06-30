@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"bcai-wails/internal/local/account"
+	"bcai-wails/internal/local/codexsettings"
 	"bcai-wails/internal/local/economy"
 	"bcai-wails/internal/local/takeover"
 )
@@ -163,14 +164,26 @@ func (h *Hub) currentAccount(p account.Provider) (*account.Account, error) {
 // GetAppSpeed 返回当前速度档配置(上下文预设 + service tier)。
 func (h *Hub) GetAppSpeed() economy.AppSpeed { return h.speedStore.Load() }
 
-// SetAppSpeed 持久化速度档配置,返回落盘后的值。
-// 注:把值写进 config.toml(model_context_window / desktop.default-service-tier)的副作用
-// 由平台/codexsettings 集成层负责;本方法只落 economy 的偏好。
+// SetAppSpeed 持久化速度档偏好,并真正落地到 Codex 的 config.toml(否则「快速」只是好看的开关):
+//   - service tier(fast/standard)→ [desktop].default-service-tier + 全局原子态(对齐 cockpit);
+//   - 仅当用户用「自定义」明确指定上下文窗口时才写 model_context_window —— 默认/快速不碰,
+//     免得和「设置」里的 1M 上下文开关(LocalSaveCodexQuickConfig)互相覆盖。
 func (h *Hub) SetAppSpeed(s economy.AppSpeed) (economy.AppSpeed, error) {
 	if err := h.speedStore.Save(s); err != nil {
 		return economy.AppSpeed{}, err
 	}
-	return h.speedStore.Load(), nil
+	saved := h.speedStore.Load()
+	if err := codexsettings.SaveCurrentServiceTier(saved.Tier == economy.TierFast); err != nil {
+		return saved, err
+	}
+	if saved.ContextPreset == economy.PresetCustom {
+		if mcw, acl := saved.ContextValues(); mcw != nil || acl != nil {
+			if _, err := codexsettings.SaveCurrentQuickConfig(mcw, acl); err != nil {
+				return saved, err
+			}
+		}
+	}
+	return saved, nil
 }
 
 // ── 自动切号配置的 JSON 持久化(economy.SwitchConfig 自身无 Store) ──

@@ -219,3 +219,29 @@ func (localPlatform) CodexRestartApp() error {
 	_, err := localPlatform{}.LaunchApp(appPath, "", nil)
 	return err
 }
+
+// RestartSpecifiedApp 杀掉并重启用户在「Codex 设置」里指定的联动应用(切号后调用)。
+// appPath 形如 .app 包(darwin)或可执行文件;空 path 由调用方过滤,这里再兜一层。
+// kill 锚定到从 appPath 推出的主进程,避免误杀;随后用 LaunchApp 重新拉起。
+func (localPlatform) RestartSpecifiedApp(appPath string) error {
+	appPath = strings.TrimSpace(appPath)
+	if appPath == "" {
+		return nil
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		if name := strings.TrimSuffix(filepath.Base(appPath), ".app"); name != "" {
+			killProcessesByPattern(name+".app/Contents/MacOS", "-TERM")
+		}
+	case "windows":
+		if exe := filepath.Base(appPath); exe != "" {
+			_ = hideCmd("taskkill", "/IM", exe, "/T").Run()
+		}
+	case "linux":
+		if name := filepath.Base(appPath); name != "" {
+			_ = hideCmd("pkill", "-TERM", "-f", name).Run()
+		}
+	}
+	_, err := localPlatform{}.LaunchApp(appPath, "", nil)
+	return err
+}

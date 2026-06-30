@@ -22,12 +22,14 @@ type fakePlatform struct {
 	ideToken           AntigravityToken
 	ideTokenErr        error
 
-	agStartCount      int
-	agStopCount       int
-	agFocusCount      int
-	agStatusCount     int
-	agRunning         bool
-	codexRestartCount int
+	agStartCount          int
+	agStopCount           int
+	agFocusCount          int
+	agStatusCount         int
+	agRunning             bool
+	codexRestartCount     int
+	restartSpecifiedCount int
+	restartSpecifiedPath  string
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -66,6 +68,11 @@ func (f *fakePlatform) AntigravityStopDefault() error {
 func (f *fakePlatform) AntigravityFocusDefault() error  { f.agFocusCount++; return nil }
 func (f *fakePlatform) AntigravityRuntimeRunning() bool { f.agStatusCount++; return f.agRunning }
 func (f *fakePlatform) CodexRestartApp() error          { f.codexRestartCount++; return nil }
+func (f *fakePlatform) RestartSpecifiedApp(appPath string) error {
+	f.restartSpecifiedCount++
+	f.restartSpecifiedPath = appPath
+	return nil
+}
 
 func newHub(t *testing.T) (*Hub, *fakePlatform) {
 	t.Helper()
@@ -200,6 +207,45 @@ func TestHub_RestartOnSwitch(t *testing.T) {
 	}
 	if fp.codexRestartCount != before {
 		t.Fatalf("LaunchOnSwitch 关时不应重启 codex,got %d (was %d)", fp.codexRestartCount, before)
+	}
+}
+
+// RestartAppOnSwitch + RestartAppPath:开关开 + 路径非空才联动重启指定应用(原为 dead config)。
+func TestHub_SetSource_RestartsSpecifiedApp(t *testing.T) {
+	h, fp := newHub(t)
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderCodex, Email: "cx@x.com", AuthKind: account.AuthOAuth, AccessToken: "AT", PoolEnabled: true})
+
+	// 开关关:即使有路径也不重启指定应用。
+	if _, err := h.SaveCodexSettings(codexsettings.Settings{RestartAppOnSwitch: false, RestartAppPath: "/Applications/Foo.app"}); err != nil {
+		t.Fatalf("SaveCodexSettings: %v", err)
+	}
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("local: %v", err)
+	}
+	if fp.restartSpecifiedCount != 0 {
+		t.Fatalf("开关关时不应重启指定应用,got %d", fp.restartSpecifiedCount)
+	}
+
+	// 开关开 + 路径空:跳过(避免空路径误启)。
+	if _, err := h.SaveCodexSettings(codexsettings.Settings{RestartAppOnSwitch: true, RestartAppPath: "  "}); err != nil {
+		t.Fatalf("SaveCodexSettings: %v", err)
+	}
+	if err := h.SetSource(account.ProviderCodex, "remote"); err != nil {
+		t.Fatalf("remote: %v", err)
+	}
+	if fp.restartSpecifiedCount != 0 {
+		t.Fatalf("路径空时不应重启指定应用,got %d", fp.restartSpecifiedCount)
+	}
+
+	// 开关开 + 路径非空:重启,且把配置的路径透传下去。
+	if _, err := h.SaveCodexSettings(codexsettings.Settings{RestartAppOnSwitch: true, RestartAppPath: "/Applications/Foo.app"}); err != nil {
+		t.Fatalf("SaveCodexSettings: %v", err)
+	}
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("local: %v", err)
+	}
+	if fp.restartSpecifiedCount != 1 || fp.restartSpecifiedPath != "/Applications/Foo.app" {
+		t.Fatalf("应重启指定应用并透传路径,got count=%d path=%q", fp.restartSpecifiedCount, fp.restartSpecifiedPath)
 	}
 }
 
