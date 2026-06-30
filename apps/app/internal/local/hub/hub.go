@@ -63,6 +63,12 @@ type Platform interface {
 	// AntigravityRestoreAccount 移除 Antigravity IDE 的注入登录态。
 	AntigravityRestoreAccount() error
 
+	// CodexAuthJSONPath 返回本机 codex 的 ~/.codex/auth.json 路径(本地导入用)。
+	CodexAuthJSONPath() string
+	// AntigravityReadIDEToken 读当前 Antigravity IDE(state.vscdb)里注入/登录的自有号
+	// 登录态(从已装 IDE 同步号用)。未登录/未装 IDE 返回错误。
+	AntigravityReadIDEToken() (AntigravityToken, error)
+
 	DetectAppPath(provider string) string
 	LaunchApp(appPath, workingDir string, args []string) (int, error)
 	StopProcess(pid int) error

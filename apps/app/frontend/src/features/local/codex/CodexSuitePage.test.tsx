@@ -291,4 +291,45 @@ describe('CodexSuitePage', () => {
     fireEvent.change(currentSel, { target: { value: '5' } })
     await waitFor(() => expect(app.LocalSetRefreshConfig).toHaveBeenCalledWith(10, 5))
   })
+
+  it('加号菜单有「从本地 ~/.codex 导入」(codex 有 importFromLocal),点击调 importFromLocal 并重拉列表', async () => {
+    const importFromLocal = vi.fn().mockResolvedValue(2)
+    const app = installApp({ LocalImportCodexFromLocal: importFromLocal })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /从本地.*导入/ }))
+    await waitFor(() => expect(importFromLocal).toHaveBeenCalled())
+    // 导入后回填:重新拉取账号列表
+    await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('加号菜单有「从文件导入」(codex 有 importAuthFiles),选文件后读文本数组并调 importAuthFiles', async () => {
+    const importAuthFiles = vi.fn().mockResolvedValue(2)
+    const app = installApp({ LocalImportCodexAuthFiles: importAuthFiles })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /从文件导入/ }))
+    const input = document.querySelector('input[type=file]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.multiple).toBe(true)
+    const f1 = new File(['{"a":1}'], 'a.json', { type: 'application/json' })
+    const f2 = new File(['{"b":2}'], 'b.json', { type: 'application/json' })
+    Object.defineProperty(input, 'files', { value: [f1, f2], configurable: true })
+    fireEvent.change(input)
+    await waitFor(() => expect(importAuthFiles).toHaveBeenCalledWith(['{"a":1}', '{"b":2}']))
+    // 导入后回填:重新拉取账号列表
+    await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('加号菜单不显示 antigravity 专属的「从已装 IDE 同步」(codex 无 syncFromIDE)', async () => {
+    installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    await screen.findByRole('menuitem', { name: /浏览器登录/ })
+    expect(screen.queryByRole('menuitem', { name: /从已装 IDE 同步/ })).toBeNull()
+  })
 })

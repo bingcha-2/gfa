@@ -63,6 +63,33 @@ func (localPlatform) AntigravityRestoreAccount() error {
 	return antigravityinject.RestorePath(dbPath)
 }
 
+// CodexAuthJSONPath 返回本机 ~/.codex/auth.json 路径(本地导入用)。
+func (localPlatform) CodexAuthJSONPath() string {
+	return filepath.Join(codexHomeDir(), "auth.json")
+}
+
+// AntigravityReadIDEToken 读当前 Antigravity IDE(state.vscdb)里注入/登录的自有号
+// 登录态(从已装 IDE 同步号用);解码 antigravityUnifiedStateSync.oauthToken 等。
+func (localPlatform) AntigravityReadIDEToken() (hub.AntigravityToken, error) {
+	dbPath, err := antigravityStateDBPath()
+	if err != nil {
+		return hub.AntigravityToken{}, err
+	}
+	tok, err := antigravityinject.ExtractToken(dbPath)
+	if err != nil {
+		return hub.AntigravityToken{}, err
+	}
+	return hub.AntigravityToken{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		IDToken:      tok.IDToken,
+		Email:        tok.Email,
+		ProjectID:    tok.ProjectID,
+		Expiry:       tok.Expiry,
+		IsGCPTos:     tok.IsGCPTos,
+	}, nil
+}
+
 // antigravityStateDBPath 返回 Antigravity IDE globalStorage 下的 state.vscdb 路径。
 func antigravityStateDBPath() (string, error) {
 	var base string

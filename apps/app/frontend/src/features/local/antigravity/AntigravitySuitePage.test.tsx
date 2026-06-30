@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { AntigravitySuitePage } from './AntigravitySuitePage'
@@ -20,6 +20,8 @@ function installApp() {
     LocalAntigravityGatewayStop: vi.fn(),
     LocalExportAntigravityAccounts: vi.fn(),
     LocalImportAntigravityFromJSON: vi.fn(),
+    LocalImportAntigravityAuthFiles: vi.fn().mockResolvedValue(2),
+    LocalSyncAntigravityFromIDE: vi.fn().mockResolvedValue(1),
     LocalGetAntigravitySource: vi.fn().mockResolvedValue('remote'),
     LocalSetAntigravitySource: vi.fn().mockResolvedValue(undefined),
   }
@@ -53,8 +55,42 @@ describe('AntigravitySuitePage', () => {
     render(<AntigravitySuitePage onNavigate={onNav} />)
     await screen.findByText('me@gmail.com')
     expect(screen.queryByText('接管模式')).toBeNull()
-    const { fireEvent } = await import('@testing-library/react')
     fireEvent.click(screen.getByRole('button', { name: /去接管中心/ }))
     expect(onNav).toHaveBeenCalledWith('takeover')
+  })
+
+  it('加号菜单有「从已装 IDE 同步」(antigravity 有 syncFromIDE),点击调 syncFromIDE 并重拉列表', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    expect(app.LocalListAntigravityAccounts).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /从已装 IDE 同步/ }))
+    await waitFor(() => expect(app.LocalSyncAntigravityFromIDE).toHaveBeenCalled())
+    await waitFor(() => expect(app.LocalListAntigravityAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('加号菜单有「从文件导入」(antigravity 有 importAuthFiles),选文件后读文本数组并调 importAuthFiles', async () => {
+    const app = installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /从文件导入/ }))
+    const input = document.querySelector('input[type=file]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    const f1 = new File(['tok-1'], 'g1.json', { type: 'application/json' })
+    Object.defineProperty(input, 'files', { value: [f1], configurable: true })
+    fireEvent.change(input)
+    await waitFor(() => expect(app.LocalImportAntigravityAuthFiles).toHaveBeenCalledWith(['tok-1']))
+    await waitFor(() => expect(app.LocalListAntigravityAccounts).toHaveBeenCalledTimes(2))
+  })
+
+  it('加号菜单不显示 codex 专属的「从本地 ~/.codex 导入」(antigravity 无 importFromLocal)', async () => {
+    installApp()
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    await screen.findByRole('menuitem', { name: /浏览器登录/ })
+    expect(screen.queryByRole('menuitem', { name: /从本地.*导入/ })).toBeNull()
   })
 })

@@ -17,6 +17,9 @@ type fakePlatform struct {
 	agInjectedToken    AntigravityToken
 	appPath            string
 	launchedArgs       []string
+	codexAuthPath      string
+	ideToken           AntigravityToken
+	ideTokenErr        error
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -30,7 +33,11 @@ func (f *fakePlatform) AntigravityInjectAccount(tok AntigravityToken) error {
 	f.agInjectedToken = tok
 	return nil
 }
-func (f *fakePlatform) AntigravityRestoreAccount() error     { f.agRestoreCount++; return nil }
+func (f *fakePlatform) AntigravityRestoreAccount() error { f.agRestoreCount++; return nil }
+func (f *fakePlatform) CodexAuthJSONPath() string        { return f.codexAuthPath }
+func (f *fakePlatform) AntigravityReadIDEToken() (AntigravityToken, error) {
+	return f.ideToken, f.ideTokenErr
+}
 func (f *fakePlatform) DetectAppPath(provider string) string { return f.appPath }
 func (f *fakePlatform) LaunchApp(appPath, workingDir string, args []string) (int, error) {
 	f.launchedArgs = args

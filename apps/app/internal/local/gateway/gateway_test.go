@@ -17,7 +17,7 @@ func TestGateway_StartStop(t *testing.T) {
 	}
 	defer acc.Close()
 
-	g := New(acc, account.ProviderCodex, dir)
+	g := NewShared(acc, dir)
 	port, err := g.Start(0)
 	if err != nil {
 		t.Fatalf("Start: %v", err)

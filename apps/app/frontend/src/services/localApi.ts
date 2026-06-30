@@ -94,6 +94,12 @@ export interface ProviderLocalApi {
   stats(): Promise<LocalStatsSnapshot>
   exportAccounts(ids: string[]): Promise<string>
   importFromJSON(json: string): Promise<number>
+  /** 从本机已装客户端导入(读 ~/.codex/auth.json);仅 codex 支持。返回新增数。 */
+  importFromLocal?(): Promise<number>
+  /** 导入用户拖入的凭证文件文本(多段);codex/antigravity 支持。返回新增数。 */
+  importAuthFiles?(contents: string[]): Promise<number>
+  /** 从已装 IDE 同步当前登录号(读 state.vscdb);仅 antigravity 支持。返回新增数。 */
+  syncFromIDE?(): Promise<number>
   wakeupConfig(): Promise<WakeupConfig>
   setWakeupConfig(enabled: boolean, intervalMinutes: number): Promise<void>
   wakeupRunNow(): Promise<WakeupRunEntry[]>
@@ -140,6 +146,8 @@ export const codexLocalApi: ProviderLocalApi = {
   stats: () => app().LocalCodexStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportCodexAccounts(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportCodexFromJSON(json) as Promise<number>,
+  importFromLocal: () => app().LocalImportCodexFromLocal() as Promise<number>,
+  importAuthFiles: (contents) => app().LocalImportCodexAuthFiles(contents) as Promise<number>,
   wakeupConfig: () => app().LocalCodexWakeupConfig() as Promise<WakeupConfig>,
   setWakeupConfig: (e, i) => app().LocalSetCodexWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalCodexWakeupRunNow() as Promise<WakeupRunEntry[]>,
@@ -176,6 +184,8 @@ export const antigravityLocalApi: ProviderLocalApi = {
   stats: () => app().LocalAntigravityStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportAntigravityAccounts(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportAntigravityFromJSON(json) as Promise<number>,
+  importAuthFiles: (contents) => app().LocalImportAntigravityAuthFiles(contents) as Promise<number>,
+  syncFromIDE: () => app().LocalSyncAntigravityFromIDE() as Promise<number>,
   wakeupConfig: () => app().LocalAntigravityWakeupConfig() as Promise<WakeupConfig>,
   setWakeupConfig: (e, i) => app().LocalSetAntigravityWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalAntigravityWakeupRunNow() as Promise<WakeupRunEntry[]>,

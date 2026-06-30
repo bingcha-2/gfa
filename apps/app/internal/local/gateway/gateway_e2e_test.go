@@ -28,7 +28,7 @@ func TestGateway_ServesV1WithOwnAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := New(acc, account.ProviderCodex, dir)
+	g := NewShared(acc, dir)
 	if _, err := g.Start(0); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

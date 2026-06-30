@@ -79,6 +79,9 @@ func (m *Manager) reload() {
 	}
 }
 
+// ReloadGateway 让网关重载自有号(导入/同步加号后由 hub 调用)。
+func (m *Manager) ReloadGateway() { m.reload() }
+
 func (m *Manager) ListAccounts() ([]AccountView, error) {
 	list, err := m.acc.List(m.provider)
 	if err != nil {

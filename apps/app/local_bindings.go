@@ -206,6 +206,22 @@ func (a *App) LocalImportCodexFromJSON(jsonStr string) (int, error) {
 	return localHub.Import(account.ProviderCodex, jsonStr)
 }
 
+// LocalImportCodexFromLocal 读本机 ~/.codex/auth.json,解析成自有号加入(按 email 去重),返回新增数。
+func (a *App) LocalImportCodexFromLocal() (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localHub.ImportCodexFromLocal()
+}
+
+// LocalImportCodexAuthFiles 把多段文件文本导入为 codex 自有号(codex auth.json / 导出格式),返回新增数。
+func (a *App) LocalImportCodexAuthFiles(contents []string) (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localHub.ImportCodexAuthFiles(contents)
+}
+
 func (a *App) LocalGetCodexSource() string {
 	if err := ensureLocal(); err != nil {
 		return "remote"
@@ -332,6 +348,22 @@ func (a *App) LocalImportAntigravityFromJSON(jsonStr string) (int, error) {
 		return 0, err
 	}
 	return localHub.Import(account.ProviderAntigravity, jsonStr)
+}
+
+// LocalImportAntigravityAuthFiles 把多段文件文本导入为 antigravity 自有号(凭证 JSON / 导出格式),返回新增数。
+func (a *App) LocalImportAntigravityAuthFiles(contents []string) (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localHub.ImportAntigravityAuthFiles(contents)
+}
+
+// LocalSyncAntigravityFromIDE 读已装 Antigravity IDE 的登录态同步成自有号(按 email 去重),返回新增数。
+func (a *App) LocalSyncAntigravityFromIDE() (int, error) {
+	if err := ensureLocal(); err != nil {
+		return 0, err
+	}
+	return localHub.SyncAntigravityFromIDE()
 }
 
 func (a *App) LocalGetAntigravitySource() string {

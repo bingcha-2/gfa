@@ -23,10 +23,8 @@ import (
 const DefaultGatewayPort = 8317
 
 type Gateway struct {
-	acc      *account.Store
-	provider account.Provider
-	shared   bool // true:共享网关,喂全部 provider 进池号
-	dataDir  string
+	acc     *account.Store
+	dataDir string
 
 	mu     sync.Mutex
 	svc    *cliproxy.Service
@@ -37,22 +35,15 @@ type Gateway struct {
 	stats  *stats.Collector
 }
 
-func New(acc *account.Store, p account.Provider, dataDir string) *Gateway {
-	return &Gateway{acc: acc, provider: p, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
-}
-
 // NewShared 构建反代网关:单实例、单 Service,auth Store 只喂 codex 自有号
 //(antigravity 接管走 IDE 注入,见 internal/local/antigravityinject)。
 func NewShared(acc *account.Store, dataDir string) *Gateway {
-	return &Gateway{acc: acc, shared: true, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
+	return &Gateway{acc: acc, dataDir: dataDir, host: "127.0.0.1", stats: stats.NewCollector()}
 }
 
 func (g *Gateway) newAuthStore() coreauth.Store {
-	if g.shared {
-		// 反代网关只服务 codex(antigravity 接管走 IDE 注入,不进网关 auth store)。
-		return authsync.NewStore(g.acc, account.ProviderCodex)
-	}
-	return authsync.NewStore(g.acc, g.provider)
+	// 反代网关只服务 codex(antigravity 接管走 IDE 注入,不进网关 auth store)。
+	return authsync.NewStore(g.acc, account.ProviderCodex)
 }
 
 // Stats 返回网关用量快照(本地统计)。
