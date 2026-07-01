@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2 } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2, Coffee } from 'lucide-react'
 import {
   type LocalAccountView, type ProviderLocalApi,
   type AlertConfig, type SwitchConfig, type AppSpeed, type ServiceTier, type ContextPreset,
@@ -15,6 +15,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Modal, useModal } from '@/components/Modal'
 import { PortalMenu, KebabMenu } from '@/components/PortalMenu'
+import { RewardModal } from '@/components/RewardModal'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 
 /** 账号 tab(本地主功能):列表 + 登录 + 池/优先/删除 + 导入导出 + 批量多选。 */
@@ -345,6 +346,8 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [newGroupName, setNewGroupName] = useState('')
   // 破坏性操作确认(删除凭证不可逆)。
   const { modalProps, showConfirm } = useModal()
+  // 赞赏作者弹窗。
+  const [rewardOpen, setRewardOpen] = useState(false)
 
   // provider 取号视角:优先取已加载账号的 provider,空列表回退到 title(codex/antigravity)。
   const provider: 'codex' | 'antigravity' =
@@ -934,7 +937,20 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
             )
           })
         )}
+        {/* 赞赏入口:低调置于号池底部,不挤进功能按钮。 */}
+        <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-[var(--border-light)] text-[12px] text-[var(--text-secondary)]">
+          <Coffee size={14} className="text-[var(--warning-deep)]" />
+          <span>觉得顺手?请作者喝杯冰茶</span>
+          <button
+            onClick={() => setRewardOpen(true)}
+            className="cursor-pointer text-[12px] font-semibold px-3 h-[26px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+          >
+            赞赏
+          </button>
+        </div>
       </div>
+
+      <RewardModal open={rewardOpen} onClose={() => setRewardOpen(false)} />
 
       <Dialog open={importOpen} onOpenChange={(o) => !o && setImportOpen(false)}>
         <DialogContent className="max-w-[460px]">
