@@ -206,6 +206,24 @@ export const zhCN = {
     localProxyNote: '· 接管后请求经此自动注入令牌,「停止」即恢复原状',
     proxyRunning: '运行中 · 127.0.0.1:{port}',
     proxyStopped: '未运行',
+    // 第三方中转封号免责 + 一键体检
+    sanitize: {
+      title: '⚠ 检测到第三方中转配置',
+      ccSwitchLead: '检测到 cc-switch —— 使用它切换/共享账号极易触发官方风控，封号风险最高，强烈建议清理。',
+      intro: '你的电脑上存在以下第三方中转配置，接管前建议清理（清理前会自动备份，可回滚）：',
+      disclaimer: '因使用 cc-switch 等第三方中转导致的账号封禁，本软件概不负责。',
+      ack: '我已知晓上述风险',
+      cleanBtn: '已知晓，清理并接管',
+      skipBtn: '仍要接管',
+      cleaning: '正在清理第三方中转配置…',
+      doneTitle: '已清理第三方中转配置',
+      doneBody: '已清理 {cleaned} 项，备份在：{backup}',
+      skippedBody: '有 {skipped} 项未能清理（可能被占用/需管理员/被企业策略重新下发），已保留在备份中。',
+      needsUac: '部分清理需要管理员权限，请在弹出的授权窗口中允许。',
+      checkupBtn: '一键体检',
+      checkupNone: '未检测到第三方中转配置，环境是干净的。',
+      checking: '正在体检…',
+    },
   },
 
   bound: {
