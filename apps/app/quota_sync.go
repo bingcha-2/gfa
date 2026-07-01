@@ -235,12 +235,16 @@ func fetchModelsViaTokenWithEndpoint(endpoint, accessToken, projectId, proxyURL 
 
 // ─── Leaser 集成 ────────────────────────────────────────────────────────
 
-// claimQuotaFetch 至多每 codexQuotaMinIntervalMs 返回一次 true 并打时间戳。
-// 首次(从未拉取)放行。对齐 codex 节流,避免每次上报都打 Google fetchAvailableModels。
+// antigravity 上游额度(Google fetchAvailableModels / Cloud Code)拉取地板。codex 因为「会跳」
+// 已降到 15s 逼近 claude;antigravity 没有同样诉求,且 Google 侧更该省着打,故保持保守的 5min。
+const antigravityQuotaMinIntervalMs int64 = 5 * 60 * 1000
+
+// claimQuotaFetch 至多每 antigravityQuotaMinIntervalMs 返回一次 true 并打时间戳。
+// 首次(从未拉取)放行。避免每次上报都打 Google fetchAvailableModels。
 func (l *Leaser) claimQuotaFetch(nowMs int64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.lastQuotaFetchAt != 0 && nowMs-l.lastQuotaFetchAt < codexQuotaMinIntervalMs {
+	if l.lastQuotaFetchAt != 0 && nowMs-l.lastQuotaFetchAt < antigravityQuotaMinIntervalMs {
 		return false
 	}
 	l.lastQuotaFetchAt = nowMs

@@ -93,10 +93,13 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 	Log("[codex-quota] ✓ 上报成功 [codex] account#%d", lease.AccountId)
 }
 
-// 上游额度拉取的最小间隔。5h/周窗口变化很慢,没必要每个请求都拉。被节流跳过时
-// cachedQuota 保持为空 → reportQuotaOnly 自然也不发,于是「额度拉取 + 额度上报」
-// 整体降到至多每 codexQuotaMinIntervalMs 一次(用量上报仍每请求,计费不受影响)。
-const codexQuotaMinIntervalMs int64 = 5 * 60 * 1000
+// 上游额度拉取的最小间隔(地板)。拉取由上报触发(reportResult → fetchCodexQuotaAsync),
+// 所以是「有请求才拉、每 codexQuotaMinIntervalMs 至多一次」——闲置零拉取(避免空打上游),
+// 靠 30min 自动刷新兜底。对齐 claude 的「每条上报都带新额度」:claude 从响应头白嫖(零成本)
+// 可每请求刷新;codex 没有限额响应头,只能单独打 wham/usage,故用 30s 地板逼近 claude 的
+// 顺滑度,同时把拼车母号的聚合请求量兜住(每客户端 ≤2 次/分),不打爆上游。被节流跳过时
+// cachedQuota 保持为空 → reportQuotaOnly 自然也不发(用量上报仍每请求,计费不受影响)。
+const codexQuotaMinIntervalMs int64 = 30 * 1000
 
 // claimQuotaFetch 至多每 codexQuotaMinIntervalMs 返回一次 true,并打上时间戳。
 // 首次(从未拉取,lastQuotaFetchAt=0)放行。
@@ -110,6 +113,20 @@ func (l *CodexLeaser) claimQuotaFetch(nowMs int64) bool {
 	return true
 }
 
+// 上游拉取「瞬时」失败后的短重试间隔:不占满 30s 窗口(血条别被一次抖动冻住),但也不每条
+// 上报都硬打(封顶 ~5s 一次)。仅用于网络错误 / 5xx;4xx(401/403/429)保留满节流。
+const codexQuotaRetryBackoffMs int64 = 5 * 1000
+
+// allowQuotaRetrySoon 把节流时间戳回拨,使下一次拉取在 codexQuotaRetryBackoffMs 后即可放行。
+// 只回拨、不前移(guard),避免意外拉长节流。
+func (l *CodexLeaser) allowQuotaRetrySoon(nowMs int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if back := nowMs - (codexQuotaMinIntervalMs - codexQuotaRetryBackoffMs); back < l.lastQuotaFetchAt {
+		l.lastQuotaFetchAt = back
+	}
+}
+
 // fetchCodexQuotaAsync queries wham/usage with the leased token and caches a
 // snapshot for the next report. Time-throttled (claimQuotaFetch) so a busy
 // session doesn't hammer the usage endpoint, then CAS-guarded so only one runs
@@ -118,7 +135,8 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 	if lease == nil || lease.AccessToken == "" {
 		return
 	}
-	if !l.claimQuotaFetch(time.Now().UnixMilli()) {
+	now := time.Now().UnixMilli()
+	if !l.claimQuotaFetch(now) {
 		return
 	}
 	if !atomic.CompareAndSwapInt32(&l.quotaFetching, 0, 1) {
@@ -138,12 +156,20 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 
 	resp, err := createHttpClient(upstreamProxy).Do(req)
 	if err != nil {
+		// 瞬时网络/代理抖动:别让一次失败白占 30s 窗口把血条冻住;放开短重试(≤5s 一次),
+		// 下次上报即可照常重拉+上报。不做无节流重试,避免持续抖动时刷屏上游。
+		l.allowQuotaRetrySoon(now)
 		Log("[codex-quota] usage request failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 5xx 服务端瞬时错误:放开短重试。4xx(401/403/429 鉴权/限流)保留 30s 节流 —— 重试也是
+		// 硬打,曾是「codex usage 401 刷屏」来源,得让它慢下来等 token 刷新。
+		if resp.StatusCode >= 500 {
+			l.allowQuotaRetrySoon(now)
+		}
 		Log("[codex-quota] usage status %d", resp.StatusCode)
 		return
 	}

@@ -2,9 +2,10 @@ package main
 
 import "testing"
 
-// Antigravity upstream quota fetch (Google fetchAvailableModels) must be
-// time-throttled like codex, so a busy session / periodic refresh doesn't hit
-// the API on every report.
+// Antigravity upstream quota fetch (Google fetchAvailableModels) stays on its
+// own conservative 5min floor (antigravityQuotaMinIntervalMs) — unlike codex,
+// which was lowered to 15s — so a busy session doesn't hit the Google API on
+// every report.
 func TestAntigravityClaimQuotaFetchThrottles(t *testing.T) {
 	l := &Leaser{}
 	base := int64(2_000_000)
@@ -15,7 +16,7 @@ func TestAntigravityClaimQuotaFetchThrottles(t *testing.T) {
 	if l.claimQuotaFetch(base + 60_000) {
 		t.Fatalf("a claim 1 min later must be throttled")
 	}
-	if !l.claimQuotaFetch(base + codexQuotaMinIntervalMs) {
+	if !l.claimQuotaFetch(base + antigravityQuotaMinIntervalMs) {
 		t.Fatalf("a claim at/after the interval should pass again")
 	}
 }
