@@ -6,6 +6,14 @@ export function ActivateCode(arg1) {
   return window['go']['main']['App']['ActivateCode'](arg1);
 }
 
+export function DetectCompetingClaudeConfig() {
+  return window['go']['main']['App']['DetectCompetingClaudeConfig']();
+}
+
+export function SanitizeCompetingClaudeConfig(arg1) {
+  return window['go']['main']['App']['SanitizeCompetingClaudeConfig'](arg1);
+}
+
 export function BrowseForPath(arg1) {
   return window['go']['main']['App']['BrowseForPath'](arg1);
 }

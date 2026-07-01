@@ -206,6 +206,23 @@ export const en: DeepPartialDict = {
     localProxyNote: '· after takeover, requests pass through here for token injection; "Stop" restores everything',
     proxyRunning: 'Running · 127.0.0.1:{port}',
     proxyStopped: 'Not running',
+    sanitize: {
+      title: '⚠ Third-party relay config detected',
+      ccSwitchLead: 'cc-switch detected — switching/sharing accounts with it easily triggers official risk control and carries the highest ban risk. Cleaning it up is strongly recommended.',
+      intro: 'The following third-party relay configs were found on your machine. Cleaning them before takeover is recommended (a backup is made first, so it can be rolled back):',
+      disclaimer: 'We take no responsibility for account bans caused by using cc-switch or other third-party relays.',
+      ack: 'I understand the risks above',
+      cleanBtn: 'Understood — clean & take over',
+      skipBtn: 'Take over anyway',
+      cleaning: 'Cleaning up third-party relay config…',
+      doneTitle: 'Third-party relay config cleaned',
+      doneBody: 'Cleaned {cleaned} item(s). Backup at: {backup}',
+      skippedBody: '{skipped} item(s) could not be cleaned (in use / needs admin / re-pushed by enterprise policy) and were kept in the backup.',
+      needsUac: 'Some cleanup needs administrator rights — please allow it in the elevation prompt.',
+      checkupBtn: 'Environment check',
+      checkupNone: 'No third-party relay config found — your environment is clean.',
+      checking: 'Checking…',
+    },
   },
 
   bound: {

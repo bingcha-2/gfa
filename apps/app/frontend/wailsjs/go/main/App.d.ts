@@ -56,6 +56,10 @@ export function HeartbeatCheck():Promise<Record<string, any>>;
 
 export function InjectSelected(arg1:Array<string>):Promise<string>;
 
+export function DetectCompetingClaudeConfig():Promise<Array<main.ClaudeConfigConflict>>;
+
+export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
+
 export function InstallStandaloneClaude():Promise<void>;
 
 export function IsHubRunningCheck():Promise<boolean>;
