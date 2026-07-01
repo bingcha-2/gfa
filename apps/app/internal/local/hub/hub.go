@@ -138,6 +138,7 @@ type Hub struct {
 	routingCfg  *routingcfg.Store
 	gwKeys      *gatewaykeys.Store
 	gwScope     *gatewaycfg.Store
+	gwOps       *gatewaycfg.OpsStore // 网关运维配置(超时/预设/上游代理)
 	modelProv   *modelprovider.Store
 	autoRefresh *autoRefresher
 
@@ -167,6 +168,7 @@ func New(dir string, platform Platform) (*Hub, error) {
 		routingCfg: routingcfg.NewStore(dir),
 		gwKeys:     gatewaykeys.NewStore(dir),
 		gwScope:    gatewaycfg.NewStore(dir),
+		gwOps:      gatewaycfg.NewOpsStore(dir),
 		sources:    takeover.NewSourceStore(dir),
 		instances:  instance.NewStore(dir),
 		platform:   platform,

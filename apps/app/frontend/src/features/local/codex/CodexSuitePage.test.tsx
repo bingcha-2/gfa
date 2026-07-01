@@ -65,6 +65,12 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalSetRoutingStrategy: vi.fn().mockResolvedValue(undefined),
     LocalGetGatewayAccessScope: vi.fn().mockResolvedValue('local'),
     LocalSetGatewayAccessScope: vi.fn().mockResolvedValue(undefined),
+    LocalGetGatewayOpsConfig: vi.fn().mockResolvedValue({
+      timeouts: { streamKeepaliveSeconds: 30, streamBootstrapRetries: 3, maxRetryCredentials: 5, maxRetryIntervalSeconds: 10 },
+      timeoutPresets: null, activePresetId: '', upstreamProxyUrl: '',
+    }),
+    LocalSaveGatewayTimeouts: vi.fn().mockImplementation((t: unknown) => Promise.resolve({ timeouts: t, timeoutPresets: null, activePresetId: '', upstreamProxyUrl: '' })),
+    LocalSaveGatewayUpstreamProxy: vi.fn().mockImplementation((u: string) => Promise.resolve({ timeouts: { streamKeepaliveSeconds: 30, streamBootstrapRetries: 3, maxRetryCredentials: 5, maxRetryIntervalSeconds: 10 }, timeoutPresets: null, activePresetId: '', upstreamProxyUrl: u })),
     LocalListGatewayKeys: vi.fn().mockResolvedValue([
       { id: 'k1', name: '默认', value: 'sk-local-abcd1234efgh5678', createdAt: 1700000000000 },
     ]),
@@ -243,6 +249,20 @@ describe('CodexSuitePage', () => {
     await waitFor(() => expect(app.LocalSetGatewayAccessScope).toHaveBeenCalledWith('lan'))
     // 开局域网给一句安全提示
     expect(await screen.findByText(/局域网内任何设备/)).toBeInTheDocument()
+  })
+
+  it('反代 tab 运维配置:改上游代理调 saveGatewayUpstreamProxy;改超时调 saveGatewayTimeouts', async () => {
+    const app = installApp()
+    await openGateway()
+    await waitFor(() => expect(app.LocalGetGatewayOpsConfig).toHaveBeenCalled())
+    const proxy = await screen.findByLabelText('出口上游代理')
+    fireEvent.change(proxy, { target: { value: 'http://127.0.0.1:7890' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(app.LocalSaveGatewayUpstreamProxy).toHaveBeenCalledWith('http://127.0.0.1:7890'))
+    const ka = screen.getByLabelText('流保活(秒)')
+    fireEvent.change(ka, { target: { value: '60' } })
+    fireEvent.blur(ka)
+    await waitFor(() => expect(app.LocalSaveGatewayTimeouts).toHaveBeenCalledWith(expect.objectContaining({ streamKeepaliveSeconds: 60 })))
   })
 
   it('反代 tab 列出网关 key(掩码),可新建/轮换/删除', async () => {

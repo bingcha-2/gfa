@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Power, Copy, Check, Loader2, Globe, Lock, Plug, Route, Wifi, KeyRound,
-  RotateCw, Trash2, ListFilter, Plug2, AlertTriangle,
+  RotateCw, Trash2, ListFilter, Plug2, AlertTriangle, SlidersHorizontal,
 } from 'lucide-react'
 import {
   type LocalGatewayStatus, type ProviderLocalApi,
   type RoutingStrategy, type GatewayAccessScope, type GatewayKey,
   type GatewayLogEntry, type GatewayLogFilter, type GatewayConnTestResult,
+  type GatewayOpsConfig,
   getRoutingStrategy, setRoutingStrategy,
   getGatewayAccessScope, setGatewayAccessScope,
   listGatewayKeys, createGatewayKey, deleteGatewayKey, rotateGatewayKey,
   queryGatewayLogs, clearGatewayStats, gatewayConnTest,
+  getGatewayOpsConfig, saveGatewayTimeouts, saveGatewayUpstreamProxy,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -64,6 +66,20 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
   const [keysLoaded, setKeysLoaded] = useState(false)
   const [keyBusy, setKeyBusy] = useState<string | null>(null)
   const [newKeyName, setNewKeyName] = useState('')
+  // 运维配置(超时 / 上游代理)。
+  const [opsCfg, setOpsCfg] = useState<GatewayOpsConfig | null>(null)
+  const [proxyDraft, setProxyDraft] = useState('')
+  const [opsBusy, setOpsBusy] = useState('')
+
+  const onSaveProxy = async () => {
+    setOpsBusy('proxy')
+    try { setOpsCfg(await saveGatewayUpstreamProxy(proxyDraft.trim())) } catch (e) { setErr(String(e)) } finally { setOpsBusy('') }
+  }
+  const onSaveTimeout = async (patch: Partial<GatewayOpsConfig['timeouts']>) => {
+    if (!opsCfg) return
+    setOpsBusy('timeout')
+    try { setOpsCfg(await saveGatewayTimeouts({ ...opsCfg.timeouts, ...patch })) } catch (e) { setErr(String(e)) } finally { setOpsBusy('') }
+  }
   const [copiedKeyId, setCopiedKeyId] = useState('')
 
   // ── 请求日志 ──
@@ -115,14 +131,16 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     }
   }, [api])
 
-  // 一次性拉运营配置(策略/范围/key);轮询只刷运行态,避免打扰输入。
+  // 一次性拉运营配置(策略/范围/key/运维配置);轮询只刷运行态,避免打扰输入。
   const loadOps = useCallback(async () => {
     try {
-      const [st, sc, ks] = await Promise.all([getRoutingStrategy(), getGatewayAccessScope(), listGatewayKeys()])
+      const [st, sc, ks, ops] = await Promise.all([getRoutingStrategy(), getGatewayAccessScope(), listGatewayKeys(), getGatewayOpsConfig()])
       setStrategy(st)
       setScope(sc)
       setKeys(ks || [])
       setKeysLoaded(true)
+      setOpsCfg(ops)
+      setProxyDraft(ops.upstreamProxyUrl)
     } catch (e) {
       setErr(String(e))
     }
@@ -394,6 +412,45 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
           {strategy ? STRATEGIES.find(([id]) => id === strategy)?.[2] : '加载中…'}
         </div>
       </div>
+
+      {/* 运维配置(超时 / 上游代理) */}
+      {opsCfg && (
+        <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
+          <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide inline-flex items-center gap-1.5"><SlidersHorizontal size={12} /> 运维配置</div>
+          <label className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)]">
+            出口上游代理
+            <input
+              aria-label="出口上游代理"
+              value={proxyDraft}
+              onChange={(e) => setProxyDraft(e.target.value)}
+              placeholder="http://127.0.0.1:7890(空=直连)"
+              className="flex-1 rounded-[7px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[30px] text-[12px] font-mono-data text-[var(--text-primary)]"
+            />
+            <button onClick={() => void onSaveProxy()} disabled={opsBusy === 'proxy'} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] border border-[var(--primary)] text-[var(--primary-strong)] hover:bg-[var(--primary-light)] disabled:opacity-50">保存</button>
+          </label>
+          <div className="grid grid-cols-2 gap-2.5">
+            {([
+              ['流保活(秒)', 'streamKeepaliveSeconds'],
+              ['流引导重试(次)', 'streamBootstrapRetries'],
+              ['最大重试号数', 'maxRetryCredentials'],
+              ['重试间隔(秒)', 'maxRetryIntervalSeconds'],
+            ] as const).map(([label, key]) => (
+              <label key={key} className="flex items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
+                {label}
+                <input
+                  type="number" min={0}
+                  aria-label={label}
+                  defaultValue={opsCfg.timeouts[key]}
+                  onBlur={(e) => { const v = Number(e.target.value); if (v !== opsCfg.timeouts[key]) void onSaveTimeout({ [key]: v }) }}
+                  disabled={opsBusy === 'timeout'}
+                  className="w-[80px] rounded-[7px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[28px] text-[12px] font-mono-data text-[var(--text-primary)] tabular-nums disabled:opacity-50"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="text-[11px] text-[var(--text-muted)]">超时/上游代理已持久化;运行时套用到内嵌网关为后续(需 SDK 支持)。</div>
+        </div>
+      )}
 
       {/* 局域网访问 */}
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-2.5">

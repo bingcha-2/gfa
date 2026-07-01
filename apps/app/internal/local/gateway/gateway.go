@@ -37,6 +37,13 @@ type Gateway struct {
 	stats    *stats.Collector
 	selector *authsync.Selector // 路由选号器(策略可热切换)
 	apiKeys  []string           // 客户端访问 key(写进 CLIProxyAPI api-keys)
+
+	// 运维参数(Wave Q):落地到 CLIProxyAPI config 的超时/重试 + 出口代理。
+	streamKeepaliveSeconds int
+	streamBootstrapRetries int
+	maxRetryCredentials    int
+	maxRetryIntervalSec    int
+	upstreamProxyURL       string
 }
 
 // NewShared 构建反代网关:单实例、单 Service,auth Store 只喂 codex 自有号
@@ -59,6 +66,34 @@ func (g *Gateway) SetStrategy(s routingcfg.Strategy) { g.selector.SetStrategy(s)
 func (g *Gateway) SetAPIKeys(keys []string) error {
 	g.mu.Lock()
 	g.apiKeys = append([]string(nil), keys...)
+	g.mu.Unlock()
+	return g.restartIfRunning()
+}
+
+// Timeouts 是网关运维超时/重试参数(落地到 CLIProxyAPI config 的子集)。
+type Timeouts struct {
+	StreamKeepaliveSeconds  int
+	StreamBootstrapRetries  int
+	MaxRetryCredentials     int
+	MaxRetryIntervalSeconds int
+}
+
+// SetTimeouts 设置超时/重试参数并重启网关使之生效(若在运行)。
+func (g *Gateway) SetTimeouts(t Timeouts) error {
+	g.mu.Lock()
+	g.streamKeepaliveSeconds = t.StreamKeepaliveSeconds
+	g.streamBootstrapRetries = t.StreamBootstrapRetries
+	g.maxRetryCredentials = t.MaxRetryCredentials
+	g.maxRetryIntervalSec = t.MaxRetryIntervalSeconds
+	g.mu.Unlock()
+	return g.restartIfRunning()
+}
+
+// SetUpstreamProxy 设置出口代理 URL(空=直连)并重启网关使之生效(若在运行)。
+// 校验交给上层(gatewaycfg.NormalizeProxyURL);这里只落地并透传给 CLIProxyAPI proxy-url。
+func (g *Gateway) SetUpstreamProxy(proxyURL string) error {
+	g.mu.Lock()
+	g.upstreamProxyURL = proxyURL
 	g.mu.Unlock()
 	return g.restartIfRunning()
 }
@@ -154,6 +189,12 @@ func (g *Gateway) Start(port int) (int, error) {
 	cfg.Port = port
 	cfg.AuthDir = authDir // 自有号经自定义 Store 注入;保留目录满足配置/落盘需要
 	cfg.APIKeys = append([]string(nil), g.apiKeys...)
+	// 运维参数(Wave Q):落地到 CLIProxyAPI config 的超时/重试 + 出口代理。
+	cfg.Streaming.KeepAliveSeconds = g.streamKeepaliveSeconds
+	cfg.Streaming.BootstrapRetries = g.streamBootstrapRetries
+	cfg.MaxRetryCredentials = g.maxRetryCredentials
+	cfg.MaxRetryInterval = g.maxRetryIntervalSec
+	cfg.ProxyURL = g.upstreamProxyURL // 出口代理:红线之外的自有号数据面出口
 
 	// Build 要求 config path(用于 watcher/reload);写一份最小 yaml 与 cfg 对齐。
 	cfgPath := filepath.Join(g.dataDir, "cliproxy.yaml")

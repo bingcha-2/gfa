@@ -119,6 +119,36 @@ export interface GatewayLogFilter { model?: string; authId?: string; failedOnly?
 /** 连通测试结果。 */
 export interface GatewayConnTestResult { ok: boolean; status: number; latencyMs: number; err: string }
 
+/** 网关超时配置(秒/次)。 */
+export interface GatewayTimeouts {
+  streamKeepaliveSeconds: number
+  streamBootstrapRetries: number
+  maxRetryCredentials: number
+  maxRetryIntervalSeconds: number
+}
+/** 一个超时预设。 */
+export interface GatewayTimeoutPreset { id: string; name: string; timeouts: GatewayTimeouts; createdAt: number; updatedAt: number }
+/** 网关运维配置(超时 / 预设 / 上游代理)。 */
+export interface GatewayOpsConfig {
+  timeouts: GatewayTimeouts
+  timeoutPresets: GatewayTimeoutPreset[] | null
+  activePresetId: string
+  upstreamProxyUrl: string
+}
+
+/** 读网关运维配置。 */
+export function getGatewayOpsConfig(): Promise<GatewayOpsConfig> {
+  return app().LocalGetGatewayOpsConfig() as Promise<GatewayOpsConfig>
+}
+/** 保存网关超时配置。 */
+export function saveGatewayTimeouts(t: GatewayTimeouts): Promise<GatewayOpsConfig> {
+  return app().LocalSaveGatewayTimeouts(t) as Promise<GatewayOpsConfig>
+}
+/** 保存出口上游代理 URL(空=直连)。 */
+export function saveGatewayUpstreamProxy(raw: string): Promise<GatewayOpsConfig> {
+  return app().LocalSaveGatewayUpstreamProxy(raw) as Promise<GatewayOpsConfig>
+}
+
 export interface InstanceProfile {
   id: string
   provider: string
