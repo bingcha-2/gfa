@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { PlugZap, Lock, ArrowRight, AlertTriangle } from 'lucide-react'
+import { PlugZap, Lock, ArrowRight } from 'lucide-react'
 import { type ProviderLocalApi } from '@/services/localApi'
 import type { PageId } from '@/types'
 import { cn } from '@/lib/utils'
@@ -94,14 +94,6 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
         >
           去接管中心 <ArrowRight size={14} />
         </button>
-      </div>
-
-      {/* 使用风险提示:本地自有号本质是代理转发,口径对齐 cockpit,克制不渲染封号。 */}
-      <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[12px] text-[var(--text-secondary)] flex items-start gap-2">
-        <AlertTriangle size={14} className="text-[var(--warning)] mt-0.5 shrink-0" />
-        <span>
-          <span className="font-semibold text-[var(--warning)]">使用风险提示</span> —— 本地自有号本质上属于代理转发的用法。就目前情况看,官方暂未对此类行为明确管控,但后续政策、规则或可用性是否变化仍存在不确定性。继续使用即表示你已知悉相关情况,并愿意自行承担可能产生的风险。
-        </span>
       </div>
 
       {/* tab 栏 */}

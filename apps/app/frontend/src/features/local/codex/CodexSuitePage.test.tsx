@@ -189,8 +189,8 @@ describe('CodexSuitePage', () => {
     // source=local → 头部显示「本地接管中 · 已注入」(注入式接管,不再显示网关地址)
     expect(screen.getByText(/本地接管中 · 已注入/)).toBeInTheDocument()
     expect(screen.getByText('仅自有号')).toBeInTheDocument()
-    // 使用风险提示横幅常驻
-    expect(screen.getByText('使用风险提示')).toBeInTheDocument()
+    // 账号页不再有风险提示:本地自有号是注入直连,非转发,不该在这里警告。
+    expect(screen.queryByText('使用风险提示')).toBeNull()
     // 配额百分比展示
     expect(screen.getByText('34%')).toBeInTheDocument()
     expect(screen.getByText('61%')).toBeInTheDocument()
@@ -227,6 +227,8 @@ describe('CodexSuitePage', () => {
     expect(await screen.findByText('本地反代')).toBeInTheDocument()
     // 网关运行中(mock addr 127.0.0.1:19528)→ 暴露 base URL
     expect(await screen.findByText('http://127.0.0.1:19528/v1')).toBeInTheDocument()
+    // 转发风险提示落在反代页(真正代理转发发生的地方)
+    expect(screen.getByText('使用风险提示')).toBeInTheDocument()
   })
 
   it('反代 tab 读取路由策略当前值,切换调 setRoutingStrategy', async () => {

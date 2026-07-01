@@ -322,6 +322,15 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
 
+      {/* 使用风险提示:反代是本机唯一真正「代理转发」的用法(把自有号池对外开 API 网关)。
+          克制不渲染封号;接管中心的本地自有号是注入直连、不经此网关,故那边不提示。 */}
+      <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[12px] text-[var(--text-secondary)] flex items-start gap-2">
+        <AlertTriangle size={14} className="text-[var(--warning)] mt-0.5 shrink-0" />
+        <span>
+          <span className="font-semibold text-[var(--warning)]">使用风险提示</span> —— 反代会把你的自有号组成号池,对外提供 OpenAI 兼容 API、由本机网关代理转发。这属官方未明确背书的用法,后续政策、规则或可用性是否变化仍存在不确定性。继续使用即表示你已知悉相关情况,并愿意自行承担可能产生的风险。
+        </span>
+      </div>
+
       {/* 运行态 + 启停 + 连通测试 */}
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
