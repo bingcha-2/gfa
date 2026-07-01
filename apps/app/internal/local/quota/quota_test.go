@@ -125,6 +125,41 @@ func TestCodexFetchQuota_MissingWindowsUnknown(t *testing.T) {
 	}
 }
 
+// TestParseQuotaResetCredits 校验 rate_limit_reset_credits.available_count 解析
+// (照搬 cockpit reset_credits_available,codex_quota.rs:207-209/1108-1111):
+// 与 rate_limit 平级、nil/0/N 三态可分,且 rate_limit 缺失时仍要带出(不被早返回吞掉)。
+func TestParseQuotaResetCredits(t *testing.T) {
+	i64 := func(v int64) *int64 { return &v }
+	cases := []struct {
+		name string
+		body string
+		want *int64
+	}{
+		{"present_n", `{"rate_limit":{},"rate_limit_reset_credits":{"available_count":3}}`, i64(3)},
+		{"present_zero", `{"rate_limit":{},"rate_limit_reset_credits":{"available_count":0}}`, i64(0)},
+		{"present_null_count", `{"rate_limit":{},"rate_limit_reset_credits":{"available_count":null}}`, nil},
+		{"absent", `{"rate_limit":{}}`, nil},
+		{"no_rate_limit_still_parsed", `{"rate_limit_reset_credits":{"available_count":5}}`, i64(5)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var u usageResponse
+			if err := json.Unmarshal([]byte(c.body), &u); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := parseQuotaFromUsage(&u).ResetCreditsAvailable
+			switch {
+			case c.want == nil && got != nil:
+				t.Fatalf("want nil, got %d", *got)
+			case c.want != nil && got == nil:
+				t.Fatalf("want %d, got nil", *c.want)
+			case c.want != nil && got != nil && *got != *c.want:
+				t.Fatalf("want %d, got %d", *c.want, *got)
+			}
+		})
+	}
+}
+
 // TestCodexFetchQuota_HTTPErrorReturnsErr:非 2xx -> error。
 func TestCodexFetchQuota_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

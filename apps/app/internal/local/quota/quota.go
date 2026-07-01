@@ -51,6 +51,11 @@ type Result struct {
 	HourlyKnown   bool   // 上游是否真给了 5h 窗口(false=未知,调用方应 keep-prior,绝不伪造满血)
 	WeeklyKnown   bool   // 上游是否真给了 周 窗口
 	PlanType      string // 上游返回的订阅档(可空)
+	// ResetCreditsAvailable 主动重置可用次数(rate_limit_reset_credits.available_count)。
+	// 照搬 cockpit reset_credits_available(Option<i64>):nil=上游未报,*v=0 表示确为 0 次。
+	// 注:GFA「主动重置次数」UI 走专用 codexbiz 路径(GetCodexResetCredits),此处仅随额度
+	// 解析一并带出、避免静默丢字段(与 wham/usage 同源,可供列表级「一眼可用次数」复用)。
+	ResetCreditsAvailable *int64
 }
 
 // CodexTokens 是 codex token 刷新结果。
@@ -249,6 +254,11 @@ type usageResponse struct {
 		PrimaryWindow   *windowInfo `json:"primary_window"`
 		SecondaryWindow *windowInfo `json:"secondary_window"`
 	} `json:"rate_limit"`
+	// rate_limit_reset_credits 与 rate_limit 平级(非嵌套):主动重置次数,
+	// 照搬 cockpit ResetCreditsInfo.available_count(codex_quota.rs:207-209)。
+	RateLimitResetCredits *struct {
+		AvailableCount *int64 `json:"available_count"`
+	} `json:"rate_limit_reset_credits"`
 }
 
 // normalizeRemainingPercentage 照搬 cockpit:remaining = 100 - clamp(used,0,100)。
@@ -284,6 +294,10 @@ func normalizeResetTimeMs(w *windowInfo) int64 {
 // memory codex-quota-window-unknown-parity 记录的已修坑,这里不能复现。
 func parseQuotaFromUsage(u *usageResponse) Result {
 	res := Result{PlanType: u.PlanType}
+	// 主动重置次数与 rate_limit 平级:在 rate_limit 缺失早返回之前先取,避免漏带。
+	if rc := u.RateLimitResetCredits; rc != nil {
+		res.ResetCreditsAvailable = rc.AvailableCount
+	}
 	if u.RateLimit == nil {
 		return res
 	}
