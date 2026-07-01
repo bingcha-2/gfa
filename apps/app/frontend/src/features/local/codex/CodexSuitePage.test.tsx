@@ -138,6 +138,16 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalCodexSessionTokenStats: vi.fn().mockResolvedValue([
       { sessionId: 's1', inputTokens: 1200, outputTokens: 340, totalTokens: 1540 },
     ]),
+    LocalListCodexSessionVisibilityRepairInstances: vi.fn().mockResolvedValue([
+      { id: 'i1', name: '工作', userDataDir: '/d1', currentProvider: 'bingchaai', running: true },
+    ]),
+    LocalSyncCodexSessionsToInstance: vi.fn().mockResolvedValue({
+      requestedSessionCount: 1, targetInstanceId: 'i1', targetInstanceName: '工作',
+      syncedSessionCount: 1, skippedExistingCount: 0, missingSessionCount: 0, running: true, message: 'ok',
+    }),
+    LocalRepairCodexSessionVisibility: vi.fn().mockResolvedValue({
+      instanceCount: 2, mutatedInstanceCount: 1, changedRolloutFileCount: 3, items: null, message: 'ok',
+    }),
     LocalMoveCodexSessionsToTrash: vi.fn().mockResolvedValue({
       requestedSessionCount: 1, trashedSessionCount: 1, trashedInstanceCount: 2,
       trashDir: '/hub/trash', message: '已移入废纸篓',
@@ -451,6 +461,20 @@ describe('CodexSuitePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '移入废纸篓' }))
     await waitFor(() => expect(app.LocalMoveCodexSessionsToTrash).toHaveBeenCalledWith(['s1']))
     await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledTimes(2))
+  })
+
+  it('跨实例会话:「修复可见性」调 repairCodexSessionVisibility;选中后「移到实例」调 syncCodexSessionsToInstance', async () => {
+    const app = installApp()
+    await openSessions()
+    await screen.findByText('重构网关')
+    // 修复可见性(无需选中)。
+    fireEvent.click(screen.getByRole('button', { name: '修复可见性' }))
+    await waitFor(() => expect(app.LocalRepairCodexSessionVisibility).toHaveBeenCalledWith(''))
+    // 移到实例:选中 + 选目标实例 + 点按钮。
+    fireEvent.click(screen.getByRole('checkbox', { name: /选择会话/ }))
+    fireEvent.change(screen.getByLabelText('同步会话到实例'), { target: { value: 'i1' } })
+    fireEvent.click(screen.getByRole('button', { name: '移到实例' }))
+    await waitFor(() => expect(app.LocalSyncCodexSessionsToInstance).toHaveBeenCalledWith(['s1'], 'i1'))
   })
 
   it('跨实例会话:切到废纸篓调 listTrashedCodexSessions,恢复调 restoreCodexSessionsFromTrash', async () => {

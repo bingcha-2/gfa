@@ -962,3 +962,102 @@ export function addAntigravitySwitchHistory(item: AntigravitySwitchHistoryItem):
 export function clearAntigravitySwitchHistory(): Promise<void> {
   return app().LocalClearAntigravitySwitchHistory() as Promise<void>
 }
+
+// ── 跨实例会话同步 / 可见性修复(Wave N · codex)──
+// 只读写本地会话文件(rollout / session_index / config.toml),与远程租号 / 网关出口无关。
+
+/** 把若干会话恢复/复制到目标实例的结果汇总。 */
+export interface SyncToInstanceSummary {
+  requestedSessionCount: number
+  targetInstanceId: string
+  targetInstanceName: string
+  syncedSessionCount: number
+  skippedExistingCount: number
+  missingSessionCount: number
+  running: boolean
+  message: string
+}
+
+/** 跨实例线程同步中,单个实例的落地统计。 */
+export interface ThreadSyncItem {
+  instanceId: string
+  instanceName: string
+  addedThreadCount: number
+  updatedThreadCount: number
+}
+
+/** 跨实例线程去重/对齐的结果汇总。 */
+export interface ThreadSyncSummary {
+  instanceCount: number
+  threadUniverseCount: number
+  mutatedInstanceCount: number
+  totalSyncedThreadCount: number
+  totalAddedThreadCount: number
+  items: ThreadSyncItem[] | null
+  message: string
+}
+
+/** 单实例可见性修复统计。 */
+export interface VisibilityRepairItem {
+  instanceId: string
+  instanceName: string
+  targetProvider: string
+  changedRolloutFileCount: number
+  running: boolean
+}
+
+/** 跨实例可见性修复的结果汇总。 */
+export interface VisibilityRepairSummary {
+  instanceCount: number
+  mutatedInstanceCount: number
+  changedRolloutFileCount: number
+  items: VisibilityRepairItem[] | null
+  message: string
+}
+
+/** 可见性修复时的候选实例(带当前 provider)。 */
+export interface RepairInstanceOption {
+  id: string
+  name: string
+  userDataDir: string
+  currentProvider: string
+  running: boolean
+}
+
+/** 一个候选 provider 及其来源(config / rollout)。 */
+export interface RepairProviderOption {
+  id: string
+  sources: string[] | null
+  isDefault: boolean
+}
+
+/** 可见性修复的候选 provider 汇总。 */
+export interface RepairProviderList {
+  defaultProvider: string
+  providers: RepairProviderOption[] | null
+}
+
+/** 把若干会话恢复/复制到目标实例。 */
+export function syncCodexSessionsToInstance(sessionIds: string[], targetInstanceId: string): Promise<SyncToInstanceSummary> {
+  return app().LocalSyncCodexSessionsToInstance(sessionIds, targetInstanceId) as Promise<SyncToInstanceSummary>
+}
+
+/** 跨实例去重/对齐线程(把每个实例缺失的会话补齐)。 */
+export function syncCodexThreadsAcrossInstances(): Promise<ThreadSyncSummary> {
+  return app().LocalSyncCodexThreadsAcrossInstances() as Promise<ThreadSyncSummary>
+}
+
+/** 重建/校正跨实例会话可见性(targetProvider 为空=各实例读自己 config)。 */
+export function repairCodexSessionVisibility(targetProvider = ''): Promise<VisibilityRepairSummary> {
+  return app().LocalRepairCodexSessionVisibility(targetProvider) as Promise<VisibilityRepairSummary>
+}
+
+/** 列可见性修复候选实例(带当前 provider)。 */
+export function listCodexSessionVisibilityRepairInstances(): Promise<RepairInstanceOption[]> {
+  return app().LocalListCodexSessionVisibilityRepairInstances() as Promise<RepairInstanceOption[]>
+}
+
+/** 列可见性修复候选 provider(config + rollout 来源)。 */
+export function listCodexSessionVisibilityRepairProviders(): Promise<RepairProviderList> {
+  return app().LocalListCodexSessionVisibilityRepairProviders() as Promise<RepairProviderList>
+}

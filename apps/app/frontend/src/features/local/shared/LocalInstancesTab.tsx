@@ -3,9 +3,11 @@ import { Plus, Trash2, RefreshCw, Layers, Play, SlidersHorizontal, MessagesSquar
 import {
   type ProviderLocalApi, type InstanceProfile, type LocalAccountView,
   type SessionRecord, type SessionTokenStats, type TrashedSessionRecord,
+  type RepairInstanceOption,
   instanceSetQuickConfig,
   listCodexSessions, codexSessionTokenStats, moveCodexSessionsToTrash,
   listTrashedCodexSessions, restoreCodexSessionsFromTrash,
+  syncCodexSessionsToInstance, repairCodexSessionVisibility, listCodexSessionVisibilityRepairInstances,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -154,6 +156,40 @@ function CrossInstanceSessions({ onError }: { onError: (e: string) => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [stats, setStats] = useState<Record<string, SessionTokenStats>>({})
   const [busy, setBusy] = useState(false)
+  // 跨实例同步 / 可见性修复(Wave N)。
+  const [repairInstances, setRepairInstances] = useState<RepairInstanceOption[]>([])
+  const [moveTarget, setMoveTarget] = useState('')
+  const [syncMsg, setSyncMsg] = useState('')
+
+  useEffect(() => {
+    void listCodexSessionVisibilityRepairInstances().then((x: RepairInstanceOption[]) => setRepairInstances(x || [])).catch(() => {})
+  }, [])
+
+  const onMoveToInstance = async () => {
+    if (selectedIds.length === 0 || !moveTarget) return
+    setBusy(true); setSyncMsg('')
+    try {
+      const s = await syncCodexSessionsToInstance(selectedIds, moveTarget)
+      setSyncMsg(`已同步 ${s.syncedSessionCount} 个会话到「${s.targetInstanceName || moveTarget}」(跳过 ${s.skippedExistingCount})`)
+      setSelected(new Set())
+    } catch (e) {
+      onError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onRepairVisibility = async () => {
+    setBusy(true); setSyncMsg('')
+    try {
+      const s = await repairCodexSessionVisibility('')
+      setSyncMsg(`已修复可见性:改写 ${s.changedRolloutFileCount} 个 rollout 文件(${s.mutatedInstanceCount}/${s.instanceCount} 实例)`)
+    } catch (e) {
+      onError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const loadActive = useCallback(async (q = '') => {
     setBusy(true)
@@ -273,12 +309,25 @@ function CrossInstanceSessions({ onError }: { onError: (e: string) => void }) {
               />
               <button onClick={() => void onTokenStats()} disabled={busy || selectedIds.length === 0} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">统计 token</button>
               <button onClick={() => void onTrash()} disabled={busy || selectedIds.length === 0} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--danger)] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50">移入废纸篓</button>
+              <select
+                aria-label="同步会话到实例"
+                value={moveTarget}
+                onChange={(e) => setMoveTarget(e.target.value)}
+                className="rounded-[7px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-1.5 h-[28px] text-[11px] text-[var(--text-primary)] max-w-[110px]"
+              >
+                <option value="">移到实例…</option>
+                {repairInstances.map((it) => <option key={it.id} value={it.id}>{it.name || it.id}</option>)}
+              </select>
+              <button onClick={() => void onMoveToInstance()} disabled={busy || selectedIds.length === 0 || !moveTarget} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">移到实例</button>
+              <button onClick={() => void onRepairVisibility()} disabled={busy} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50" title="重建跨实例会话可见性元数据">修复可见性</button>
             </>
           ) : (
             <button onClick={() => void onRestore()} disabled={busy || selectedIds.length === 0} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1 disabled:opacity-50"><RotateCcw size={12} /> 恢复</button>
           )}
         </div>
       </div>
+
+      {syncMsg && <div className="px-4 py-1.5 text-[11px] text-[var(--success)] border-t border-[var(--border-light)]">{syncMsg}</div>}
 
       {view === 'active' ? (
         sessions.length === 0 ? (
