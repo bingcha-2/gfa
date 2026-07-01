@@ -818,51 +818,6 @@ export function restoreCodexSessionsFromTrash(sessionIds: string[]): Promise<Res
   return app().LocalRestoreCodexSessionsFromTrash(sessionIds) as Promise<RestoreSummary>
 }
 
-// ── 数据迁移 bundle(备份/换机) ──
-// bundle 是版本化 JSON 文本;只打包/还原本地配置与实例库,绝不导出远程租号 / token 出口。
-
-/** 导出「配置 + 实例库」为版本化 JSON 文本。 */
-export function exportDataBundle(): Promise<string> {
-  return app().LocalExportDataBundle() as Promise<string>
-}
-
-/** 从 JSON 文本还原本地,返回导入的实例数。 */
-export function importDataBundle(bundleJson: string): Promise<number> {
-  return app().LocalImportDataBundle(bundleJson) as Promise<number>
-}
-
-// ── WebDAV 备份同步 ──
-// 仅同步本地配置/实例 bundle,与远程租号 / 网关出口物理隔离。
-
-/** WebDAV 同步配置(Password 明文落本地 0600)。 */
-export interface WebDAVConfig {
-  enabled: boolean
-  url: string
-  username: string
-  password: string
-  remoteDir: string
-}
-
-/** 读 WebDAV 同步配置(缺省回退默认:禁用)。 */
-export function getWebDAVConfig(): Promise<WebDAVConfig> {
-  return app().LocalGetWebDAVConfig() as Promise<WebDAVConfig>
-}
-
-/** 保存 WebDAV 同步配置,返回落盘后的值。 */
-export function setWebDAVConfig(cfg: WebDAVConfig): Promise<WebDAVConfig> {
-  return app().LocalSetWebDAVConfig(cfg) as Promise<WebDAVConfig>
-}
-
-/** 把当前本地 bundle 上传到 WebDAV。 */
-export function webdavUploadBackup(): Promise<void> {
-  return app().LocalWebDAVUploadBackup() as Promise<void>
-}
-
-/** 从 WebDAV 下载 bundle 并还原本地,返回导入的实例数。 */
-export function webdavDownloadBackup(): Promise<number> {
-  return app().LocalWebDAVDownloadBackup() as Promise<number>
-}
-
 // ── Antigravity 默认实例运行时控制 + 切号历史 ──
 // 运行时只控制本机 IDE 进程,切号历史只读写本地 JSON,均与远程租号 / 网关出口无关。
 

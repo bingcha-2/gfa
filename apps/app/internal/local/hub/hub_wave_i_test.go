@@ -108,30 +108,6 @@ func TestHub_InstanceSetExtraFields(t *testing.T) {
 	}
 }
 
-// ── 数据迁移 bundle:导出含实例,导入清运行态并回灌实例库 ──
-
-func TestHub_DataTransfer_ExportImportRoundTrip(t *testing.T) {
-	h, _ := newHub(t)
-	_, _ = h.InstanceCreate("codex", "工作", "/tmp/w", "/wd", "--foo", "")
-	data, err := h.ExportDataBundle()
-	if err != nil {
-		t.Fatalf("ExportDataBundle: %v", err)
-	}
-	// 全新 hub 导入这份 bundle,实例库应被替换为 bundle 内容。
-	h2, _ := newHub(t)
-	n, err := h2.ImportDataBundle(data)
-	if err != nil {
-		t.Fatalf("ImportDataBundle: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("expected 1 instance imported, got %d", n)
-	}
-	list, _ := h2.InstanceList("codex")
-	if len(list) != 1 || list[0].Name != "工作" || list[0].WorkingDir != "/wd" {
-		t.Fatalf("imported instance wrong: %+v", list)
-	}
-}
-
 // ── 会话同步:实例集合从实例库映射,trashRoot 在 hub 数据目录下 ──
 
 func TestHub_ListSessions_MapsInstancesAndTrashRoot(t *testing.T) {
@@ -158,28 +134,6 @@ func TestHub_ListSessions_MapsInstancesAndTrashRoot(t *testing.T) {
 	}
 	if len(recs[0].Locations) != 1 || recs[0].Locations[0].InstanceName != "实例A" {
 		t.Fatalf("location should carry instance name: %+v", recs[0].Locations)
-	}
-}
-
-// ── WebDAV 配置往返(纯持久化,不连网) ──
-
-func TestHub_WebDAVConfigRoundTrip(t *testing.T) {
-	h, _ := newHub(t)
-	cfg := h.GetWebDAVConfig()
-	if cfg.Enabled {
-		t.Fatalf("default webdav should be disabled: %+v", cfg)
-	}
-	cfg.Enabled = true
-	cfg.URL = "https://dav.example.com/"
-	cfg.Username = "u"
-	cfg.Password = "p"
-	cfg.RemoteDir = "bcai"
-	saved, err := h.SetWebDAVConfig(cfg)
-	if err != nil {
-		t.Fatalf("SetWebDAVConfig: %v", err)
-	}
-	if !saved.Enabled || saved.Username != "u" {
-		t.Fatalf("webdav not persisted: %+v", saved)
 	}
 }
 

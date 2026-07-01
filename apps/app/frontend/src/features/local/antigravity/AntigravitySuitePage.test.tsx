@@ -38,13 +38,7 @@ function installApp() {
     LocalCurrentAntigravityAccount: vi.fn().mockResolvedValue(null),
     LocalSetCurrentAntigravityAccount: vi.fn().mockResolvedValue(undefined),
     LocalReorderAntigravityAccounts: vi.fn().mockResolvedValue(undefined),
-    // ── 数据 tab(数据迁移 + WebDAV + antigravity 运行时 + 切换历史)(Wave J · 共享) ──
-    LocalExportDataBundle: vi.fn().mockResolvedValue('{"version":1,"instances":[]}'),
-    LocalImportDataBundle: vi.fn().mockResolvedValue(3),
-    LocalGetWebDAVConfig: vi.fn().mockResolvedValue({ enabled: false, url: '', username: '', password: '', remoteDir: 'bcai-backup' }),
-    LocalSetWebDAVConfig: vi.fn().mockImplementation((c: unknown) => Promise.resolve(c)),
-    LocalWebDAVUploadBackup: vi.fn().mockResolvedValue(undefined),
-    LocalWebDAVDownloadBackup: vi.fn().mockResolvedValue(2),
+    // ── 实例 tab(antigravity 额外:默认实例运行时 + 切换历史)──
     LocalAntigravityRuntimeStatus: vi.fn().mockResolvedValue(true),
     LocalAntigravityStartDefault: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityStopDefault: vi.fn().mockResolvedValue(undefined),
@@ -165,43 +159,33 @@ describe('AntigravitySuitePage', () => {
     await waitFor(() => expect(app.LocalReorderAntigravityAccounts).toHaveBeenCalledWith(['g2', 'g1']))
   })
 
-  // ── 数据 tab(数据迁移 + WebDAV + antigravity 额外:运行时 + 切换历史)──
+  // ── 实例 tab(antigravity 额外:默认实例运行时 + 切换历史,原在已删的「数据」tab)──
 
-  it('有「数据」tab,打开后读取 WebDAV 配置 + 运行时状态 + 切换历史', async () => {
+  it('实例 tab 挂载读取运行时状态 + 切换历史', async () => {
     const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    await waitFor(() => expect(app.LocalGetWebDAVConfig).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '实例' }))
     await waitFor(() => expect(app.LocalAntigravityRuntimeStatus).toHaveBeenCalled())
     await waitFor(() => expect(app.LocalAntigravitySwitchHistory).toHaveBeenCalled())
   })
 
-  it('数据 tab 导出 bundle 调 exportDataBundle', async () => {
-    const app = installApp()
-    render(<AntigravitySuitePage />)
-    await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    fireEvent.click(await screen.findByRole('button', { name: /导出/ }))
-    await waitFor(() => expect(app.LocalExportDataBundle).toHaveBeenCalled())
-  })
-
-  it('数据 tab(antigravity)显示默认实例运行时控制,启动调 startDefault', async () => {
+  it('实例 tab 显示默认实例运行时控制,启动调 startDefault', async () => {
     const app = installApp()
     ;(app.LocalAntigravityRuntimeStatus as ReturnType<typeof vi.fn>).mockResolvedValue(false)
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    fireEvent.click(screen.getByRole('button', { name: '实例' }))
     expect(await screen.findByText('默认实例运行时')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '启动' }))
     await waitFor(() => expect(app.LocalAntigravityStartDefault).toHaveBeenCalled())
   })
 
-  it('数据 tab(antigravity)切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
+  it('实例 tab 切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
     const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
+    fireEvent.click(screen.getByRole('button', { name: '实例' }))
     expect(await screen.findByText('switched@gmail.com')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清空历史' }))
     await waitFor(() => expect(app.LocalClearAntigravitySwitchHistory).toHaveBeenCalled())

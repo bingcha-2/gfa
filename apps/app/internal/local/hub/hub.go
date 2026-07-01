@@ -34,7 +34,6 @@ import (
 	"bcai-wails/internal/local/stats"
 	"bcai-wails/internal/local/takeover"
 	"bcai-wails/internal/local/wakeup"
-	"bcai-wails/internal/local/webdav"
 )
 
 // AntigravityToken 是注入 Antigravity IDE 所需的一份自有号登录态(不经网关)。
@@ -136,10 +135,9 @@ type Hub struct {
 	// codexSettings 是「Codex 设置」面板的本地持久化。
 	codexSettings *codexsettings.Store
 
-	// 账号组织 / 切号历史 / WebDAV 同步(均为自包含纯逻辑包,本地 JSON 持久化)。
+	// 账号组织 / 切号历史(均为自包含纯逻辑包,本地 JSON 持久化)。
 	groups    *accountgroups.Store
 	agHistory *aghistory.Store
-	webdav    *webdav.ConfigStore
 }
 
 // New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
@@ -170,7 +168,6 @@ func New(dir string, platform Platform) (*Hub, error) {
 
 		groups:    accountgroups.NewStore(dir),
 		agHistory: aghistory.NewStore(dir),
-		webdav:    webdav.NewConfigStore(dir),
 	}
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())

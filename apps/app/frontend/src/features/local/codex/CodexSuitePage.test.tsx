@@ -151,13 +151,6 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
       requestedSessionCount: 1, restoredSessionCount: 1, restoredInstanceCount: 1,
       message: '已恢复',
     }),
-    // ── 数据 tab(数据迁移 + WebDAV)(Wave J · 共享,codex 无 antigravity 运行时)──
-    LocalExportDataBundle: vi.fn().mockResolvedValue('{"version":1,"instances":[]}'),
-    LocalImportDataBundle: vi.fn().mockResolvedValue(3),
-    LocalGetWebDAVConfig: vi.fn().mockResolvedValue({ enabled: false, url: '', username: '', password: '', remoteDir: 'bcai-backup' }),
-    LocalSetWebDAVConfig: vi.fn().mockImplementation((c: unknown) => Promise.resolve(c)),
-    LocalWebDAVUploadBackup: vi.fn().mockResolvedValue(undefined),
-    LocalWebDAVDownloadBackup: vi.fn().mockResolvedValue(2),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -951,47 +944,5 @@ describe('CodexSuitePage', () => {
     expect(downs[downs.length - 1]).toBeDisabled()
   })
 
-  // ── 数据 tab(数据迁移 + WebDAV;codex 无 antigravity 运行时)──
-
-  it('codex 有「数据」tab,打开后读取 WebDAV 配置', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    await waitFor(() => expect(app.LocalGetWebDAVConfig).toHaveBeenCalled())
-    expect(await screen.findByLabelText('WebDAV 地址')).toBeInTheDocument()
-  })
-
-  it('数据 tab 导出 bundle 调 exportDataBundle,导入调 importDataBundle', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    fireEvent.click(await screen.findByRole('button', { name: /导出/ }))
-    await waitFor(() => expect(app.LocalExportDataBundle).toHaveBeenCalled())
-    fireEvent.change(screen.getByLabelText('待导入的数据'), { target: { value: '{"version":1}' } })
-    fireEvent.click(screen.getByRole('button', { name: /^导入$/ }))
-    await waitFor(() => expect(app.LocalImportDataBundle).toHaveBeenCalledWith('{"version":1}'))
-  })
-
-  it('数据 tab WebDAV 上传/下载调对应绑定', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    fireEvent.click(await screen.findByRole('button', { name: /上传备份/ }))
-    await waitFor(() => expect(app.LocalWebDAVUploadBackup).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: /下载恢复/ }))
-    await waitFor(() => expect(app.LocalWebDAVDownloadBackup).toHaveBeenCalled())
-  })
-
-  it('codex 数据 tab 不显示 antigravity 默认实例运行时与切换历史', async () => {
-    installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '数据' }))
-    await screen.findByLabelText('WebDAV 地址')
-    expect(screen.queryByText('默认实例运行时')).toBeNull()
-    expect(screen.queryByText('切换历史')).toBeNull()
-  })
+  // codex 无独立「数据」tab(数据迁移/WebDAV 已移除);antigravity 的运行时/切换历史见 AntigravitySuitePage 测试。
 })

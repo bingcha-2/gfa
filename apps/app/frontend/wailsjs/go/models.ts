@@ -1,3 +1,475 @@
+export namespace accountgroups {
+	
+	export class Group {
+	    id: string;
+	    name: string;
+	    sortOrder: number;
+	    accountIds: string[];
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Group(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.sortOrder = source["sortOrder"];
+	        this.accountIds = source["accountIds"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+
+}
+
+export namespace aghistory {
+	
+	export class AutoSwitchHitGroup {
+	    groupId: string;
+	    groupName: string;
+	    percentage: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoSwitchHitGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.groupId = source["groupId"];
+	        this.groupName = source["groupName"];
+	        this.percentage = source["percentage"];
+	    }
+	}
+	export class AutoSwitchReason {
+	    rule: string;
+	    threshold: number;
+	    scopeMode: string;
+	    selectedGroupIds?: string[];
+	    selectedGroupNames?: string[];
+	    hitGroups?: AutoSwitchHitGroup[];
+	    candidateCount: number;
+	    selectedPolicy: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoSwitchReason(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rule = source["rule"];
+	        this.threshold = source["threshold"];
+	        this.scopeMode = source["scopeMode"];
+	        this.selectedGroupIds = source["selectedGroupIds"];
+	        this.selectedGroupNames = source["selectedGroupNames"];
+	        this.hitGroups = this.convertValues(source["hitGroups"], AutoSwitchHitGroup);
+	        this.candidateCount = source["candidateCount"];
+	        this.selectedPolicy = source["selectedPolicy"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SwitchHistoryItem {
+	    id: string;
+	    timestamp: number;
+	    accountId: string;
+	    targetEmail: string;
+	    triggerType: string;
+	    triggerSource: string;
+	    localOk: boolean;
+	    seamlessOk: boolean;
+	    success: boolean;
+	    localDurationMs: number;
+	    seamlessDurationMs?: number;
+	    totalDurationMs: number;
+	    errorStage?: string;
+	    errorCode?: string;
+	    errorMessage?: string;
+	    seamlessEffectiveMode?: string;
+	    seamlessFromEmail?: string;
+	    seamlessToEmail?: string;
+	    seamlessExecutionId?: string;
+	    seamlessFinishedAt?: string;
+	    autoSwitchReason?: AutoSwitchReason;
+	
+	    static createFrom(source: any = {}) {
+	        return new SwitchHistoryItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.timestamp = source["timestamp"];
+	        this.accountId = source["accountId"];
+	        this.targetEmail = source["targetEmail"];
+	        this.triggerType = source["triggerType"];
+	        this.triggerSource = source["triggerSource"];
+	        this.localOk = source["localOk"];
+	        this.seamlessOk = source["seamlessOk"];
+	        this.success = source["success"];
+	        this.localDurationMs = source["localDurationMs"];
+	        this.seamlessDurationMs = source["seamlessDurationMs"];
+	        this.totalDurationMs = source["totalDurationMs"];
+	        this.errorStage = source["errorStage"];
+	        this.errorCode = source["errorCode"];
+	        this.errorMessage = source["errorMessage"];
+	        this.seamlessEffectiveMode = source["seamlessEffectiveMode"];
+	        this.seamlessFromEmail = source["seamlessFromEmail"];
+	        this.seamlessToEmail = source["seamlessToEmail"];
+	        this.seamlessExecutionId = source["seamlessExecutionId"];
+	        this.seamlessFinishedAt = source["seamlessFinishedAt"];
+	        this.autoSwitchReason = this.convertValues(source["autoSwitchReason"], AutoSwitchReason);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace codexbiz {
+	
+	export class ReferralTimeFrameRule {
+	    type: string;
+	    invites_sent: number;
+	    invites_total: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReferralTimeFrameRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.invites_sent = source["invites_sent"];
+	        this.invites_total = source["invites_total"];
+	    }
+	}
+	export class ReferralEligibilityRules {
+	    requires_explicit_confirmation?: boolean;
+	    rules: string[];
+	    time_frame_rules: ReferralTimeFrameRule[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReferralEligibilityRules(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requires_explicit_confirmation = source["requires_explicit_confirmation"];
+	        this.rules = source["rules"];
+	        this.time_frame_rules = this.convertValues(source["time_frame_rules"], ReferralTimeFrameRule);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ReferralInvite {
+	    email: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReferralInvite(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.email = source["email"];
+	    }
+	}
+	export class ReferralInviteEligibility {
+	    should_show: boolean;
+	    remaining_referrals?: number;
+	    ineligible_reason_code?: string;
+	    grant_action?: string;
+	    grant_amount?: number;
+	    referral_key: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReferralInviteEligibility(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.should_show = source["should_show"];
+	        this.remaining_referrals = source["remaining_referrals"];
+	        this.ineligible_reason_code = source["ineligible_reason_code"];
+	        this.grant_action = source["grant_action"];
+	        this.grant_amount = source["grant_amount"];
+	        this.referral_key = source["referral_key"];
+	    }
+	}
+	export class ReferralInviteResponse {
+	    invites: ReferralInvite[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReferralInviteResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.invites = this.convertValues(source["invites"], ReferralInvite);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ResetCredit {
+	    id?: string;
+	    status?: string;
+	    reset_type?: string;
+	    granted_at?: number;
+	    expires_at?: number;
+	    redeemed_at?: number;
+	    raw_status?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResetCredit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.status = source["status"];
+	        this.reset_type = source["reset_type"];
+	        this.granted_at = source["granted_at"];
+	        this.expires_at = source["expires_at"];
+	        this.redeemed_at = source["redeemed_at"];
+	        this.raw_status = source["raw_status"];
+	    }
+	}
+	export class ResetCreditsSnapshot {
+	    available_count?: number;
+	    credits: ResetCredit[];
+	    next_expires_at?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResetCreditsSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available_count = source["available_count"];
+	        this.credits = this.convertValues(source["credits"], ResetCredit);
+	        this.next_expires_at = source["next_expires_at"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SubscriptionSnapshot {
+	    AccountID: string;
+	    PlanType: string;
+	    SubscriptionActiveUntil: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.AccountID = source["AccountID"];
+	        this.PlanType = source["PlanType"];
+	        this.SubscriptionActiveUntil = source["SubscriptionActiveUntil"];
+	    }
+	}
+
+}
+
+export namespace codexsettings {
+	
+	export class QuickConfig {
+	    contextWindow1m: boolean;
+	    autoCompactTokenLimit: number;
+	    detectedModelContextWindow?: number;
+	    detectedAutoCompactTokenLimit?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new QuickConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.contextWindow1m = source["contextWindow1m"];
+	        this.autoCompactTokenLimit = source["autoCompactTokenLimit"];
+	        this.detectedModelContextWindow = source["detectedModelContextWindow"];
+	        this.detectedAutoCompactTokenLimit = source["detectedAutoCompactTokenLimit"];
+	    }
+	}
+	export class Settings {
+	    codexAppPath: string;
+	    launchOnSwitch: boolean;
+	    restartAppOnSwitch: boolean;
+	    restartAppPath: string;
+	    showApiEntry: boolean;
+	    filterMemory: boolean;
+	    showCodeReviewQuota: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Settings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.codexAppPath = source["codexAppPath"];
+	        this.launchOnSwitch = source["launchOnSwitch"];
+	        this.restartAppOnSwitch = source["restartAppOnSwitch"];
+	        this.restartAppPath = source["restartAppPath"];
+	        this.showApiEntry = source["showApiEntry"];
+	        this.filterMemory = source["filterMemory"];
+	        this.showCodeReviewQuota = source["showCodeReviewQuota"];
+	    }
+	}
+
+}
+
+export namespace economy {
+	
+	export class AlertConfig {
+	    enabled: boolean;
+	    thresholdPct: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AlertConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.thresholdPct = source["thresholdPct"];
+	    }
+	}
+	export class AlertResult {
+	    Alert: boolean;
+	    LowestPercentage: number;
+	    LowModels: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AlertResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Alert = source["Alert"];
+	        this.LowestPercentage = source["LowestPercentage"];
+	        this.LowModels = source["LowModels"];
+	    }
+	}
+	export class AppSpeed {
+	    contextPreset: string;
+	    tier: string;
+	    customContextWindow?: number;
+	    customAutoCompact?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSpeed(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.contextPreset = source["contextPreset"];
+	        this.tier = source["tier"];
+	        this.customContextWindow = source["customContextWindow"];
+	        this.customAutoCompact = source["customAutoCompact"];
+	    }
+	}
+	export class SwitchConfig {
+	    Enabled: boolean;
+	    ThresholdPct: number;
+	    ScopeMode: string;
+	    SelectedAccountIDs: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SwitchConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Enabled = source["Enabled"];
+	        this.ThresholdPct = source["ThresholdPct"];
+	        this.ScopeMode = source["ScopeMode"];
+	        this.SelectedAccountIDs = source["SelectedAccountIDs"];
+	    }
+	}
+
+}
+
 export namespace gateway {
 	
 	export class ConnTestResult {
@@ -75,6 +547,11 @@ export namespace instance {
 	    workingDir?: string;
 	    extraArgs?: string;
 	    bindAccountId?: string;
+	    launchMode?: string;
+	    appSpeed?: string;
+	    followLocalAccount?: boolean;
+	    quickContextWindow?: number;
+	    quickAutoCompact?: number;
 	    createdAt: number;
 	    lastLaunchedAt?: number;
 	    pid?: number;
@@ -92,6 +569,11 @@ export namespace instance {
 	        this.workingDir = source["workingDir"];
 	        this.extraArgs = source["extraArgs"];
 	        this.bindAccountId = source["bindAccountId"];
+	        this.launchMode = source["launchMode"];
+	        this.appSpeed = source["appSpeed"];
+	        this.followLocalAccount = source["followLocalAccount"];
+	        this.quickContextWindow = source["quickContextWindow"];
+	        this.quickAutoCompact = source["quickAutoCompact"];
 	        this.createdAt = source["createdAt"];
 	        this.lastLaunchedAt = source["lastLaunchedAt"];
 	        this.pid = source["pid"];
@@ -396,6 +878,102 @@ export namespace manager {
 
 }
 
+export namespace modelprovider {
+	
+	export class ConnTestResult {
+	    ok: boolean;
+	    status: number;
+	    latencyMs: number;
+	    err: string;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConnTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.status = source["status"];
+	        this.latencyMs = source["latencyMs"];
+	        this.err = source["err"];
+	        this.model = source["model"];
+	    }
+	}
+	export class Model {
+	    id: string;
+	    displayName?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Model(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.displayName = source["displayName"];
+	    }
+	}
+	export class ListModelsResult {
+	    models: Model[];
+	    latencyMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListModelsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.models = this.convertValues(source["models"], Model);
+	        this.latencyMs = source["latencyMs"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class Provider {
+	    id: string;
+	    name: string;
+	    baseURL: string;
+	    apiKey: string;
+	    wireApi: string;
+	    modelCatalog: string[];
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Provider(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.baseURL = source["baseURL"];
+	        this.apiKey = source["apiKey"];
+	        this.wireApi = source["wireApi"];
+	        this.modelCatalog = source["modelCatalog"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+
+}
+
 export namespace refreshcfg {
 	
 	export class Config {
@@ -411,6 +989,177 @@ export namespace refreshcfg {
 	        this.quotaMinutes = source["quotaMinutes"];
 	        this.currentMinutes = source["currentMinutes"];
 	    }
+	}
+
+}
+
+export namespace sessionsync {
+	
+	export class RestoreSummary {
+	    requestedSessionCount: number;
+	    restoredSessionCount: number;
+	    restoredInstanceCount: number;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestedSessionCount = source["requestedSessionCount"];
+	        this.restoredSessionCount = source["restoredSessionCount"];
+	        this.restoredInstanceCount = source["restoredInstanceCount"];
+	        this.message = source["message"];
+	    }
+	}
+	export class SessionLocation {
+	    instanceId: string;
+	    instanceName: string;
+	    running: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionLocation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instanceId = source["instanceId"];
+	        this.instanceName = source["instanceName"];
+	        this.running = source["running"];
+	    }
+	}
+	export class SessionRecord {
+	    sessionId: string;
+	    title: string;
+	    cwd: string;
+	    updatedAt?: number;
+	    locationCount: number;
+	    locations: SessionLocation[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.title = source["title"];
+	        this.cwd = source["cwd"];
+	        this.updatedAt = source["updatedAt"];
+	        this.locationCount = source["locationCount"];
+	        this.locations = this.convertValues(source["locations"], SessionLocation);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SessionTokenStats {
+	    sessionId: string;
+	    inputTokens: number;
+	    outputTokens: number;
+	    totalTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionTokenStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.totalTokens = source["totalTokens"];
+	    }
+	}
+	export class TrashSummary {
+	    requestedSessionCount: number;
+	    trashedSessionCount: number;
+	    trashedInstanceCount: number;
+	    trashDir: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrashSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestedSessionCount = source["requestedSessionCount"];
+	        this.trashedSessionCount = source["trashedSessionCount"];
+	        this.trashedInstanceCount = source["trashedInstanceCount"];
+	        this.trashDir = source["trashDir"];
+	        this.message = source["message"];
+	    }
+	}
+	export class TrashedSessionLocation {
+	    instanceId: string;
+	    instanceName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrashedSessionLocation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instanceId = source["instanceId"];
+	        this.instanceName = source["instanceName"];
+	    }
+	}
+	export class TrashedSessionRecord {
+	    sessionId: string;
+	    title: string;
+	    cwd: string;
+	    deletedAt?: number;
+	    locationCount: number;
+	    locations: TrashedSessionLocation[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TrashedSessionRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.title = source["title"];
+	        this.cwd = source["cwd"];
+	        this.deletedAt = source["deletedAt"];
+	        this.locationCount = source["locationCount"];
+	        this.locations = this.convertValues(source["locations"], TrashedSessionLocation);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
