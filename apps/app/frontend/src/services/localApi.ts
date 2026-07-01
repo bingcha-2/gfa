@@ -51,6 +51,27 @@ export interface LocalStatsSnapshot {
 export interface WakeupConfig { enabled: boolean; intervalMinutes: number }
 export interface WakeupRunEntry { atMs: number; accountId: string; email: string; ok: boolean; err?: string; newExpiry?: number }
 
+/** 一次单账号保活验证结果(pass/fail + 原因 + 时间)。 */
+export interface WakeupVerifyResult {
+  accountId: string
+  email: string
+  ok: boolean
+  reason?: string
+  atMs: number
+  durationMs: number
+  newExpiry?: number
+}
+
+/** 一批保活验证的聚合 + 明细(历史一条 = 一批)。 */
+export interface WakeupVerifyBatch {
+  batchId: string
+  atMs: number
+  total: number
+  passCount: number
+  failCount: number
+  records: WakeupVerifyResult[] | null
+}
+
 /** 自动刷新间隔(分钟):配额自动刷新 / 当前账号刷新。 */
 export interface RefreshConfig { quotaMinutes: number; currentMinutes: number }
 
@@ -162,6 +183,16 @@ export interface ProviderLocalApi {
   setWakeupConfig(enabled: boolean, intervalMinutes: number): Promise<void>
   wakeupRunNow(): Promise<WakeupRunEntry[]>
   wakeupHistory(): Promise<WakeupRunEntry[]>
+  /** 对选中账号跑一批真保活验证(pass/fail + 聚合)。 */
+  wakeupVerifyBatch(ids: string[]): Promise<WakeupVerifyBatch>
+  /** 每账号最新一次验证结果(从磁盘)。 */
+  wakeupVerificationState(): Promise<WakeupVerifyResult[]>
+  /** 验证历史批次(新→旧)。 */
+  wakeupVerificationHistory(): Promise<WakeupVerifyBatch[]>
+  /** 删除指定 batchId 的验证历史,返回删除数量。 */
+  clearWakeupVerificationHistory(batchIds: string[]): Promise<number>
+  /** 单账号即席保活测试(按 id,provider 无关)。 */
+  wakeupTestOne(id: string): Promise<WakeupVerifyResult>
   instanceList(): Promise<InstanceProfile[]>
   instanceCreate(name: string, userDataDir: string, workingDir: string, extraArgs: string, bindAccountId: string): Promise<InstanceProfile>
   instanceDelete(id: string): Promise<void>
@@ -211,6 +242,11 @@ export const codexLocalApi: ProviderLocalApi = {
   setWakeupConfig: (e, i) => app().LocalSetCodexWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalCodexWakeupRunNow() as Promise<WakeupRunEntry[]>,
   wakeupHistory: () => app().LocalCodexWakeupHistory() as Promise<WakeupRunEntry[]>,
+  wakeupVerifyBatch: (ids) => app().LocalCodexWakeupVerifyBatch(ids) as Promise<WakeupVerifyBatch>,
+  wakeupVerificationState: () => app().LocalCodexWakeupVerificationState() as Promise<WakeupVerifyResult[]>,
+  wakeupVerificationHistory: () => app().LocalCodexWakeupVerificationHistory() as Promise<WakeupVerifyBatch[]>,
+  clearWakeupVerificationHistory: (ids) => app().LocalCodexWakeupClearVerificationHistory(ids) as Promise<number>,
+  wakeupTestOne: (id) => app().LocalWakeupTestOne(id) as Promise<WakeupVerifyResult>,
   instanceList: () => app().LocalInstanceList('codex') as Promise<InstanceProfile[]>,
   instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('codex', n, d, w, e, b) as Promise<InstanceProfile>,
   instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
@@ -249,6 +285,11 @@ export const antigravityLocalApi: ProviderLocalApi = {
   setWakeupConfig: (e, i) => app().LocalSetAntigravityWakeupConfig(e, i) as Promise<void>,
   wakeupRunNow: () => app().LocalAntigravityWakeupRunNow() as Promise<WakeupRunEntry[]>,
   wakeupHistory: () => app().LocalAntigravityWakeupHistory() as Promise<WakeupRunEntry[]>,
+  wakeupVerifyBatch: (ids) => app().LocalAntigravityWakeupVerifyBatch(ids) as Promise<WakeupVerifyBatch>,
+  wakeupVerificationState: () => app().LocalAntigravityWakeupVerificationState() as Promise<WakeupVerifyResult[]>,
+  wakeupVerificationHistory: () => app().LocalAntigravityWakeupVerificationHistory() as Promise<WakeupVerifyBatch[]>,
+  clearWakeupVerificationHistory: (ids) => app().LocalAntigravityWakeupClearVerificationHistory(ids) as Promise<number>,
+  wakeupTestOne: (id) => app().LocalWakeupTestOne(id) as Promise<WakeupVerifyResult>,
   instanceList: () => app().LocalInstanceList('antigravity') as Promise<InstanceProfile[]>,
   instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('antigravity', n, d, w, e, b) as Promise<InstanceProfile>,
   instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,

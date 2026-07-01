@@ -122,6 +122,7 @@ type providerCtx struct {
 	mgr       *manager.Manager
 	wk        *wakeup.Scheduler
 	wkCfg     *wakeup.ConfigStore
+	wkVerify  *wakeup.Verification // 保活验证 + 单号测试(复用同一 keepAlive)
 	refresher manager.Refresher
 }
 
@@ -224,7 +225,12 @@ func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, refresher 
 	wkCfg := wakeup.NewConfigStore(h.dir, string(p))
 	wk.SetConfig(wkCfg.Load())
 	wk.Start(context.Background(), time.Minute)
-	return &providerCtx{mgr: mgr, wk: wk, wkCfg: wkCfg, refresher: refresher}
+	// 保活验证 + 单号测试:复用同一 keepAlive(真 token 续约 + 轻探额度),
+	// 按 id 解析账号 = acc.Get。历史/状态各 provider 独立落盘。
+	wkVerify := wakeup.NewVerification(h.dir, string(p), keepAlive, func(id string) (*account.Account, error) {
+		return h.acc.Get(id)
+	})
+	return &providerCtx{mgr: mgr, wk: wk, wkCfg: wkCfg, wkVerify: wkVerify, refresher: refresher}
 }
 
 func (h *Hub) ctx(p account.Provider) (*providerCtx, error) {

@@ -45,6 +45,8 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalSetCodexWakeupConfig: vi.fn().mockResolvedValue(undefined),
     LocalCodexWakeupRunNow: vi.fn().mockResolvedValue([]),
     LocalCodexWakeupHistory: vi.fn().mockResolvedValue([{ atMs: 1700000000000, accountId: 'a1', email: 'yifan@example.com', ok: true }]),
+    LocalCodexWakeupVerifyBatch: vi.fn().mockResolvedValue({ batchId: 'b1', atMs: 1700000000000, total: 1, passCount: 1, failCount: 0, records: [{ accountId: 'a1', email: 'yifan@example.com', ok: true, atMs: 1700000000000, durationMs: 12 }] }),
+    LocalWakeupTestOne: vi.fn().mockResolvedValue({ accountId: 'a1', email: 'yifan@example.com', ok: true, atMs: 1700000000000, durationMs: 12 }),
     LocalInstanceList: vi.fn().mockResolvedValue([{ id: 'i1', provider: 'codex', name: '工作', userDataDir: '/tmp/w', createdAt: 1 }]),
     LocalInstanceCreate: vi.fn().mockResolvedValue({ id: 'i2', provider: 'codex', name: '新', userDataDir: '/tmp/n', createdAt: 2 }),
     LocalInstanceDelete: vi.fn().mockResolvedValue(undefined),
@@ -607,6 +609,20 @@ describe('CodexSuitePage', () => {
     const currentSel = await screen.findByLabelText('当前账号刷新间隔')
     fireEvent.change(currentSel, { target: { value: '5' } })
     await waitFor(() => expect(app.LocalSetRefreshConfig).toHaveBeenCalledWith(10, 5))
+  })
+
+  it('保活 tab 验证:勾选号点「验证选中」调 wakeupVerifyBatch;单号「测试」调 wakeupTestOne', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '保活' }))
+    // 验证面板列出在池号 a1。
+    fireEvent.click(await screen.findByRole('checkbox', { name: '验证 yifan@example.com' }))
+    fireEvent.click(screen.getByRole('button', { name: /验证选中/ }))
+    await waitFor(() => expect(app.LocalCodexWakeupVerifyBatch).toHaveBeenCalledWith(['a1']))
+    // 单号测试。
+    fireEvent.click(screen.getByRole('button', { name: '测试' }))
+    await waitFor(() => expect(app.LocalWakeupTestOne).toHaveBeenCalledWith('a1'))
   })
 
   it('加号菜单有「从本地 ~/.codex 导入」(codex 有 importFromLocal),点击调 importFromLocal 并重拉列表', async () => {

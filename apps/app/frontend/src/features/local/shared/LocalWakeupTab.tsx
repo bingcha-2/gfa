@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Play, RefreshCw, AlarmClock, Gauge } from 'lucide-react'
-import { type ProviderLocalApi, type WakeupConfig, type WakeupRunEntry, type RefreshConfig, getRefreshConfig, setRefreshConfig } from '@/services/localApi'
+import { Play, RefreshCw, AlarmClock, Gauge, ShieldCheck, Check, X } from 'lucide-react'
+import { type ProviderLocalApi, type WakeupConfig, type WakeupRunEntry, type RefreshConfig, type LocalAccountView, type WakeupVerifyBatch, getRefreshConfig, setRefreshConfig } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
 /** 自动刷新间隔下拉选项(分钟),口径对齐 cockpit;后端 clamp 正值,故无「关」。 */
@@ -14,13 +14,18 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  // 保活验证 + 单号测试(Wave P)。
+  const [accounts, setAccounts] = useState<LocalAccountView[]>([])
+  const [verifySel, setVerifySel] = useState<Set<string>>(new Set())
+  const [verifyBatch, setVerifyBatch] = useState<WakeupVerifyBatch | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const [c, h, rc] = await Promise.all([api.wakeupConfig(), api.wakeupHistory(), getRefreshConfig()])
+      const [c, h, rc, accs] = await Promise.all([api.wakeupConfig(), api.wakeupHistory(), getRefreshConfig(), api.listAccounts()])
       setCfg(c)
       setHistory(h || [])
       setRefreshCfgState(rc)
+      setAccounts((accs || []).filter((a) => a.poolEnabled))
       setErr('')
     } catch (e) {
       setErr(String(e))
@@ -28,6 +33,34 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
       setLoading(false)
     }
   }, [api])
+
+  const onVerify = async () => {
+    const ids = Array.from(verifySel)
+    if (ids.length === 0) return
+    setBusy('verify')
+    try {
+      setVerifyBatch(await api.wakeupVerifyBatch(ids))
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onTestOne = async (id: string) => {
+    setBusy(`test-${id}`)
+    try {
+      const r = await api.wakeupTestOne(id)
+      setVerifyBatch({ batchId: `single-${id}`, atMs: r.atMs, total: 1, passCount: r.ok ? 1 : 0, failCount: r.ok ? 0 : 1, records: [r] })
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleVerify = (id: string) =>
+    setVerifySel((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -150,6 +183,40 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
+        <div>
+          <div className="text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5"><ShieldCheck size={14} /> 保活验证</div>
+          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">对选中的在池号跑一次真实保活,验证是否还能用(逐号 pass/fail);也可单号即时测试。</div>
+        </div>
+        {accounts.length === 0 ? (
+          <div className="text-[12px] text-[var(--text-muted)] py-2">没有在池账号。</div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5 max-h-[180px] overflow-auto">
+              {accounts.map((a) => {
+                const r = verifyBatch?.records?.find((x) => x.accountId === a.id)
+                return (
+                  <div key={a.id} className="flex items-center gap-2 text-[12px]">
+                    <input type="checkbox" aria-label={`验证 ${a.email}`} checked={verifySel.has(a.id)} onChange={() => toggleVerify(a.id)} className="accent-[var(--primary)]" />
+                    <span className="truncate flex-1 text-[var(--text-secondary)]">{a.email || a.id}</span>
+                    {r && (
+                      <span className={cn('inline-flex items-center gap-1', r.ok ? 'text-[var(--success)]' : 'text-[var(--danger)]')}>
+                        {r.ok ? <Check size={12} /> : <X size={12} />}{r.ok ? '可用' : (r.reason || '失败')}
+                      </span>
+                    )}
+                    <button onClick={() => void onTestOne(a.id)} disabled={busy === `test-${a.id}`} className="text-[11px] font-semibold px-2 h-[24px] rounded-[6px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">测试</button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-2 pt-1 border-t border-[var(--border-light)]">
+              <button onClick={() => void onVerify()} disabled={busy === 'verify' || verifySel.size === 0} className="text-[12px] font-semibold px-3 h-[30px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50 inline-flex items-center gap-1.5"><ShieldCheck size={13} /> 验证选中</button>
+              {verifyBatch && <span className="text-[11px] text-[var(--text-muted)]">通过 {verifyBatch.passCount} · 失败 {verifyBatch.failCount} / {verifyBatch.total}</span>}
+            </div>
+          </>
         )}
       </div>
     </div>
