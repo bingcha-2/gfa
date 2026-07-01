@@ -25,7 +25,6 @@ import (
 	"bcai-wails/internal/local/gateway"
 	"bcai-wails/internal/local/gatewaycfg"
 	"bcai-wails/internal/local/gatewaykeys"
-	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
 	"bcai-wails/internal/local/modelprovider"
 	"bcai-wails/internal/local/quota"
@@ -131,7 +130,6 @@ type Hub struct {
 	acc         *account.Store
 	gw          *gateway.Gateway // 反代网关:只喂 codex 自有号(antigravity 接管走 IDE 注入)
 	sources     *takeover.SourceStore
-	instances   *instance.Store
 	platform    Platform
 	providers   map[account.Provider]*providerCtx
 	refreshCfg  *refreshcfg.Store
@@ -170,7 +168,6 @@ func New(dir string, platform Platform) (*Hub, error) {
 		gwScope:    gatewaycfg.NewStore(dir),
 		gwOps:      gatewaycfg.NewOpsStore(dir),
 		sources:    takeover.NewSourceStore(dir),
-		instances:  instance.NewStore(dir),
 		platform:   platform,
 		providers:  map[account.Provider]*providerCtx{},
 		refreshCfg: refreshcfg.NewStore(dir),
@@ -826,49 +823,3 @@ func (h *Hub) WakeupHistory(p account.Provider) ([]wakeup.RunEntry, error) {
 	return pc.wk.History(), nil
 }
 
-// ── 多实例(启动/停止经 Platform） ──
-
-func (h *Hub) InstanceList(provider string) ([]*instance.Profile, error) {
-	return h.instances.List(provider)
-}
-
-func (h *Hub) InstanceCreate(provider, name, userDataDir, workingDir, extraArgs, bindAccountID string) (*instance.Profile, error) {
-	p := &instance.Profile{
-		Provider: provider, Name: name, UserDataDir: userDataDir,
-		WorkingDir: workingDir, ExtraArgs: extraArgs, BindAccountID: bindAccountID,
-	}
-	if err := h.instances.Create(p); err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-func (h *Hub) InstanceUpdate(p instance.Profile) error { return h.instances.Update(&p) }
-func (h *Hub) InstanceDelete(id string) error          { return h.instances.Delete(id) }
-
-func (h *Hub) InstanceLaunch(id string) error {
-	p, ok := h.instances.Get(id)
-	if !ok {
-		return fmt.Errorf("实例不存在")
-	}
-	appPath := h.platform.DetectAppPath(p.Provider)
-	if appPath == "" {
-		return fmt.Errorf("未检测到 %s 的应用,请先安装", p.Provider)
-	}
-	pid, err := h.platform.LaunchApp(appPath, p.WorkingDir, BuildInstanceLaunchArgs(p))
-	if err != nil {
-		return err
-	}
-	return h.instances.SetPid(id, pid)
-}
-
-func (h *Hub) InstanceStop(id string) error {
-	p, ok := h.instances.Get(id)
-	if !ok {
-		return fmt.Errorf("实例不存在")
-	}
-	if p.Pid > 0 {
-		_ = h.platform.StopProcess(p.Pid)
-	}
-	return h.instances.SetPid(id, 0)
-}

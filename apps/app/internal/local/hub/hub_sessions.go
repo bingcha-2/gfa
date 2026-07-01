@@ -3,6 +3,7 @@ package hub
 import (
 	"path/filepath"
 
+	"bcai-wails/internal/local/codexsettings"
 	"bcai-wails/internal/local/sessionsync"
 )
 
@@ -15,25 +16,14 @@ import (
 //
 // 红线:只读写本地会话文件,与远程租号 / proxy.go / 网关出口无关。
 
-// sessionInstances 把 codex 实例库映射成 sessionsync.Instance(UserDataDir 空的跳过)。
+// sessionInstances 返回会话来源:默认 Codex 主目录(~/.codex 或 CODEX_HOME)。
+// (多实例管理已删,会话统一从默认 Codex 主目录读 rollout。)
 func (h *Hub) sessionInstances() ([]sessionsync.Instance, error) {
-	profiles, err := h.instances.List("codex")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]sessionsync.Instance, 0, len(profiles))
-	for _, p := range profiles {
-		if p.UserDataDir == "" {
-			continue
-		}
-		out = append(out, sessionsync.Instance{
-			ID:      p.ID,
-			Name:    p.Name,
-			DataDir: p.UserDataDir,
-			Running: p.Pid > 0,
-		})
-	}
-	return out, nil
+	return []sessionsync.Instance{{
+		ID:      "default",
+		Name:    "Codex",
+		DataDir: codexsettings.CodexHomeDir(),
+	}}, nil
 }
 
 // sessionTrashRoot 是会话废纸篓根目录(hub 数据目录下,跨机器不可迁移的运行态)。

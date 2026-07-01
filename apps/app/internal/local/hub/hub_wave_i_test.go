@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"bcai-wails/internal/local/account"
-	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/sessionsync"
 )
 
@@ -90,31 +89,13 @@ func TestHub_CurrentAndSetCurrentAndReorder(t *testing.T) {
 	}
 }
 
-// ── 实例增强字段设置 ──
+// ── 会话:从默认 Codex 主目录(CODEX_HOME)读 rollout(多实例已删) ──
 
-func TestHub_InstanceSetExtraFields(t *testing.T) {
+func TestHub_ListSessions_FromDefaultCodexHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
 	h, _ := newHub(t)
-	p, _ := h.InstanceCreate("codex", "x", "/tmp/x", "", "", "")
-	cw := int64(1048576)
-	if err := h.InstanceSetQuickConfig(p.ID, "cli", "fast", true, &cw, nil); err != nil {
-		t.Fatalf("InstanceSetQuickConfig: %v", err)
-	}
-	got, _ := h.instances.Get(p.ID)
-	if got.LaunchMode != instance.LaunchModeCLI || got.AppSpeed != instance.AppSpeedFast || !got.FollowLocalAccount {
-		t.Fatalf("extra fields not set: %+v", got)
-	}
-	if got.QuickContextWindow == nil || *got.QuickContextWindow != cw || got.QuickAutoCompact != nil {
-		t.Fatalf("quick config pointers wrong: ctx=%v compact=%v", got.QuickContextWindow, got.QuickAutoCompact)
-	}
-}
-
-// ── 会话同步:实例集合从实例库映射,trashRoot 在 hub 数据目录下 ──
-
-func TestHub_ListSessions_MapsInstancesAndTrashRoot(t *testing.T) {
-	h, _ := newHub(t)
-	// 造一个带 user-data-dir 的 codex 实例,放一份 rollout 会话。
-	dataDir := filepath.Join(t.TempDir(), "udd")
-	sessDir := filepath.Join(dataDir, "sessions", "2026", "06", "30")
+	sessDir := filepath.Join(home, "sessions", "2026", "06", "30")
 	if err := os.MkdirAll(sessDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -123,17 +104,12 @@ func TestHub_ListSessions_MapsInstancesAndTrashRoot(t *testing.T) {
 	if err := os.WriteFile(rollout, []byte(line), 0o644); err != nil {
 		t.Fatalf("write rollout: %v", err)
 	}
-	p, _ := h.InstanceCreate("codex", "实例A", dataDir, "", "", "")
-	_ = p
 	recs, err := h.ListSessions(sessionsync.SearchFilter{})
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
 	if len(recs) != 1 || recs[0].SessionID != "sid1" {
-		t.Fatalf("expected sid1 session: %+v", recs)
-	}
-	if len(recs[0].Locations) != 1 || recs[0].Locations[0].InstanceName != "实例A" {
-		t.Fatalf("location should carry instance name: %+v", recs[0].Locations)
+		t.Fatalf("expected sid1 session from default codex home: %+v", recs)
 	}
 }
 

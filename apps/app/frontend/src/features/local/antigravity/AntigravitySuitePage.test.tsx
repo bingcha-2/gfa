@@ -38,7 +38,7 @@ function installApp() {
     LocalCurrentAntigravityAccount: vi.fn().mockResolvedValue(null),
     LocalSetCurrentAntigravityAccount: vi.fn().mockResolvedValue(undefined),
     LocalReorderAntigravityAccounts: vi.fn().mockResolvedValue(undefined),
-    // ── 实例 tab(antigravity 额外:默认实例运行时 + 切换历史)──
+    // ── 运行时 tab(antigravity 额外:默认实例运行时 + 切换历史)──
     LocalAntigravityRuntimeStatus: vi.fn().mockResolvedValue(true),
     LocalAntigravityStartDefault: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityStopDefault: vi.fn().mockResolvedValue(undefined),
@@ -169,22 +169,22 @@ describe('AntigravitySuitePage', () => {
     await waitFor(() => expect(app.LocalReorderAntigravityAccounts).toHaveBeenCalledWith(['g2', 'g1']))
   })
 
-  // ── 实例 tab(antigravity 额外:默认实例运行时 + 切换历史,原在已删的「数据」tab)──
+  // ── 运行时 tab(antigravity 额外:默认实例运行时 + 切换历史,原在已删的「数据」tab)──
 
-  it('实例 tab 挂载读取运行时状态 + 切换历史', async () => {
+  it('运行时 tab 挂载读取运行时状态 + 切换历史', async () => {
     const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '实例' }))
+    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
     await waitFor(() => expect(app.LocalAntigravityApps).toHaveBeenCalled())
     await waitFor(() => expect(app.LocalAntigravitySwitchHistory).toHaveBeenCalled())
   })
 
-  it('实例 tab 显示两个 app(IDE + 独立版),对独立版启动调 AppStart(standalone)', async () => {
+  it('运行时 tab 显示两个 app(IDE + 独立版),对独立版启动调 AppStart(standalone)', async () => {
     const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '实例' }))
+    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
     // 两张 app 卡:IDE(唯一名)+ 独立版;各带「启动」。
     expect(await screen.findByText('Antigravity IDE')).toBeInTheDocument()
     const starts = await screen.findAllByRole('button', { name: /启动/ })
@@ -193,11 +193,11 @@ describe('AntigravitySuitePage', () => {
     await waitFor(() => expect(app.LocalAntigravityAppStart).toHaveBeenCalledWith('standalone'))
   })
 
-  it('实例 tab 切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
+  it('运行时 tab 切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
     const app = installApp()
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '实例' }))
+    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
     expect(await screen.findByText('switched@gmail.com')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清空历史' }))
     await waitFor(() => expect(app.LocalClearAntigravitySwitchHistory).toHaveBeenCalled())

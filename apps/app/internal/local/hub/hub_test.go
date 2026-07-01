@@ -5,7 +5,6 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/codexsettings"
-	"bcai-wails/internal/local/instance"
 )
 
 // fakePlatform 记录注入/检测调用,供 hub 单测(不碰真实 app/IDE)。
@@ -410,36 +409,5 @@ func TestHub_SetGatewayPort(t *testing.T) {
 	}
 	if st.Port == 0 {
 		t.Fatalf("expected a port, got %+v", st)
-	}
-}
-
-func TestHub_InstanceLaunch_UsesPlatform(t *testing.T) {
-	h, fp := newHub(t)
-	fp.appPath = "/Applications/Codex.app"
-	p, _ := h.InstanceCreate("codex", "工作", "/tmp/w", "", "--foo", "")
-	if err := h.InstanceLaunch(p.ID); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	got, _ := h.instances.Get(p.ID)
-	if got.Pid != 4321 {
-		t.Fatalf("expected pid 4321, got %d", got.Pid)
-	}
-	if len(fp.launchedArgs) != 2 || fp.launchedArgs[0] != "--user-data-dir=/tmp/w" || fp.launchedArgs[1] != "--foo" {
-		t.Fatalf("launch args wrong: %v", fp.launchedArgs)
-	}
-}
-
-func TestHub_InstanceLaunch_NoApp(t *testing.T) {
-	h, _ := newHub(t)
-	p, _ := h.InstanceCreate("codex", "x", "/tmp/x", "", "", "")
-	if err := h.InstanceLaunch(p.ID); err == nil {
-		t.Fatal("expected error when app not detected")
-	}
-}
-
-func TestBuildInstanceLaunchArgs(t *testing.T) {
-	args := BuildInstanceLaunchArgs(&instance.Profile{UserDataDir: "/d", ExtraArgs: "--a --b"})
-	if len(args) != 3 || args[0] != "--user-data-dir=/d" || args[1] != "--a" || args[2] != "--b" {
-		t.Fatalf("args wrong: %v", args)
 	}
 }

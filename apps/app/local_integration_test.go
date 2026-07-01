@@ -10,7 +10,6 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/economy"
-	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/takeover"
 )
 
@@ -325,72 +324,4 @@ func TestLocal_AccountGroupAssignEndToEnd(t *testing.T) {
 	if resolved2[a2.ID] != g2.ID {
 		t.Errorf("a2 改组后应属「团队 B」(%s,独占),实际 %q", g2.ID, resolved2[a2.ID])
 	}
-}
-
-// TestLocal_InstanceQuickConfigEndToEnd 端到端跑实例 quick config 写读链路:
-// LocalInstanceCreate 建一个 codex 实例 → LocalInstanceSetQuickConfig 写
-// launchMode/appSpeed/followLocalAccount/contextWindow/autoCompact → LocalInstanceList
-// 回读断言落库;再 nil 删 autoCompact 断言独立清键(不影响 contextWindow)。
-func TestLocal_InstanceQuickConfigEndToEnd(t *testing.T) {
-	localTestEnv(t)
-	app := NewApp()
-
-	prof, err := app.LocalInstanceCreate("codex", "工作实例", t.TempDir(), "", "", "")
-	if err != nil {
-		t.Fatalf("LocalInstanceCreate 失败: %v", err)
-	}
-	if prof.ID == "" || prof.Provider != "codex" {
-		t.Fatalf("建实例回视图异常: %+v", prof)
-	}
-
-	cw := int64(1000000)
-	acl := int64(150000)
-	if err := app.LocalInstanceSetQuickConfig(prof.ID, instance.LaunchModeCLI, instance.AppSpeedFast, true, &cw, &acl); err != nil {
-		t.Fatalf("LocalInstanceSetQuickConfig 失败: %v", err)
-	}
-
-	got := findInstance(t, app, prof.ID)
-	if got.LaunchMode != instance.LaunchModeCLI {
-		t.Errorf("launchMode = %q, 期望 %q", got.LaunchMode, instance.LaunchModeCLI)
-	}
-	if got.AppSpeed != instance.AppSpeedFast {
-		t.Errorf("appSpeed = %q, 期望 %q", got.AppSpeed, instance.AppSpeedFast)
-	}
-	if !got.FollowLocalAccount {
-		t.Errorf("followLocalAccount 应为 true")
-	}
-	if got.QuickContextWindow == nil || *got.QuickContextWindow != cw {
-		t.Errorf("quickContextWindow = %v, 期望 %d", got.QuickContextWindow, cw)
-	}
-	if got.QuickAutoCompact == nil || *got.QuickAutoCompact != acl {
-		t.Errorf("quickAutoCompact = %v, 期望 %d", got.QuickAutoCompact, acl)
-	}
-
-	// nil 删 autoCompact:contextWindow 保留。
-	if err := app.LocalInstanceSetQuickConfig(prof.ID, instance.LaunchModeCLI, instance.AppSpeedFast, true, &cw, nil); err != nil {
-		t.Fatalf("LocalInstanceSetQuickConfig(删 autoCompact) 失败: %v", err)
-	}
-	after := findInstance(t, app, prof.ID)
-	if after.QuickAutoCompact != nil {
-		t.Errorf("删键后 quickAutoCompact 应为 nil,实际 %v", *after.QuickAutoCompact)
-	}
-	if after.QuickContextWindow == nil || *after.QuickContextWindow != cw {
-		t.Errorf("删 autoCompact 不应影响 quickContextWindow,实际 %v", after.QuickContextWindow)
-	}
-}
-
-// findInstance 从 LocalInstanceList(codex) 里按 id 取一个实例,找不到即 fatal。
-func findInstance(t *testing.T, app *App, id string) *instance.Profile {
-	t.Helper()
-	list, err := app.LocalInstanceList("codex")
-	if err != nil {
-		t.Fatalf("LocalInstanceList 失败: %v", err)
-	}
-	for _, p := range list {
-		if p.ID == id {
-			return p
-		}
-	}
-	t.Fatalf("实例 %s 不在列表中: %+v", id, list)
-	return nil
 }

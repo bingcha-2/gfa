@@ -361,100 +361,19 @@ describe('CodexSuitePage', () => {
     await waitFor(() => expect(app.LocalDeleteAccounts).toHaveBeenCalledWith(['a1']))
   })
 
-  it('shows the instances tab and can create a profile', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '实例' }))
-    expect(await screen.findByText('工作')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('实例名称'), { target: { value: '新实例' } })
-    fireEvent.change(screen.getByLabelText('user-data 目录'), { target: { value: '/tmp/x' } })
-    fireEvent.click(screen.getByRole('button', { name: /创建/ }))
-    await waitFor(() => expect(app.LocalInstanceCreate).toHaveBeenCalledWith('codex', '新实例', '/tmp/x', '', '', ''))
-    // 启动既有实例(无 pid → 显示启动)
-    fireEvent.click(screen.getByRole('button', { name: /启动/ }))
-    await waitFor(() => expect(app.LocalInstanceLaunch).toHaveBeenCalledWith('i1'))
-    // 改绑账号(内联下拉)
-    fireEvent.change(screen.getByLabelText('改绑账号'), { target: { value: 'a1' } })
-    await waitFor(() => expect(app.LocalInstanceUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'i1', bindAccountId: 'a1' })))
-  })
-
-  // ── 实例增强:启动方式 / 跟随当前账号 / 快捷上下文(Wave I)──
-
-  async function openInstances() {
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '实例' }))
-    await screen.findByText('工作')
-  }
-
-  it('实例行可展开配置面板,启动方式段控切 CLI 调 instanceSetQuickConfig(launchMode=cli)', async () => {
-    const app = installApp()
-    await openInstances()
-    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
-    // 当前 gui(默认)→ GUI 段控高亮
-    expect((await screen.findByRole('button', { name: 'GUI' })).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: 'CLI' }))
-    await waitFor(() =>
-      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', 'cli', expect.any(String), expect.any(Boolean), null, null),
-    )
-  })
-
-  it('实例配置面板「跟随当前账号」开关 off→on 调 instanceSetQuickConfig(followLocalAccount=true)', async () => {
-    const app = installApp()
-    await openInstances()
-    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
-    const sw = await screen.findByRole('switch', { name: /跟随当前账号/ })
-    expect(sw).toHaveAttribute('aria-checked', 'false')
-    fireEvent.click(sw)
-    await waitFor(() =>
-      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', expect.any(String), expect.any(String), true, null, null),
-    )
-  })
-
-  it('实例配置面板改上下文窗口/压缩阈值失焦调 instanceSetQuickConfig(带数值)', async () => {
-    const app = installApp()
-    await openInstances()
-    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
-    const ctx = await screen.findByLabelText('上下文窗口') as HTMLInputElement
-    const compact = screen.getByLabelText('压缩阈值') as HTMLInputElement
-    fireEvent.change(ctx, { target: { value: '516000' } })
-    fireEvent.change(compact, { target: { value: '460000' } })
-    fireEvent.blur(compact)
-    await waitFor(() =>
-      expect(app.LocalInstanceSetQuickConfig).toHaveBeenCalledWith('i1', expect.any(String), expect.any(String), expect.any(Boolean), 516000, 460000),
-    )
-  })
-
-  it('实例配置面板:已配置实例回填 launchMode/follow/上下文当前值', async () => {
-    installApp({
-      LocalInstanceList: vi.fn().mockResolvedValue([
-        { id: 'i1', provider: 'codex', name: '工作', userDataDir: '/tmp/w', launchMode: 'cli', followLocalAccount: true, quickContextWindow: 516000, quickAutoCompact: 460000, createdAt: 1 },
-      ]),
-    })
-    await openInstances()
-    fireEvent.click(screen.getByRole('button', { name: '配置实例' }))
-    expect((await screen.findByRole('button', { name: 'CLI' })).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('switch', { name: /跟随当前账号/ })).toHaveAttribute('aria-checked', 'true')
-    expect((screen.getByLabelText('上下文窗口') as HTMLInputElement).value).toBe('516000')
-    expect((screen.getByLabelText('压缩阈值') as HTMLInputElement).value).toBe('460000')
-  })
-
-  // ── 跨实例会话:列会话 / token 统计 / 移回收站 / 废纸篓恢复(Wave J)──
 
   async function openSessions() {
-    await openInstances()
-    fireEvent.click(screen.getByRole('button', { name: /跨实例会话/ }))
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: '会话' }))
   }
 
-  it('跨实例会话:打开调 listCodexSessions,列出会话(标题/cwd/落点数)', async () => {
+  it('会话 tab:打开调 listCodexSessions,列出会话(标题/cwd)', async () => {
     const app = installApp()
     await openSessions()
     await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledWith('', ''))
     expect(await screen.findByText('重构网关')).toBeInTheDocument()
     expect(screen.getByText('/work/gfa')).toBeInTheDocument()
-    // 落点数 = 2(出现在 2 个实例)
-    expect(screen.getByText(/2 个实例/)).toBeInTheDocument()
   })
 
   it('跨实例会话:输入标题过滤重新查询 listCodexSessions(带 titleQuery)', async () => {
@@ -487,19 +406,6 @@ describe('CodexSuitePage', () => {
     await waitFor(() => expect(app.LocalListCodexSessions).toHaveBeenCalledTimes(2))
   })
 
-  it('跨实例会话:「修复可见性」调 repairCodexSessionVisibility;选中后「移到实例」调 syncCodexSessionsToInstance', async () => {
-    const app = installApp()
-    await openSessions()
-    await screen.findByText('重构网关')
-    // 修复可见性(无需选中)。
-    fireEvent.click(screen.getByRole('button', { name: '修复可见性' }))
-    await waitFor(() => expect(app.LocalRepairCodexSessionVisibility).toHaveBeenCalledWith(''))
-    // 移到实例:选中 + 选目标实例 + 点按钮。
-    fireEvent.click(screen.getByRole('checkbox', { name: /选择会话/ }))
-    fireEvent.change(screen.getByLabelText('同步会话到实例'), { target: { value: 'i1' } })
-    fireEvent.click(screen.getByRole('button', { name: '移到实例' }))
-    await waitFor(() => expect(app.LocalSyncCodexSessionsToInstance).toHaveBeenCalledWith(['s1'], 'i1'))
-  })
 
   it('跨实例会话:切到废纸篓调 listTrashedCodexSessions,恢复调 restoreCodexSessionsFromTrash', async () => {
     const app = installApp()

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { LocalAccountsTab } from './LocalAccountsTab'
 import { LocalStatsTab } from './LocalStatsTab'
 import { LocalWakeupTab } from './LocalWakeupTab'
-import { LocalInstancesTab } from './LocalInstancesTab'
+import { LocalSessionsTab } from './LocalSessionsTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
 import { LocalModelProvidersTab } from './LocalModelProvidersTab'
 import { LocalSettingsTab } from './LocalSettingsTab'
@@ -31,20 +31,23 @@ export interface LocalProviderSuiteProps {
   hasModelProviders?: boolean
   /** 是否有「Codex 设置」面板(本地 Codex 设置 + config.toml 快捷配置)。仅 codex。 */
   hasSettings?: boolean
-  /** 「实例」tab 是否额外显示 antigravity 默认实例运行时控制 + 切换历史。仅 antigravity。 */
+  /** 是否有「会话」tab(codex 会话列表/回收站/统计,读默认 Codex 主目录)。仅 codex。 */
+  hasSessions?: boolean
+  /** 是否有「运行时」tab(antigravity 双 app 启停/聚焦 + 切换历史)。仅 antigravity。 */
   antigravityRuntime?: boolean
 }
 
-type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'instances' | 'settings'
+type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'sessions' | 'agruntime' | 'settings'
 
-export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false, antigravityRuntime = false }: LocalProviderSuiteProps) {
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false, hasSessions = false, antigravityRuntime = false }: LocalProviderSuiteProps) {
   const tabs: [TabId, string][] = [
     ['accounts', '账号'],
     ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
     ...(hasModelProviders ? ([['providers', '供应商']] as [TabId, string][]) : []),
     ['stats', '统计'],
     ['wakeup', '保活'],
-    ['instances', '实例'],
+    ...(hasSessions ? ([['sessions', '会话']] as [TabId, string][]) : []),
+    ...(antigravityRuntime ? ([['agruntime', '运行时']] as [TabId, string][]) : []),
     ...(hasSettings ? ([['settings', '设置']] as [TabId, string][]) : []),
   ]
   const [source, setSource] = useState<'remote' | 'local'>('remote')
@@ -126,12 +129,8 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
       {tab === 'providers' && <LocalModelProvidersTab />}
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
-      {tab === 'instances' && (
-        <div className="flex flex-col gap-4">
-          {antigravityRuntime && <LocalAntigravityRuntimeTab />}
-          <LocalInstancesTab api={api} />
-        </div>
-      )}
+      {tab === 'sessions' && <LocalSessionsTab />}
+      {tab === 'agruntime' && <LocalAntigravityRuntimeTab />}
       {tab === 'settings' && <LocalSettingsTab onNavigate={(p) => { if (p === 'wakeup') setTab('wakeup'); else onNavigate?.(p) }} />}
     </div>
   )

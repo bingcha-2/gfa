@@ -7,7 +7,6 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/hub"
-	"bcai-wails/internal/local/instance"
 	"bcai-wails/internal/local/manager"
 	"bcai-wails/internal/local/refreshcfg"
 	"bcai-wails/internal/local/stats"
@@ -408,46 +407,3 @@ func (a *App) LocalAntigravityWakeupHistory() ([]wakeup.RunEntry, error) {
 	return localHub.WakeupHistory(account.ProviderAntigravity)
 }
 
-// ── 多实例 ──
-
-func (a *App) LocalInstanceList(provider string) ([]*instance.Profile, error) {
-	if err := ensureLocal(); err != nil {
-		return nil, err
-	}
-	return localHub.InstanceList(provider)
-}
-
-func (a *App) LocalInstanceCreate(provider, name, userDataDir, workingDir, extraArgs, bindAccountID string) (*instance.Profile, error) {
-	if err := ensureLocal(); err != nil {
-		return nil, err
-	}
-	return localHub.InstanceCreate(provider, name, userDataDir, workingDir, extraArgs, bindAccountID)
-}
-
-func (a *App) LocalInstanceUpdate(p instance.Profile) error {
-	if err := ensureLocal(); err != nil {
-		return err
-	}
-	return localHub.InstanceUpdate(p)
-}
-
-func (a *App) LocalInstanceDelete(id string) error {
-	if err := ensureLocal(); err != nil {
-		return err
-	}
-	return localHub.InstanceDelete(id)
-}
-
-func (a *App) LocalInstanceLaunch(id string) error {
-	if err := ensureLocal(); err != nil {
-		return err
-	}
-	return localHub.InstanceLaunch(id)
-}
-
-func (a *App) LocalInstanceStop(id string) error {
-	if err := ensureLocal(); err != nil {
-		return err
-	}
-	return localHub.InstanceStop(id)
-}

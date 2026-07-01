@@ -149,29 +149,6 @@ export function saveGatewayUpstreamProxy(raw: string): Promise<GatewayOpsConfig>
   return app().LocalSaveGatewayUpstreamProxy(raw) as Promise<GatewayOpsConfig>
 }
 
-export interface InstanceProfile {
-  id: string
-  provider: string
-  name: string
-  userDataDir: string
-  workingDir?: string
-  extraArgs?: string
-  bindAccountId?: string
-  /** 启动方式:gui(官方桌面 App)| cli。默认 gui。 */
-  launchMode?: string
-  /** 推理速度档:standard | fast。默认 standard。 */
-  appSpeed?: string
-  /** 跟随本地当前账号。 */
-  followLocalAccount?: boolean
-  /** config.toml model_context_window;未配置时省略。 */
-  quickContextWindow?: number
-  /** config.toml model_auto_compact_token_limit;未配置时省略。 */
-  quickAutoCompact?: number
-  createdAt: number
-  lastLaunchedAt?: number
-  pid?: number
-}
-
 /** 一个 provider 的本地账号能力(UI 组件只依赖此接口)。 */
 export interface ProviderLocalApi {
   listAccounts(): Promise<LocalAccountView[]>
@@ -227,12 +204,6 @@ export interface ProviderLocalApi {
   clearWakeupVerificationHistory(batchIds: string[]): Promise<number>
   /** 单账号即席保活测试(按 id,provider 无关)。 */
   wakeupTestOne(id: string): Promise<WakeupVerifyResult>
-  instanceList(): Promise<InstanceProfile[]>
-  instanceCreate(name: string, userDataDir: string, workingDir: string, extraArgs: string, bindAccountId: string): Promise<InstanceProfile>
-  instanceDelete(id: string): Promise<void>
-  instanceUpdate(profile: InstanceProfile): Promise<void>
-  instanceLaunch(id: string): Promise<void>
-  instanceStop(id: string): Promise<void>
   /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
   getSource?(): Promise<string>
   setSource?(source: 'remote' | 'local'): Promise<void>
@@ -283,12 +254,6 @@ export const codexLocalApi: ProviderLocalApi = {
   wakeupVerificationHistory: () => app().LocalCodexWakeupVerificationHistory() as Promise<WakeupVerifyBatch[]>,
   clearWakeupVerificationHistory: (ids) => app().LocalCodexWakeupClearVerificationHistory(ids) as Promise<number>,
   wakeupTestOne: (id) => app().LocalWakeupTestOne(id) as Promise<WakeupVerifyResult>,
-  instanceList: () => app().LocalInstanceList('codex') as Promise<InstanceProfile[]>,
-  instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('codex', n, d, w, e, b) as Promise<InstanceProfile>,
-  instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
-  instanceUpdate: (p) => app().LocalInstanceUpdate(p) as Promise<void>,
-  instanceLaunch: (id) => app().LocalInstanceLaunch(id) as Promise<void>,
-  instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
   getSource: () => app().LocalGetCodexSource() as Promise<string>,
   setSource: (src) => app().LocalSetCodexSource(src) as Promise<void>,
 }
@@ -328,12 +293,6 @@ export const antigravityLocalApi: ProviderLocalApi = {
   wakeupVerificationHistory: () => app().LocalAntigravityWakeupVerificationHistory() as Promise<WakeupVerifyBatch[]>,
   clearWakeupVerificationHistory: (ids) => app().LocalAntigravityWakeupClearVerificationHistory(ids) as Promise<number>,
   wakeupTestOne: (id) => app().LocalWakeupTestOne(id) as Promise<WakeupVerifyResult>,
-  instanceList: () => app().LocalInstanceList('antigravity') as Promise<InstanceProfile[]>,
-  instanceCreate: (n, d, w, e, b) => app().LocalInstanceCreate('antigravity', n, d, w, e, b) as Promise<InstanceProfile>,
-  instanceDelete: (id) => app().LocalInstanceDelete(id) as Promise<void>,
-  instanceUpdate: (p) => app().LocalInstanceUpdate(p) as Promise<void>,
-  instanceLaunch: (id) => app().LocalInstanceLaunch(id) as Promise<void>,
-  instanceStop: (id) => app().LocalInstanceStop(id) as Promise<void>,
   getSource: () => app().LocalGetAntigravitySource() as Promise<string>,
   setSource: (src) => app().LocalSetAntigravitySource(src) as Promise<void>,
 }
@@ -797,30 +756,6 @@ export function reorderAccounts(provider: 'codex' | 'antigravity', ids: string[]
     : app().LocalReorderAntigravityAccounts(ids)) as Promise<void>
 }
 
-// ── 实例增强:局部设置 launchMode / appSpeed / followLocalAccount / quick config ──
-
-/**
- * 局部设置某实例的启动/速度/跟随/快捷上下文配置。
- * quickContextWindow/quickAutoCompact 传 null 表示「不配置/继承官方」,正整数表示写入。
- */
-export function instanceSetQuickConfig(
-  id: string,
-  launchMode: string,
-  appSpeed: string,
-  followLocalAccount: boolean,
-  quickContextWindow: number | null,
-  quickAutoCompact: number | null,
-): Promise<void> {
-  return app().LocalInstanceSetQuickConfig(
-    id,
-    launchMode,
-    appSpeed,
-    followLocalAccount,
-    quickContextWindow,
-    quickAutoCompact,
-  ) as Promise<void>
-}
-
 // ── codex 跨实例会话管理(列/统计/废纸篓) ──
 // 自包含:实例集合来自实例库,废纸篓在 hub 数据目录;与远程租号 / 网关出口无关。
 
@@ -1042,101 +977,3 @@ export function clearAntigravitySwitchHistory(): Promise<void> {
   return app().LocalClearAntigravitySwitchHistory() as Promise<void>
 }
 
-// ── 跨实例会话同步 / 可见性修复(Wave N · codex)──
-// 只读写本地会话文件(rollout / session_index / config.toml),与远程租号 / 网关出口无关。
-
-/** 把若干会话恢复/复制到目标实例的结果汇总。 */
-export interface SyncToInstanceSummary {
-  requestedSessionCount: number
-  targetInstanceId: string
-  targetInstanceName: string
-  syncedSessionCount: number
-  skippedExistingCount: number
-  missingSessionCount: number
-  running: boolean
-  message: string
-}
-
-/** 跨实例线程同步中,单个实例的落地统计。 */
-export interface ThreadSyncItem {
-  instanceId: string
-  instanceName: string
-  addedThreadCount: number
-  updatedThreadCount: number
-}
-
-/** 跨实例线程去重/对齐的结果汇总。 */
-export interface ThreadSyncSummary {
-  instanceCount: number
-  threadUniverseCount: number
-  mutatedInstanceCount: number
-  totalSyncedThreadCount: number
-  totalAddedThreadCount: number
-  items: ThreadSyncItem[] | null
-  message: string
-}
-
-/** 单实例可见性修复统计。 */
-export interface VisibilityRepairItem {
-  instanceId: string
-  instanceName: string
-  targetProvider: string
-  changedRolloutFileCount: number
-  running: boolean
-}
-
-/** 跨实例可见性修复的结果汇总。 */
-export interface VisibilityRepairSummary {
-  instanceCount: number
-  mutatedInstanceCount: number
-  changedRolloutFileCount: number
-  items: VisibilityRepairItem[] | null
-  message: string
-}
-
-/** 可见性修复时的候选实例(带当前 provider)。 */
-export interface RepairInstanceOption {
-  id: string
-  name: string
-  userDataDir: string
-  currentProvider: string
-  running: boolean
-}
-
-/** 一个候选 provider 及其来源(config / rollout)。 */
-export interface RepairProviderOption {
-  id: string
-  sources: string[] | null
-  isDefault: boolean
-}
-
-/** 可见性修复的候选 provider 汇总。 */
-export interface RepairProviderList {
-  defaultProvider: string
-  providers: RepairProviderOption[] | null
-}
-
-/** 把若干会话恢复/复制到目标实例。 */
-export function syncCodexSessionsToInstance(sessionIds: string[], targetInstanceId: string): Promise<SyncToInstanceSummary> {
-  return app().LocalSyncCodexSessionsToInstance(sessionIds, targetInstanceId) as Promise<SyncToInstanceSummary>
-}
-
-/** 跨实例去重/对齐线程(把每个实例缺失的会话补齐)。 */
-export function syncCodexThreadsAcrossInstances(): Promise<ThreadSyncSummary> {
-  return app().LocalSyncCodexThreadsAcrossInstances() as Promise<ThreadSyncSummary>
-}
-
-/** 重建/校正跨实例会话可见性(targetProvider 为空=各实例读自己 config)。 */
-export function repairCodexSessionVisibility(targetProvider = ''): Promise<VisibilityRepairSummary> {
-  return app().LocalRepairCodexSessionVisibility(targetProvider) as Promise<VisibilityRepairSummary>
-}
-
-/** 列可见性修复候选实例(带当前 provider)。 */
-export function listCodexSessionVisibilityRepairInstances(): Promise<RepairInstanceOption[]> {
-  return app().LocalListCodexSessionVisibilityRepairInstances() as Promise<RepairInstanceOption[]>
-}
-
-/** 列可见性修复候选 provider(config + rollout 来源)。 */
-export function listCodexSessionVisibilityRepairProviders(): Promise<RepairProviderList> {
-  return app().LocalListCodexSessionVisibilityRepairProviders() as Promise<RepairProviderList>
-}
