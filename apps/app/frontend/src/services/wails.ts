@@ -19,6 +19,8 @@ import {
   InstallStandaloneClaude as _InstallStandaloneClaude,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
+  DetectCompetingClaudeConfig as _DetectCompetingClaudeConfig,
+  SanitizeCompetingClaudeConfig as _SanitizeCompetingClaudeConfig,
   SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
   GetDetectedPaths,
   BrowseForPath as _BrowseForPath,
@@ -271,6 +273,20 @@ export async function injectSelected(targets: string[]): Promise<string> {
 
 export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
+}
+
+export type ClaudeConfigConflict = main.ClaudeConfigConflict
+export type SanitizeReport = main.SanitizeReport
+
+// 只读检测：机器上指向第三方中转的配置（cc-switch、别家 ANTHROPIC_BASE_URL、企业策略文件等）。
+// GFA 自己的接管注入不会被列入。
+export async function detectCompetingClaudeConfig(): Promise<ClaudeConfigConflict[]> {
+  return _DetectCompetingClaudeConfig()
+}
+
+// 备份并清理指定冲突（ids 为空表示清理全部检出）。破坏性动作，须先经封号免责确认。
+export async function sanitizeCompetingClaudeConfig(ids: string[]): Promise<SanitizeReport> {
+  return _SanitizeCompetingClaudeConfig(ids)
 }
 
 export async function setClaudeDesktopMockLogin(on: boolean): Promise<boolean> {

@@ -3,6 +3,7 @@ import { useAppStore } from '@/stores/useAppStore'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Modal, useModal } from '@/components/Modal'
+import { CompetingRelayDialog, useCompetingRelayGate } from '@/components/CompetingRelayDialog'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import * as api from '@/services/wails'
@@ -42,6 +43,7 @@ export function TokenSourceControl() {
   const proxyRunning = useAppStore((s) => s.proxyRunning)
   const proxyPort = useAppStore((s) => s.proxyPort)
   const { showAlert, showConfirm, modalProps } = useModal()
+  const { confirmSanitize, dialogProps: relayDialogProps } = useCompetingRelayGate()
 
   const hasCard = !!config?.userToken && config.userToken.trim() !== ''
 
@@ -170,6 +172,68 @@ export function TokenSourceControl() {
     }
   }
 
+  // 接管前的第三方中转预检:检测 → 弹「封号免责」窗 → 按用户选择清理/跳过/取消。
+  // 返回是否继续接管(cancel=false;clean/skip=true)。检测或清理失败都不阻断接管。
+  const preflightSanitize = async (target: string): Promise<boolean> => {
+    let conflicts: api.ClaudeConfigConflict[] = []
+    try {
+      conflicts = await api.detectCompetingClaudeConfig()
+    } catch {
+      return true // 检测失败不阻断接管
+    }
+    if (!conflicts || conflicts.length === 0) return true
+
+    const decision = await confirmSanitize(conflicts)
+    if (decision === 'cancel') return false
+    if (decision === 'clean') {
+      setBusy(target)
+      setBusyLabel(t('takeover.sanitize.cleaning'))
+      try {
+        const rep = await api.sanitizeCompetingClaudeConfig([]) // [] = 清理全部检出
+        setBusy(null)
+        if ((rep.skipped?.length ?? 0) > 0) {
+          await showAlert(t('takeover.sanitize.doneTitle'), t('takeover.sanitize.skippedBody', { skipped: rep.skipped.length }))
+        }
+      } catch (e) {
+        setBusy(null)
+        await showAlert(t('takeover.opFailed'), String(e))
+      }
+    }
+    return true // clean 或 skip 都继续接管
+  }
+
+  // P4 独立「一键体检」:不接管也能手动跑一遍检测→(带免责弹窗)清理。
+  const handleCheckup = async () => {
+    setBusy('checkup')
+    setBusyLabel(t('takeover.sanitize.checking'))
+    let conflicts: api.ClaudeConfigConflict[] = []
+    try {
+      conflicts = await api.detectCompetingClaudeConfig()
+    } catch {
+      /* 忽略,按无冲突处理 */
+    }
+    setBusy(null)
+    if (!conflicts || conflicts.length === 0) {
+      await showAlert(t('takeover.sanitize.checkupBtn'), t('takeover.sanitize.checkupNone'))
+      return
+    }
+    const decision = await confirmSanitize(conflicts)
+    if (decision !== 'clean') return
+    setBusy('checkup')
+    setBusyLabel(t('takeover.sanitize.cleaning'))
+    try {
+      const rep = await api.sanitizeCompetingClaudeConfig([])
+      setBusy(null)
+      await showAlert(
+        t('takeover.sanitize.doneTitle'),
+        t('takeover.sanitize.doneBody', { cleaned: rep.cleaned?.length ?? 0, backup: rep.backupTo }),
+      )
+    } catch (e) {
+      setBusy(null)
+      await showAlert(t('takeover.opFailed'), String(e))
+    }
+  }
+
   // 接管前校验账号卡;无卡则引导激活,不下发后端动作。
   const ensureCard = async (productLabel: string): Promise<boolean> => {
     if (hasCard) return true
@@ -194,7 +258,10 @@ export function TokenSourceControl() {
   // ── Claude Code(CLI + VSCode 扩展) ──────────────────────────
   const claudeInjected = !!claudeApp?.injected
   const handleClaudeToggle = async () => {
-    if (!claudeInjected && !(await ensureCard('Claude Code'))) return
+    if (!claudeInjected) {
+      if (!(await ensureCard('Claude Code'))) return
+      if (!(await preflightSanitize('claude'))) return
+    }
     await runTakeover('claude', !claudeInjected)
   }
 
@@ -208,6 +275,7 @@ export function TokenSourceControl() {
         t('takeover.desktopConfirmBody'),
       )
       if (!ok) return
+      if (!(await preflightSanitize('claude_desktop'))) return
     }
     await runTakeover('claude_desktop', !claudeDesktopInjected)
   }
@@ -365,12 +433,24 @@ export function TokenSourceControl() {
             <span className="text-[12px] text-[var(--text-secondary)]">{t('takeover.localProxy')}</span>
             <span className="text-[10px] text-[var(--text-muted)]">{t('takeover.localProxyNote')}</span>
           </div>
-          <span className="text-[12px] font-mono-data text-[var(--text-muted)] shrink-0">
-            {proxyRunning ? t('takeover.proxyRunning', { port: proxyPort }) : t('takeover.proxyStopped')}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[12px] font-mono-data text-[var(--text-muted)]">
+              {proxyRunning ? t('takeover.proxyRunning', { port: proxyPort }) : t('takeover.proxyStopped')}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy !== null}
+              onClick={handleCheckup}
+              className="text-[11px] h-6 px-2 cursor-pointer"
+            >
+              {t('takeover.sanitize.checkupBtn')}
+            </Button>
+          </div>
         </div>
       </CardContent>
       <Modal {...modalProps} />
+      <CompetingRelayDialog {...relayDialogProps} />
       <LoadingOverlay show={busy !== null} label={busyLabel} />
     </Card>
   )

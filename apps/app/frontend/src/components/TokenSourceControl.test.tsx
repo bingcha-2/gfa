@@ -10,6 +10,8 @@ const { apiMocks } = vi.hoisted(() => ({
     openSystemPermissionSettings: vi.fn(),
     installStandaloneClaude: vi.fn(),
     openURL: vi.fn(),
+    detectCompetingClaudeConfig: vi.fn().mockResolvedValue([]),
+    sanitizeCompetingClaudeConfig: vi.fn(),
   },
 }))
 
@@ -19,6 +21,8 @@ vi.mock('@/services/wails', () => ({
   openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
   installStandaloneClaude: apiMocks.installStandaloneClaude,
   openURL: apiMocks.openURL,
+  detectCompetingClaudeConfig: apiMocks.detectCompetingClaudeConfig,
+  sanitizeCompetingClaudeConfig: apiMocks.sanitizeCompetingClaudeConfig,
 }))
 
 // zustand store 以 selector 形式读取;mock 成"对给定 state 跑 selector"。
@@ -91,6 +95,38 @@ describe('TokenSourceControl — Claude Desktop 接管入口跨平台', () => {
     setPlatform('Linux x86_64')
     render(<TokenSourceControl />)
     expect(screen.queryByText(DESKTOP_LABEL)).toBeNull()
+  })
+
+  it('一键体检检出 cc-switch:免责窗需勾选才能清理,勾选后调用清理', async () => {
+    setPlatform('MacIntel')
+    apiMocks.detectCompetingClaudeConfig.mockResolvedValue([
+      { id: 'cc-switch', kind: 'cc-switch', scope: 'user', location: '/home/x/.cc-switch', detail: 'cc-switch（第三方账号切换工具）', severity: 'blocking' },
+    ])
+    apiMocks.sanitizeCompetingClaudeConfig.mockResolvedValue({ cleaned: ['cc-switch'], skipped: [], backupTo: '/home/x/.bcai/sanitize-backup', needsUac: false })
+
+    render(<TokenSourceControl />)
+    fireEvent.click(screen.getByRole('button', { name: '一键体检' }))
+
+    // cc-switch 被点名 + 「清理」按钮初始禁用(未勾选「我已知晓」)
+    const cleanBtn = await screen.findByRole('button', { name: '已知晓，清理并接管' })
+    expect(cleanBtn).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(cleanBtn).not.toBeDisabled()
+    fireEvent.click(cleanBtn)
+
+    await waitFor(() => expect(apiMocks.sanitizeCompetingClaudeConfig).toHaveBeenCalledWith([]))
+  })
+
+  it('一键体检无冲突:提示环境干净,不触发清理', async () => {
+    setPlatform('MacIntel')
+    apiMocks.detectCompetingClaudeConfig.mockResolvedValue([])
+
+    render(<TokenSourceControl />)
+    fireEvent.click(screen.getByRole('button', { name: '一键体检' }))
+
+    expect(await screen.findByText('未检测到第三方中转配置，环境是干净的。')).toBeInTheDocument()
+    expect(apiMocks.sanitizeCompetingClaudeConfig).not.toHaveBeenCalled()
   })
 
   it('Store 版 Claude Desktop 弹窗确认后打开官方独立版 exe 下载地址', async () => {
