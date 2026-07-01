@@ -63,6 +63,30 @@ describe('AntigravitySuitePage', () => {
     expect(screen.getByRole('button', { name: '统计' })).toBeInTheDocument()
   })
 
+  // 多桶额度:有 quotaBuckets 时按桶展示 Gemini/Claude × 5h/周,取代默认 5h/本周两条。
+  it('账号行按 quotaBuckets 展示多个额度桶', async () => {
+    const app = installApp()
+    ;(app.LocalListAntigravityAccounts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'g1', email: 'me@gmail.com', name: '', provider: 'antigravity', authKind: 'oauth', note: '',
+        planType: 'free', quotaStatus: 'ok', tags: [], poolEnabled: true, priority: false,
+        hourlyPercent: 42, weeklyPercent: 80, hourlyResetAt: 0, weeklyResetAt: 0, lastUsedAt: 0,
+        quotaBuckets: [
+          { key: 'gemini-5h', label: 'Gemini · 5 小时', percent: 42, resetAt: 0 },
+          { key: 'gemini-weekly', label: 'Gemini · 本周', percent: 80, resetAt: 0 },
+          { key: '3p-5h', label: 'Claude · 5 小时', percent: 55, resetAt: 0 },
+          { key: '3p-weekly', label: 'Claude · 本周', percent: 90, resetAt: 0 },
+        ],
+      },
+    ])
+    render(<AntigravitySuitePage />)
+    await screen.findByText('me@gmail.com')
+    expect(screen.getByText('Gemini · 5 小时')).toBeInTheDocument()
+    expect(screen.getByText('Gemini · 本周')).toBeInTheDocument()
+    expect(screen.getByText('Claude · 5 小时')).toBeInTheDocument()
+    expect(screen.getByText('Claude · 本周')).toBeInTheDocument()
+  })
+
   // antigravity 没有自定义模型供应商(只 codex 有 OpenAI 兼容供应商喂号)。
   it('无「供应商」tab(antigravity 不支持自定义模型供应商)', async () => {
     render(<AntigravitySuitePage />)

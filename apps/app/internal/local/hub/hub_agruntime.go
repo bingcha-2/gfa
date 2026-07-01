@@ -78,41 +78,55 @@ func (h *Hub) AntigravityLocalInjected(variant string) bool {
 func (h *Hub) SetAntigravityLocalInjected(variant string, on bool) error {
 	v := normalizeAntigravityVariant(variant)
 	st := h.loadAntigravityLocal()
+	var tok AntigravityToken
 	if on {
-		tok, err := h.pickAntigravityToken()
-		if err != nil {
+		var err error
+		if tok, err = h.pickAntigravityToken(); err != nil {
 			return err
 		}
-		if err := h.platform.AntigravityInjectAccountTo(v, tok); err != nil {
-			return err
-		}
-	} else {
-		_ = h.platform.AntigravityRestoreAccountFor(v)
 	}
-	st.set(v, on)
-	if err := h.saveAntigravityLocal(st); err != nil {
+	if err := h.mutateAntigravityState(v, func() error {
+		if on {
+			return h.platform.AntigravityInjectAccountTo(v, tok)
+		}
+		_ = h.platform.AntigravityRestoreAccountFor(v)
+		return nil
+	}); err != nil {
 		return err
 	}
-	h.restartAntigravityRunning(v)
-	return nil
+	st.set(v, on)
+	return h.saveAntigravityLocal(st)
 }
 
-// restartAntigravityRunning 若某变体 app 在跑,停+起让它重读 state.vscdb;没跑则不动。
-func (h *Hub) restartAntigravityRunning(variant string) {
+// mutateAntigravityState 对某变体的 state.vscdb 做变更(注入/还原),并保证「先停 → 再写 → 后起」:
+// VS Code/Electron 把全局状态存内存,优雅退出会回写 state.vscdb —— 若边跑边写,退出回写会
+// 冲掉我们刚写入的登录态(接管不生效的根因)。app 没在跑则直接写,下次启动自然读到。
+func (h *Hub) mutateAntigravityState(variant string, mutate func() error) error {
 	v := normalizeAntigravityVariant(variant)
-	if h.platform.AntigravityAppRunning(v) {
+	wasRunning := h.platform.AntigravityAppRunning(v)
+	if wasRunning {
 		_ = h.platform.AntigravityAppStop(v)
+	}
+	err := mutate()
+	if wasRunning {
 		_ = h.platform.AntigravityAppStart(v)
 	}
+	return err
 }
 
-// restoreAntigravityAll 撤销两个变体 app 的注入登录态(未装的变体为 no-op)。
+// restoreAntigravityAll 撤销两个变体 app 的注入登录态(先停后清再起,未装的变体为 no-op)。
 func (h *Hub) restoreAntigravityAll() {
-	_ = h.platform.AntigravityRestoreAccountFor("ide")
-	_ = h.platform.AntigravityRestoreAccountFor("standalone")
+	for _, v := range []string{"ide", "standalone"} {
+		variant := v
+		_ = h.mutateAntigravityState(variant, func() error {
+			return h.platform.AntigravityRestoreAccountFor(variant)
+		})
+	}
 }
 
 // reinjectAntigravityInjected 把当前号重注入到所有已处于本地接管态的 app(切当前号时同步)。
+// 每个变体走「先停 → 再写 → 后起」:IDE/独立版仅在启动时读一次 state.vscdb,不重启则
+// 正在跑的窗口一直抱旧号,且边跑边写会被退出回写冲掉 —— 用户视角「切了没生效」。
 func (h *Hub) reinjectAntigravityInjected() {
 	st := h.loadAntigravityLocal()
 	if !st.anyInjected() {
@@ -122,10 +136,13 @@ func (h *Hub) reinjectAntigravityInjected() {
 	if err != nil {
 		return
 	}
-	if st.IDE {
-		_ = h.platform.AntigravityInjectAccountTo("ide", tok)
-	}
-	if st.Standalone {
-		_ = h.platform.AntigravityInjectAccountTo("standalone", tok)
+	for _, v := range []string{"ide", "standalone"} {
+		if !st.get(v) {
+			continue
+		}
+		variant := v
+		_ = h.mutateAntigravityState(variant, func() error {
+			return h.platform.AntigravityInjectAccountTo(variant, tok)
+		})
 	}
 }

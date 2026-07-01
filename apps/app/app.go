@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"bcai-wails/internal/local/quota"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -30,6 +32,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	initLogger()
+	quota.Logf = Log // 额度探测诊断日志接到 desktop.log
 
 	Log("=== 冰茶AI Desktop Startup ===")
 	initGuard()

@@ -92,6 +92,30 @@ func TestStore_ExpiryAndGCPTosPersist(t *testing.T) {
 	}
 }
 
+func TestStore_QuotaBucketsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	a := &Account{Provider: ProviderAntigravity, Email: "ag@x.com", Buckets: []QuotaBucket{
+		{Key: "gemini-5h", Label: "Gemini · 5 小时", Percent: 42, ResetAt: 111},
+		{Key: "3p-weekly", Label: "Claude · 本周", Percent: 90, ResetAt: 222},
+	}}
+	if err := s.Add(a); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, _ := s.Get(a.ID)
+	if len(got.Buckets) != 2 || got.Buckets[0].Key != "gemini-5h" || got.Buckets[0].Percent != 42 || got.Buckets[1].ResetAt != 222 {
+		t.Fatalf("buckets not persisted on add: %+v", got.Buckets)
+	}
+	// 更新为一个桶,确认整体覆盖。
+	got.Buckets = []QuotaBucket{{Key: "gemini-weekly", Label: "Gemini · 本周", Percent: 5, ResetAt: 333}}
+	if err := s.Update(got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	again, _ := s.Get(a.ID)
+	if len(again.Buckets) != 1 || again.Buckets[0].Key != "gemini-weekly" || again.Buckets[0].Percent != 5 {
+		t.Fatalf("buckets not updated: %+v", again.Buckets)
+	}
+}
+
 func TestStore_NamePersistsOnAdd(t *testing.T) {
 	s := newTestStore(t)
 	a := &Account{Provider: ProviderCodex, Email: "n@y.com", Name: "显示名", PoolEnabled: true}

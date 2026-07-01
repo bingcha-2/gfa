@@ -39,9 +39,10 @@ func (r *CodexRefresher) FetchQuota(a *account.Account) (Result, error) {
 	return r.f.FetchQuota(a)
 }
 
-// AntigravityRefresher 适配 antigravity。antigravity 上游不暴露 5h/周额度细项,
-// 保活靠 RefreshToken(刷 access_token 即视为存活);FetchQuota 两窗口都报「未知」,
-// 绝不伪造满血(否则 fair-share 血条卡死,见 codex-quota-window-unknown-parity)。
+// AntigravityRefresher 适配 antigravity。保活靠 RefreshToken(刷 access_token);
+// FetchQuota 走 Google Cloud Code Companion API 拉 5h/周 桶(照搬 cockpit,见 antigravity_cloudcode.go)。
+// 缺桶的窗口报「未知」(Known=false),由调用方 keep-prior、绝不伪造满血
+// (见 codex-quota-window-unknown-parity)。
 type AntigravityRefresher struct{ f *AntigravityFetcher }
 
 func NewAntigravityRefresher(ep AntigravityEndpoints) *AntigravityRefresher {
@@ -68,9 +69,8 @@ func (r *AntigravityRefresher) RefreshToken(a *account.Account) error {
 	return nil
 }
 
-// FetchQuota:antigravity 无 5h/周窗口口径,两窗口都报「未知」(Known=false)——
-// 调用方据此 keep-prior、不写、也不把 QuotaStatus 强刷成 OK,避免每轮自动刷新
-// 把 antigravity 号的状态(冷却/百分比)清掉(见 manager.refreshOne)。
+// FetchQuota 走 Cloud Code API 拉 5h/周 桶(实现见 AntigravityFetcher.FetchQuota)。
+// 会就地回填 a.ProjectID(领到/确认的 project),refreshOne 随后持久化。
 func (r *AntigravityRefresher) FetchQuota(a *account.Account) (Result, error) {
-	return Result{}, nil
+	return r.f.FetchQuota(a)
 }

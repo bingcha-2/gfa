@@ -28,6 +28,7 @@ type fakePlatform struct {
 	agAppStarts           []string
 	agAppStops            []string
 	agInjectVariant       string
+	agEvents              []string // 有序记录 stop/inject/restore/start,断言时序(先停后写再起)
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -46,10 +47,12 @@ func (f *fakePlatform) AntigravityInjectAccountTo(variant string, tok Antigravit
 	f.agInjectCount++
 	f.agInjectedToken = tok
 	f.agInjectVariant = variant
+	f.agEvents = append(f.agEvents, "inject:"+variant)
 	return nil
 }
 func (f *fakePlatform) AntigravityRestoreAccountFor(variant string) error {
 	f.agRestoreCount++
+	f.agEvents = append(f.agEvents, "restore:"+variant)
 	return nil
 }
 func (f *fakePlatform) AntigravityReadTokenFrom(variant string) (AntigravityToken, error) {
@@ -77,10 +80,12 @@ func (f *fakePlatform) RestartSpecifiedApp(appPath string) error {
 func (f *fakePlatform) AntigravityAppRunning(variant string) bool { return f.agRunning }
 func (f *fakePlatform) AntigravityAppStart(variant string) error {
 	f.agAppStarts = append(f.agAppStarts, variant)
+	f.agEvents = append(f.agEvents, "start:"+variant)
 	return nil
 }
 func (f *fakePlatform) AntigravityAppStop(variant string) error {
 	f.agAppStops = append(f.agAppStops, variant)
+	f.agEvents = append(f.agEvents, "stop:"+variant)
 	return nil
 }
 
@@ -225,6 +230,78 @@ func TestHub_RestartOnSwitch(t *testing.T) {
 	}
 	if fp.codexRestartCount != before {
 		t.Fatalf("LaunchOnSwitch 关时不应重启 codex,got %d (was %d)", fp.codexRestartCount, before)
+	}
+}
+
+// 切「当前号」后必须重启已接管/在跑的客户端,让新号真正生效 —— 与切接管源(SetSource)对称。
+// 否则:auth.json/state.vscdb 写了新号,但正在跑的 codex/IDE 仍抱旧号("点了没生效")。
+func TestHub_SetCurrentAccount_RestartsClientOnSwitch(t *testing.T) {
+	h, fp := newHub(t)
+
+	// ── codex 注入式接管态:切当前号 → 重注入新号 + 重启 GUI(LaunchOnSwitch 默认 true) ──
+	a1 := &account.Account{Provider: account.ProviderCodex, Email: "cx1@x.com", AuthKind: account.AuthOAuth, AccessToken: "AT1", AccountID: "acc1", PoolEnabled: true, Priority: true}
+	a2 := &account.Account{Provider: account.ProviderCodex, Email: "cx2@x.com", AuthKind: account.AuthOAuth, AccessToken: "AT2", AccountID: "acc2", PoolEnabled: true}
+	_ = h.acc.Add(a1)
+	_ = h.acc.Add(a2)
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("codex local: %v", err)
+	}
+	beforeCodex := fp.codexRestartCount
+	if err := h.SetCurrentAccount(account.ProviderCodex, a2.ID); err != nil {
+		t.Fatalf("SetCurrentAccount codex: %v", err)
+	}
+	if fp.codexInjectedToken.AccessToken != "AT2" {
+		t.Fatalf("切当前号应重注入新号,got token %q", fp.codexInjectedToken.AccessToken)
+	}
+	if fp.codexRestartCount <= beforeCodex {
+		t.Fatalf("切当前号应重启 codex GUI(LaunchOnSwitch=true),count %d→%d", beforeCodex, fp.codexRestartCount)
+	}
+
+	// ── antigravity:IDE 在跑 + 已本地接管,切当前号 → 重注入 + 重启 IDE 重读 state.vscdb ──
+	fp.agRunning = true
+	g1 := &account.Account{Provider: account.ProviderAntigravity, Email: "ag1@x.com", AccessToken: "GT1", PoolEnabled: true, Priority: true}
+	g2 := &account.Account{Provider: account.ProviderAntigravity, Email: "ag2@x.com", AccessToken: "GT2", PoolEnabled: true}
+	_ = h.acc.Add(g1)
+	_ = h.acc.Add(g2)
+	if err := h.SetAntigravityLocalInjected("ide", true); err != nil {
+		t.Fatalf("ag ide inject: %v", err)
+	}
+	beforeStarts := len(fp.agAppStarts)
+	if err := h.SetCurrentAccount(account.ProviderAntigravity, g2.ID); err != nil {
+		t.Fatalf("SetCurrentAccount antigravity: %v", err)
+	}
+	if fp.agInjectedToken.Email != "ag2@x.com" || fp.agInjectedToken.AccessToken != "GT2" {
+		t.Fatalf("切当前号应重注入新 antigravity 号,got %+v", fp.agInjectedToken)
+	}
+	if len(fp.agAppStarts) <= beforeStarts {
+		t.Fatalf("切当前号应重启在跑的 IDE 让其重读 state.vscdb,starts %d→%d", beforeStarts, len(fp.agAppStarts))
+	}
+}
+
+// antigravity IDE 在跑时接管:必须「先停 → 再写 state.vscdb → 后起」。
+// 若先写后停,VS Code 优雅退出会把内存态回写 state.vscdb,冲掉刚注入的登录态 → 接管不生效。
+func TestHub_AntigravityInject_StopsBeforeWriteWhenRunning(t *testing.T) {
+	h, fp := newHub(t)
+	fp.agRunning = true
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com", AccessToken: "AT", PoolEnabled: true, Priority: true})
+
+	if err := h.SetAntigravityLocalInjected("ide", true); err != nil {
+		t.Fatalf("inject ide: %v", err)
+	}
+	// 开着的 IDE 必须先停,写入才不会被退出回写冲掉,最后再拉起。
+	want := []string{"stop:ide", "inject:ide", "start:ide"}
+	if got := fp.agEvents; len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("时序应为 %v,got %v", want, got)
+	}
+
+	// 还原(关接管)同理:先停再清,否则退出回写会把登录态又写回去。
+	fp.agEvents = nil
+	if err := h.SetAntigravityLocalInjected("ide", false); err != nil {
+		t.Fatalf("off ide: %v", err)
+	}
+	want = []string{"stop:ide", "restore:ide", "start:ide"}
+	if got := fp.agEvents; len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("还原时序应为 %v,got %v", want, got)
 	}
 }
 

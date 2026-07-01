@@ -26,7 +26,17 @@ export interface LocalAccountView {
   weeklyPercent: number
   hourlyResetAt: number
   weeklyResetAt: number
+  /** 多窗口/多模型族剩余额度(antigravity gemini/claude × 5h/周);codex 为空。 */
+  quotaBuckets?: LocalQuotaBucket[] | null
   lastUsedAt: number
+}
+
+/** 一个「按窗口/模型族」剩余额度桶(antigravity 多桶展示)。 */
+export interface LocalQuotaBucket {
+  key: string
+  label: string
+  percent: number
+  resetAt: number
 }
 
 export interface LocalGatewayStatus {

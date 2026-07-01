@@ -31,24 +31,26 @@ type Reloader interface{ Reload() error }
 
 // AccountView 是给前端的账号视图(不含原始 token)。
 type AccountView struct {
-	ID            string   `json:"id"`
-	Email         string   `json:"email"`
-	Name          string   `json:"name"`
-	Provider      string   `json:"provider"`
-	AuthKind      string   `json:"authKind"`
-	Note          string   `json:"note"`
-	PlanType      string   `json:"planType"`
-	QuotaStatus   string   `json:"quotaStatus"`
-	Tags          []string `json:"tags"`
-	PoolEnabled   bool     `json:"poolEnabled"`
-	Priority      bool     `json:"priority"`
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider"`
+	AuthKind    string   `json:"authKind"`
+	Note        string   `json:"note"`
+	PlanType    string   `json:"planType"`
+	QuotaStatus string   `json:"quotaStatus"`
+	Tags        []string `json:"tags"`
+	PoolEnabled bool     `json:"poolEnabled"`
+	Priority    bool     `json:"priority"`
 	// ServiceTier 是按号服务档(codex 专属):""(继承/标准)| "fast"(快速=上游 priority)。
-	ServiceTier   string   `json:"serviceTier"`
-	HourlyPercent int      `json:"hourlyPercent"`
-	WeeklyPercent int      `json:"weeklyPercent"`
-	HourlyResetAt int64    `json:"hourlyResetAt"`
-	WeeklyResetAt int64    `json:"weeklyResetAt"`
-	LastUsedAt    int64    `json:"lastUsedAt"`
+	ServiceTier   string `json:"serviceTier"`
+	HourlyPercent int    `json:"hourlyPercent"`
+	WeeklyPercent int    `json:"weeklyPercent"`
+	HourlyResetAt int64  `json:"hourlyResetAt"`
+	WeeklyResetAt int64  `json:"weeklyResetAt"`
+	// QuotaBuckets 是多窗口/多模型族剩余额度(antigravity gemini/claude × 5h/周);codex 为空。
+	QuotaBuckets []account.QuotaBucket `json:"quotaBuckets"`
+	LastUsedAt   int64                 `json:"lastUsedAt"`
 }
 
 // ToView 把一个 account.Account 适配成只读视图(供 hub 显式当前号 get 复用)。
@@ -60,7 +62,8 @@ func toView(a *account.Account) AccountView {
 		Note: a.Note, PlanType: a.PlanType, QuotaStatus: string(a.QuotaStatus), Tags: a.Tags,
 		PoolEnabled: a.PoolEnabled, Priority: a.Priority, ServiceTier: a.ServiceTier,
 		HourlyPercent: a.HourlyPercent, WeeklyPercent: a.WeeklyPercent,
-		HourlyResetAt: a.HourlyResetAt, WeeklyResetAt: a.WeeklyResetAt, LastUsedAt: a.LastUsedAt,
+		HourlyResetAt: a.HourlyResetAt, WeeklyResetAt: a.WeeklyResetAt,
+		QuotaBuckets: a.Buckets, LastUsedAt: a.LastUsedAt,
 	}
 }
 

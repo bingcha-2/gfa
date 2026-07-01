@@ -413,6 +413,9 @@ func (h *Hub) reinjectIfLocal(p account.Provider) {
 		if tok, err := h.pickCodexToken(); err == nil {
 			_ = h.platform.CodexRestoreAccount()
 			_ = h.platform.CodexInjectAccount(tok)
+			// 切号后重启客户端,让新 auth.json 生效(对齐 SetSource,尊重 LaunchOnSwitch);
+			// 否则正在跑的 codex GUI/会话仍抱旧号 —— 用户视角「切了没生效」。
+			h.restartClientAfterSwitch(p)
 		}
 	case account.ProviderAntigravity:
 		// 按 app 独立接管:把新当前号重注入到所有已本地接管的 app(未接管的不动)。
@@ -617,10 +620,9 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 	// 整卡 SetSource 只处理 remote —— 撤掉两个 app 的本地注入(与远程互斥);local 交给按 app 开关。
 	if p == account.ProviderAntigravity {
 		if src == takeover.SourceRemote {
+			// restoreAntigravityAll 内部已「先停 → 清登录态 → 后起」逐变体还原,无需再单独重启。
 			h.restoreAntigravityAll()
 			_ = h.saveAntigravityLocal(antigravityLocalState{})
-			h.restartAntigravityRunning("ide")
-			h.restartAntigravityRunning("standalone")
 		}
 		return nil
 	}

@@ -89,9 +89,13 @@ func (m *Manager) refreshOne(a *account.Account) error {
 	if res.PlanType != "" {
 		a.PlanType = res.PlanType
 	}
+	// 多桶(antigravity gemini/claude × 5h/周):拿到就整体覆盖;空则 keep-prior。
+	if len(res.Buckets) > 0 {
+		a.Buckets = res.Buckets
+	}
 	// 只有真拿到窗口数据才宣告 OK;全未知(如 antigravity 无窗口)则 keep-prior 状态,
 	// 避免每轮自动刷新把冷却/错误态清成 OK。
-	if res.HourlyKnown || res.WeeklyKnown {
+	if res.HourlyKnown || res.WeeklyKnown || len(res.Buckets) > 0 {
 		a.QuotaStatus = account.QuotaOK
 		a.QuotaReason = ""
 	}

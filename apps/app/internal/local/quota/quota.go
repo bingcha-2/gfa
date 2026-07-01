@@ -51,6 +51,9 @@ type Result struct {
 	HourlyKnown   bool   // 上游是否真给了 5h 窗口(false=未知,调用方应 keep-prior,绝不伪造满血)
 	WeeklyKnown   bool   // 上游是否真给了 周 窗口
 	PlanType      string // 上游返回的订阅档(可空)
+	// Buckets 是多窗口/多模型族剩余额度(antigravity 4 桶:gemini/claude × 5h/周)。
+	// 非空即由调用方覆盖写入 account.Buckets;codex 留空(仍走 Hourly/Weekly)。
+	Buckets []account.QuotaBucket
 	// ResetCreditsAvailable 主动重置可用次数(rate_limit_reset_credits.available_count)。
 	// 照搬 cockpit reset_credits_available(Option<i64>):nil=上游未报,*v=0 表示确为 0 次。
 	// 注:GFA「主动重置次数」UI 走专用 codexbiz 路径(GetCodexResetCredits),此处仅随额度
@@ -180,6 +183,9 @@ type AntigravityEndpoints struct {
 	TokenURL     string
 	ClientID     string
 	ClientSecret string
+	// CloudCodeBaseURL 覆盖额度端点(Google Cloud Code Companion API);
+	// 空=按账号 is_gcp_tos 选 daily/prod(见 antigravity_cloudcode.go)。测试注入 mock。
+	CloudCodeBaseURL string
 }
 
 type AntigravityFetcher struct {

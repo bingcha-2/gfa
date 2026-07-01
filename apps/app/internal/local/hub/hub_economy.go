@@ -10,7 +10,6 @@ import (
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/codexsettings"
 	"bcai-wails/internal/local/economy"
-	"bcai-wails/internal/local/takeover"
 )
 
 // 经济与自动化(① 超额预警 ② 自动切号 ③ 速度档)的薄委托 + 集成。
@@ -133,13 +132,9 @@ func (h *Hub) maybeAutoSwitchCodex() {
 	if err := pc.mgr.SetPriority(target.ID); err != nil {
 		return
 	}
-	// 若当前是 local 接管态,重注入新优先级号(SetPriority 不碰 ~/.codex/auth.json)。
-	if h.sources.Get(string(account.ProviderCodex)) == takeover.SourceLocal {
-		if tok, err := h.pickCodexToken(); err == nil {
-			_ = h.platform.CodexRestoreAccount()
-			_ = h.platform.CodexInjectAccount(tok)
-		}
-	}
+	// 若当前是 local 接管态,重注入新优先级号并重启客户端(SetPriority 不碰 ~/.codex/auth.json)。
+	// 复用手动切号同一路径,保证自动切号也会重启、让新号真正生效。
+	h.reinjectIfLocal(account.ProviderCodex)
 }
 
 // currentAccount 返回某 provider 的「当前号」:优先级号;无优先级则第一个进池号;都无返回 nil。
