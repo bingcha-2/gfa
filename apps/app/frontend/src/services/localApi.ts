@@ -842,16 +842,16 @@ export function restoreCodexSessionsFromTrash(sessionIds: string[]): Promise<Res
   return app().LocalRestoreCodexSessionsFromTrash(sessionIds) as Promise<RestoreSummary>
 }
 
-// ── Antigravity 本地接管注入目标(IDE / 独立版)——决定自有号注入进哪个 app 的 state.vscdb ──
-// 注入目标只影响本地注入落点,与远程租号 / 网关出口无关。
+// ── Antigravity 本地接管(按 app 独立)——IDE / 独立版 各自可单独注入自有号到其 state.vscdb ──
+// 两个 app 互不影响(和远程那两行对称);只影响本地注入落点,与远程租号 / 网关出口无关。
 
-/** 读本地接管注入的目标 app 变体("ide"/"standalone")。 */
-export function getAntigravityTarget(): Promise<'ide' | 'standalone'> {
-  return app().LocalGetAntigravityTarget() as Promise<'ide' | 'standalone'>
+/** 报告某 Antigravity app 变体("ide"/"standalone")是否本地自有号接管中。 */
+export function antigravityLocalInjected(variant: 'ide' | 'standalone'): Promise<boolean> {
+  return app().LocalAntigravityLocalInjected(variant) as Promise<boolean>
 }
 
-/** 设注入目标 app 变体(local 接管态下立即重注入到新目标)。 */
-export function setAntigravityTarget(variant: string): Promise<void> {
-  return app().LocalSetAntigravityTarget(variant) as Promise<void>
+/** 独立开/关某 app 变体的本地自有号注入接管。 */
+export function setAntigravityLocalInjected(variant: 'ide' | 'standalone', on: boolean): Promise<void> {
+  return app().LocalSetAntigravityLocalInjected(variant, on) as Promise<void>
 }
 

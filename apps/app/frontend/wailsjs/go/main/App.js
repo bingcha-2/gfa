@@ -126,6 +126,10 @@ export function LocalAntigravityGatewayStop() {
   return window['go']['main']['App']['LocalAntigravityGatewayStop']();
 }
 
+export function LocalAntigravityLocalInjected(arg1) {
+  return window['go']['main']['App']['LocalAntigravityLocalInjected'](arg1);
+}
+
 export function LocalAntigravityStats() {
   return window['go']['main']['App']['LocalAntigravityStats']();
 }
@@ -300,10 +304,6 @@ export function LocalGetAlertConfig() {
 
 export function LocalGetAntigravitySource() {
   return window['go']['main']['App']['LocalGetAntigravitySource']();
-}
-
-export function LocalGetAntigravityTarget() {
-  return window['go']['main']['App']['LocalGetAntigravityTarget']();
 }
 
 export function LocalGetAppSpeed() {
@@ -494,16 +494,16 @@ export function LocalSetAlertConfig(arg1) {
   return window['go']['main']['App']['LocalSetAlertConfig'](arg1);
 }
 
+export function LocalSetAntigravityLocalInjected(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetAntigravityLocalInjected'](arg1, arg2);
+}
+
 export function LocalSetAntigravityPriority(arg1) {
   return window['go']['main']['App']['LocalSetAntigravityPriority'](arg1);
 }
 
 export function LocalSetAntigravitySource(arg1) {
   return window['go']['main']['App']['LocalSetAntigravitySource'](arg1);
-}
-
-export function LocalSetAntigravityTarget(arg1) {
-  return window['go']['main']['App']['LocalSetAntigravityTarget'](arg1);
 }
 
 export function LocalSetAntigravityWakeupConfig(arg1, arg2) {

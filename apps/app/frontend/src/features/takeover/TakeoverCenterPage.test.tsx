@@ -18,7 +18,7 @@ vi.mock('@/services/wails', () => ({
 }))
 
 // 本地号 api(codex / antigravity 的本地模式用)。
-const { codexApi, antigravityApi, agTargetMocks } = vi.hoisted(() => {
+const { codexApi, antigravityApi, agLocalMocks } = vi.hoisted(() => {
   const mk = () => ({
     getSource: vi.fn().mockResolvedValue('remote'),
     setSource: vi.fn().mockResolvedValue(undefined),
@@ -27,17 +27,17 @@ const { codexApi, antigravityApi, agTargetMocks } = vi.hoisted(() => {
   })
   return {
     codexApi: mk(), antigravityApi: mk(),
-    agTargetMocks: {
-      getAntigravityTarget: vi.fn().mockResolvedValue('ide'),
-      setAntigravityTarget: vi.fn().mockResolvedValue(undefined),
+    agLocalMocks: {
+      antigravityLocalInjected: vi.fn().mockResolvedValue(false),
+      setAntigravityLocalInjected: vi.fn().mockResolvedValue(undefined),
     },
   }
 })
 vi.mock('@/services/localApi', () => ({
   codexLocalApi: codexApi,
   antigravityLocalApi: antigravityApi,
-  getAntigravityTarget: agTargetMocks.getAntigravityTarget,
-  setAntigravityTarget: agTargetMocks.setAntigravityTarget,
+  antigravityLocalInjected: agLocalMocks.antigravityLocalInjected,
+  setAntigravityLocalInjected: agLocalMocks.setAntigravityLocalInjected,
 }))
 
 const { store } = vi.hoisted(() => ({
@@ -72,6 +72,8 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     vi.clearAllMocks()
     codexApi.getSource.mockResolvedValue('remote')
     antigravityApi.getSource.mockResolvedValue('remote')
+    agLocalMocks.antigravityLocalInjected.mockResolvedValue(false)
+    agLocalMocks.setAntigravityLocalInjected.mockResolvedValue(undefined)
     store.state.ideProducts = [
       { id: 'claude_code', name: 'Claude Code (CLI + VSCode)', detected: true, injected: false },
       { id: 'claude_desktop', name: 'Claude Desktop (Code/Cowork)', detected: true, injected: false },
@@ -195,7 +197,8 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     render(<TakeoverCenterPage />)
     const ag = screen.getByRole('region', { name: 'Antigravity' })
     fireEvent.click(within(ag).getByRole('button', { name: '本地自有号' }))
-    await within(ag).findByRole('button', { name: '接管' })
+    // 本地模式两行(IDE + 独立版),各带一个「接管」。
+    expect((await within(ag).findAllByRole('button', { name: '接管' })).length).toBe(2)
     expect(within(ag).getByText(/注入 state\.vscdb.*直连官方/)).toBeInTheDocument()
     expect(within(ag).getByText(/不走反代/)).toBeInTheDocument()
     // 接管语义不应再写「网关 127.0.0.1」/「指向本地反代」
@@ -203,28 +206,35 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     expect(within(ag).queryByText(/指向本地反代/)).toBeNull()
   })
 
-  it('Antigravity 本地卡有「注入到 IDE/独立版」段控,切独立版调 setAntigravityTarget(standalone)', async () => {
+  it('Antigravity 本地卡按 app 两行独立接管:点独立版「接管」调 setAntigravityLocalInjected(standalone,true)', async () => {
     setPlatform('MacIntel')
     render(<TakeoverCenterPage />)
     const ag = screen.getByRole('region', { name: 'Antigravity' })
     fireEvent.click(within(ag).getByRole('button', { name: '本地自有号' }))
-    await waitFor(() => expect(agTargetMocks.getAntigravityTarget).toHaveBeenCalled())
-    fireEvent.click(await within(ag).findByRole('button', { name: '注入目标 独立版' }))
-    await waitFor(() => expect(agTargetMocks.setAntigravityTarget).toHaveBeenCalledWith('standalone'))
-    // codex 卡不应有注入目标段控(仅 antigravity)。
+    // 两行:Antigravity IDE + Antigravity 独立版,和远程那两行对称。
+    expect(await within(ag).findByText('Antigravity IDE')).toBeInTheDocument()
+    expect(within(ag).getByText('Antigravity 独立版')).toBeInTheDocument()
+    const takeovers = within(ag).getAllByRole('button', { name: '接管' })
+    expect(takeovers.length).toBe(2)
+    fireEvent.click(takeovers[1]) // 独立版(IDE 行在前)
+    await waitFor(() => expect(agLocalMocks.setAntigravityLocalInjected).toHaveBeenCalledWith('standalone', true))
+    // codex 仍是单按钮(非按 app 两行)。
     const codex = screen.getByRole('region', { name: 'Codex' })
     fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
-    expect(within(codex).queryByRole('button', { name: /注入目标/ })).toBeNull()
+    expect(within(codex).getAllByRole('button', { name: '接管' }).length).toBe(1)
   })
 
-  it('Antigravity 已本地接管时显示「已接管 · 直连官方」(不显示网关地址)', async () => {
+  it('Antigravity app 已本地接管时该行显示「已接管 · 直连官方」(不显示网关地址)', async () => {
     setPlatform('MacIntel')
     antigravityApi.getSource.mockResolvedValue('local')
+    agLocalMocks.antigravityLocalInjected.mockResolvedValue(true) // 两个 app 都已接管
     // 即便 gatewayStatus 谎报 running,也不该显示网关地址(inject 不走网关)
     antigravityApi.gatewayStatus.mockResolvedValue({ running: true, addr: '127.0.0.1:9999', port: 9999 })
     render(<TakeoverCenterPage />)
     const ag = screen.getByRole('region', { name: 'Antigravity' })
-    expect(await within(ag).findByText(/已接管 · 直连官方/)).toBeInTheDocument()
+    expect((await within(ag).findAllByText(/已接管 · 直连官方/)).length).toBeGreaterThanOrEqual(1)
+    // 已接管的 app 行给出「停止」按钮。
+    expect(within(ag).getAllByRole('button', { name: '停止' }).length).toBeGreaterThanOrEqual(1)
     expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
   })
 })

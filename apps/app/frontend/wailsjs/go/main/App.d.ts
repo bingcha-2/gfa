@@ -78,6 +78,8 @@ export function LocalAntigravityGatewayStatus():Promise<hub.GatewayStatus>;
 
 export function LocalAntigravityGatewayStop():Promise<void>;
 
+export function LocalAntigravityLocalInjected(arg1:string):Promise<boolean>;
+
 export function LocalAntigravityStats():Promise<stats.Snapshot>;
 
 export function LocalAntigravityWakeupClearVerificationHistory(arg1:Array<string>):Promise<number>;
@@ -165,8 +167,6 @@ export function LocalGatewayStop():Promise<void>;
 export function LocalGetAlertConfig():Promise<economy.AlertConfig>;
 
 export function LocalGetAntigravitySource():Promise<string>;
-
-export function LocalGetAntigravityTarget():Promise<string>;
 
 export function LocalGetAppSpeed():Promise<economy.AppSpeed>;
 
@@ -262,11 +262,11 @@ export function LocalSetAccountTags(arg1:string,arg2:Array<string>):Promise<void
 
 export function LocalSetAlertConfig(arg1:economy.AlertConfig):Promise<economy.AlertConfig>;
 
+export function LocalSetAntigravityLocalInjected(arg1:string,arg2:boolean):Promise<void>;
+
 export function LocalSetAntigravityPriority(arg1:string):Promise<void>;
 
 export function LocalSetAntigravitySource(arg1:string):Promise<void>;
-
-export function LocalSetAntigravityTarget(arg1:string):Promise<void>;
 
 export function LocalSetAntigravityWakeupConfig(arg1:boolean,arg2:number):Promise<void>;
 

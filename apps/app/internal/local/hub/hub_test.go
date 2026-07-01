@@ -152,16 +152,16 @@ func TestHub_GatewayIndependentOfTakeover(t *testing.T) {
 	}
 }
 
-// antigravity 'local' = 注入 IDE(不走网关):调 AntigravityInjectAccount,
+// antigravity 本地接管 = 注入某 app 的 state.vscdb(不走网关):调 AntigravityInjectAccountTo,
 // 且网关不应因接管 antigravity 而启动。
-func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
+func TestHub_SetAntigravityLocalInjected_InjectsAccountNotGateway(t *testing.T) {
 	h, fp := newHub(t)
 	// 造一个进池 antigravity 自有号(优先级)。
 	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com",
 		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", Expiry: 1893456000, IsGCPTos: true,
 		PoolEnabled: true, Priority: true})
-	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
-		t.Fatalf("SetSource ag local: %v", err)
+	if err := h.SetAntigravityLocalInjected("ide", true); err != nil {
+		t.Fatalf("inject ide: %v", err)
 	}
 	if fp.agInjectCount != 1 {
 		t.Fatalf("expected antigravity account injected once, got %d", fp.agInjectCount)
@@ -176,12 +176,19 @@ func TestHub_SetSourceAntigravity_InjectsAccountNotGateway(t *testing.T) {
 	if h.GatewayStatusOf(account.ProviderAntigravity).Running {
 		t.Fatal("antigravity takeover must not start the reverse-proxy gateway")
 	}
-	// 还原:调 AntigravityRestoreAccount。
-	if err := h.SetSource(account.ProviderAntigravity, "remote"); err != nil {
-		t.Fatalf("SetSource ag remote: %v", err)
+	// 派生 source:任一 app 注入后整卡为 local。
+	if h.GetSource(account.ProviderAntigravity) != "local" {
+		t.Fatalf("注入后 source 应派生为 local,got %q", h.GetSource(account.ProviderAntigravity))
+	}
+	// 关掉该 app:调 AntigravityRestoreAccountFor,全部关掉后 source 派生回 remote。
+	if err := h.SetAntigravityLocalInjected("ide", false); err != nil {
+		t.Fatalf("off ide: %v", err)
 	}
 	if fp.agRestoreCount < 1 {
-		t.Fatal("expected antigravity restored on remote")
+		t.Fatal("expected antigravity restored on off")
+	}
+	if h.GetSource(account.ProviderAntigravity) != "remote" {
+		t.Fatal("全部关掉后 source 应派生为 remote")
 	}
 }
 
@@ -191,12 +198,12 @@ func TestHub_RestartOnSwitch(t *testing.T) {
 	h, fp := newHub(t)
 	fp.agRunning = true
 	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com", AccessToken: "AT", PoolEnabled: true})
-	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
-		t.Fatalf("ag local: %v", err)
+	if err := h.SetAntigravityLocalInjected("ide", true); err != nil {
+		t.Fatalf("ag ide inject: %v", err)
 	}
-	// 默认目标 = ide;在跑则重启目标 app(经变体化 AppStop/AppStart)。
+	// 该 app 在跑 → 重启它(经变体化 AppStop/AppStart)让它重读 state.vscdb。
 	if len(fp.agAppStops) < 1 || len(fp.agAppStarts) < 1 || fp.agAppStarts[len(fp.agAppStarts)-1] != "ide" {
-		t.Fatalf("antigravity 切换应重启目标 app(stops=%v starts=%v)", fp.agAppStops, fp.agAppStarts)
+		t.Fatalf("antigravity 本地接管应重启该 app(stops=%v starts=%v)", fp.agAppStops, fp.agAppStarts)
 	}
 
 	// codex 默认 LaunchOnSwitch=true(对齐 cockpit)→ 切换应重启 GUI。
@@ -260,32 +267,51 @@ func TestHub_SetSource_RestartsSpecifiedApp(t *testing.T) {
 	}
 }
 
-// 注入目标 app 可选(ide/standalone):切到 standalone 后本地接管注入到独立版变体。
-func TestHub_AntigravityInjectTarget(t *testing.T) {
+// 按 app 独立接管:IDE 与独立版各自可单独开/关,互不影响;source 随「任一注入」派生。
+func TestHub_AntigravityPerAppInjection(t *testing.T) {
 	h, fp := newHub(t)
-	if h.GetAntigravityTarget() != "ide" {
-		t.Fatalf("默认目标应为 ide,got %q", h.GetAntigravityTarget())
-	}
 	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com",
 		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", PoolEnabled: true, Priority: true})
-	if err := h.SetAntigravityTarget("standalone"); err != nil {
-		t.Fatalf("SetAntigravityTarget: %v", err)
+	// 默认两个 app 都未接管。
+	if h.AntigravityLocalInjected("ide") || h.AntigravityLocalInjected("standalone") {
+		t.Fatal("默认两个 app 都应未接管")
 	}
-	if h.GetAntigravityTarget() != "standalone" {
-		t.Fatalf("目标应持久化为 standalone")
-	}
-	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
-		t.Fatalf("ag local: %v", err)
+	// 只接管独立版:注入落到 standalone 变体,IDE 不受影响。
+	if err := h.SetAntigravityLocalInjected("standalone", true); err != nil {
+		t.Fatalf("inject standalone: %v", err)
 	}
 	if fp.agInjectVariant != "standalone" {
-		t.Fatalf("本地接管应注入到 standalone 变体,got %q", fp.agInjectVariant)
+		t.Fatalf("应注入到 standalone 变体,got %q", fp.agInjectVariant)
+	}
+	if !h.AntigravityLocalInjected("standalone") || h.AntigravityLocalInjected("ide") {
+		t.Fatal("应只有独立版接管、IDE 仍未接管")
+	}
+	if h.GetSource(account.ProviderAntigravity) != "local" {
+		t.Fatal("任一 app 接管后整卡 source 应为 local")
+	}
+	// 再接管 IDE:两个都接管,互不影响。
+	if err := h.SetAntigravityLocalInjected("ide", true); err != nil {
+		t.Fatalf("inject ide: %v", err)
+	}
+	if !h.AntigravityLocalInjected("ide") || !h.AntigravityLocalInjected("standalone") {
+		t.Fatal("两个 app 应都接管")
+	}
+	// 关掉独立版:IDE 不受影响,source 仍为 local。
+	if err := h.SetAntigravityLocalInjected("standalone", false); err != nil {
+		t.Fatalf("off standalone: %v", err)
+	}
+	if h.AntigravityLocalInjected("standalone") || !h.AntigravityLocalInjected("ide") {
+		t.Fatal("关独立版后应只剩 IDE 接管")
+	}
+	if h.GetSource(account.ProviderAntigravity) != "local" {
+		t.Fatal("IDE 仍接管,source 应仍为 local")
 	}
 }
 
-// antigravity 'local' 无可用号时报错(且不注入)。
-func TestHub_SetSourceAntigravity_NoAccountErrors(t *testing.T) {
+// antigravity 本地接管无可用号时报错(且不注入)。
+func TestHub_AntigravityInject_NoAccountErrors(t *testing.T) {
 	h, fp := newHub(t)
-	if err := h.SetSource(account.ProviderAntigravity, "local"); err == nil {
+	if err := h.SetAntigravityLocalInjected("ide", true); err == nil {
 		t.Fatal("expected error when no antigravity pool account")
 	}
 	if fp.agInjectCount != 0 {

@@ -7,7 +7,7 @@ import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
 import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
-import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, getAntigravityTarget, setAntigravityTarget } from '@/services/localApi'
+import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import type { PageId } from '@/types'
 import { ArrowRight, Users } from 'lucide-react'
@@ -113,12 +113,18 @@ function ProductCard({ name, provider, note, mode, onModeChange, children }: {
   )
 }
 
+// antigravity 本地接管的两个 app(和远程那两行 IDE + Hub 对称)。各自独立注入自己的 state.vscdb。
+const AG_VARIANTS = [
+  { variant: 'ide' as const, label: 'Antigravity IDE' },
+  { variant: 'standalone' as const, label: 'Antigravity 独立版' },
+]
+
 /**
  * Codex / Antigravity 卡:远程/本地两模式互斥。
  * 本地自有号 = 注入式接管(把选中号写进正版客户端凭证,直连官方)——
- * codex 写 ~/.codex/auth.json,antigravity 写 IDE state.vscdb。两者都不经反代。
+ * codex 写 ~/.codex/auth.json,antigravity 按 app 独立写各自 state.vscdb。两者都不经反代。
  * 反代(cliproxy 网关)是单独功能,在各 suite 的「反代」tab 自开自关,与此处接管无关。
- * localDesc 描述该产品注入到哪。
+ * localDesc 描述该产品注入到哪(本地模式下作头部副标题)。
  */
 function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk, onManageAccounts }: {
   name: string
@@ -135,22 +141,29 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
   const [accounts, setAccounts] = useState(0)
   const [busyLocal, setBusyLocal] = useState(false)
   const [err, setErr] = useState('')
-  // 仅 antigravity:注入目标 app(IDE / 独立版)。决定本地自有号注入进哪个 app 的 state.vscdb。
   const isAntigravity = provider === 'antigravity'
-  const [agTarget, setAgTarget] = useState<'ide' | 'standalone'>('ide')
+  // 仅 antigravity:两个 app(IDE / 独立版)各自独立的本地接管态。和远程那两行对称,互不影响。
+  const [agInjected, setAgInjected] = useState<Record<'ide' | 'standalone', boolean>>({ ide: false, standalone: false })
+  const [busyVariant, setBusyVariant] = useState<string | null>(null)
 
-  // 刷新实际态(source/账号数)。不动 mode —— 段控只反映用户选择,实际态由 source 承载,
-  // 避免异步刷新把用户刚切的段顶回去。
+  const loadAgInjected = useCallback(async () => {
+    if (!isAntigravity) return
+    const [ide, standalone] = await Promise.all([antigravityLocalInjected('ide'), antigravityLocalInjected('standalone')])
+    setAgInjected({ ide, standalone })
+  }, [isAntigravity])
+
+  // 刷新实际态(source/账号数/antigravity 两个 app 接管态)。不动 mode —— 段控只反映用户选择。
   const refresh = useCallback(async () => {
     try {
       const src = (await api.getSource?.()) === 'local' ? 'local' : 'remote'
       setSource(src)
       const list = await api.listAccounts()
       setAccounts(list.length)
+      await loadAgInjected()
     } catch (e) {
       setErr(String(e))
     }
-  }, [api])
+  }, [api, loadAgInjected])
 
   // 挂载:仅当实际已是本地接管时,把段控初始化到本地;远程则保留默认段,不强切。
   useEffect(() => {
@@ -161,23 +174,14 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
       try {
         const list = await api.listAccounts()
         setAccounts(list.length)
+        await loadAgInjected()
       } catch (e) {
         setErr(String(e))
       }
-      if (isAntigravity) {
-        try { setAgTarget(await getAntigravityTarget()) } catch { /* 缺省 ide */ }
-      }
     })()
-  }, [api, isAntigravity])
+  }, [api, loadAgInjected])
 
-  const onPickAgTarget = async (v: 'ide' | 'standalone') => {
-    if (v === agTarget) return
-    setBusyLocal(true)
-    try { await setAntigravityTarget(v); setAgTarget(v) } catch (e) { setErr(String(e)) } finally { setBusyLocal(false) }
-  }
-
-  // 本地接管/停止:setSource('local')/setSource('remote')。后端把选中号注入正版客户端
-  //(codex auth.json / antigravity state.vscdb),前端只切 source、刷新实际态。
+  // codex 本地接管/停止:setSource('local'/'remote')。前端只切 source、刷新实际态。
   const onToggleLocal = async () => {
     setBusyLocal(true)
     setErr('')
@@ -191,7 +195,21 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
     }
   }
 
-  // 远程接管:切本地→远程前先停本地(互斥),再走通行证注入。
+  // antigravity 按 app 独立接管/停止:注入/撤销该 app 的 state.vscdb,互不影响另一个。
+  const onToggleVariant = async (variant: 'ide' | 'standalone', on: boolean) => {
+    setBusyVariant(variant)
+    setErr('')
+    try {
+      await setAntigravityLocalInjected(variant, on)
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusyVariant(null)
+    }
+  }
+
+  // 远程接管:切本地→远程前先停本地(互斥,后端撤掉所有本地注入),再走通行证注入。
   const onToggleRemote = async (spec: RemoteRowSpec) => {
     if (!spec.injected && !(await tk.ensureCard(name))) return
     if (!spec.injected && source === 'local') {
@@ -210,6 +228,39 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
         remoteRows.map((spec) => (
           <RemoteRow key={spec.target} spec={spec} busy={tk.busy} onToggle={() => onToggleRemote(spec)} />
         ))
+      ) : isAntigravity ? (
+        <>
+          {/* 按 app 独立接管:IDE + 独立版 各一行,和远程那两行对称;各注入自己的 state.vscdb,互不影响。 */}
+          {AG_VARIANTS.map(({ variant, label }) => {
+            const on = agInjected[variant]
+            return (
+              <div key={variant} className="flex items-center justify-between gap-3 h-[40px]">
+                <div className="min-w-0">
+                  <div className="text-[12px] text-[var(--text-primary)] font-medium">{label}</div>
+                  <div className={cn('text-[10px] flex items-center gap-1.5', on ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+                    <span className={cn('w-1.5 h-1.5 rounded-full', on ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
+                    {on ? '已接管 · 直连官方' : '未接管'}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={on ? 'secondary' : 'default'}
+                  disabled={busyVariant === variant}
+                  onClick={() => void onToggleVariant(variant, !on)}
+                  className="shrink-0 cursor-pointer min-w-[68px]"
+                >
+                  {busyVariant === variant ? '...' : on ? '停止' : '接管'}
+                </Button>
+              </div>
+            )
+          })}
+          <button
+            onClick={onManageAccounts}
+            className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)] py-1.5"
+          >
+            <Users size={11} /> {accounts} 个自有号 · 管理账号 <ArrowRight size={11} />
+          </button>
+        </>
       ) : (
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div className="min-w-0">
@@ -218,25 +269,6 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
               <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
               <span className={localActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}>{localActive ? '已接管 · 直连官方' : '未接管'}</span>
             </div>
-            {isAntigravity && (
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <span className="text-[10px] text-[var(--text-muted)]">注入到</span>
-                <div className="inline-flex rounded-[6px] bg-[var(--bg-tertiary)] p-0.5">
-                  {([['ide', 'IDE'], ['standalone', '独立版']] as const).map(([v, label]) => (
-                    <button
-                      key={v}
-                      aria-label={`注入目标 ${label}`}
-                      aria-pressed={agTarget === v}
-                      disabled={busyLocal}
-                      onClick={() => void onPickAgTarget(v)}
-                      className={cn('cursor-pointer text-[10px] font-semibold px-2 h-[20px] rounded-[4px] transition-colors disabled:opacity-50', agTarget === v ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             <button
               onClick={onManageAccounts}
               className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)]"

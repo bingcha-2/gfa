@@ -405,19 +405,18 @@ func (h *Hub) ReorderAccounts(p account.Provider, ids []string) error {
 
 // reinjectIfLocal 若某 provider 当前为 local 接管态,重注入其当前号(切当前号需同步本机注入)。
 func (h *Hub) reinjectIfLocal(p account.Provider) {
-	if h.sources.Get(string(p)) != takeover.SourceLocal {
-		return
-	}
 	switch p {
 	case account.ProviderCodex:
+		if h.sources.Get(string(p)) != takeover.SourceLocal {
+			return
+		}
 		if tok, err := h.pickCodexToken(); err == nil {
 			_ = h.platform.CodexRestoreAccount()
 			_ = h.platform.CodexInjectAccount(tok)
 		}
 	case account.ProviderAntigravity:
-		if tok, err := h.pickAntigravityToken(); err == nil {
-			_ = h.injectAntigravityToTarget(tok)
-		}
+		// 按 app 独立接管:把新当前号重注入到所有已本地接管的 app(未接管的不动)。
+		h.reinjectAntigravityInjected()
 	}
 }
 
@@ -599,6 +598,13 @@ func (h *Hub) accountEmails(p account.Provider) map[string]string {
 // ── 接管号源(平台专有注入经 Platform） ──
 
 func (h *Hub) GetSource(p account.Provider) string {
+	// antigravity 本地接管改为「按 app 独立开关」;整卡 source 派生:任一 app 本地注入即 local。
+	if p == account.ProviderAntigravity {
+		if h.loadAntigravityLocal().anyInjected() {
+			return string(takeover.SourceLocal)
+		}
+		return string(takeover.SourceRemote)
+	}
 	return string(h.sources.Get(string(p)))
 }
 
@@ -607,37 +613,31 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		return err
 	}
 	src := takeover.Normalize(source)
+	// antigravity 本地接管改为「按 app 独立开关」(见 SetAntigravityLocalInjected):
+	// 整卡 SetSource 只处理 remote —— 撤掉两个 app 的本地注入(与远程互斥);local 交给按 app 开关。
+	if p == account.ProviderAntigravity {
+		if src == takeover.SourceRemote {
+			h.restoreAntigravityAll()
+			_ = h.saveAntigravityLocal(antigravityLocalState{})
+			h.restartAntigravityRunning("ide")
+			h.restartAntigravityRunning("standalone")
+		}
+		return nil
+	}
 	if src == takeover.SourceLocal {
-		switch p {
-		case account.ProviderCodex:
-			// codex 'local' = 注入式接管:挑一个自有号直接写进 ~/.codex/auth.json,
-			// 真 codex CLI 直连 OpenAI。不碰反代网关(反代是单独功能,反代 tab 自开自关)。
-			tok, err := h.pickCodexToken()
-			if err != nil {
-				return err
-			}
-			_ = h.platform.CodexRestoreAccount()
-			if err := h.platform.CodexInjectAccount(tok); err != nil {
-				return err
-			}
-		case account.ProviderAntigravity:
-			// antigravity 'local' = 不走网关:挑一个自有号直接注入目标 app 的 state.vscdb。
-			tok, err := h.pickAntigravityToken()
-			if err != nil {
-				return err
-			}
-			if err := h.injectAntigravityToTarget(tok); err != nil {
-				return err
-			}
+		// codex 'local' = 注入式接管:挑一个自有号直接写进 ~/.codex/auth.json,
+		// 真 codex CLI 直连 OpenAI。不碰反代网关(反代是单独功能,反代 tab 自开自关)。
+		tok, err := h.pickCodexToken()
+		if err != nil {
+			return err
+		}
+		_ = h.platform.CodexRestoreAccount()
+		if err := h.platform.CodexInjectAccount(tok); err != nil {
+			return err
 		}
 	} else {
 		// 还原:仅撤注入。网关生命周期与接管解耦——不在此处停网关(反代 tab 独立控制)。
-		switch p {
-		case account.ProviderCodex:
-			_ = h.platform.CodexRestoreAccount()
-		case account.ProviderAntigravity:
-			h.restoreAntigravityAll()
-		}
+		_ = h.platform.CodexRestoreAccount()
 	}
 	if err := h.sources.Set(string(p), src); err != nil {
 		return err
@@ -647,28 +647,20 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 	return nil
 }
 
-// restartClientAfterSwitch 切换接管源后重启对应客户端,让注入的新登录生效:
-//   - antigravity:IDE 常驻、把 state.vscdb 缓存在内存,若在跑则重启(停+起)才会重读新号;
-//     没在跑就不动(下次用户自己打开即读到新态)。
-//   - codex:CLI 每次运行自读 auth.json 无需重启;仅当用户开了「切换时启动 Codex App」才重启常驻 GUI。
+// restartClientAfterSwitch 切换 codex 接管源后重启客户端,让注入的新登录生效:
+// codex CLI 每次运行自读 auth.json 无需重启;仅当用户开了「切换时启动 Codex App」才重启常驻 GUI。
+// (antigravity 改为按 app 独立开关,重启在 SetAntigravityLocalInjected 里就地处理。)
 func (h *Hub) restartClientAfterSwitch(p account.Provider) {
-	switch p {
-	case account.ProviderAntigravity:
-		// 重启当前注入目标 app(IDE 或独立版),让它重读 state.vscdb 里的新号;没在跑就不动。
-		target := h.GetAntigravityTarget()
-		if h.platform.AntigravityAppRunning(target) {
-			_ = h.platform.AntigravityAppStop(target)
-			_ = h.platform.AntigravityAppStart(target)
-		}
-	case account.ProviderCodex:
-		cs := h.GetCodexSettings()
-		if cs.LaunchOnSwitch {
-			_ = h.platform.CodexRestartApp()
-		}
-		// 切号后联动重启用户指定的应用(如自建 IDE/编辑器);未开或未配路径则跳过。
-		if cs.RestartAppOnSwitch && strings.TrimSpace(cs.RestartAppPath) != "" {
-			_ = h.platform.RestartSpecifiedApp(cs.RestartAppPath)
-		}
+	if p != account.ProviderCodex {
+		return
+	}
+	cs := h.GetCodexSettings()
+	if cs.LaunchOnSwitch {
+		_ = h.platform.CodexRestartApp()
+	}
+	// 切号后联动重启用户指定的应用(如自建 IDE/编辑器);未开或未配路径则跳过。
+	if cs.RestartAppOnSwitch && strings.TrimSpace(cs.RestartAppPath) != "" {
+		_ = h.platform.RestartSpecifiedApp(cs.RestartAppPath)
 	}
 }
 
