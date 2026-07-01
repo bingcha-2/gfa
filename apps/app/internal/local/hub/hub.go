@@ -185,17 +185,21 @@ func New(dir string, platform Platform) (*Hub, error) {
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
 	_ = h.gw.SetHost(h.gwScope.Load().Host())
-	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, quota.NewCodexRefresher(quota.CodexEndpoints{}))
-	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
+	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, codexauth.LoginWithPrompt, quota.NewCodexRefresher(quota.CodexEndpoints{}))
+	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, antigravityauth.LoginWithPrompt, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
 	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。
 	h.autoRefresh = newAutoRefresher(h, h.refreshCfg.Load())
 	h.autoRefresh.start(context.Background())
 	return h, nil
 }
 
-func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, refresher manager.Refresher) *providerCtx {
+func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, loginPrompt manager.LoginPromptFunc, refresher manager.Refresher) *providerCtx {
 	mgr := manager.New(h.acc, h.gw, p, login)
 	mgr.SetRefresher(refresher)
+	// 手动回调/可取消登录:防火墙/无浏览器/端口占用时,前端可粘贴回调 URL 完成登录。
+	if loginPrompt != nil {
+		mgr.SetPromptLogin(loginPrompt)
+	}
 
 	// 续约保活:逐个 pool_enabled 自有号刷 token(防过期)+ 轻探额度,
 	// 续约成功就持久化新过期时刻,返回给 wakeup history(NewExpiry)。
@@ -329,6 +333,24 @@ func (h *Hub) WaitLogin(p account.Provider, id string) (manager.AccountView, err
 		return manager.AccountView{}, err
 	}
 	return pc.mgr.WaitLogin(id)
+}
+
+// SubmitLoginCallback 为一个 pending 登录提交手动粘贴的回调 URL(防火墙/无浏览器/端口占用兜底)。
+func (h *Hub) SubmitLoginCallback(p account.Provider, id, callbackURL string) error {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return err
+	}
+	return pc.mgr.SubmitLoginCallback(id, callbackURL)
+}
+
+// CancelLogin 取消一个 pending 登录(取消 ctx 并解除 prompt 阻塞)。
+func (h *Hub) CancelLogin(p account.Provider, id string) error {
+	pc, err := h.ctx(p)
+	if err != nil {
+		return err
+	}
+	return pc.mgr.CancelLogin(id)
 }
 
 func (h *Hub) AddByToken(p account.Provider, refreshToken, accessToken, email string) (manager.AccountView, error) {

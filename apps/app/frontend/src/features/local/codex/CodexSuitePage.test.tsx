@@ -21,6 +21,8 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalSetCodexSource: vi.fn().mockResolvedValue(undefined),
     LocalStartCodexLogin: vi.fn().mockResolvedValue('login-1'),
     LocalWaitCodexLogin: vi.fn().mockResolvedValue(fakeAccount()),
+    LocalSubmitCodexLoginCallback: vi.fn().mockResolvedValue(undefined),
+    LocalCancelCodexLogin: vi.fn().mockResolvedValue(undefined),
     LocalSetPoolEnabled: vi.fn().mockResolvedValue(undefined),
     LocalSetCodexPriority: vi.fn().mockResolvedValue(undefined),
     LocalSetCodexAccountServiceTier: vi.fn().mockResolvedValue(undefined),
@@ -524,6 +526,22 @@ describe('CodexSuitePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /加号/ }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
     await waitFor(() => expect(app.LocalStartCodexLogin).toHaveBeenCalled())
+  })
+
+  it('登录进行中露出手动回调:粘贴 URL 提交调 submitLoginCallback', async () => {
+    // waitLogin 永不 resolve → 登录会话保持进行中,手动回调面板出现。
+    const app = installApp({
+      LocalWaitCodexLogin: vi.fn().mockImplementation(() => new Promise(() => {})),
+      LocalSubmitCodexLoginCallback: vi.fn().mockResolvedValue(undefined),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+    const input = await screen.findByLabelText('OAuth 回调 URL')
+    fireEvent.change(input, { target: { value: 'http://localhost:1455/cb?code=xyz' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    await waitFor(() => expect(app.LocalSubmitCodexLoginCallback).toHaveBeenCalledWith('login-1', 'http://localhost:1455/cb?code=xyz'))
   })
 
   it('账号行有 name 时标题显示 name', async () => {

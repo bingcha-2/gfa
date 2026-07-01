@@ -147,6 +147,10 @@ export interface ProviderLocalApi {
   listAccounts(): Promise<LocalAccountView[]>
   startLogin(): Promise<string>
   waitLogin(loginId: string): Promise<LocalAccountView>
+  /** 手动提交 OAuth 回调 URL 完成登录(防火墙/无浏览器/端口占用场景)。 */
+  submitLoginCallback?(loginId: string, callbackURL: string): Promise<void>
+  /** 取消一个进行中的登录会话。 */
+  cancelLogin?(loginId: string): Promise<void>
   /** 手动加号:自备 OAuth token。 */
   addByToken(refreshToken: string, accessToken: string, email: string): Promise<LocalAccountView>
   /** 手动加号:自备 API Key。 */
@@ -217,6 +221,8 @@ export const codexLocalApi: ProviderLocalApi = {
   listAccounts: () => app().LocalListCodexAccounts() as Promise<LocalAccountView[]>,
   startLogin: () => app().LocalStartCodexLogin() as Promise<string>,
   waitLogin: (id) => app().LocalWaitCodexLogin(id) as Promise<LocalAccountView>,
+  submitLoginCallback: (id, url) => app().LocalSubmitCodexLoginCallback(id, url) as Promise<void>,
+  cancelLogin: (id) => app().LocalCancelCodexLogin(id) as Promise<void>,
   addByToken: (rt, at, email) => app().LocalAddCodexToken(rt, at, email) as Promise<LocalAccountView>,
   addByApiKey: (key, base, email) => app().LocalAddCodexApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
@@ -261,6 +267,8 @@ export const antigravityLocalApi: ProviderLocalApi = {
   listAccounts: () => app().LocalListAntigravityAccounts() as Promise<LocalAccountView[]>,
   startLogin: () => app().LocalStartAntigravityLogin() as Promise<string>,
   waitLogin: (id) => app().LocalWaitAntigravityLogin(id) as Promise<LocalAccountView>,
+  submitLoginCallback: (id, url) => app().LocalSubmitAntigravityLoginCallback(id, url) as Promise<void>,
+  cancelLogin: (id) => app().LocalCancelAntigravityLogin(id) as Promise<void>,
   addByToken: (rt, at, email) => app().LocalAddAntigravityToken(rt, at, email) as Promise<LocalAccountView>,
   addByApiKey: (key, base, email) => app().LocalAddAntigravityApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,

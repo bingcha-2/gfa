@@ -16,6 +16,16 @@ import (
 // LoginFunc 是某 provider 的 OAuth 登录(codexauth.Login / antigravityauth.Login)。
 type LoginFunc func(ctx context.Context, cfg *config.Config) (*account.Account, error)
 
+// PromptFunc 由 SDK 在需要「手动粘贴回调 URL」时回调:阻塞直至拿到用户输入的
+// 回调 URL(或因取消/超时返回 error)。message 是提示语(本地忽略,前端自渲染)。
+type PromptFunc func(message string) (string, error)
+
+// LoginPromptFunc 是「支持手动回调 + 可取消」的 OAuth 登录:ctx 用于取消,prompt
+// 在防火墙/无浏览器/端口占用时被 SDK 调用以获取手动粘贴的回调 URL。
+// 由 codexauth.LoginWithPrompt / antigravityauth.LoginWithPrompt 实现。
+// prompt 用未命名的 func 类型以匹配 SDK LoginOptions.Prompt 的签名(避免命名类型不兼容)。
+type LoginPromptFunc func(ctx context.Context, cfg *config.Config, prompt func(string) (string, error)) (*account.Account, error)
+
 // Reloader 抽象「让网关重载自有号」,便于测试(gateway.Gateway 实现 Reload)。
 type Reloader interface{ Reload() error }
 
@@ -55,17 +65,21 @@ func toView(a *account.Account) AccountView {
 }
 
 type loginState struct {
-	done chan struct{}
-	view AccountView
-	err  error
+	done   chan struct{}
+	view   AccountView
+	err    error
+	cancel context.CancelFunc // 取消底层 OAuth ctx
+	submit chan string        // 手动粘贴的回调 URL 从此喂入 prompt
+	closed bool               // submit 是否已关闭(取消/完成后防重复 close)
 }
 
 type Manager struct {
-	acc       *account.Store
-	gw        Reloader // nil-able(测试或网关未启动)
-	provider  account.Provider
-	loginFn   LoginFunc
-	refresher Refresher // nil-able(按号额度刷新/续约;hub 注入)
+	acc           *account.Store
+	gw            Reloader // nil-able(测试或网关未启动)
+	provider      account.Provider
+	loginFn       LoginFunc
+	loginPromptFn LoginPromptFunc // nil-able(支持手动回调/取消;hub 注入)
+	refresher     Refresher       // nil-able(按号额度刷新/续约;hub 注入)
 
 	mu     sync.Mutex
 	logins map[string]*loginState
@@ -179,15 +193,18 @@ func (m *Manager) DeleteAccount(id string) error {
 }
 
 // StartLogin 异步发起 OAuth(SDK 会开浏览器并阻塞等回调);返回 loginId。
+// 若已注入 loginPromptFn(hub 场景),则登录可被取消,并支持手动粘贴回调 URL
+// (见 SubmitLoginCallback / CancelLogin,实现在 login_manual.go)。
 func (m *Manager) StartLogin() string {
 	id := uuid.NewString()
-	st := &loginState{done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	st := &loginState{done: make(chan struct{}), cancel: cancel, submit: make(chan string, 1)}
 	m.mu.Lock()
 	m.logins[id] = st
 	m.mu.Unlock()
 	go func() {
 		defer close(st.done)
-		acc, err := m.loginFn(context.Background(), nil)
+		acc, err := m.runLogin(ctx, st)
 		if err != nil {
 			st.err = err
 			return

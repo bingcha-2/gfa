@@ -306,6 +306,9 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // 进行中的登录会话(用于手动粘贴回调 URL / 取消,防火墙/无浏览器场景)。
+  const [loginId, setLoginId] = useState<string | null>(null)
+  const [callbackURL, setCallbackURL] = useState('')
   // codex 专属经济区:用 importFromLocal 这个 codex 唯一能力作判别(antigravity 无),不污染 antigravity。
   const hasEconomy = !!api.importFromLocal
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -386,14 +389,37 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
 
   const onLogin = async () => {
     setBusy('login')
+    setErr('')
     try {
       const id = await api.startLogin()
-      await api.waitLogin(id) // SDK 自动开浏览器,等回调
-      await refresh()
+      setLoginId(id) // 记录会话:登录期间露出手动回调 / 取消入口
+      // 后台等回调(SDK 自动开浏览器);手动提交回调 URL 也会让它返回。
+      api.waitLogin(id).then(() => { setLoginId(null); setCallbackURL(''); void refresh() })
+        .catch((e) => { setErr(String(e)); setLoginId(null) })
+        .finally(() => setBusy(null))
+    } catch (e) {
+      setErr(String(e))
+      setBusy(null)
+    }
+  }
+
+  const onSubmitCallback = async () => {
+    if (!loginId || !callbackURL.trim() || !api.submitLoginCallback) return
+    try {
+      await api.submitLoginCallback(loginId, callbackURL.trim())
+    } catch (e) {
+      setErr(String(e))
+    }
+  }
+
+  const onCancelLogin = async () => {
+    if (!loginId) return
+    try {
+      if (api.cancelLogin) await api.cancelLogin(loginId)
     } catch (e) {
       setErr(String(e))
     } finally {
-      setBusy(null)
+      setLoginId(null); setCallbackURL(''); setBusy(null)
     }
   }
 
@@ -625,6 +651,22 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
       {importInfo && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/5 px-3 py-2 text-[12px] text-[var(--success)]">{importInfo}</div>}
+      {loginId && (
+        <div className="rounded-[10px] border border-[var(--primary)] bg-[var(--primary-light)] px-3 py-2.5 flex flex-col gap-2">
+          <div className="text-[12px] text-[var(--text-primary)]">已打开浏览器登录,完成后会自动加号。若无法自动回调(防火墙/无浏览器),把浏览器地址栏的回调 URL 粘到这里:</div>
+          <div className="flex items-center gap-2">
+            <input
+              aria-label="OAuth 回调 URL"
+              value={callbackURL}
+              onChange={(e) => setCallbackURL(e.target.value)}
+              placeholder="http://localhost:1455/auth/callback?code=..."
+              className="flex-1 rounded-[7px] border border-[var(--border)] bg-[var(--bg-card)] px-2.5 h-[30px] text-[12px] font-mono-data text-[var(--text-primary)]"
+            />
+            <button onClick={() => void onSubmitCallback()} disabled={!callbackURL.trim()} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">提交</button>
+            <button onClick={() => void onCancelLogin()} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+          </div>
+        </div>
+      )}
 
       {hasEconomy && <EconomyBar />}
 
