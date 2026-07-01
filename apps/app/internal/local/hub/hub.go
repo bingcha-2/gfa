@@ -73,6 +73,10 @@ type Platform interface {
 	AntigravityInjectAccount(tok AntigravityToken) error
 	// AntigravityRestoreAccount 移除 Antigravity IDE 的注入登录态。
 	AntigravityRestoreAccount() error
+	// 变体化注入/还原/读取:variant="ide"/"standalone",分别落到对应 app 的 state.vscdb。
+	AntigravityInjectAccountTo(variant string, tok AntigravityToken) error
+	AntigravityRestoreAccountFor(variant string) error
+	AntigravityReadTokenFrom(variant string) (AntigravityToken, error)
 
 	// CodexAuthJSONPath 返回本机 codex 的 ~/.codex/auth.json 路径(本地导入用)。
 	CodexAuthJSONPath() string
@@ -397,8 +401,7 @@ func (h *Hub) reinjectIfLocal(p account.Provider) {
 		}
 	case account.ProviderAntigravity:
 		if tok, err := h.pickAntigravityToken(); err == nil {
-			_ = h.platform.AntigravityRestoreAccount()
-			_ = h.platform.AntigravityInjectAccount(tok)
+			_ = h.injectAntigravityToTarget(tok)
 		}
 	}
 }
@@ -603,13 +606,12 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 				return err
 			}
 		case account.ProviderAntigravity:
-			// antigravity 'local' = 不走网关:挑一个自有号直接注入 IDE 的 state.vscdb。
+			// antigravity 'local' = 不走网关:挑一个自有号直接注入目标 app 的 state.vscdb。
 			tok, err := h.pickAntigravityToken()
 			if err != nil {
 				return err
 			}
-			_ = h.platform.AntigravityRestoreAccount()
-			if err := h.platform.AntigravityInjectAccount(tok); err != nil {
+			if err := h.injectAntigravityToTarget(tok); err != nil {
 				return err
 			}
 		}
@@ -619,7 +621,7 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		case account.ProviderCodex:
 			_ = h.platform.CodexRestoreAccount()
 		case account.ProviderAntigravity:
-			_ = h.platform.AntigravityRestoreAccount()
+			h.restoreAntigravityAll()
 		}
 	}
 	if err := h.sources.Set(string(p), src); err != nil {
@@ -637,9 +639,11 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 func (h *Hub) restartClientAfterSwitch(p account.Provider) {
 	switch p {
 	case account.ProviderAntigravity:
-		if h.platform.AntigravityRuntimeRunning() {
-			_ = h.platform.AntigravityStopDefault()
-			_ = h.platform.AntigravityStartDefault()
+		// 重启当前注入目标 app(IDE 或独立版),让它重读 state.vscdb 里的新号;没在跑就不动。
+		target := h.GetAntigravityTarget()
+		if h.platform.AntigravityAppRunning(target) {
+			_ = h.platform.AntigravityAppStop(target)
+			_ = h.platform.AntigravityAppStart(target)
 		}
 	case account.ProviderCodex:
 		cs := h.GetCodexSettings()

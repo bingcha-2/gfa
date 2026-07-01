@@ -84,6 +84,22 @@ func (a *App) LocalAntigravityAppFocus(variant string) error {
 	return localHub.AntigravityAppFocus(variant)
 }
 
+// LocalGetAntigravityTarget 返回本地接管注入的目标 app 变体("ide"/"standalone")。
+func (a *App) LocalGetAntigravityTarget() string {
+	if err := ensureLocal(); err != nil {
+		return "ide"
+	}
+	return localHub.GetAntigravityTarget()
+}
+
+// LocalSetAntigravityTarget 设注入目标 app 变体(local 接管态下立即重注入到新目标)。
+func (a *App) LocalSetAntigravityTarget(variant string) error {
+	if err := ensureLocal(); err != nil {
+		return err
+	}
+	return localHub.SetAntigravityTarget(variant)
+}
+
 // ── 切号历史 ──
 
 func (a *App) LocalAntigravitySwitchHistory() ([]aghistory.SwitchHistoryItem, error) {

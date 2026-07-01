@@ -33,6 +33,7 @@ type fakePlatform struct {
 	agAppStarts           []string
 	agAppStops            []string
 	agAppFocuses          []string
+	agInjectVariant       string
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -47,7 +48,20 @@ func (f *fakePlatform) AntigravityInjectAccount(tok AntigravityToken) error {
 	return nil
 }
 func (f *fakePlatform) AntigravityRestoreAccount() error { f.agRestoreCount++; return nil }
-func (f *fakePlatform) CodexAuthJSONPath() string        { return f.codexAuthPath }
+func (f *fakePlatform) AntigravityInjectAccountTo(variant string, tok AntigravityToken) error {
+	f.agInjectCount++
+	f.agInjectedToken = tok
+	f.agInjectVariant = variant
+	return nil
+}
+func (f *fakePlatform) AntigravityRestoreAccountFor(variant string) error {
+	f.agRestoreCount++
+	return nil
+}
+func (f *fakePlatform) AntigravityReadTokenFrom(variant string) (AntigravityToken, error) {
+	return f.ideToken, f.ideTokenErr
+}
+func (f *fakePlatform) CodexAuthJSONPath() string { return f.codexAuthPath }
 func (f *fakePlatform) AntigravityReadIDEToken() (AntigravityToken, error) {
 	return f.ideToken, f.ideTokenErr
 }
@@ -201,8 +215,9 @@ func TestHub_RestartOnSwitch(t *testing.T) {
 	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
 		t.Fatalf("ag local: %v", err)
 	}
-	if fp.agStopCount < 1 || fp.agStartCount < 1 {
-		t.Fatalf("antigravity 切换应重启 IDE(stop=%d start=%d)", fp.agStopCount, fp.agStartCount)
+	// 默认目标 = ide;在跑则重启目标 app(经变体化 AppStop/AppStart)。
+	if len(fp.agAppStops) < 1 || len(fp.agAppStarts) < 1 || fp.agAppStarts[len(fp.agAppStarts)-1] != "ide" {
+		t.Fatalf("antigravity 切换应重启目标 app(stops=%v starts=%v)", fp.agAppStops, fp.agAppStarts)
 	}
 
 	// codex 默认 LaunchOnSwitch=true(对齐 cockpit)→ 切换应重启 GUI。
@@ -291,6 +306,28 @@ func TestHub_AntigravityApps_BothVariantsAndControl(t *testing.T) {
 	}
 	if len(fp.agAppFocuses) != 1 || fp.agAppFocuses[0] != "standalone" {
 		t.Fatalf("focus 变体透传错:%v", fp.agAppFocuses)
+	}
+}
+
+// 注入目标 app 可选(ide/standalone):切到 standalone 后本地接管注入到独立版变体。
+func TestHub_AntigravityInjectTarget(t *testing.T) {
+	h, fp := newHub(t)
+	if h.GetAntigravityTarget() != "ide" {
+		t.Fatalf("默认目标应为 ide,got %q", h.GetAntigravityTarget())
+	}
+	_ = h.acc.Add(&account.Account{Provider: account.ProviderAntigravity, Email: "ag@x.com",
+		AccessToken: "AT", RefreshToken: "RT", ProjectID: "proj", PoolEnabled: true, Priority: true})
+	if err := h.SetAntigravityTarget("standalone"); err != nil {
+		t.Fatalf("SetAntigravityTarget: %v", err)
+	}
+	if h.GetAntigravityTarget() != "standalone" {
+		t.Fatalf("目标应持久化为 standalone")
+	}
+	if err := h.SetSource(account.ProviderAntigravity, "local"); err != nil {
+		t.Fatalf("ag local: %v", err)
+	}
+	if fp.agInjectVariant != "standalone" {
+		t.Fatalf("本地接管应注入到 standalone 变体,got %q", fp.agInjectVariant)
 	}
 }
 

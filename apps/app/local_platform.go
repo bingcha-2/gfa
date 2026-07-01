@@ -41,10 +41,15 @@ func (localPlatform) CodexRestoreAccount() error {
 	return codexinject.RestoreHome(codexHomeDir())
 }
 
-// AntigravityInjectAccount 把一份自有号 token 直接写进 Antigravity IDE 的
-// state.vscdb(对齐 cockpit),让 IDE 以该号官方登录态运行——不经任何网关。
+// AntigravityInjectAccount 把一份自有号 token 注入 Antigravity IDE 的 state.vscdb(默认变体)。
 func (localPlatform) AntigravityInjectAccount(tok hub.AntigravityToken) error {
-	dbPath, err := antigravityStateDBPath()
+	return localPlatform{}.AntigravityInjectAccountTo("ide", tok)
+}
+
+// AntigravityInjectAccountTo 把自有号 token 注入指定 Antigravity app 变体的 state.vscdb
+// (对齐 cockpit,让该 app 以此号官方登录态运行——不经任何网关)。variant="ide"/"standalone"。
+func (localPlatform) AntigravityInjectAccountTo(variant string, tok hub.AntigravityToken) error {
+	dbPath, err := antigravityStateDBPathForKind(antigravityKindFromVariant(variant))
 	if err != nil {
 		return err
 	}
@@ -59,12 +64,16 @@ func (localPlatform) AntigravityInjectAccount(tok hub.AntigravityToken) error {
 	})
 }
 
-// AntigravityRestoreAccount 移除 IDE 的注入登录态(state.vscdb)。
+// AntigravityRestoreAccount 移除 IDE(默认变体)的注入登录态。
 func (localPlatform) AntigravityRestoreAccount() error {
-	dbPath, err := antigravityStateDBPath()
+	return localPlatform{}.AntigravityRestoreAccountFor("ide")
+}
+
+// AntigravityRestoreAccountFor 移除指定变体 app 的注入登录态;未安装则视为无操作。
+func (localPlatform) AntigravityRestoreAccountFor(variant string) error {
+	dbPath, err := antigravityStateDBPathForKind(antigravityKindFromVariant(variant))
 	if err != nil {
-		// IDE 未安装或库不存在时,还原视为无操作。
-		return nil
+		return nil // 未安装或库不存在时,还原视为无操作
 	}
 	return antigravityinject.RestorePath(dbPath)
 }
@@ -74,10 +83,15 @@ func (localPlatform) CodexAuthJSONPath() string {
 	return filepath.Join(codexHomeDir(), "auth.json")
 }
 
-// AntigravityReadIDEToken 读当前 Antigravity IDE(state.vscdb)里注入/登录的自有号
-// 登录态(从已装 IDE 同步号用);解码 antigravityUnifiedStateSync.oauthToken 等。
+// AntigravityReadIDEToken 读 IDE(默认变体)里注入/登录的自有号登录态。
 func (localPlatform) AntigravityReadIDEToken() (hub.AntigravityToken, error) {
-	dbPath, err := antigravityStateDBPath()
+	return localPlatform{}.AntigravityReadTokenFrom("ide")
+}
+
+// AntigravityReadTokenFrom 读指定变体 app 的 state.vscdb 里注入/登录的自有号登录态
+// (从已装 app 同步号用);解码 antigravityUnifiedStateSync.oauthToken 等。
+func (localPlatform) AntigravityReadTokenFrom(variant string) (hub.AntigravityToken, error) {
+	dbPath, err := antigravityStateDBPathForKind(antigravityKindFromVariant(variant))
 	if err != nil {
 		return hub.AntigravityToken{}, err
 	}

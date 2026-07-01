@@ -15,6 +15,8 @@ function installApp(over: Record<string, unknown> = {}) {
     LocalAntigravityAppStop: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityAppRestart: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityAppFocus: vi.fn().mockResolvedValue(undefined),
+    LocalGetAntigravityTarget: vi.fn().mockResolvedValue('ide'),
+    LocalSetAntigravityTarget: vi.fn().mockResolvedValue(undefined),
     LocalClearAntigravitySwitchHistory: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
@@ -59,6 +61,14 @@ describe('LocalAntigravityRuntimeTab —— 双 app 运行时 + 切换历史', (
     await screen.findByText('未安装')
     const starts = await screen.findAllByRole('button', { name: /启动/ })
     expect(starts[1]).toBeDisabled() // standalone 未安装 → 禁用
+  })
+
+  it('切注入目标到独立版调 setAntigravityTarget(standalone)', async () => {
+    const app = installApp()
+    render(<LocalAntigravityRuntimeTab />)
+    await waitFor(() => expect(app.LocalGetAntigravityTarget).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '独立版' }))
+    await waitFor(() => expect(app.LocalSetAntigravityTarget).toHaveBeenCalledWith('standalone'))
   })
 
   it('清空历史调 clearAntigravitySwitchHistory', async () => {

@@ -52,6 +52,8 @@ function installApp() {
     LocalAntigravityAppStop: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityAppRestart: vi.fn().mockResolvedValue(undefined),
     LocalAntigravityAppFocus: vi.fn().mockResolvedValue(undefined),
+    LocalGetAntigravityTarget: vi.fn().mockResolvedValue('ide'),
+    LocalSetAntigravityTarget: vi.fn().mockResolvedValue(undefined),
     LocalAntigravitySwitchHistory: vi.fn().mockResolvedValue([
       { id: 'h1', timestamp: 1700000000000, accountId: 'g1', targetEmail: 'switched@gmail.com', triggerType: 'manual', triggerSource: 'user', localOk: true, seamlessOk: true, success: true, localDurationMs: 100, totalDurationMs: 200 },
     ]),

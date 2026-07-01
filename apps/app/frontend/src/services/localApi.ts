@@ -884,6 +884,16 @@ export function antigravityAppFocus(variant: string): Promise<void> {
   return app().LocalAntigravityAppFocus(variant) as Promise<void>
 }
 
+/** 读本地接管注入的目标 app 变体("ide"/"standalone")。 */
+export function getAntigravityTarget(): Promise<'ide' | 'standalone'> {
+  return app().LocalGetAntigravityTarget() as Promise<'ide' | 'standalone'>
+}
+
+/** 设注入目标 app 变体(local 接管态下立即重注入到新目标)。 */
+export function setAntigravityTarget(variant: string): Promise<void> {
+  return app().LocalSetAntigravityTarget(variant) as Promise<void>
+}
+
 /** 一条 Antigravity 自动切号命中分组。 */
 export interface AntigravityAutoSwitchHitGroup {
   groupId: string
