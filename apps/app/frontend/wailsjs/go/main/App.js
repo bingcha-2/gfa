@@ -94,6 +94,10 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function LocalActivateGatewayTimeoutPreset(arg1) {
+  return window['go']['main']['App']['LocalActivateGatewayTimeoutPreset'](arg1);
+}
+
 export function LocalAddAntigravityApiKey(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalAddAntigravityApiKey'](arg1, arg2, arg3);
 }
@@ -112,6 +116,26 @@ export function LocalAddCodexApiKey(arg1, arg2, arg3) {
 
 export function LocalAddCodexToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalAddCodexToken'](arg1, arg2, arg3);
+}
+
+export function LocalAntigravityAppFocus(arg1) {
+  return window['go']['main']['App']['LocalAntigravityAppFocus'](arg1);
+}
+
+export function LocalAntigravityAppRestart(arg1) {
+  return window['go']['main']['App']['LocalAntigravityAppRestart'](arg1);
+}
+
+export function LocalAntigravityAppStart(arg1) {
+  return window['go']['main']['App']['LocalAntigravityAppStart'](arg1);
+}
+
+export function LocalAntigravityAppStop(arg1) {
+  return window['go']['main']['App']['LocalAntigravityAppStop'](arg1);
+}
+
+export function LocalAntigravityApps() {
+  return window['go']['main']['App']['LocalAntigravityApps']();
 }
 
 export function LocalAntigravityFocusDefault() {
@@ -154,6 +178,10 @@ export function LocalAntigravitySwitchHistory() {
   return window['go']['main']['App']['LocalAntigravitySwitchHistory']();
 }
 
+export function LocalAntigravityWakeupClearVerificationHistory(arg1) {
+  return window['go']['main']['App']['LocalAntigravityWakeupClearVerificationHistory'](arg1);
+}
+
 export function LocalAntigravityWakeupConfig() {
   return window['go']['main']['App']['LocalAntigravityWakeupConfig']();
 }
@@ -166,12 +194,32 @@ export function LocalAntigravityWakeupRunNow() {
   return window['go']['main']['App']['LocalAntigravityWakeupRunNow']();
 }
 
+export function LocalAntigravityWakeupVerificationHistory() {
+  return window['go']['main']['App']['LocalAntigravityWakeupVerificationHistory']();
+}
+
+export function LocalAntigravityWakeupVerificationState() {
+  return window['go']['main']['App']['LocalAntigravityWakeupVerificationState']();
+}
+
+export function LocalAntigravityWakeupVerifyBatch(arg1) {
+  return window['go']['main']['App']['LocalAntigravityWakeupVerifyBatch'](arg1);
+}
+
 export function LocalAssignAccountsToGroup(arg1, arg2) {
   return window['go']['main']['App']['LocalAssignAccountsToGroup'](arg1, arg2);
 }
 
 export function LocalBrowseForPath(arg1) {
   return window['go']['main']['App']['LocalBrowseForPath'](arg1);
+}
+
+export function LocalCancelAntigravityLogin(arg1) {
+  return window['go']['main']['App']['LocalCancelAntigravityLogin'](arg1);
+}
+
+export function LocalCancelCodexLogin(arg1) {
+  return window['go']['main']['App']['LocalCancelCodexLogin'](arg1);
 }
 
 export function LocalClearAntigravitySwitchHistory() {
@@ -198,6 +246,10 @@ export function LocalCodexStats() {
   return window['go']['main']['App']['LocalCodexStats']();
 }
 
+export function LocalCodexWakeupClearVerificationHistory(arg1) {
+  return window['go']['main']['App']['LocalCodexWakeupClearVerificationHistory'](arg1);
+}
+
 export function LocalCodexWakeupConfig() {
   return window['go']['main']['App']['LocalCodexWakeupConfig']();
 }
@@ -208,6 +260,18 @@ export function LocalCodexWakeupHistory() {
 
 export function LocalCodexWakeupRunNow() {
   return window['go']['main']['App']['LocalCodexWakeupRunNow']();
+}
+
+export function LocalCodexWakeupVerificationHistory() {
+  return window['go']['main']['App']['LocalCodexWakeupVerificationHistory']();
+}
+
+export function LocalCodexWakeupVerificationState() {
+  return window['go']['main']['App']['LocalCodexWakeupVerificationState']();
+}
+
+export function LocalCodexWakeupVerifyBatch(arg1) {
+  return window['go']['main']['App']['LocalCodexWakeupVerifyBatch'](arg1);
 }
 
 export function LocalConsumeCodexResetCredit(arg1, arg2) {
@@ -290,6 +354,10 @@ export function LocalGetAntigravitySource() {
   return window['go']['main']['App']['LocalGetAntigravitySource']();
 }
 
+export function LocalGetAntigravityTarget() {
+  return window['go']['main']['App']['LocalGetAntigravityTarget']();
+}
+
 export function LocalGetAppSpeed() {
   return window['go']['main']['App']['LocalGetAppSpeed']();
 }
@@ -312,6 +380,10 @@ export function LocalGetCodexSource() {
 
 export function LocalGetGatewayAccessScope() {
   return window['go']['main']['App']['LocalGetGatewayAccessScope']();
+}
+
+export function LocalGetGatewayOpsConfig() {
+  return window['go']['main']['App']['LocalGetGatewayOpsConfig']();
 }
 
 export function LocalGetRefreshConfig() {
@@ -344,34 +416,6 @@ export function LocalImportCodexFromJSON(arg1) {
 
 export function LocalImportCodexFromLocal() {
   return window['go']['main']['App']['LocalImportCodexFromLocal']();
-}
-
-export function LocalInstanceCreate(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['LocalInstanceCreate'](arg1, arg2, arg3, arg4, arg5, arg6);
-}
-
-export function LocalInstanceDelete(arg1) {
-  return window['go']['main']['App']['LocalInstanceDelete'](arg1);
-}
-
-export function LocalInstanceLaunch(arg1) {
-  return window['go']['main']['App']['LocalInstanceLaunch'](arg1);
-}
-
-export function LocalInstanceList(arg1) {
-  return window['go']['main']['App']['LocalInstanceList'](arg1);
-}
-
-export function LocalInstanceSetQuickConfig(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['LocalInstanceSetQuickConfig'](arg1, arg2, arg3, arg4, arg5, arg6);
-}
-
-export function LocalInstanceStop(arg1) {
-  return window['go']['main']['App']['LocalInstanceStop'](arg1);
-}
-
-export function LocalInstanceUpdate(arg1) {
-  return window['go']['main']['App']['LocalInstanceUpdate'](arg1);
 }
 
 export function LocalListAccountGroups() {
@@ -470,6 +514,18 @@ export function LocalSaveCodexSettings(arg1) {
   return window['go']['main']['App']['LocalSaveCodexSettings'](arg1);
 }
 
+export function LocalSaveGatewayTimeoutPresets(arg1) {
+  return window['go']['main']['App']['LocalSaveGatewayTimeoutPresets'](arg1);
+}
+
+export function LocalSaveGatewayTimeouts(arg1) {
+  return window['go']['main']['App']['LocalSaveGatewayTimeouts'](arg1);
+}
+
+export function LocalSaveGatewayUpstreamProxy(arg1) {
+  return window['go']['main']['App']['LocalSaveGatewayUpstreamProxy'](arg1);
+}
+
 export function LocalSaveModelProvider(arg1) {
   return window['go']['main']['App']['LocalSaveModelProvider'](arg1);
 }
@@ -498,12 +554,20 @@ export function LocalSetAntigravitySource(arg1) {
   return window['go']['main']['App']['LocalSetAntigravitySource'](arg1);
 }
 
+export function LocalSetAntigravityTarget(arg1) {
+  return window['go']['main']['App']['LocalSetAntigravityTarget'](arg1);
+}
+
 export function LocalSetAntigravityWakeupConfig(arg1, arg2) {
   return window['go']['main']['App']['LocalSetAntigravityWakeupConfig'](arg1, arg2);
 }
 
 export function LocalSetAppSpeed(arg1) {
   return window['go']['main']['App']['LocalSetAppSpeed'](arg1);
+}
+
+export function LocalSetCodexAccountServiceTier(arg1, arg2) {
+  return window['go']['main']['App']['LocalSetCodexAccountServiceTier'](arg1, arg2);
 }
 
 export function LocalSetCodexPriority(arg1) {
@@ -558,6 +622,14 @@ export function LocalStartCodexLogin() {
   return window['go']['main']['App']['LocalStartCodexLogin']();
 }
 
+export function LocalSubmitAntigravityLoginCallback(arg1, arg2) {
+  return window['go']['main']['App']['LocalSubmitAntigravityLoginCallback'](arg1, arg2);
+}
+
+export function LocalSubmitCodexLoginCallback(arg1, arg2) {
+  return window['go']['main']['App']['LocalSubmitCodexLoginCallback'](arg1, arg2);
+}
+
 export function LocalSyncAntigravityFromIDE() {
   return window['go']['main']['App']['LocalSyncAntigravityFromIDE']();
 }
@@ -576,6 +648,10 @@ export function LocalWaitAntigravityLogin(arg1) {
 
 export function LocalWaitCodexLogin(arg1) {
   return window['go']['main']['App']['LocalWaitCodexLogin'](arg1);
+}
+
+export function LocalWakeupTestOne(arg1) {
+  return window['go']['main']['App']['LocalWakeupTestOne'](arg1);
 }
 
 export function OpenCACertForTrust() {

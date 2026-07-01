@@ -7,7 +7,7 @@ import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
 import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
-import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi } from '@/services/localApi'
+import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, getAntigravityTarget, setAntigravityTarget } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import type { PageId } from '@/types'
 import { Lock, ArrowRight, Users } from 'lucide-react'
@@ -135,6 +135,9 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
   const [accounts, setAccounts] = useState(0)
   const [busyLocal, setBusyLocal] = useState(false)
   const [err, setErr] = useState('')
+  // 仅 antigravity:注入目标 app(IDE / 独立版)。决定本地自有号注入进哪个 app 的 state.vscdb。
+  const isAntigravity = provider === 'antigravity'
+  const [agTarget, setAgTarget] = useState<'ide' | 'standalone'>('ide')
 
   // 刷新实际态(source/账号数)。不动 mode —— 段控只反映用户选择,实际态由 source 承载,
   // 避免异步刷新把用户刚切的段顶回去。
@@ -161,8 +164,17 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
       } catch (e) {
         setErr(String(e))
       }
+      if (isAntigravity) {
+        try { setAgTarget(await getAntigravityTarget()) } catch { /* 缺省 ide */ }
+      }
     })()
-  }, [api])
+  }, [api, isAntigravity])
+
+  const onPickAgTarget = async (v: 'ide' | 'standalone') => {
+    if (v === agTarget) return
+    setBusyLocal(true)
+    try { await setAntigravityTarget(v); setAgTarget(v) } catch (e) { setErr(String(e)) } finally { setBusyLocal(false) }
+  }
 
   // 本地接管/停止:setSource('local')/setSource('remote')。后端把选中号注入正版客户端
   //(codex auth.json / antigravity state.vscdb),前端只切 source、刷新实际态。
@@ -209,6 +221,25 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
             </div>
             {/* 点明注入到哪;反代是另一回事(在 suite 的反代 tab) */}
             <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-tight">{localDesc}</div>
+            {isAntigravity && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="text-[10px] text-[var(--text-muted)]">注入到</span>
+                <div className="inline-flex rounded-[6px] bg-[var(--bg-tertiary)] p-0.5">
+                  {([['ide', 'IDE'], ['standalone', '独立版']] as const).map(([v, label]) => (
+                    <button
+                      key={v}
+                      aria-label={`注入目标 ${label}`}
+                      aria-pressed={agTarget === v}
+                      disabled={busyLocal}
+                      onClick={() => void onPickAgTarget(v)}
+                      className={cn('cursor-pointer text-[10px] font-semibold px-2 h-[20px] rounded-[4px] transition-colors disabled:opacity-50', agTarget === v ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <button
               onClick={onManageAccounts}
               className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)]"

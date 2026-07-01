@@ -18,18 +18,26 @@ vi.mock('@/services/wails', () => ({
 }))
 
 // 本地号 api(codex / antigravity 的本地模式用)。
-const { codexApi, antigravityApi } = vi.hoisted(() => {
+const { codexApi, antigravityApi, agTargetMocks } = vi.hoisted(() => {
   const mk = () => ({
     getSource: vi.fn().mockResolvedValue('remote'),
     setSource: vi.fn().mockResolvedValue(undefined),
     gatewayStatus: vi.fn().mockResolvedValue({ running: false, addr: '', port: 0 }),
     listAccounts: vi.fn().mockResolvedValue([]),
   })
-  return { codexApi: mk(), antigravityApi: mk() }
+  return {
+    codexApi: mk(), antigravityApi: mk(),
+    agTargetMocks: {
+      getAntigravityTarget: vi.fn().mockResolvedValue('ide'),
+      setAntigravityTarget: vi.fn().mockResolvedValue(undefined),
+    },
+  }
 })
 vi.mock('@/services/localApi', () => ({
   codexLocalApi: codexApi,
   antigravityLocalApi: antigravityApi,
+  getAntigravityTarget: agTargetMocks.getAntigravityTarget,
+  setAntigravityTarget: agTargetMocks.setAntigravityTarget,
 }))
 
 const { store } = vi.hoisted(() => ({
@@ -193,6 +201,20 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     // 接管语义不应再写「网关 127.0.0.1」/「指向本地反代」
     expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
     expect(within(ag).queryByText(/指向本地反代/)).toBeNull()
+  })
+
+  it('Antigravity 本地卡有「注入到 IDE/独立版」段控,切独立版调 setAntigravityTarget(standalone)', async () => {
+    setPlatform('MacIntel')
+    render(<TakeoverCenterPage />)
+    const ag = screen.getByRole('region', { name: 'Antigravity' })
+    fireEvent.click(within(ag).getByRole('button', { name: '本地自有号' }))
+    await waitFor(() => expect(agTargetMocks.getAntigravityTarget).toHaveBeenCalled())
+    fireEvent.click(await within(ag).findByRole('button', { name: '注入目标 独立版' }))
+    await waitFor(() => expect(agTargetMocks.setAntigravityTarget).toHaveBeenCalledWith('standalone'))
+    // codex 卡不应有注入目标段控(仅 antigravity)。
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+    expect(within(codex).queryByRole('button', { name: /注入目标/ })).toBeNull()
   })
 
   it('Antigravity 已本地接管时显示「已注入 · 直连官方」(不显示网关地址)', async () => {

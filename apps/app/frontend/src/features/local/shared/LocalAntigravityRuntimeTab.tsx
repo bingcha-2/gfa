@@ -5,7 +5,6 @@ import {
 import {
   type AntigravitySwitchHistoryItem, type AntigravityAppView,
   antigravityApps, antigravityAppStart, antigravityAppStop, antigravityAppRestart, antigravityAppFocus,
-  getAntigravityTarget, setAntigravityTarget,
   antigravitySwitchHistory, clearAntigravitySwitchHistory,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
@@ -13,7 +12,7 @@ import { cn } from '@/lib/utils'
 /**
  * Antigravity 运行时:Antigravity 是两个独立 app —— Antigravity IDE(编辑器)与 Antigravity(独立版)。
  * 各自可检测/启停/重启/聚焦(对齐 cockpit 的两个 RuntimeTarget);外加自有号切换历史。
- * 只在 antigravity 的「实例」tab 里挂载(codex 无此块)。
+ * 只在 antigravity 的「运行时」tab 里挂载(codex 无此块)。注入目标(IDE/独立版)已上移到接管中心。
  *
  * 红线:只控制本机 app 进程,切换历史只读写本地 JSON,与远程租号 / 网关出口无关。
  */
@@ -37,33 +36,18 @@ export function LocalAntigravityRuntimeTab() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [apps, setApps] = useState<AntigravityAppView[]>([])
-  const [target, setTarget] = useState<'ide' | 'standalone'>('ide')
   const [history, setHistory] = useState<AntigravitySwitchHistoryItem[]>([])
 
   const refreshRuntime = useCallback(async () => {
     try {
-      const [a, tg, h] = await Promise.all([antigravityApps(), getAntigravityTarget(), antigravitySwitchHistory()])
+      const [a, h] = await Promise.all([antigravityApps(), antigravitySwitchHistory()])
       setApps(a || [])
-      setTarget(tg)
       setHistory(h || [])
       setErr('')
     } catch (e) {
       setErr(String(e))
     }
   }, [])
-
-  const onPickTarget = async (v: 'ide' | 'standalone') => {
-    if (v === target) return
-    setBusy(`target-${v}`)
-    try {
-      await setAntigravityTarget(v)
-      await refreshRuntime()
-    } catch (e) {
-      setErr(String(e))
-    } finally {
-      setBusy(null)
-    }
-  }
 
   useEffect(() => { void refreshRuntime() }, [refreshRuntime])
 
@@ -90,22 +74,8 @@ export function LocalAntigravityRuntimeTab() {
         title="Antigravity 应用运行时"
         desc="Antigravity 有两个独立 app:IDE(编辑器)与独立版。各自检测 / 启动 / 停止 / 重启 / 聚焦。"
       >
-        <div className="flex items-center gap-2 flex-wrap -mt-1">
-          <span className="text-[11px] text-[var(--text-muted)]">本地接管注入到</span>
-          <div className="inline-flex rounded-[8px] bg-[var(--bg-tertiary)] p-0.5">
-            {([['ide', 'IDE'], ['standalone', '独立版']] as const).map(([v, label]) => (
-              <button
-                key={v}
-                aria-pressed={target === v}
-                disabled={busy === `target-${v}`}
-                onClick={() => void onPickTarget(v)}
-                className={cn('cursor-pointer text-[11px] font-semibold px-2.5 h-[24px] rounded-[6px] transition-colors disabled:opacity-50', target === v ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-[var(--shadow-sm)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <button onClick={() => void refreshRuntime()} className="ml-auto text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="刷新状态"><RefreshCw size={13} /></button>
+        <div className="flex items-center justify-end -mt-1">
+          <button onClick={() => void refreshRuntime()} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="刷新状态"><RefreshCw size={13} /></button>
         </div>
         <div className="grid md:grid-cols-2 gap-3">
           {apps.map((appv) => {
