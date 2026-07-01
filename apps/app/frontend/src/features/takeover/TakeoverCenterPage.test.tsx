@@ -8,6 +8,9 @@ const { apiMocks } = vi.hoisted(() => ({
     restoreSelected: vi.fn(),
     openSystemPermissionSettings: vi.fn(),
     openURL: vi.fn(),
+    // 默认无第三方中转冲突,不弹 relay 窗;需要测门控的用例用 mockResolvedValueOnce 覆盖。
+    detectCompetingClaudeConfig: vi.fn().mockResolvedValue([]),
+    sanitizeCompetingClaudeConfig: vi.fn().mockResolvedValue({ cleaned: [], skipped: [], backupTo: '' }),
   },
 }))
 vi.mock('@/services/wails', () => ({
@@ -15,6 +18,8 @@ vi.mock('@/services/wails', () => ({
   restoreSelected: apiMocks.restoreSelected,
   openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
   openURL: apiMocks.openURL,
+  detectCompetingClaudeConfig: apiMocks.detectCompetingClaudeConfig,
+  sanitizeCompetingClaudeConfig: apiMocks.sanitizeCompetingClaudeConfig,
 }))
 
 // 本地号 api(codex / antigravity 的本地模式用)。
@@ -236,5 +241,47 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     // 已接管的 app 行给出「停止」按钮。
     expect(within(ag).getAllByRole('button', { name: '停止' }).length).toBeGreaterThanOrEqual(1)
     expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
+  })
+
+  // ── 接管前第三方中转预检(从 main 合入,接回接管中心)──
+  it('接管 Claude 前检测到 cc-switch:弹免责窗,勾选清理后调 sanitize 再接管', async () => {
+    setPlatform('Win32')
+    apiMocks.detectCompetingClaudeConfig.mockResolvedValueOnce([
+      { id: 'cc1', kind: 'cc-switch', detail: 'ANTHROPIC_BASE_URL=https://cc-switch.example' },
+    ])
+    apiMocks.injectSelected.mockResolvedValueOnce('接管失败') // 快速返回,避免 8s 状态轮询
+    render(<TakeoverCenterPage />)
+    const row = screen.getByText('Claude Code (CLI + VSCode)').closest('.flex.items-center.justify-between')
+    if (!(row instanceof HTMLElement)) throw new Error('claude code row not found')
+    fireEvent.click(within(row).getByRole('button', { name: '接管' }))
+
+    // 检出冲突 → 弹「封号免责」窗;未勾选时「清理」禁用。
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/检测到第三方中转配置/)).toBeInTheDocument()
+    const cleanBtn = within(dialog).getByRole('button', { name: '已知晓，清理并接管' })
+    expect(cleanBtn).toBeDisabled()
+
+    fireEvent.click(within(dialog).getByRole('checkbox'))
+    fireEvent.click(cleanBtn)
+
+    // 清理调 sanitize(空数组=全部),随后才真正接管 claude。
+    await waitFor(() => expect(apiMocks.sanitizeCompetingClaudeConfig).toHaveBeenCalledWith([]))
+    await waitFor(() => expect(apiMocks.injectSelected).toHaveBeenCalledWith(['claude']))
+  })
+
+  it('接管 Claude 前检测到冲突,用户「仍要接管」:不清理但继续接管', async () => {
+    setPlatform('Win32')
+    apiMocks.detectCompetingClaudeConfig.mockResolvedValueOnce([
+      { id: 'cc1', kind: 'cc-switch', detail: 'x' },
+    ])
+    render(<TakeoverCenterPage />)
+    const row = screen.getByText('Claude Code (CLI + VSCode)').closest('.flex.items-center.justify-between')
+    if (!(row instanceof HTMLElement)) throw new Error('claude code row not found')
+    fireEvent.click(within(row).getByRole('button', { name: '接管' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: '仍要接管' }))
+    // 「仍要接管」= skip:不清理,但继续接管。
+    await waitFor(() => expect(apiMocks.injectSelected).toHaveBeenCalledWith(['claude']))
+    expect(apiMocks.sanitizeCompetingClaudeConfig).not.toHaveBeenCalled()
   })
 })

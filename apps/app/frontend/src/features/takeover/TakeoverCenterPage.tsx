@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/Modal'
+import { CompetingRelayDialog } from '@/components/CompetingRelayDialog'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
@@ -312,6 +313,8 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
   const claudeToggle = async (target: string, injected: boolean, label: string, desktop = false) => {
     if (!injected && !(await tk.ensureCard(label))) return
     if (desktop && !injected && !(await tk.confirmDesktopTakeover())) return
+    // 接管前检测并处理第三方中转配置(cc-switch 等),避免母号被判定异常。
+    if (!injected && !(await tk.preflightSanitize(target))) return
     await tk.runTakeover(target, !injected)
   }
 
@@ -393,6 +396,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
       </div>
 
       <Modal {...tk.modalProps} />
+      <CompetingRelayDialog {...tk.relayDialogProps} />
       <LoadingOverlay show={tk.busy !== null} label={tk.busyLabel} />
     </div>
   )

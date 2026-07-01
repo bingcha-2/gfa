@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { useModal } from '@/components/Modal'
+import { useCompetingRelayGate } from '@/components/CompetingRelayDialog'
 import * as api from '@/services/wails'
 import { isMacPlatform } from '@/lib/platform'
 import { useT } from '@/i18n'
@@ -31,6 +32,7 @@ export function useRemoteTakeover() {
   const config = useAppStore((s) => s.config)
   const fetchIDEStatus = useAppStore((s) => s.fetchIDEStatus)
   const { showAlert, showConfirm, modalProps } = useModal()
+  const { confirmSanitize, dialogProps: relayDialogProps } = useCompetingRelayGate()
 
   const hasCard = !!config?.userToken && config.userToken.trim() !== ''
   const isMac = isMacPlatform()
@@ -142,6 +144,36 @@ export function useRemoteTakeover() {
     }
   }
 
+  // 接管前的第三方中转预检:检测 → 弹「封号免责」窗 → 按用户选择清理/跳过/取消。
+  // 返回是否继续接管(cancel=false;clean/skip=true)。检测或清理失败都不阻断接管。
+  const preflightSanitize = async (target: string): Promise<boolean> => {
+    let conflicts: api.ClaudeConfigConflict[] = []
+    try {
+      conflicts = await api.detectCompetingClaudeConfig()
+    } catch {
+      return true // 检测失败不阻断接管
+    }
+    if (!conflicts || conflicts.length === 0) return true
+
+    const decision = await confirmSanitize(conflicts)
+    if (decision === 'cancel') return false
+    if (decision === 'clean') {
+      setBusy(target)
+      setBusyLabel(t('takeover.sanitize.cleaning'))
+      try {
+        const rep = await api.sanitizeCompetingClaudeConfig([]) // [] = 清理全部检出
+        setBusy(null)
+        if ((rep.skipped?.length ?? 0) > 0) {
+          await showAlert(t('takeover.sanitize.doneTitle'), t('takeover.sanitize.skippedBody', { skipped: rep.skipped.length }))
+        }
+      } catch (e) {
+        setBusy(null)
+        await showAlert(t('takeover.opFailed'), String(e))
+      }
+    }
+    return true // clean 或 skip 都继续接管
+  }
+
   // 接管前校验账号卡;无卡则引导激活,不下发后端动作。
   const ensureCard = async (productLabel: string): Promise<boolean> => {
     if (hasCard) return true
@@ -153,5 +185,5 @@ export function useRemoteTakeover() {
   const confirmDesktopTakeover = (): Promise<boolean> =>
     showConfirm(t('takeover.desktopConfirmTitle'), t('takeover.desktopConfirmBody'))
 
-  return { busy, busyLabel, hasCard, runTakeover, ensureCard, confirmDesktopTakeover, modalProps }
+  return { busy, busyLabel, hasCard, runTakeover, ensureCard, confirmDesktopTakeover, preflightSanitize, modalProps, relayDialogProps }
 }
