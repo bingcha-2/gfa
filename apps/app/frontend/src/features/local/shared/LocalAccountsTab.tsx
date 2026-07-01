@@ -940,7 +940,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
         {/* 赞赏入口:低调置于号池底部,不挤进功能按钮。 */}
         <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-[var(--border-light)] text-[12px] text-[var(--text-secondary)]">
           <Coffee size={14} className="text-[var(--warning-deep)]" />
-          <span>觉得顺手?请作者喝杯冰茶</span>
+          <span>觉得顺手?请作者喝咖啡、吃麦当劳薯条</span>
           <button
             onClick={() => setRewardOpen(true)}
             className="cursor-pointer text-[12px] font-semibold px-3 h-[26px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"

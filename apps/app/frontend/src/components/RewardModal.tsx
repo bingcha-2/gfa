@@ -8,7 +8,7 @@ export function RewardModal({ open, onClose }: { open: boolean; onClose: () => v
       <DialogContent className="max-w-[320px]">
         <DialogHeader>
           <DialogTitle>赞赏作者</DialogTitle>
-          <DialogDescription>开源不易,一杯冰茶的鼓励。</DialogDescription>
+          <DialogDescription>开发不易,一杯咖啡加一份麦当劳薯条的鼓励。</DialogDescription>
         </DialogHeader>
         <img
           src={alipayQR}
