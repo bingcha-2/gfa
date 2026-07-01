@@ -10,7 +10,7 @@ import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, getAntigravityTarget, setAntigravityTarget } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import type { PageId } from '@/types'
-import { Lock, ArrowRight, Users } from 'lucide-react'
+import { ArrowRight, Users } from 'lucide-react'
 
 /**
  * 接管中心 —— 统一控制面。每个产品一张卡:决定该产品走「远程托管」还是「本地自有号」接管,
@@ -205,7 +205,7 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
   const localActive = source === 'local'
 
   return (
-    <ProductCard name={name} provider={provider} note={note} mode={mode} onModeChange={setMode}>
+    <ProductCard name={name} provider={provider} note={mode === 'local' ? localDesc : note} mode={mode} onModeChange={setMode}>
       {mode === 'remote' ? (
         remoteRows.map((spec) => (
           <RemoteRow key={spec.target} spec={spec} busy={tk.busy} onToggle={() => onToggleRemote(spec)} />
@@ -213,14 +213,11 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
       ) : (
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div className="min-w-0">
+            {/* 状态一行:和远程行一样只留「状态点 + 文案」;号源/落点已在头部副标题说明 */}
             <div className="flex items-center gap-1.5 text-[11px]">
-              {/* 注入式接管:直连官方,只看是否已接管 */}
               <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
-              <span className="text-[var(--text-secondary)]">{localActive ? '已注入 · 直连官方' : '未接管'}</span>
-              <span className="inline-flex items-center gap-1 text-[var(--success)]"><Lock size={10} /> 仅自有号</span>
+              <span className={localActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}>{localActive ? '已接管 · 直连官方' : '未接管'}</span>
             </div>
-            {/* 点明注入到哪;反代是另一回事(在 suite 的反代 tab) */}
-            <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-tight">{localDesc}</div>
             {isAntigravity && (
               <div className="mt-1.5 flex items-center gap-1.5">
                 <span className="text-[10px] text-[var(--text-muted)]">注入到</span>
@@ -331,7 +328,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Codex"
           provider="codex"
           note={t('takeover.codexNote')}
-          localDesc="把选中号注入 ~/.codex/auth.json,真 codex CLI 直连 OpenAI —— 无反代、不池化(反代见 suite 的反代 tab)"
+          localDesc="本地自有号 · 注入 ~/.codex/auth.json,codex CLI 直连 OpenAI(不走反代)"
           api={codexLocalApi}
           remoteRows={codexRows}
           tk={tk}
@@ -343,7 +340,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           name="Antigravity"
           provider="antigravity"
           note={t('takeover.agNote')}
-          localDesc="把选中号注入 IDE 的 state.vscdb,真 IDE 直连官方 —— 无反代、不池化"
+          localDesc="本地自有号 · 注入 state.vscdb,直连官方(不走反代)"
           api={antigravityLocalApi}
           remoteRows={agRows}
           tk={tk}

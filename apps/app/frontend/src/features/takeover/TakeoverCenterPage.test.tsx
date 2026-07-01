@@ -169,35 +169,35 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
   })
 
   // ── 本地语义文案:codex 与 antigravity 都是注入式接管(直连官方),反代是另一回事 ──
-  it('Codex 本地段文案点明「注入 auth.json + 无反代」(反代是单独功能)', async () => {
+  it('Codex 本地模式头部副标题点明「注入 auth.json + 不走反代」(反代是单独功能)', async () => {
     setPlatform('MacIntel')
     render(<TakeoverCenterPage />)
     const codex = screen.getByRole('region', { name: 'Codex' })
     fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
     await within(codex).findByRole('button', { name: '接管' })
     expect(within(codex).getByText(/注入.*auth\.json/)).toBeInTheDocument()
-    expect(within(codex).getByText(/无反代/)).toBeInTheDocument()
+    expect(within(codex).getByText(/不走反代/)).toBeInTheDocument()
     // 接管不再是「指向反代」
     expect(within(codex).queryByText(/指向本地反代/)).toBeNull()
   })
 
-  it('Codex 已本地接管时显示「已注入 · 直连官方」(注入式,不显示网关地址)', async () => {
+  it('Codex 已本地接管时显示「已接管 · 直连官方」(注入式,不显示网关地址)', async () => {
     setPlatform('MacIntel')
     codexApi.getSource.mockResolvedValue('local')
     render(<TakeoverCenterPage />)
     const codex = screen.getByRole('region', { name: 'Codex' })
-    expect(await within(codex).findByText(/已注入 · 直连官方/)).toBeInTheDocument()
+    expect(await within(codex).findByText(/已接管 · 直连官方/)).toBeInTheDocument()
     expect(within(codex).queryByText(/127\.0\.0\.1/)).toBeNull()
   })
 
-  it('Antigravity 本地段文案点明「注入号、直连官方、无反代/不池化」且不提网关地址', async () => {
+  it('Antigravity 本地模式头部副标题点明「注入 state.vscdb、直连官方、不走反代」且不提网关地址', async () => {
     setPlatform('MacIntel')
     render(<TakeoverCenterPage />)
     const ag = screen.getByRole('region', { name: 'Antigravity' })
     fireEvent.click(within(ag).getByRole('button', { name: '本地自有号' }))
     await within(ag).findByRole('button', { name: '接管' })
-    expect(within(ag).getByText(/注入.*IDE.*直连官方/)).toBeInTheDocument()
-    expect(within(ag).getByText(/无反代.*不池化/)).toBeInTheDocument()
+    expect(within(ag).getByText(/注入 state\.vscdb.*直连官方/)).toBeInTheDocument()
+    expect(within(ag).getByText(/不走反代/)).toBeInTheDocument()
     // 接管语义不应再写「网关 127.0.0.1」/「指向本地反代」
     expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
     expect(within(ag).queryByText(/指向本地反代/)).toBeNull()
@@ -217,14 +217,14 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     expect(within(codex).queryByRole('button', { name: /注入目标/ })).toBeNull()
   })
 
-  it('Antigravity 已本地接管时显示「已注入 · 直连官方」(不显示网关地址)', async () => {
+  it('Antigravity 已本地接管时显示「已接管 · 直连官方」(不显示网关地址)', async () => {
     setPlatform('MacIntel')
     antigravityApi.getSource.mockResolvedValue('local')
     // 即便 gatewayStatus 谎报 running,也不该显示网关地址(inject 不走网关)
     antigravityApi.gatewayStatus.mockResolvedValue({ running: true, addr: '127.0.0.1:9999', port: 9999 })
     render(<TakeoverCenterPage />)
     const ag = screen.getByRole('region', { name: 'Antigravity' })
-    expect(await within(ag).findByText(/已注入 · 直连官方/)).toBeInTheDocument()
+    expect(await within(ag).findByText(/已接管 · 直连官方/)).toBeInTheDocument()
     expect(within(ag).queryByText(/127\.0\.0\.1/)).toBeNull()
   })
 })
