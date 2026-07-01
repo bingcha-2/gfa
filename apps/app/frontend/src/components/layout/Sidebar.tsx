@@ -1,4 +1,4 @@
-import { LayoutDashboard, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen } from 'lucide-react'
+import { Cloud, SlidersHorizontal, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen, PlugZap, Rocket } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
@@ -27,8 +27,13 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
 
   const hasUpdate = updateStatus && updateStatus.status === 'available'
 
+  // 主导航:接管中心(统一控制面)+ 远程(用量看板)。日志/使用指南收进底部 dock。
   const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
-    { id: 'home', label: t('nav.home'), icon: LayoutDashboard },
+    { id: 'takeover', label: t('nav.takeover'), icon: SlidersHorizontal },
+    { id: 'remote', label: t('nav.home'), icon: Cloud },
+  ]
+  // 底部 dock 次级入口:使用指南 + 日志(设置/反馈在 AccountDock 菜单)。
+  const dockItems: { id: PageId; label: string; icon: React.ElementType }[] = [
     { id: 'faq', label: t('nav.faq'), icon: BookOpen },
     { id: 'logs', label: t('nav.logs'), icon: ScrollText },
   ]
@@ -90,6 +95,39 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
               </button>
             )
           })}
+
+          {/* 本地自有号分组 */}
+          {!collapsed && (
+            <div className="px-3 pt-3 pb-1 text-[10px] font-bold tracking-wider text-[var(--text-muted)] select-none">本地自有号</div>
+          )}
+          <button
+            onClick={() => onPageChange('local_codex')}
+            title={collapsed ? 'Codex' : undefined}
+            className={cn(
+              'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
+              collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
+              currentPage === 'local_codex'
+                ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            )}
+          >
+            <PlugZap size={20} strokeWidth={currentPage === 'local_codex' ? 2.2 : 1.7} className="flex-shrink-0" />
+            {!collapsed && 'Codex'}
+          </button>
+          <button
+            onClick={() => onPageChange('local_antigravity')}
+            title={collapsed ? 'Antigravity' : undefined}
+            className={cn(
+              'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
+              collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
+              currentPage === 'local_antigravity'
+                ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+            )}
+          >
+            <Rocket size={20} strokeWidth={currentPage === 'local_antigravity' ? 2.2 : 1.7} className="flex-shrink-0" />
+            {!collapsed && 'Antigravity'}
+          </button>
         </div>
 
         {/* ④ Bottom: Settings + Version + Update */}
@@ -97,7 +135,28 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
           <div className="border-t border-[var(--border-light)] mb-2" />
 
           <div className={cn('flex flex-col gap-[3px]', collapsed && 'items-center')}>
-            {/* 设置 / 意见反馈已收纳进账户坞菜单(见 AccountDock),左导航只留主页面入口,更清爽。 */}
+            {/* 次级入口:使用指南 + 日志(设置/反馈在 AccountDock 菜单)。从主导航收纳至此,更清爽。 */}
+            {dockItems.map((item) => {
+              const Icon = item.icon
+              const isActive = currentPage === item.id
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onPageChange(item.id)}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    'flex items-center rounded-[10px] text-[12px] font-medium transition-all duration-200 text-left',
+                    collapsed ? 'justify-center w-[48px] h-[40px]' : 'gap-3 px-3 h-[36px] w-full',
+                    isActive
+                      ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
+                  )}
+                >
+                  <Icon size={17} strokeWidth={isActive ? 2.2 : 1.7} className="flex-shrink-0" />
+                  {!collapsed && item.label}
+                </button>
+              )
+            })}
 
             {/* Update button */}
             {hasUpdate && (

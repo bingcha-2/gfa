@@ -1,5 +1,5 @@
 /**
- * 应用多语言。九种语言,简体中文为源语言/兜底。
+ * 应用多语言。三种语言(简体 / 繁體中文 / English),简体中文为源语言/兜底。
  * - useT():组件内取翻译函数,语言切换时自动重渲(配合 App 根部 key={locale} 整树刷新)。
  * - t():非组件代码(lib/工具函数)直接调用,按当前语言取值。
  * - 语言持久化在 localStorage('bcai_locale'),默认简体中文;仅当用户手动切换后才改变。
@@ -9,15 +9,9 @@ import { create } from 'zustand'
 import { zhCN, type Dict } from './locales/zh-CN'
 import { zhTW } from './locales/zh-TW'
 import { en } from './locales/en'
-import { ja } from './locales/ja'
-import { ko } from './locales/ko'
-import { es } from './locales/es'
-import { fr } from './locales/fr'
-import { de } from './locales/de'
-import { vi } from './locales/vi'
 
 export const SUPPORTED_LOCALES = [
-  'zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'vi',
+  'zh-CN', 'zh-TW', 'en',
 ] as const
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number]
@@ -26,12 +20,6 @@ export const LOCALE_NAMES: Record<Locale, string> = {
   'zh-CN': '简体中文',
   'zh-TW': '繁體中文',
   en: 'English',
-  ja: '日本語',
-  ko: '한국어',
-  es: 'Español',
-  fr: 'Français',
-  de: 'Deutsch',
-  vi: 'Tiếng Việt',
 }
 
 const STORAGE_KEY = 'bcai_locale'
@@ -40,12 +28,6 @@ const RAW: Record<Locale, object> = {
   'zh-CN': zhCN,
   'zh-TW': zhTW,
   en,
-  ja,
-  ko,
-  es,
-  fr,
-  de,
-  vi,
 }
 
 function isLocale(v: unknown): v is Locale {

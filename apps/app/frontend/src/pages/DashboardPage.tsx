@@ -4,7 +4,6 @@ import { NotificationBanner } from '@/components/NotificationBanner'
 import { UsageBar } from '@/components/UsageBar'
 import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
-import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { SubscriptionUsageCarousel } from '@/components/SubscriptionUsageCarousel'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
@@ -331,9 +330,6 @@ export function DashboardPage() {
           })()}
         </CardContent>
       </Card>
-
-      {/* ── 接管:整宽操作面板(生态自适应分列,加生态=加块)── */}
-      <TokenSourceControl />
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
