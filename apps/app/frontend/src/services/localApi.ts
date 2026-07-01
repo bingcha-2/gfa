@@ -20,6 +20,8 @@ export interface LocalAccountView {
   tags: string[] | null
   poolEnabled: boolean
   priority: boolean
+  /** 按号服务档(codex 专属):''(继承/标准)| 'fast'(快速=上游 priority)。 */
+  serviceTier?: string
   hourlyPercent: number
   weeklyPercent: number
   hourlyResetAt: number
@@ -130,6 +132,8 @@ export interface ProviderLocalApi {
   addByApiKey(apiKey: string, baseURL: string, email: string): Promise<LocalAccountView>
   setPoolEnabled(id: string, enabled: boolean): Promise<void>
   setPriority(id: string): Promise<void>
+  /** 按号服务档(仅 codex 支持):'standard'(继承/标准)| 'fast'(快速)。 */
+  setServiceTier?(id: string, tier: ServiceTier): Promise<void>
   /** 按号额度刷新:真去上游拉额度并回填(provider 无关,按 id)。 */
   refreshQuota(id: string): Promise<void>
   /** 刷新本 provider 全部 pool_enabled 自有号额度,返回成功数量。 */
@@ -186,6 +190,7 @@ export const codexLocalApi: ProviderLocalApi = {
   addByApiKey: (key, base, email) => app().LocalAddCodexApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
   setPriority: (id) => app().LocalSetCodexPriority(id) as Promise<void>,
+  setServiceTier: (id, tier) => setCodexAccountServiceTier(id, tier),
   refreshQuota: (id) => app().LocalRefreshAccountQuota(id) as Promise<void>,
   refreshAllQuotas: () => app().LocalRefreshAllQuotas('codex') as Promise<number>,
   rename: (id, name) => app().LocalRenameAccount(id, name) as Promise<void>,
@@ -431,6 +436,11 @@ export type ContextPreset = 'default' | 'preset_516k' | 'preset_1m' | 'custom'
 
 /** 官方 App 推理速度档:standard=默认(删 service tier 键) / fast=priority。 */
 export type ServiceTier = 'standard' | 'fast'
+
+/** 设某 codex 自有号的按号服务档(standard 继承/标准 | fast 快速=上游 priority)。 */
+export function setCodexAccountServiceTier(id: string, tier: ServiceTier): Promise<void> {
+  return app().LocalSetCodexAccountServiceTier(id, tier) as Promise<void>
+}
 
 /** 统一速度档配置:上下文预设(+ 自定义值)+ service tier。 */
 export interface AppSpeed {

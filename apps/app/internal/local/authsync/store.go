@@ -41,6 +41,23 @@ func toAuth(a *account.Account) *coreauth.Auth {
 	if a.Priority {
 		prio = "1"
 	}
+	// 按号服务档:归一为出口口径("fast"→"priority",空/标准→"")。透出到 auth 记录,
+	// 便于诊断/日志,也是未来 egress 注入的读取点。
+	//
+	// TODO(wave-L, egress-hook):把「快速档号」出口请求体注入 service_tier:"priority" 尚未接线。
+	// 原因:嵌入式 CLIProxyAPI(v7.2.47)没有暴露「逐号请求体修改」的钩子——
+	//   1) cliproxy.Hooks 只有 OnBeforeStart/OnAfterStart(生命周期),无逐请求钩子;
+	//   2) codex 出口请求体由 SDK 内部 CodexExecutor.Execute 构建,且其 codex 请求翻译器
+	//      (internal/translator/codex/openai/responses/codex_openai-responses_request.go)会主动
+	//      删除入站 body 里的 service_tier;config.CodexKey 也无 service-tier 字段。
+	// 故要真正带上 service_tier 需 fork/patch 供应商 SDK 的 executor 或 translator —— 属高风险、
+	// 越界改动(见 spec 红线:本地网关只服务 codex 自有号,不动反代/远程租号内部)。本波暂以
+	// 「持久化 + 视图 + 绑定 + 前端 UI」交付,egress 注入待 SDK 提供逐请求/逐号钩子后接线。
+	svcTier := account.NormalizeServiceTier(a.ServiceTier)
+	upstreamTier := ""
+	if svcTier == "fast" {
+		upstreamTier = "priority" // 上游 service_tier 口径
+	}
 	return &coreauth.Auth{
 		ID:       a.ID,
 		Provider: string(a.Provider),
@@ -50,6 +67,7 @@ func toAuth(a *account.Account) *coreauth.Auth {
 			"plan_type":     a.PlanType,
 			"auth_kind":     string(a.AuthKind),
 			"priority":      prio,
+			"service_tier":  upstreamTier, // 快速档→"priority";标准/继承→""(egress 注入待接线,见上 TODO)
 			"remaining_pct": strconv.Itoa(accountRemainingPct(a)), // fair 路由用:剩余额度百分比
 		},
 		Metadata: map[string]any{

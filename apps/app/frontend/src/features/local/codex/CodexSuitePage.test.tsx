@@ -23,6 +23,7 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalWaitCodexLogin: vi.fn().mockResolvedValue(fakeAccount()),
     LocalSetPoolEnabled: vi.fn().mockResolvedValue(undefined),
     LocalSetCodexPriority: vi.fn().mockResolvedValue(undefined),
+    LocalSetCodexAccountServiceTier: vi.fn().mockResolvedValue(undefined),
     LocalDeleteAccount: vi.fn().mockResolvedValue(undefined),
     LocalGatewayStart: vi.fn().mockResolvedValue({ running: true, addr: '127.0.0.1:19528', port: 19528 }),
     LocalGatewayStop: vi.fn().mockResolvedValue(undefined),
@@ -750,6 +751,15 @@ describe('CodexSuitePage', () => {
     await screen.findByText('yifan@example.com')
     fireEvent.click(await screen.findByRole('button', { name: '快速' }))
     await waitFor(() => expect(app.LocalSetAppSpeed).toHaveBeenCalledWith(expect.objectContaining({ tier: 'fast' })))
+  })
+
+  it('codex OAuth 号行按号服务档点「快速」调 setCodexAccountServiceTier(id, fast)', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    // 用带 aria-label 的按号档控件消歧(与顶部全局速度档区分)。
+    fireEvent.click(await screen.findByRole('button', { name: '按号服务档 快速' }))
+    await waitFor(() => expect(app.LocalSetCodexAccountServiceTier).toHaveBeenCalledWith('a1', 'fast'))
   })
 
   it('速度档选「自定义」露出上下文阈值输入,改值调 setAppSpeed(custom)', async () => {

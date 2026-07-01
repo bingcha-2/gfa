@@ -49,6 +49,10 @@ type Account struct {
 	PoolEnabled   bool // 是否进网关池
 	Priority      bool // 优先出口
 	SortOrder     int  // 手动排序序号(越小越靠前;默认 0 时按 created_at 兜底)
+	// ServiceTier 是「按号服务档」(codex 专属,对齐 cockpit accounts.updateAppSpeed /
+	// config.apiServiceAppSpeed):""(=继承/standard)| "fast"(=priority)。
+	// 语义映射对齐 cockpit codex_speed.normalize_service_tier_speed:{fast,priority,flex}→fast,其余→standard。
+	ServiceTier   string
 	QuotaStatus   QuotaStatus
 	QuotaReason   string
 	HourlyPercent int

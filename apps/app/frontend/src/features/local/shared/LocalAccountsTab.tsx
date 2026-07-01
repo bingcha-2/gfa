@@ -834,6 +834,25 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                   >
                     {a.poolEnabled ? '移出池' : '加入池'}
                   </button>
+                  {api.setServiceTier && a.authKind !== 'apikey' && (
+                    <div className="inline-flex rounded-[7px] bg-[var(--bg-tertiary)] p-0.5" title="按号服务档:快速=上游 priority">
+                      {([['standard', '默认'], ['fast', '快速']] as const).map(([tv, label]) => {
+                        const on = (a.serviceTier === 'fast' ? 'fast' : 'standard') === tv
+                        return (
+                          <button
+                            key={tv}
+                            aria-label={`按号服务档 ${label}`}
+                            aria-pressed={on}
+                            disabled={busy === `tier-${a.id}`}
+                            onClick={() => act(`tier-${a.id}`, () => api.setServiceTier!(a.id, tv))}
+                            className={cn('cursor-pointer text-[11px] font-semibold px-2 h-[24px] rounded-[5px] transition-colors disabled:opacity-50', on ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-[var(--shadow-sm)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
+                          >
+                            {label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                   {!a.priority && (
                     <button
                       onClick={() => onSetCurrent(a.id)}

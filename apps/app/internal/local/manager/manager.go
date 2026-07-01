@@ -32,6 +32,8 @@ type AccountView struct {
 	Tags          []string `json:"tags"`
 	PoolEnabled   bool     `json:"poolEnabled"`
 	Priority      bool     `json:"priority"`
+	// ServiceTier 是按号服务档(codex 专属):""(继承/标准)| "fast"(快速=上游 priority)。
+	ServiceTier   string   `json:"serviceTier"`
 	HourlyPercent int      `json:"hourlyPercent"`
 	WeeklyPercent int      `json:"weeklyPercent"`
 	HourlyResetAt int64    `json:"hourlyResetAt"`
@@ -46,7 +48,7 @@ func toView(a *account.Account) AccountView {
 	return AccountView{
 		ID: a.ID, Email: a.Email, Name: a.Name, Provider: string(a.Provider), AuthKind: string(a.AuthKind),
 		Note: a.Note, PlanType: a.PlanType, QuotaStatus: string(a.QuotaStatus), Tags: a.Tags,
-		PoolEnabled: a.PoolEnabled, Priority: a.Priority,
+		PoolEnabled: a.PoolEnabled, Priority: a.Priority, ServiceTier: a.ServiceTier,
 		HourlyPercent: a.HourlyPercent, WeeklyPercent: a.WeeklyPercent,
 		HourlyResetAt: a.HourlyResetAt, WeeklyResetAt: a.WeeklyResetAt, LastUsedAt: a.LastUsedAt,
 	}
@@ -245,6 +247,17 @@ func (m *Manager) SetNote(id, note string) error {
 // SetTags 改账号标签。
 func (m *Manager) SetTags(id string, tags []string) error {
 	return m.editField(id, func(a *account.Account) { a.Tags = tags })
+}
+
+// SetServiceTier 设按号服务档(codex 专属),归一后落库并热刷网关。
+//   - "fast"/"priority"/"flex" → "fast"(出口需带 service_tier:"priority");
+//   - 空/standard/未知 → ""(继承标准档)。
+//
+// 对齐 cockpit accounts.updateAppSpeed。egress 侧真正注入 service_tier 的接线见
+// authsync 的 TODO(嵌入式 CLIProxyAPI 无逐号请求体注入钩子)。
+func (m *Manager) SetServiceTier(id, tier string) error {
+	norm := account.NormalizeServiceTier(tier)
+	return m.editField(id, func(a *account.Account) { a.ServiceTier = norm })
 }
 
 func (m *Manager) editField(id string, mut func(*account.Account)) error {
