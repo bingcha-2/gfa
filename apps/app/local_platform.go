@@ -97,23 +97,16 @@ func (localPlatform) AntigravityReadIDEToken() (hub.AntigravityToken, error) {
 }
 
 // antigravityStateDBPath 返回 Antigravity IDE globalStorage 下的 state.vscdb 路径。
+// 目前默认 IDE 变体;独立版走 antigravityStateDBPathForKind(见 antigravity_apps.go)。
 func antigravityStateDBPath() (string, error) {
-	var base string
-	switch runtime.GOOS {
-	case "darwin":
-		base = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Antigravity IDE", "User", "globalStorage")
-	case "windows":
-		appdata := os.Getenv("APPDATA")
-		if appdata == "" {
-			appdata = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
-		}
-		base = filepath.Join(appdata, "Antigravity IDE", "User", "globalStorage")
-	default:
-		base = filepath.Join(os.Getenv("HOME"), ".config", "Antigravity IDE", "User", "globalStorage")
-	}
-	path := filepath.Join(base, "state.vscdb")
+	return antigravityStateDBPathForKind(agIDE)
+}
+
+// antigravityStateDBPathForKind 返回某 Antigravity app 变体的 state.vscdb 路径(不存在则报错)。
+func antigravityStateDBPathForKind(kind antigravityAppKind) (string, error) {
+	path := filepath.Join(antigravityGlobalStorageDir(kind), "state.vscdb")
 	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("Antigravity IDE 数据库不存在: %s", path)
+		return "", fmt.Errorf("%s 数据库不存在: %s", antigravitySpec(kind).DisplayName, path)
 	}
 	return path, nil
 }
