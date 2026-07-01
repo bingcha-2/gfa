@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, X, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2 } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2 } from 'lucide-react'
 import {
   type LocalAccountView, type ProviderLocalApi,
   type AlertConfig, type SwitchConfig, type AppSpeed, type ServiceTier, type ContextPreset,
@@ -13,6 +13,9 @@ import {
   setCurrentAccount, reorderAccounts,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
+import { Modal, useModal } from '@/components/Modal'
+import { PortalMenu, KebabMenu } from '@/components/PortalMenu'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 
 /** 账号 tab(本地主功能):列表 + 登录 + 池/优先/删除 + 导入导出 + 批量多选。 */
 
@@ -23,26 +26,30 @@ function planBadgeClass(plan: string): string {
 
 function statusLabel(s: string): { text: string; cls: string } {
   switch (s) {
-    case 'ok': return { text: '在线', cls: 'text-[var(--success)]' }
-    case 'cooling': return { text: '冷却中', cls: 'text-[var(--warning)]' }
-    case 'exhausted': return { text: '额度用尽', cls: 'text-[var(--danger)]' }
-    case 'error': return { text: '需重登', cls: 'text-[var(--danger)]' }
+    case 'ok': return { text: '在线', cls: 'text-[var(--success-strong)] font-medium' }
+    case 'cooling': return { text: '冷却中', cls: 'text-[var(--warning-deep)] font-medium' }
+    case 'exhausted': return { text: '额度用尽', cls: 'text-[var(--danger)] font-medium' }
+    case 'error': return { text: '需重登', cls: 'text-[var(--danger)] font-medium' }
     default: return { text: '未知', cls: 'text-[var(--text-muted)]' }
   }
 }
 
+/**
+ * 紧凑内联额度条:标签 · 短条 · 数字 三者贴在一起,避免 justify-between 把数字甩到半空。
+ * percent 是「剩余额度%」(越高越健康,满血=100):剩余越少越红。绿=健康 / 琥珀=告急 / 红=将尽。
+ * 数字色只在告急/将尽时上色,健康态保持安静,让视线自动落到有问题的号。
+ */
 function QuotaBar({ label, percent }: { label: string; percent: number }) {
   const p = Math.max(0, Math.min(100, percent))
-  const color = p >= 90 ? 'var(--danger)' : p >= 75 ? 'var(--warning)' : 'var(--primary)'
+  const barColor = p <= 10 ? 'var(--danger)' : p <= 25 ? 'var(--warning)' : 'var(--success-strong)'
+  const numColor = p <= 10 ? 'var(--danger)' : p <= 25 ? 'var(--warning-deep)' : 'var(--text-secondary)'
   return (
-    <div className="flex-1 min-w-[80px]">
-      <div className="flex justify-between text-[10px] text-[var(--text-muted)] mb-1">
-        <span>{label}</span>
-        <span className="font-mono-data">{p}%</span>
+    <div className="inline-flex items-center gap-2 whitespace-nowrap">
+      <span className="text-[11px] text-[var(--text-muted)]">{label}</span>
+      <div className="w-16 h-[5px] rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
+        <div className="h-full rounded-full transition-[width] duration-300 ease-out" style={{ width: `${p}%`, background: barColor }} />
       </div>
-      <div className="h-[5px] rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${p}%`, background: color }} />
-      </div>
+      <span className="text-[11px] font-mono-data tabular-nums" style={{ color: numColor }}>{p}%</span>
     </div>
   )
 }
@@ -57,7 +64,7 @@ function Toggle({ on, label, disabled, onToggle }: { on: boolean; label: string;
       aria-label={label}
       disabled={disabled}
       onClick={onToggle}
-      className={cn('cursor-pointer w-[38px] h-[22px] rounded-full relative transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0', on ? 'bg-[var(--primary)]' : 'bg-[#cbd2dc]')}
+      className={cn('cursor-pointer w-[38px] h-[22px] rounded-full relative transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0', on ? 'bg-[var(--primary)]' : 'bg-[var(--switch-off)]')}
     >
       <span className={cn('absolute top-[3px] w-[16px] h-[16px] rounded-full bg-white transition-all', on ? 'right-[3px]' : 'left-[3px]')} />
     </button>
@@ -314,7 +321,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // 加号下拉 + 两种粘贴弹窗
   const [addMenuOpen, setAddMenuOpen] = useState(false)
-  const addMenuRef = useRef<HTMLDivElement>(null)
+  const addBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importInfo, setImportInfo] = useState('')
   const [addMode, setAddMode] = useState<'token' | 'apikey' | null>(null)
@@ -336,19 +343,12 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [groupFilter, setGroupFilter] = useState<string>('all')
   const [groupModalOpen, setGroupModalOpen] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
+  // 破坏性操作确认(删除凭证不可逆)。
+  const { modalProps, showConfirm } = useModal()
 
   // provider 取号视角:优先取已加载账号的 provider,空列表回退到 title(codex/antigravity)。
   const provider: 'codex' | 'antigravity' =
     accounts[0]?.provider === 'antigravity' || title.toLowerCase() === 'antigravity' ? 'antigravity' : 'codex'
-
-  useEffect(() => {
-    if (!addMenuOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setAddMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [addMenuOpen])
 
   const toggleSel = (id: string) => setSelected((prev) => {
     const next = new Set(prev)
@@ -448,6 +448,8 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
 
   const onBatchDelete = async () => {
     if (selected.size === 0) return
+    const ok = await showConfirm('删除所选账号', `将删除 ${selected.size} 个账号,凭证从本机移除且不可恢复。确定继续?`, { confirmLabel: '确认删除', cancelLabel: '取消' })
+    if (!ok) return
     setBusy('batch')
     try {
       await api.deleteAccounts([...selected])
@@ -609,6 +611,14 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     }
   }
 
+  // 单号删除:先确认(凭证不可恢复),再走通用 act 刷新。
+  const onDeleteAccount = async (a: LocalAccountView) => {
+    const who = a.name || a.email || '该账号'
+    const ok = await showConfirm('删除账号', `删除「${who}」后凭证从本机移除且不可恢复。确定继续?`, { confirmLabel: '确认删除', cancelLabel: '取消' })
+    if (!ok) return
+    await act(`del-${a.id}`, () => api.deleteAccount(a.id))
+  }
+
   // 显式设为当前号(= 设优先出口;local 接管态后端会重注入)。
   const onSetCurrent = async (id: string) => {
     setBusy(`current-${id}`)
@@ -723,41 +733,39 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
             >
               {busy === 'refresh-all' ? <Loader2 size={12} className="animate-spin" /> : <Gauge size={12} />} 全部刷新额度
             </button>
-            <div className="relative" ref={addMenuRef}>
-              <button onClick={() => setAddMenuOpen((v) => !v)} disabled={busy === 'login'} aria-label="加号" aria-haspopup="menu" aria-expanded={addMenuOpen} className="text-[11px] font-semibold px-2.5 h-[26px] rounded-[7px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1 disabled:opacity-50">
+            <div className="relative">
+              <button ref={addBtnRef} onClick={() => setAddMenuOpen((v) => !v)} disabled={busy === 'login'} aria-label="加号" aria-haspopup="menu" aria-expanded={addMenuOpen} className="text-[11px] font-semibold px-2.5 h-[26px] rounded-[7px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1 disabled:opacity-50">
                 {busy === 'login' ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} 加号 <ChevronDown size={11} />
               </button>
-              {addMenuOpen && (
-                <div role="menu" className="absolute right-0 mt-1 w-[176px] z-[55] rounded-[10px] border border-[var(--border)] bg-[var(--bg-card)] shadow-lg py-1 overflow-hidden">
-                  <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onLogin() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                    <Globe size={13} className="text-[var(--text-muted)]" /> 浏览器登录
+              <PortalMenu open={addMenuOpen} anchorRef={addBtnRef} onClose={() => setAddMenuOpen(false)} label="加号菜单">
+                <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onLogin() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                  <Globe size={13} className="text-[var(--text-muted)]" /> 浏览器登录
+                </button>
+                <button role="menuitem" onClick={() => { setAddMenuOpen(false); setAddMode('token') }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                  <ClipboardPaste size={13} className="text-[var(--text-muted)]" /> 粘贴 token
+                </button>
+                <button role="menuitem" onClick={() => { setAddMenuOpen(false); setAddMode('apikey') }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                  <KeyRound size={13} className="text-[var(--text-muted)]" /> 粘贴 API Key
+                </button>
+                {(api.importFromLocal || api.syncFromIDE || api.importAuthFiles) && (
+                  <div className="my-1 border-t border-[var(--border-light)]" />
+                )}
+                {api.importFromLocal && (
+                  <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onImportFromLocal() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                    <FolderInput size={13} className="text-[var(--text-muted)]" /> 从本地 ~/.codex 导入
                   </button>
-                  <button role="menuitem" onClick={() => { setAddMenuOpen(false); setAddMode('token') }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                    <ClipboardPaste size={13} className="text-[var(--text-muted)]" /> 粘贴 token
+                )}
+                {api.syncFromIDE && (
+                  <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onSyncFromIDE() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                    <MonitorDown size={13} className="text-[var(--text-muted)]" /> 从已装 IDE 同步
                   </button>
-                  <button role="menuitem" onClick={() => { setAddMenuOpen(false); setAddMode('apikey') }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                    <KeyRound size={13} className="text-[var(--text-muted)]" /> 粘贴 API Key
+                )}
+                {api.importAuthFiles && (
+                  <button role="menuitem" onClick={onPickFiles} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
+                    <FileUp size={13} className="text-[var(--text-muted)]" /> 从文件导入
                   </button>
-                  {(api.importFromLocal || api.syncFromIDE || api.importAuthFiles) && (
-                    <div className="my-1 border-t border-[var(--border-light)]" />
-                  )}
-                  {api.importFromLocal && (
-                    <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onImportFromLocal() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                      <FolderInput size={13} className="text-[var(--text-muted)]" /> 从本地 ~/.codex 导入
-                    </button>
-                  )}
-                  {api.syncFromIDE && (
-                    <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onSyncFromIDE() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                      <MonitorDown size={13} className="text-[var(--text-muted)]" /> 从已装 IDE 同步
-                    </button>
-                  )}
-                  {api.importAuthFiles && (
-                    <button role="menuitem" onClick={onPickFiles} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-                      <FileUp size={13} className="text-[var(--text-muted)]" /> 从文件导入
-                    </button>
-                  )}
-                </div>
-              )}
+                )}
+              </PortalMenu>
               {api.importAuthFiles && (
                 <input
                   ref={fileInputRef}
@@ -835,13 +843,22 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                     {a.priority && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--primary)] text-[var(--primary-ink)] inline-flex items-center gap-1 shrink-0"><CheckCircle2 size={11} /> 当前号</span>}
                     {a.name && a.email && <span className="text-[11px] text-[var(--text-muted)] truncate">{a.email}</span>}
                     {a.planType && <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full', planBadgeClass(a.planType))}>{a.planType}</span>}
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{a.authKind === 'apikey' ? 'API Key' : 'OAuth'}</span>
+                    <span className="text-[11px] text-[var(--text-muted)]">{a.authKind === 'apikey' ? 'API Key' : 'OAuth'}</span>
                     <span className={cn('text-[11px] ml-1', st.cls)}>{st.text}</span>
                   </div>
-                  <div className="flex gap-4 mt-2 max-w-[420px]">
-                    <QuotaBar label="5 小时" percent={a.hourlyPercent} />
-                    <QuotaBar label="本周" percent={a.weeklyPercent} />
-                  </div>
+                  {a.quotaBuckets && a.quotaBuckets.length > 0 ? (
+                    // antigravity 多桶(gemini/claude × 5h/周):紧凑内联,缺桶不占位,自动换行。
+                    <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2">
+                      {a.quotaBuckets.map((b) => (
+                        <QuotaBar key={b.key} label={b.label} percent={b.percent} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2">
+                      <QuotaBar label="5 小时" percent={a.hourlyPercent} />
+                      <QuotaBar label="本周" percent={a.weeklyPercent} />
+                    </div>
+                  )}
                   {(a.note || (a.tags && a.tags.length > 0)) && (
                     <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                       {(a.tags || []).map((t) => (
@@ -851,24 +868,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => act(`quota-${a.id}`, () => api.refreshQuota(a.id))}
-                    disabled={busy === `quota-${a.id}`}
-                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-7 h-7 inline-flex items-center justify-center rounded-[7px] hover:bg-[var(--bg-hover)] disabled:opacity-40"
-                    aria-label="刷新额度"
-                    title="去上游重新拉取该号额度"
-                  >
-                    {busy === `quota-${a.id}` ? <Loader2 size={13} className="animate-spin" /> : <Gauge size={13} />}
-                  </button>
-                  <button
-                    onClick={() => openEdit(a)}
-                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-7 h-7 inline-flex items-center justify-center rounded-[7px] hover:bg-[var(--bg-hover)]"
-                    aria-label="编辑账号"
-                    title="重命名 / 备注 / 标签"
-                  >
-                    <Pencil size={13} />
-                  </button>
+                <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-full">
                   <button
                     onClick={() => act(`pool-${a.id}`, () => api.setPoolEnabled(a.id, !a.poolEnabled))}
                     disabled={busy === `pool-${a.id}`}
@@ -905,14 +905,13 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                       {busy === `current-${a.id}` ? <Loader2 size={13} className="animate-spin" /> : null} 设为当前号
                     </button>
                   )}
-                  <button
-                    onClick={() => act(`del-${a.id}`, () => api.deleteAccount(a.id))}
-                    disabled={busy === `del-${a.id}`}
-                    className="text-[var(--text-muted)] hover:text-[var(--danger)] w-7 h-7 inline-flex items-center justify-center rounded-[7px] hover:bg-[var(--danger)]/10"
-                    title="删除"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <KebabMenu
+                    items={[
+                      { key: 'quota', label: '刷新额度', icon: <Gauge size={14} />, disabled: busy === `quota-${a.id}`, onClick: () => act(`quota-${a.id}`, () => api.refreshQuota(a.id)) },
+                      { key: 'edit', label: '编辑账号', icon: <Pencil size={14} />, onClick: () => openEdit(a) },
+                      { key: 'del', label: '删除账号', icon: <Trash2 size={14} />, danger: true, disabled: busy === `del-${a.id}`, onClick: () => void onDeleteAccount(a) },
+                    ]}
+                  />
                   {hasEconomy && (
                     <button
                       onClick={() => toggleExpand(a.id)}
@@ -937,91 +936,81 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
         )}
       </div>
 
-      {importOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setImportOpen(false)}>
-          <div className="w-[460px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-bold text-[var(--text-primary)]">从 JSON 导入账号</span>
-              <button onClick={() => setImportOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mb-2">粘贴导出的 JSON,按邮箱去重(已存在的自动跳过)。</div>
-            <textarea
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              rows={8}
-              placeholder='[{"email":"you@example.com","authKind":"oauth","refreshToken":"..."}]'
-              className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] p-2 text-[12px] font-mono-data text-[var(--text-primary)] resize-none"
-            />
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setImportOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-              <button onClick={onImportConfirm} disabled={busy === 'import' || !importText.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">导入</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={importOpen} onOpenChange={(o) => !o && setImportOpen(false)}>
+        <DialogContent className="max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>从 JSON 导入账号</DialogTitle>
+            <DialogDescription>粘贴导出的 JSON,按邮箱去重(已存在的自动跳过)。</DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={8}
+            placeholder='[{"email":"you@example.com","authKind":"oauth","refreshToken":"..."}]'
+            className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] p-2 text-[12px] font-mono-data text-[var(--text-primary)] resize-none"
+          />
+          <DialogFooter>
+            <button onClick={() => setImportOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+            <button onClick={onImportConfirm} disabled={busy === 'import' || !importText.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">导入</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {addMode === 'token' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setAddMode(null)}>
-          <div className="w-[460px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-bold text-[var(--text-primary)]">粘贴 OAuth Token 加号</span>
-              <button onClick={() => setAddMode(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mb-3">自备已登录账号的 OAuth 令牌,凭证只留在本机。</div>
-            <div className="flex flex-col gap-2.5">
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Refresh Token
-                <input aria-label="Refresh Token" value={tokRefresh} onChange={(e) => setTokRefresh(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
-              </label>
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Access Token
-                <input aria-label="Access Token" value={tokAccess} onChange={(e) => setTokAccess(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
-              </label>
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">邮箱(可选)
-                <input aria-label="邮箱(可选)" value={tokEmail} onChange={(e) => setTokEmail(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setAddMode(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-              <button onClick={onAddToken} disabled={busy === 'add' || !tokRefresh.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">添加账号</button>
-            </div>
+      <Dialog open={addMode === 'token'} onOpenChange={(o) => !o && setAddMode(null)}>
+        <DialogContent className="max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>粘贴 OAuth Token 加号</DialogTitle>
+            <DialogDescription>自备已登录账号的 OAuth 令牌,凭证只留在本机。</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2.5">
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Refresh Token
+              <input aria-label="Refresh Token" value={tokRefresh} onChange={(e) => setTokRefresh(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Access Token
+              <input aria-label="Access Token" value={tokAccess} onChange={(e) => setTokAccess(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">邮箱(可选)
+              <input aria-label="邮箱(可选)" value={tokEmail} onChange={(e) => setTokEmail(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
+            </label>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <button onClick={() => setAddMode(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+            <button onClick={onAddToken} disabled={busy === 'add' || !tokRefresh.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">添加账号</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {addMode === 'apikey' && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setAddMode(null)}>
-          <div className="w-[460px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-bold text-[var(--text-primary)]">粘贴 API Key 加号</span>
-              <button onClick={() => setAddMode(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mb-3">自备 API Key,凭证只留在本机。</div>
-            <div className="flex flex-col gap-2.5">
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">API Key
-                <input aria-label="API Key" value={keyValue} onChange={(e) => setKeyValue(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
-              </label>
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Base URL(可选)
-                <input aria-label="Base URL(可选)" value={keyBaseUrl} onChange={(e) => setKeyBaseUrl(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
-              </label>
-              <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">邮箱(可选)
-                <input aria-label="邮箱(可选)" value={keyEmail} onChange={(e) => setKeyEmail(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setAddMode(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-              <button onClick={onAddApiKey} disabled={busy === 'add' || !keyValue.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">添加账号</button>
-            </div>
+      <Dialog open={addMode === 'apikey'} onOpenChange={(o) => !o && setAddMode(null)}>
+        <DialogContent className="max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>粘贴 API Key 加号</DialogTitle>
+            <DialogDescription>自备 API Key,凭证只留在本机。</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2.5">
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">API Key
+              <input aria-label="API Key" value={keyValue} onChange={(e) => setKeyValue(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">Base URL(可选)
+              <input aria-label="Base URL(可选)" value={keyBaseUrl} onChange={(e) => setKeyBaseUrl(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] font-mono-data text-[var(--text-primary)]" />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">邮箱(可选)
+              <input aria-label="邮箱(可选)" value={keyEmail} onChange={(e) => setKeyEmail(e.target.value)} className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
+            </label>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <button onClick={() => setAddMode(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+            <button onClick={onAddApiKey} disabled={busy === 'add' || !keyValue.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">添加账号</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {editing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setEditing(null)}>
-          <div className="w-[460px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-bold text-[var(--text-primary)]">编辑账号</span>
-              <button onClick={() => setEditing(null)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mb-3 truncate">{editing.email || editing.id}</div>
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        {editing && (
+        <DialogContent className="max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>编辑账号</DialogTitle>
+            <DialogDescription className="truncate">{editing.email || editing.id}</DialogDescription>
+          </DialogHeader>
             <div className="flex flex-col gap-2.5">
               <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">名称
                 <input aria-label="名称" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="留空则显示邮箱" className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)]" />
@@ -1041,39 +1030,38 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                 </select>
               </label>
             </div>
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setEditing(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-              <button onClick={onEditSave} disabled={busy === 'edit'} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
+          <DialogFooter>
+            <button onClick={() => setEditing(null)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+            <button onClick={onEditSave} disabled={busy === 'edit'} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">保存</button>
+          </DialogFooter>
+        </DialogContent>
+        )}
+      </Dialog>
 
-      {groupModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setGroupModalOpen(false)}>
-          <div className="w-[400px] max-w-[90vw] rounded-[12px] bg-[var(--bg-card)] border border-[var(--border)] shadow-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-bold text-[var(--text-primary)]">新建分组</span>
-              <button onClick={() => setGroupModalOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={15} /></button>
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mb-3">分组只用于本地组织视图,一个账号只属于一个分组。</div>
-            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">分组名称
-              <input
-                aria-label="分组名称"
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void onCreateGroup() }}
-                placeholder="如:主力 / 备用 / 测试"
-                className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]"
-              />
-            </label>
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setGroupModalOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-              <button onClick={onCreateGroup} disabled={busy === 'group' || !newGroupName.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">创建分组</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={groupModalOpen} onOpenChange={(o) => !o && setGroupModalOpen(false)}>
+        <DialogContent className="max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>新建分组</DialogTitle>
+            <DialogDescription>分组只用于本地组织视图,一个账号只属于一个分组。</DialogDescription>
+          </DialogHeader>
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">分组名称
+            <input
+              aria-label="分组名称"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void onCreateGroup() }}
+              placeholder="如:主力 / 备用 / 测试"
+              className="w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[34px] text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--primary)]"
+            />
+          </label>
+          <DialogFooter>
+            <button onClick={() => setGroupModalOpen(false)} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
+            <button onClick={onCreateGroup} disabled={busy === 'group' || !newGroupName.trim()} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">创建分组</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Modal {...modalProps} />
     </div>
   )
 }

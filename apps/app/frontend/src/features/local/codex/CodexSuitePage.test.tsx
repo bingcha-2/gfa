@@ -353,14 +353,28 @@ describe('CodexSuitePage', () => {
     await waitFor(() => expect(app.LocalCodexWakeupRunNow).toHaveBeenCalled())
   })
 
-  it('batch deletes selected accounts', async () => {
+  it('batch deletes selected accounts (需确认)', async () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
     fireEvent.click(screen.getByLabelText('选择账号'))
     expect(await screen.findByText('已选 1')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
+    // 破坏性操作先弹确认,点「确认删除」才真正删。
+    fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(app.LocalDeleteAccounts).toHaveBeenCalledWith(['a1']))
+  })
+
+  it('单号删除先确认:点「确认删除」才调 deleteAccount', async () => {
+    const app = installApp()
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    // 删除收进「⋯」菜单,点「删除账号」后弹确认,未确认不删。
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '删除账号' }))
+    expect(app.LocalDeleteAccount).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(app.LocalDeleteAccount).toHaveBeenCalledWith('a1'))
   })
 
 
@@ -488,7 +502,8 @@ describe('CodexSuitePage', () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编辑账号' }))
     fireEvent.change(await screen.findByLabelText('名称'), { target: { value: '新名字' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(app.LocalRenameAccount).toHaveBeenCalledWith('a1', '新名字'))
@@ -498,7 +513,8 @@ describe('CodexSuitePage', () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编辑账号' }))
     fireEvent.change(await screen.findByLabelText('备注'), { target: { value: '这是备注' } })
     fireEvent.change(screen.getByLabelText('标签(逗号分隔)'), { target: { value: 'a, b ,c' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -511,7 +527,8 @@ describe('CodexSuitePage', () => {
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
     expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: '刷新额度' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '刷新额度' }))
     await waitFor(() => expect(app.LocalRefreshAccountQuota).toHaveBeenCalledWith('a1'))
     // 刷新后回填:重新拉取账号列表展示新百分比
     await waitFor(() => expect(app.LocalListCodexAccounts).toHaveBeenCalledTimes(2))
@@ -875,7 +892,8 @@ describe('CodexSuitePage', () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: '编辑账号' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编辑账号' }))
     const sel = await screen.findByLabelText('所属分组') as HTMLSelectElement
     // 当前归属 gr1(主力)
     expect(sel.value).toBe('gr1')

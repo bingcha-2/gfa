@@ -27,9 +27,12 @@
 
   /* ── State semantics ── */
   --success: #16a34a;
+  --success-strong: #15803d;   /* 小号状态字(在线)对白 ≥4.5:1 */
   --warning: #d97706;
   --warning-strong: #ea580c;
+  --warning-deep: #b45309;     /* 小号状态字(冷却中)对白 ≥4.5:1 */
   --danger: #dc2626;
+  --switch-off: #cbd2dc;       /* 开关关闭态轨道 */
 
   /* ── Surfaces(浅色:中性近白,chroma≈0,非奶油米色) ── */
   --bg-primary: #f6f7f9;       /* 应用画布 */
@@ -90,9 +93,12 @@
   --accent: #8b93a5;
 
   --success: #34d399;
+  --success-strong: #34d399;   /* 深底上浅绿已高对比,无需再深 */
   --warning: #fbbf24;
   --warning-strong: #fb923c;
+  --warning-deep: #fbbf24;
   --danger: #f87171;
+  --switch-off: #3a4152;       /* 深色下关闭态轨道 */
 
   /* ── Surfaces:深靛蓝夜色(呼应官网深色模式) ── */
   --bg-primary: #14151d;
