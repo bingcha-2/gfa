@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 )
 
 // Antigravity 有两个各自独立的桌面 app(对齐 cockpit RuntimeTarget::Ide / ::Legacy):
@@ -66,6 +70,138 @@ func antigravitySpec(kind antigravityAppKind) antigravityAppSpec {
 		return s
 	}
 	return antigravityAppSpecs[agIDE]
+}
+
+// ── 变体化的 app 检测 / 运行态 / 启停(供平台层按变体调用) ──
+
+// detectAntigravityAppPath 探测某变体的安装路径(用 spec 里的各平台名);无则空串。
+// 结构对齐旧 detectAntigravityIDEPath,但按变体参数化;IDE 变体额外认用户自定义 IDEPath。
+func detectAntigravityAppPath(kind antigravityAppKind) string {
+	spec := antigravitySpec(kind)
+	if kind == agIDE {
+		if cfg := LoadConfig(); cfg.IDEPath != "" {
+			if _, err := os.Stat(cfg.IDEPath); err == nil {
+				return cfg.IDEPath
+			}
+		}
+	}
+	switch runtime.GOOS {
+	case "windows":
+		if loc := registryFindInstallPath(spec.DisplayName); loc != "" {
+			if strings.HasSuffix(strings.ToLower(loc), ".exe") {
+				if info, err := os.Stat(loc); err == nil && !info.IsDir() {
+					return loc
+				}
+			}
+			exe := filepath.Join(loc, spec.WinExeName)
+			if info, err := os.Stat(exe); err == nil && !info.IsDir() {
+				return exe
+			}
+		}
+		for _, base := range []string{os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")} {
+			if base == "" {
+				continue
+			}
+			p := filepath.Join(base, "Programs", spec.DisplayName, spec.WinExeName)
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
+		}
+	case "darwin":
+		if p := spotlightFindApp(spec.MacAppBundle); p != "" {
+			return p
+		}
+		if p := filepath.Join("/Applications", spec.MacAppBundle); dirExists(p) {
+			return p
+		}
+	case "linux":
+		if p := desktopFindApp(spec.DisplayName); p != "" {
+			return p
+		}
+		for _, p := range []string{
+			filepath.Join("/usr/share", spec.LinuxBin, spec.LinuxBin),
+			filepath.Join("/opt", spec.DisplayName, spec.LinuxBin),
+		} {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+// isAntigravityAppRunning 报告某变体是否在运行。各平台锚点用 spec 里的独立标识,
+// 保证 IDE 与独立版互不误判(darwin 用 .app/Contents/MacOS 前缀、win 用精确 IMAGENAME)。
+func isAntigravityAppRunning(kind antigravityAppKind) bool {
+	spec := antigravitySpec(kind)
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := hideCmd("pgrep", "-f", spec.MacProcessPattern).Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	case "windows":
+		out, err := hideCmd("tasklist", "/FI", "IMAGENAME eq "+spec.WinExeName, "/NH").Output()
+		return err == nil && !strings.Contains(string(out), "No tasks")
+	case "linux":
+		out, err := hideCmd("pgrep", "-f", spec.LinuxBin).Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	default:
+		return false
+	}
+}
+
+// launchAntigravityApp 拉起某变体(未检测到安装路径则报错)。
+func launchAntigravityApp(kind antigravityAppKind) error {
+	spec := antigravitySpec(kind)
+	appPath := detectAntigravityAppPath(kind)
+	if appPath == "" {
+		return fmt.Errorf("未检测到 %s 安装路径", spec.DisplayName)
+	}
+	Log("[antigravity] 正在启动 %s...", spec.DisplayName)
+	return launchApp(appPath)
+}
+
+// stopAntigravityApp 停某变体进程(SIGTERM,必要时 SIGKILL / 强制 taskkill)。
+// 进程锚点用 spec,避免误杀另一变体或无关进程。
+func stopAntigravityApp(kind antigravityAppKind) error {
+	spec := antigravitySpec(kind)
+	running := func() bool { return isAntigravityAppRunning(kind) }
+	switch runtime.GOOS {
+	case "darwin":
+		killProcessesByPattern(spec.MacProcessPattern, "-TERM")
+		if !waitForProcessExit(running, 5*time.Second) {
+			killProcessesByPattern(spec.MacProcessPattern, "-9")
+		}
+	case "windows":
+		_ = hideCmd("taskkill", "/IM", spec.WinExeName, "/T").Run()
+		if !waitForProcessExit(running, 5*time.Second) {
+			_ = hideCmd("taskkill", "/IM", spec.WinExeName, "/T", "/F").Run()
+		}
+	case "linux":
+		_ = hideCmd("pkill", "-TERM", "-f", spec.LinuxBin).Run()
+		waitForProcessExit(running, 3*time.Second)
+	}
+	return nil
+}
+
+// focusAntigravityApp 把某变体带到前台(未运行则拉起)。
+func focusAntigravityApp(kind antigravityAppKind) error {
+	spec := antigravitySpec(kind)
+	appPath := detectAntigravityAppPath(kind)
+	if appPath == "" {
+		return fmt.Errorf("未检测到 %s 安装路径", spec.DisplayName)
+	}
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", "-a", appPath).Start()
+	}
+	if isAntigravityAppRunning(kind) {
+		return nil
+	}
+	return launchApp(appPath)
 }
 
 // antigravityGlobalStorageDir 纯路径构造(不 Stat):返回某变体的 User/globalStorage 目录。

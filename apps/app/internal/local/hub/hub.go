@@ -91,6 +91,14 @@ type Platform interface {
 	AntigravityFocusDefault() error
 	AntigravityRuntimeRunning() bool
 
+	// 变体化运行时:同时支持 Antigravity IDE 与独立版 Antigravity(variant="ide"/"standalone")。
+	// cockpit 把两者作两个独立 app(RuntimeTarget::Ide / ::Legacy),各自可检测/启停/聚焦。
+	AntigravityAppRunning(variant string) bool
+	AntigravityAppDetected(variant string) bool
+	AntigravityAppStart(variant string) error
+	AntigravityAppStop(variant string) error
+	AntigravityAppFocus(variant string) error
+
 	// CodexRestartApp 重启常驻 Codex GUI app(切号后重读 auth.json);未装则 no-op。
 	CodexRestartApp() error
 

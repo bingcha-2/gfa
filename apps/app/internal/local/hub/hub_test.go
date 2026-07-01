@@ -30,6 +30,9 @@ type fakePlatform struct {
 	codexRestartCount     int
 	restartSpecifiedCount int
 	restartSpecifiedPath  string
+	agAppStarts           []string
+	agAppStops            []string
+	agAppFocuses          []string
 }
 
 func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
@@ -71,6 +74,20 @@ func (f *fakePlatform) CodexRestartApp() error          { f.codexRestartCount++;
 func (f *fakePlatform) RestartSpecifiedApp(appPath string) error {
 	f.restartSpecifiedCount++
 	f.restartSpecifiedPath = appPath
+	return nil
+}
+func (f *fakePlatform) AntigravityAppRunning(variant string) bool  { return f.agRunning }
+func (f *fakePlatform) AntigravityAppDetected(variant string) bool { return true }
+func (f *fakePlatform) AntigravityAppStart(variant string) error {
+	f.agAppStarts = append(f.agAppStarts, variant)
+	return nil
+}
+func (f *fakePlatform) AntigravityAppStop(variant string) error {
+	f.agAppStops = append(f.agAppStops, variant)
+	return nil
+}
+func (f *fakePlatform) AntigravityAppFocus(variant string) error {
+	f.agAppFocuses = append(f.agAppFocuses, variant)
 	return nil
 }
 
@@ -246,6 +263,34 @@ func TestHub_SetSource_RestartsSpecifiedApp(t *testing.T) {
 	}
 	if fp.restartSpecifiedCount != 1 || fp.restartSpecifiedPath != "/Applications/Foo.app" {
 		t.Fatalf("应重启指定应用并透传路径,got count=%d path=%q", fp.restartSpecifiedCount, fp.restartSpecifiedPath)
+	}
+}
+
+// AntigravityApps 同时暴露两个变体(IDE + 独立版);按变体控制透传 variant 给平台。
+func TestHub_AntigravityApps_BothVariantsAndControl(t *testing.T) {
+	h, fp := newHub(t)
+	apps := h.AntigravityApps()
+	if len(apps) != 2 || apps[0].Variant != "ide" || apps[1].Variant != "standalone" {
+		t.Fatalf("应同时暴露 ide + standalone 两变体,got %+v", apps)
+	}
+	if apps[1].Name != "Antigravity" {
+		t.Fatalf("独立版展示名应为 Antigravity,got %q", apps[1].Name)
+	}
+	if err := h.AntigravityAppStart("standalone"); err != nil {
+		t.Fatalf("start standalone: %v", err)
+	}
+	if err := h.AntigravityAppRestart("ide"); err != nil {
+		t.Fatalf("restart ide: %v", err)
+	}
+	if err := h.AntigravityAppFocus("standalone"); err != nil {
+		t.Fatalf("focus standalone: %v", err)
+	}
+	// start standalone(1) + restart ide(stop+start,再 1 start)= starts 应含 standalone 与 ide。
+	if len(fp.agAppStarts) < 2 || fp.agAppStops[len(fp.agAppStops)-1] != "ide" {
+		t.Fatalf("变体应透传给平台:starts=%v stops=%v", fp.agAppStarts, fp.agAppStops)
+	}
+	if len(fp.agAppFocuses) != 1 || fp.agAppFocuses[0] != "standalone" {
+		t.Fatalf("focus 变体透传错:%v", fp.agAppFocuses)
 	}
 }
 

@@ -4,14 +4,17 @@ import { LocalAntigravityRuntimeTab } from './LocalAntigravityRuntimeTab'
 
 function installApp(over: Record<string, unknown> = {}) {
   const base = {
-    LocalAntigravityRuntimeStatus: vi.fn().mockResolvedValue(true),
+    LocalAntigravityApps: vi.fn().mockResolvedValue([
+      { variant: 'ide', name: 'Antigravity IDE', detected: true, running: true },
+      { variant: 'standalone', name: 'Antigravity', detected: true, running: false },
+    ]),
     LocalAntigravitySwitchHistory: vi.fn().mockResolvedValue([
       { id: 'h1', timestamp: 1_700_000_000_000, targetEmail: 'switched@gmail.com', accountId: 'a1', success: true },
     ]),
-    LocalAntigravityStartDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityStopDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityRestartDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityFocusDefault: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityAppStart: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityAppStop: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityAppRestart: vi.fn().mockResolvedValue(undefined),
+    LocalAntigravityAppFocus: vi.fn().mockResolvedValue(undefined),
     LocalClearAntigravitySwitchHistory: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
@@ -19,32 +22,43 @@ function installApp(over: Record<string, unknown> = {}) {
   return base
 }
 
-describe('LocalAntigravityRuntimeTab —— 默认实例运行时 + 切换历史', () => {
+describe('LocalAntigravityRuntimeTab —— 双 app 运行时 + 切换历史', () => {
   beforeEach(() => {
     ;(window as unknown as { go?: unknown }).go = undefined
   })
 
-  it('挂载即读运行时状态与切换历史,并渲染目标号', async () => {
+  it('同时渲染 Antigravity IDE 与独立版 Antigravity 两张卡', async () => {
     const app = installApp()
     render(<LocalAntigravityRuntimeTab />)
-    await waitFor(() => expect(app.LocalAntigravityRuntimeStatus).toHaveBeenCalled())
-    expect(app.LocalAntigravitySwitchHistory).toHaveBeenCalled()
-    expect(await screen.findByText('运行中')).toBeInTheDocument()
+    await waitFor(() => expect(app.LocalAntigravityApps).toHaveBeenCalled())
+    expect(await screen.findByText('Antigravity IDE')).toBeInTheDocument()
+    expect(await screen.findByText('Antigravity')).toBeInTheDocument()
+    // 切换历史目标号也在。
     expect(await screen.findByText('switched@gmail.com')).toBeInTheDocument()
   })
 
-  it('启/停/重启/聚焦分别调对应绑定', async () => {
+  it('对独立版点启动,透传 variant=standalone', async () => {
     const app = installApp()
     render(<LocalAntigravityRuntimeTab />)
-    await screen.findByText('默认实例运行时')
-    fireEvent.click(screen.getByRole('button', { name: '启动' }))
-    await waitFor(() => expect(app.LocalAntigravityStartDefault).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '停止' }))
-    await waitFor(() => expect(app.LocalAntigravityStopDefault).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '重启' }))
-    await waitFor(() => expect(app.LocalAntigravityRestartDefault).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '聚焦窗口' }))
-    await waitFor(() => expect(app.LocalAntigravityFocusDefault).toHaveBeenCalled())
+    await screen.findByText('Antigravity')
+    // 独立版卡在第二张;两张卡各有「启动」,取第二个。
+    const starts = await screen.findAllByRole('button', { name: /启动/ })
+    fireEvent.click(starts[1])
+    await waitFor(() => expect(app.LocalAntigravityAppStart).toHaveBeenCalledWith('standalone'))
+  })
+
+  it('未安装的 app 其控制按钮禁用', async () => {
+    const app = installApp({
+      LocalAntigravityApps: vi.fn().mockResolvedValue([
+        { variant: 'ide', name: 'Antigravity IDE', detected: true, running: false },
+        { variant: 'standalone', name: 'Antigravity', detected: false, running: false },
+      ]),
+    })
+    render(<LocalAntigravityRuntimeTab />)
+    await waitFor(() => expect(app.LocalAntigravityApps).toHaveBeenCalled())
+    await screen.findByText('未安装')
+    const starts = await screen.findAllByRole('button', { name: /启动/ })
+    expect(starts[1]).toBeDisabled() // standalone 未安装 → 禁用
   })
 
   it('清空历史调 clearAntigravitySwitchHistory', async () => {

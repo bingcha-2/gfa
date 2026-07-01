@@ -30,6 +30,35 @@ func (h *Hub) AntigravityFocusDefault() error { return h.platform.AntigravityFoc
 // AntigravityRuntimeStatus 返回默认实例是否在运行。
 func (h *Hub) AntigravityRuntimeStatus() bool { return h.platform.AntigravityRuntimeRunning() }
 
+// ── 变体化运行时:IDE 与独立版 Antigravity 各自可检测/启停/聚焦(variant="ide"/"standalone") ──
+
+// AntigravityAppView 是某 Antigravity app 变体的运行时视图(前端渲染两张卡用)。
+type AntigravityAppView struct {
+	Variant  string `json:"variant"`  // "ide" | "standalone"
+	Name     string `json:"name"`     // 展示名
+	Detected bool   `json:"detected"` // 是否检测到安装
+	Running  bool   `json:"running"`  // 是否在运行
+}
+
+// AntigravityApps 返回两个变体的运行时视图(供前端同时展示 IDE + 独立版)。
+func (h *Hub) AntigravityApps() []AntigravityAppView {
+	return []AntigravityAppView{
+		{Variant: "ide", Name: "Antigravity IDE",
+			Detected: h.platform.AntigravityAppDetected("ide"), Running: h.platform.AntigravityAppRunning("ide")},
+		{Variant: "standalone", Name: "Antigravity",
+			Detected: h.platform.AntigravityAppDetected("standalone"), Running: h.platform.AntigravityAppRunning("standalone")},
+	}
+}
+
+// AntigravityAppStart/Stop/Restart/Focus 按变体控制对应 app。
+func (h *Hub) AntigravityAppStart(variant string) error { return h.platform.AntigravityAppStart(variant) }
+func (h *Hub) AntigravityAppStop(variant string) error  { return h.platform.AntigravityAppStop(variant) }
+func (h *Hub) AntigravityAppRestart(variant string) error {
+	_ = h.platform.AntigravityAppStop(variant)
+	return h.platform.AntigravityAppStart(variant)
+}
+func (h *Hub) AntigravityAppFocus(variant string) error { return h.platform.AntigravityAppFocus(variant) }
+
 // ── 切号历史(对齐 cockpit antigravity_switch_history) ──
 
 // AntigravitySwitchHistory 返回切号历史(降序;缺省/损坏返回空切片)。

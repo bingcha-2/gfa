@@ -196,6 +196,32 @@ func (localPlatform) AntigravityFocusDefault() error {
 // AntigravityRuntimeRunning 返回 Antigravity IDE 是否在运行。
 func (localPlatform) AntigravityRuntimeRunning() bool { return IsIDERunning() }
 
+// ── 变体化运行时:同时支持 Antigravity IDE 与独立版 Antigravity(variant="ide"/"standalone") ──
+
+// antigravityKindFromVariant 把 hub/前端的字符串变体映射到 app kind(未知回退 IDE)。
+func antigravityKindFromVariant(variant string) antigravityAppKind {
+	if variant == "standalone" || variant == "antigravity" {
+		return agStandalone
+	}
+	return agIDE
+}
+
+func (localPlatform) AntigravityAppRunning(variant string) bool {
+	return isAntigravityAppRunning(antigravityKindFromVariant(variant))
+}
+func (localPlatform) AntigravityAppDetected(variant string) bool {
+	return detectAntigravityAppPath(antigravityKindFromVariant(variant)) != ""
+}
+func (localPlatform) AntigravityAppStart(variant string) error {
+	return launchAntigravityApp(antigravityKindFromVariant(variant))
+}
+func (localPlatform) AntigravityAppStop(variant string) error {
+	return stopAntigravityApp(antigravityKindFromVariant(variant))
+}
+func (localPlatform) AntigravityAppFocus(variant string) error {
+	return focusAntigravityApp(antigravityKindFromVariant(variant))
+}
+
 // CodexRestartApp 重启常驻 Codex GUI app,让它重读 ~/.codex/auth.json(切号后生效)。
 // codex CLI 每次运行自读 auth.json,无需重启;此方法仅针对常驻 GUI。未装则 no-op。
 func (localPlatform) CodexRestartApp() error {
