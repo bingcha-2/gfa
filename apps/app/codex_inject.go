@@ -282,6 +282,9 @@ func isCodexProcessTreeRunning() bool {
 // Wails app 未授权时静默失败,导致 Codex 退不掉、随后 `open -a` 拉不起新实例 ——
 // 即"无法唤起")。改用 pgrep+kill(SIGTERM→等待→SIGKILL),与 ide_inject.go 一致。
 func QuitCodexApp() {
+	if appActionsSuppressed() {
+		return // go test 下绝不 kill 本机 Codex 进程
+	}
 	switch runtime.GOOS {
 	case "darwin", "linux":
 		// 用进程树检查(含 Resources/codex app-server),确保等到 sqlite 锁释放。
@@ -307,6 +310,9 @@ func QuitCodexApp() {
 // 仅对桌面 GUI 安装有意义:纯 CLI 没有可"拉起"的常驻进程,headless 执行 codex 二进制(无 TTY)
 // 只会起一个立即退出/空转的孤儿进程。故先用 codexGUIInstalled 守卫,纯 CLI 直接跳过。
 func LaunchCodexApp() {
+	if appActionsSuppressed() {
+		return // go test 下绝不 open 本机 Codex
+	}
 	if !codexGUIInstalled() {
 		Log("[codex] 纯 CLI 安装(无桌面 GUI),无需拉起;config 已生效,重开终端即可")
 		return

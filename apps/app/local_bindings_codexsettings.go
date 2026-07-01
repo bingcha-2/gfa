@@ -55,6 +55,9 @@ func (a *App) LocalBrowseForPath(title string) (string, error) {
 
 // LocalOpenCodexConfigToml 用系统默认程序打开 ~/.codex/config.toml。
 func (a *App) LocalOpenCodexConfigToml() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不用本机默认程序打开文件
+	}
 	path := codexConfigPath()
 	var cmd *exec.Cmd
 	switch goruntime.GOOS {

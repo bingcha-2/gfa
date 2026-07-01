@@ -136,6 +136,9 @@ func (localPlatform) DetectAppPath(provider string) string {
 }
 
 func (localPlatform) LaunchApp(appPath, workingDir string, args []string) (int, error) {
+	if appActionsSuppressed() {
+		return -1, nil // go test 下绝不 open 本机 app
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" && strings.HasSuffix(appPath, ".app") {
 		cmd = exec.Command("open", append([]string{"-n", "-a", appPath, "--args"}, args...)...)
@@ -169,6 +172,9 @@ func (localPlatform) AntigravityStartDefault() error { return LaunchIDE() }
 
 // AntigravityStopDefault 停掉 Antigravity IDE 进程(SIGTERM,必要时 SIGKILL)。
 func (localPlatform) AntigravityStopDefault() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill 本机 IDE 进程
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		// 锚定到 .app/Contents/MacOS 主进程,避免误杀任何 argv 里含「Antigravity IDE」的无关进程。
@@ -190,6 +196,9 @@ func (localPlatform) AntigravityStopDefault() error {
 
 // AntigravityFocusDefault 把 Antigravity IDE 带到前台(未运行则拉起)。
 func (localPlatform) AntigravityFocusDefault() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 open 本机 IDE
+	}
 	idePath := detectAntigravityIDEPathCached()
 	if idePath == "" {
 		return fmt.Errorf("未检测到 Antigravity IDE 安装路径")
@@ -239,6 +248,9 @@ func (localPlatform) AntigravityAppFocus(variant string) error {
 // CodexRestartApp 重启常驻 Codex GUI app,让它重读 ~/.codex/auth.json(切号后生效)。
 // codex CLI 每次运行自读 auth.json,无需重启;此方法仅针对常驻 GUI。未装则 no-op。
 func (localPlatform) CodexRestartApp() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill/open 本机 Codex GUI
+	}
 	appPath := detectCodexGUIPath()
 	if appPath == "" {
 		return nil
@@ -257,6 +269,9 @@ func (localPlatform) CodexRestartApp() error {
 // appPath 形如 .app 包(darwin)或可执行文件;空 path 由调用方过滤,这里再兜一层。
 // kill 锚定到从 appPath 推出的主进程,避免误杀;随后用 LaunchApp 重新拉起。
 func (localPlatform) RestartSpecifiedApp(appPath string) error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill/open 本机联动应用
+	}
 	appPath = strings.TrimSpace(appPath)
 	if appPath == "" {
 		return nil

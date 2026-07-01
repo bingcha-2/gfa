@@ -168,6 +168,9 @@ func launchAntigravityApp(kind antigravityAppKind) error {
 // stopAntigravityApp 停某变体进程(SIGTERM,必要时 SIGKILL / 强制 taskkill)。
 // 进程锚点用 spec,避免误杀另一变体或无关进程。
 func stopAntigravityApp(kind antigravityAppKind) error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill 本机进程
+	}
 	spec := antigravitySpec(kind)
 	running := func() bool { return isAntigravityAppRunning(kind) }
 	switch runtime.GOOS {
@@ -190,6 +193,9 @@ func stopAntigravityApp(kind antigravityAppKind) error {
 
 // focusAntigravityApp 把某变体带到前台(未运行则拉起)。
 func focusAntigravityApp(kind antigravityAppKind) error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 open 本机 app
+	}
 	spec := antigravitySpec(kind)
 	appPath := detectAntigravityAppPath(kind)
 	if appPath == "" {

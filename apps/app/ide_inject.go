@@ -1253,6 +1253,9 @@ func IsLSProxyApplied(proxyPort int) bool {
 // RestartLanguageServerIfNeeded 逐进程检查 language_server 是否已指向代理
 // 只杀未连接代理的进程，保留已接管的进程（修复多 LS 场景下的 bug）
 func RestartLanguageServerIfNeeded(proxyPort int) {
+	if appActionsSuppressed() {
+		return // go test 下绝不 kill/重启本机 language_server
+	}
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	processes := queryLanguageServerProcesses()
 
@@ -1293,6 +1296,9 @@ func RestartLanguageServerIfNeeded(proxyPort int) {
 
 // KillAndRestartIDE 杀死并重启 Antigravity IDE
 func KillAndRestartIDE() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill/重启本机 IDE
+	}
 	idePath := detectAntigravityIDEPath()
 	if idePath == "" {
 		return fmt.Errorf("未检测到 IDE 安装路径")
@@ -1325,6 +1331,9 @@ func KillAndRestartIDE() error {
 // 用于解决 extension host 缓存旧 LS 端口导致 ECONNREFUSED 的问题
 // 与 Timo 的 taskkill /IM 策略一致
 func ForceRestartIDE() error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 kill/重启本机 IDE + language_server
+	}
 	idePath := detectAntigravityIDEPath()
 	if idePath == "" {
 		return fmt.Errorf("未检测到 IDE 安装路径")
@@ -1400,6 +1409,9 @@ func waitForProcessExit(check func() bool, maxWait time.Duration) bool {
 // killProcessesByPattern 通过 pgrep 查找进程 PID，然后用 kill 逐个终止
 // 比 pkill 更可靠，且能记录每个 PID 的终止情况
 func killProcessesByPattern(pattern string, signal string) int {
+	if appActionsSuppressed() {
+		return 0 // go test 下绝不 kill 本机进程
+	}
 	out, err := hideCmd("pgrep", "-f", pattern).Output()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		Log("[ide-inject] pgrep '%s' 未找到匹配进程", pattern)
@@ -1579,6 +1591,9 @@ func LaunchHub() error {
 
 // launchApp 跨平台启动应用
 func launchApp(appPath string) error {
+	if appActionsSuppressed() {
+		return nil // go test 下绝不 open 本机 app
+	}
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
