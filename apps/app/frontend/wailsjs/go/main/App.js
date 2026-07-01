@@ -102,10 +102,6 @@ export function LocalAddAntigravityApiKey(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalAddAntigravityApiKey'](arg1, arg2, arg3);
 }
 
-export function LocalAddAntigravitySwitchHistory(arg1) {
-  return window['go']['main']['App']['LocalAddAntigravitySwitchHistory'](arg1);
-}
-
 export function LocalAddAntigravityToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalAddAntigravityToken'](arg1, arg2, arg3);
 }
@@ -116,30 +112,6 @@ export function LocalAddCodexApiKey(arg1, arg2, arg3) {
 
 export function LocalAddCodexToken(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalAddCodexToken'](arg1, arg2, arg3);
-}
-
-export function LocalAntigravityAppFocus(arg1) {
-  return window['go']['main']['App']['LocalAntigravityAppFocus'](arg1);
-}
-
-export function LocalAntigravityAppRestart(arg1) {
-  return window['go']['main']['App']['LocalAntigravityAppRestart'](arg1);
-}
-
-export function LocalAntigravityAppStart(arg1) {
-  return window['go']['main']['App']['LocalAntigravityAppStart'](arg1);
-}
-
-export function LocalAntigravityAppStop(arg1) {
-  return window['go']['main']['App']['LocalAntigravityAppStop'](arg1);
-}
-
-export function LocalAntigravityApps() {
-  return window['go']['main']['App']['LocalAntigravityApps']();
-}
-
-export function LocalAntigravityFocusDefault() {
-  return window['go']['main']['App']['LocalAntigravityFocusDefault']();
 }
 
 export function LocalAntigravityGatewayStart() {
@@ -154,28 +126,8 @@ export function LocalAntigravityGatewayStop() {
   return window['go']['main']['App']['LocalAntigravityGatewayStop']();
 }
 
-export function LocalAntigravityRestartDefault() {
-  return window['go']['main']['App']['LocalAntigravityRestartDefault']();
-}
-
-export function LocalAntigravityRuntimeStatus() {
-  return window['go']['main']['App']['LocalAntigravityRuntimeStatus']();
-}
-
-export function LocalAntigravityStartDefault() {
-  return window['go']['main']['App']['LocalAntigravityStartDefault']();
-}
-
 export function LocalAntigravityStats() {
   return window['go']['main']['App']['LocalAntigravityStats']();
-}
-
-export function LocalAntigravityStopDefault() {
-  return window['go']['main']['App']['LocalAntigravityStopDefault']();
-}
-
-export function LocalAntigravitySwitchHistory() {
-  return window['go']['main']['App']['LocalAntigravitySwitchHistory']();
 }
 
 export function LocalAntigravityWakeupClearVerificationHistory(arg1) {
@@ -220,10 +172,6 @@ export function LocalCancelAntigravityLogin(arg1) {
 
 export function LocalCancelCodexLogin(arg1) {
   return window['go']['main']['App']['LocalCancelCodexLogin'](arg1);
-}
-
-export function LocalClearAntigravitySwitchHistory() {
-  return window['go']['main']['App']['LocalClearAntigravitySwitchHistory']();
 }
 
 export function LocalClearGatewayStats() {

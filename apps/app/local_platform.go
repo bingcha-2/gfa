@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"bcai-wails/internal/local/antigravityinject"
 	"bcai-wails/internal/local/codexinject"
@@ -165,61 +164,8 @@ func (localPlatform) StopProcess(pid int) error {
 	return proc.Kill()
 }
 
-// ── Antigravity 默认实例运行时(复用 ide_inject.go 既有的探测/启停/进程检测) ──
-
-// AntigravityStartDefault 拉起已装 Antigravity IDE(不杀进程,仅打开)。
-func (localPlatform) AntigravityStartDefault() error { return LaunchIDE() }
-
-// AntigravityStopDefault 停掉 Antigravity IDE 进程(SIGTERM,必要时 SIGKILL)。
-func (localPlatform) AntigravityStopDefault() error {
-	if appActionsSuppressed() {
-		return nil // go test 下绝不 kill 本机 IDE 进程
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		// 锚定到 .app/Contents/MacOS 主进程,避免误杀任何 argv 里含「Antigravity IDE」的无关进程。
-		killProcessesByPattern("Antigravity IDE.app/Contents/MacOS", "-TERM")
-		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
-			killProcessesByPattern("Antigravity IDE.app/Contents/MacOS", "-9")
-		}
-	case "windows":
-		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T").Run()
-		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
-			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T", "/F").Run()
-		}
-	case "linux":
-		_ = hideCmd("pkill", "-TERM", "-f", "antigravity-ide").Run()
-		waitForProcessExit(IsIDERunning, 3*time.Second)
-	}
-	return nil
-}
-
-// AntigravityFocusDefault 把 Antigravity IDE 带到前台(未运行则拉起)。
-func (localPlatform) AntigravityFocusDefault() error {
-	if appActionsSuppressed() {
-		return nil // go test 下绝不 open 本机 IDE
-	}
-	idePath := detectAntigravityIDEPathCached()
-	if idePath == "" {
-		return fmt.Errorf("未检测到 Antigravity IDE 安装路径")
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		// open -a 会聚焦已运行实例,未运行则拉起。
-		return exec.Command("open", "-a", idePath).Start()
-	default:
-		// 其它平台:未运行则拉起(已运行时多数 IDE 会聚焦既有窗口)。
-		if IsIDERunning() {
-			return nil
-		}
-		return LaunchIDE()
-	}
-}
-
-// AntigravityRuntimeRunning 返回 Antigravity IDE 是否在运行。
-func (localPlatform) AntigravityRuntimeRunning() bool { return IsIDERunning() }
-
-// ── 变体化运行时:同时支持 Antigravity IDE 与独立版 Antigravity(variant="ide"/"standalone") ──
+// ── 切号后自动重启当前注入目标 app(IDE / 独立版),让它重读 state.vscdb 的新登录态 ──
+// 仅 hub.restartClientAfterSwitch 复用这三个原语;手动 app 启停/聚焦面板已下线。
 
 // antigravityKindFromVariant 把 hub/前端的字符串变体映射到 app kind(未知回退 IDE)。
 func antigravityKindFromVariant(variant string) antigravityAppKind {
@@ -232,17 +178,11 @@ func antigravityKindFromVariant(variant string) antigravityAppKind {
 func (localPlatform) AntigravityAppRunning(variant string) bool {
 	return isAntigravityAppRunning(antigravityKindFromVariant(variant))
 }
-func (localPlatform) AntigravityAppDetected(variant string) bool {
-	return detectAntigravityAppPath(antigravityKindFromVariant(variant)) != ""
-}
 func (localPlatform) AntigravityAppStart(variant string) error {
 	return launchAntigravityApp(antigravityKindFromVariant(variant))
 }
 func (localPlatform) AntigravityAppStop(variant string) error {
 	return stopAntigravityApp(antigravityKindFromVariant(variant))
-}
-func (localPlatform) AntigravityAppFocus(variant string) error {
-	return focusAntigravityApp(antigravityKindFromVariant(variant))
 }
 
 // CodexRestartApp 重启常驻 Codex GUI app,让它重读 ~/.codex/auth.json(切号后生效)。

@@ -10,12 +10,11 @@ import { LocalSessionsTab } from './LocalSessionsTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
 import { LocalModelProvidersTab } from './LocalModelProvidersTab'
 import { LocalSettingsTab } from './LocalSettingsTab'
-import { LocalAntigravityRuntimeTab } from './LocalAntigravityRuntimeTab'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
  * 头部(只读接管态:本地自有号徽记 + 网关运行态 + 当前模式 + 去接管中心链接)+ tab 栏 +
- * 四个独立 tab(账号/统计/保活/实例)。codex / antigravity 共用,仅 api 与 title 不同。
+ * 若干独立 tab(账号/统计/保活,codex 另有反代/供应商/会话/设置)。codex / antigravity 共用,仅 api 与 title 不同。
  *
  * 接管模式(远程托管 / 本地自有号)的切换已上移至「接管中心」—— 此处只读展示当前态,
  * 专注账号管理。样式沿用 GFA 客户端 token(琥珀单色、近白/深靛、克制语义色)。
@@ -33,13 +32,11 @@ export interface LocalProviderSuiteProps {
   hasSettings?: boolean
   /** 是否有「会话」tab(codex 会话列表/回收站/统计,读默认 Codex 主目录)。仅 codex。 */
   hasSessions?: boolean
-  /** 是否有「运行时」tab(antigravity 双 app 启停/聚焦 + 切换历史)。仅 antigravity。 */
-  antigravityRuntime?: boolean
 }
 
-type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'sessions' | 'agruntime' | 'settings'
+type TabId = 'accounts' | 'gateway' | 'providers' | 'stats' | 'wakeup' | 'sessions' | 'settings'
 
-export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false, hasSessions = false, antigravityRuntime = false }: LocalProviderSuiteProps) {
+export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false, hasModelProviders = false, hasSettings = false, hasSessions = false }: LocalProviderSuiteProps) {
   const tabs: [TabId, string][] = [
     ['accounts', '账号'],
     ...(hasGateway ? ([['gateway', '反代']] as [TabId, string][]) : []),
@@ -47,7 +44,6 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
     ['stats', '统计'],
     ['wakeup', '保活'],
     ...(hasSessions ? ([['sessions', '会话']] as [TabId, string][]) : []),
-    ...(antigravityRuntime ? ([['agruntime', '运行时']] as [TabId, string][]) : []),
     ...(hasSettings ? ([['settings', '设置']] as [TabId, string][]) : []),
   ]
   const [source, setSource] = useState<'remote' | 'local'>('remote')
@@ -130,7 +126,6 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
       {tab === 'stats' && <LocalStatsTab api={api} />}
       {tab === 'wakeup' && <LocalWakeupTab api={api} />}
       {tab === 'sessions' && <LocalSessionsTab />}
-      {tab === 'agruntime' && <LocalAntigravityRuntimeTab />}
       {tab === 'settings' && <LocalSettingsTab onNavigate={(p) => { if (p === 'wakeup') setTab('wakeup'); else onNavigate?.(p) }} />}
     </div>
   )

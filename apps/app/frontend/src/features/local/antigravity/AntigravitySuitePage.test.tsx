@@ -38,26 +38,6 @@ function installApp() {
     LocalCurrentAntigravityAccount: vi.fn().mockResolvedValue(null),
     LocalSetCurrentAntigravityAccount: vi.fn().mockResolvedValue(undefined),
     LocalReorderAntigravityAccounts: vi.fn().mockResolvedValue(undefined),
-    // ── 运行时 tab(antigravity 额外:默认实例运行时 + 切换历史)──
-    LocalAntigravityRuntimeStatus: vi.fn().mockResolvedValue(true),
-    LocalAntigravityStartDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityStopDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityRestartDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityFocusDefault: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityApps: vi.fn().mockResolvedValue([
-      { variant: 'ide', name: 'Antigravity IDE', detected: true, running: true },
-      { variant: 'standalone', name: 'Antigravity', detected: true, running: false },
-    ]),
-    LocalAntigravityAppStart: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityAppStop: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityAppRestart: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravityAppFocus: vi.fn().mockResolvedValue(undefined),
-    LocalGetAntigravityTarget: vi.fn().mockResolvedValue('ide'),
-    LocalSetAntigravityTarget: vi.fn().mockResolvedValue(undefined),
-    LocalAntigravitySwitchHistory: vi.fn().mockResolvedValue([
-      { id: 'h1', timestamp: 1700000000000, accountId: 'g1', targetEmail: 'switched@gmail.com', triggerType: 'manual', triggerSource: 'user', localOk: true, seamlessOk: true, success: true, localDurationMs: 100, totalDurationMs: 200 },
-    ]),
-    LocalClearAntigravitySwitchHistory: vi.fn().mockResolvedValue(undefined),
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
   return base
@@ -169,37 +149,9 @@ describe('AntigravitySuitePage', () => {
     await waitFor(() => expect(app.LocalReorderAntigravityAccounts).toHaveBeenCalledWith(['g2', 'g1']))
   })
 
-  // ── 运行时 tab(antigravity 额外:默认实例运行时 + 切换历史,原在已删的「数据」tab)──
-
-  it('运行时 tab 挂载读取运行时状态 + 切换历史', async () => {
-    const app = installApp()
+  it('不再有「运行时」tab(app 启停/注入目标已移至接管中心)', async () => {
     render(<AntigravitySuitePage />)
     await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
-    await waitFor(() => expect(app.LocalAntigravityApps).toHaveBeenCalled())
-    await waitFor(() => expect(app.LocalAntigravitySwitchHistory).toHaveBeenCalled())
-  })
-
-  it('运行时 tab 显示两个 app(IDE + 独立版),对独立版启动调 AppStart(standalone)', async () => {
-    const app = installApp()
-    render(<AntigravitySuitePage />)
-    await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
-    // 两张 app 卡:IDE(唯一名)+ 独立版;各带「启动」。
-    expect(await screen.findByText('Antigravity IDE')).toBeInTheDocument()
-    const starts = await screen.findAllByRole('button', { name: /启动/ })
-    expect(starts.length).toBeGreaterThanOrEqual(2)
-    fireEvent.click(starts[1]) // 独立版(IDE 卡在前)
-    await waitFor(() => expect(app.LocalAntigravityAppStart).toHaveBeenCalledWith('standalone'))
-  })
-
-  it('运行时 tab 切换历史显示目标号,清空调 clearAntigravitySwitchHistory', async () => {
-    const app = installApp()
-    render(<AntigravitySuitePage />)
-    await screen.findByText('me@gmail.com')
-    fireEvent.click(screen.getByRole('button', { name: '运行时' }))
-    expect(await screen.findByText('switched@gmail.com')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '清空历史' }))
-    await waitFor(() => expect(app.LocalClearAntigravitySwitchHistory).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: '运行时' })).toBeNull()
   })
 })

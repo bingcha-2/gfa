@@ -842,71 +842,8 @@ export function restoreCodexSessionsFromTrash(sessionIds: string[]): Promise<Res
   return app().LocalRestoreCodexSessionsFromTrash(sessionIds) as Promise<RestoreSummary>
 }
 
-// ── Antigravity 默认实例运行时控制 + 切号历史 ──
-// 运行时只控制本机 IDE 进程,切号历史只读写本地 JSON,均与远程租号 / 网关出口无关。
-
-/** 拉起 Antigravity 默认实例(已装 IDE)。 */
-export function antigravityStartDefault(): Promise<void> {
-  return app().LocalAntigravityStartDefault() as Promise<void>
-}
-
-/** 停掉 Antigravity 默认实例进程。 */
-export function antigravityStopDefault(): Promise<void> {
-  return app().LocalAntigravityStopDefault() as Promise<void>
-}
-
-/** 重启 Antigravity 默认实例(先停后起)。 */
-export function antigravityRestartDefault(): Promise<void> {
-  return app().LocalAntigravityRestartDefault() as Promise<void>
-}
-
-/** 把 Antigravity 默认实例窗口带到前台。 */
-export function antigravityFocusDefault(): Promise<void> {
-  return app().LocalAntigravityFocusDefault() as Promise<void>
-}
-
-/** 默认实例是否在运行。 */
-export function antigravityRuntimeStatus(): Promise<boolean> {
-  return app().LocalAntigravityRuntimeStatus() as Promise<boolean>
-}
-
-/**
- * 一个 Antigravity app 变体的运行时视图。Antigravity 是两个独立 app:
- *  - ide:Antigravity IDE(编辑器);
- *  - standalone:Antigravity(独立版)。
- * 二者各自可检测/启停/聚焦(对齐 cockpit 的两个 RuntimeTarget)。
- */
-export interface AntigravityAppView {
-  variant: 'ide' | 'standalone'
-  name: string
-  detected: boolean
-  running: boolean
-}
-
-/** 返回两个 Antigravity app 变体的运行时视图(同时展示 IDE + 独立版)。 */
-export function antigravityApps(): Promise<AntigravityAppView[]> {
-  return app().LocalAntigravityApps() as Promise<AntigravityAppView[]>
-}
-
-/** 按变体拉起对应 Antigravity app。 */
-export function antigravityAppStart(variant: string): Promise<void> {
-  return app().LocalAntigravityAppStart(variant) as Promise<void>
-}
-
-/** 按变体停掉对应 Antigravity app。 */
-export function antigravityAppStop(variant: string): Promise<void> {
-  return app().LocalAntigravityAppStop(variant) as Promise<void>
-}
-
-/** 按变体重启对应 Antigravity app(先停后起)。 */
-export function antigravityAppRestart(variant: string): Promise<void> {
-  return app().LocalAntigravityAppRestart(variant) as Promise<void>
-}
-
-/** 按变体把对应 Antigravity app 窗口带到前台。 */
-export function antigravityAppFocus(variant: string): Promise<void> {
-  return app().LocalAntigravityAppFocus(variant) as Promise<void>
-}
+// ── Antigravity 本地接管注入目标(IDE / 独立版)——决定自有号注入进哪个 app 的 state.vscdb ──
+// 注入目标只影响本地注入落点,与远程租号 / 网关出口无关。
 
 /** 读本地接管注入的目标 app 变体("ide"/"standalone")。 */
 export function getAntigravityTarget(): Promise<'ide' | 'standalone'> {
@@ -916,64 +853,5 @@ export function getAntigravityTarget(): Promise<'ide' | 'standalone'> {
 /** 设注入目标 app 变体(local 接管态下立即重注入到新目标)。 */
 export function setAntigravityTarget(variant: string): Promise<void> {
   return app().LocalSetAntigravityTarget(variant) as Promise<void>
-}
-
-/** 一条 Antigravity 自动切号命中分组。 */
-export interface AntigravityAutoSwitchHitGroup {
-  groupId: string
-  groupName: string
-  percentage: number
-}
-
-/** Antigravity 自动切号命中详情。 */
-export interface AntigravityAutoSwitchReason {
-  rule: string
-  threshold: number
-  scopeMode: string
-  selectedGroupIds?: string[]
-  selectedGroupNames?: string[]
-  hitGroups?: AntigravityAutoSwitchHitGroup[]
-  candidateCount: number
-  selectedPolicy: string
-}
-
-/** 一条 Antigravity 切号历史。 */
-export interface AntigravitySwitchHistoryItem {
-  id: string
-  timestamp: number
-  accountId: string
-  targetEmail: string
-  triggerType: string
-  triggerSource: string
-  localOk: boolean
-  seamlessOk: boolean
-  success: boolean
-  localDurationMs: number
-  seamlessDurationMs?: number
-  totalDurationMs: number
-  errorStage?: string
-  errorCode?: string
-  errorMessage?: string
-  seamlessEffectiveMode?: string
-  seamlessFromEmail?: string
-  seamlessToEmail?: string
-  seamlessExecutionId?: string
-  seamlessFinishedAt?: string
-  autoSwitchReason?: AntigravityAutoSwitchReason
-}
-
-/** 读切号历史(降序;缺省/损坏返回空数组)。 */
-export function antigravitySwitchHistory(): Promise<AntigravitySwitchHistoryItem[]> {
-  return app().LocalAntigravitySwitchHistory() as Promise<AntigravitySwitchHistoryItem[]>
-}
-
-/** 追加一条切号历史(按 id 去重、降序、截断 200)。 */
-export function addAntigravitySwitchHistory(item: AntigravitySwitchHistoryItem): Promise<void> {
-  return app().LocalAddAntigravitySwitchHistory(item) as Promise<void>
-}
-
-/** 清空切号历史。 */
-export function clearAntigravitySwitchHistory(): Promise<void> {
-  return app().LocalClearAntigravitySwitchHistory() as Promise<void>
 }
 

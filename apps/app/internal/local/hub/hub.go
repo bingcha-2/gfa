@@ -17,7 +17,6 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/accountgroups"
-	"bcai-wails/internal/local/aghistory"
 	"bcai-wails/internal/local/antigravityauth"
 	"bcai-wails/internal/local/codexauth"
 	"bcai-wails/internal/local/codexsettings"
@@ -87,20 +86,11 @@ type Platform interface {
 	LaunchApp(appPath, workingDir string, args []string) (int, error)
 	StopProcess(pid int) error
 
-	// Antigravity 「默认实例」运行时控制(拉起/聚焦/停 已装 IDE 进程,复用平台探测/启停)。
-	// 对齐 cockpit runtime.startDefault/stopDefault/restartDefault/focusDefault/status。
-	AntigravityStartDefault() error
-	AntigravityStopDefault() error
-	AntigravityFocusDefault() error
-	AntigravityRuntimeRunning() bool
-
-	// 变体化运行时:同时支持 Antigravity IDE 与独立版 Antigravity(variant="ide"/"standalone")。
-	// cockpit 把两者作两个独立 app(RuntimeTarget::Ide / ::Legacy),各自可检测/启停/聚焦。
+	// 切号后重启当前注入目标 app(IDE 或独立版),让它重读 state.vscdb 里的新登录态。
+	// 仅切号自动重启复用这三个原语(variant="ide"/"standalone");手动 app 启停面板已下线。
 	AntigravityAppRunning(variant string) bool
-	AntigravityAppDetected(variant string) bool
 	AntigravityAppStart(variant string) error
 	AntigravityAppStop(variant string) error
-	AntigravityAppFocus(variant string) error
 
 	// CodexRestartApp 重启常驻 Codex GUI app(切号后重读 auth.json);未装则 no-op。
 	CodexRestartApp() error
@@ -147,9 +137,8 @@ type Hub struct {
 	// codexSettings 是「Codex 设置」面板的本地持久化。
 	codexSettings *codexsettings.Store
 
-	// 账号组织 / 切号历史(均为自包含纯逻辑包,本地 JSON 持久化)。
-	groups    *accountgroups.Store
-	agHistory *aghistory.Store
+	// 账号组织(自包含纯逻辑包,本地 JSON 持久化)。
+	groups *accountgroups.Store
 }
 
 // New 打开账号 DB,构建【单个反代网关(只服务 codex)】+ codex/antigravity 两套
@@ -178,8 +167,7 @@ func New(dir string, platform Platform) (*Hub, error) {
 		speedStore:    economy.NewSpeedStore(dir),
 		codexSettings: codexsettings.NewStore(dir),
 
-		groups:    accountgroups.NewStore(dir),
-		agHistory: aghistory.NewStore(dir),
+		groups: accountgroups.NewStore(dir),
 	}
 	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())

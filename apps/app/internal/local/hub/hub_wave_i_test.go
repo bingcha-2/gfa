@@ -113,25 +113,3 @@ func TestHub_ListSessions_FromDefaultCodexHome(t *testing.T) {
 	}
 }
 
-// ── Antigravity runtime 控制经 Platform 委托 ──
-
-func TestHub_AntigravityRuntime_DelegatesToPlatform(t *testing.T) {
-	h, fp := newHub(t)
-	if err := h.AntigravityStartDefault(); err != nil {
-		t.Fatalf("StartDefault: %v", err)
-	}
-	if err := h.AntigravityStopDefault(); err != nil {
-		t.Fatalf("StopDefault: %v", err)
-	}
-	if err := h.AntigravityRestartDefault(); err != nil {
-		t.Fatalf("RestartDefault: %v", err)
-	}
-	if err := h.AntigravityFocusDefault(); err != nil {
-		t.Fatalf("FocusDefault: %v", err)
-	}
-	_ = h.AntigravityRuntimeStatus()
-	if fp.agStartCount != 2 || fp.agStopCount != 2 || fp.agFocusCount != 1 || fp.agStatusCount != 1 {
-		t.Fatalf("runtime delegation counts wrong: start=%d stop=%d focus=%d status=%d",
-			fp.agStartCount, fp.agStopCount, fp.agFocusCount, fp.agStatusCount)
-	}
-}

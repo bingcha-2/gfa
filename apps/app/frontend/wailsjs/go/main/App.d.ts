@@ -3,7 +3,6 @@
 import {main} from '../models';
 import {gatewaycfg} from '../models';
 import {manager} from '../models';
-import {aghistory} from '../models';
 import {hub} from '../models';
 import {stats} from '../models';
 import {wakeup} from '../models';
@@ -67,25 +66,11 @@ export function LocalActivateGatewayTimeoutPreset(arg1:string):Promise<gatewaycf
 
 export function LocalAddAntigravityApiKey(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
-export function LocalAddAntigravitySwitchHistory(arg1:aghistory.SwitchHistoryItem):Promise<void>;
-
 export function LocalAddAntigravityToken(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
 export function LocalAddCodexApiKey(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
 export function LocalAddCodexToken(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
-
-export function LocalAntigravityAppFocus(arg1:string):Promise<void>;
-
-export function LocalAntigravityAppRestart(arg1:string):Promise<void>;
-
-export function LocalAntigravityAppStart(arg1:string):Promise<void>;
-
-export function LocalAntigravityAppStop(arg1:string):Promise<void>;
-
-export function LocalAntigravityApps():Promise<Array<hub.AntigravityAppView>>;
-
-export function LocalAntigravityFocusDefault():Promise<void>;
 
 export function LocalAntigravityGatewayStart():Promise<hub.GatewayStatus>;
 
@@ -93,17 +78,7 @@ export function LocalAntigravityGatewayStatus():Promise<hub.GatewayStatus>;
 
 export function LocalAntigravityGatewayStop():Promise<void>;
 
-export function LocalAntigravityRestartDefault():Promise<void>;
-
-export function LocalAntigravityRuntimeStatus():Promise<boolean>;
-
-export function LocalAntigravityStartDefault():Promise<void>;
-
 export function LocalAntigravityStats():Promise<stats.Snapshot>;
-
-export function LocalAntigravityStopDefault():Promise<void>;
-
-export function LocalAntigravitySwitchHistory():Promise<Array<aghistory.SwitchHistoryItem>>;
 
 export function LocalAntigravityWakeupClearVerificationHistory(arg1:Array<string>):Promise<number>;
 
@@ -126,8 +101,6 @@ export function LocalBrowseForPath(arg1:string):Promise<string>;
 export function LocalCancelAntigravityLogin(arg1:string):Promise<void>;
 
 export function LocalCancelCodexLogin(arg1:string):Promise<void>;
-
-export function LocalClearAntigravitySwitchHistory():Promise<void>;
 
 export function LocalClearGatewayStats():Promise<void>;
 

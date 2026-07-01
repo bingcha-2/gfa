@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -189,25 +188,6 @@ func stopAntigravityApp(kind antigravityAppKind) error {
 		waitForProcessExit(running, 3*time.Second)
 	}
 	return nil
-}
-
-// focusAntigravityApp 把某变体带到前台(未运行则拉起)。
-func focusAntigravityApp(kind antigravityAppKind) error {
-	if appActionsSuppressed() {
-		return nil // go test 下绝不 open 本机 app
-	}
-	spec := antigravitySpec(kind)
-	appPath := detectAntigravityAppPath(kind)
-	if appPath == "" {
-		return fmt.Errorf("未检测到 %s 安装路径", spec.DisplayName)
-	}
-	if runtime.GOOS == "darwin" {
-		return exec.Command("open", "-a", appPath).Start()
-	}
-	if isAntigravityAppRunning(kind) {
-		return nil
-	}
-	return launchApp(appPath)
 }
 
 // antigravityGlobalStorageDir 纯路径构造(不 Stat):返回某变体的 User/globalStorage 目录。

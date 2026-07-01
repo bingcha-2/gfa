@@ -938,5 +938,5 @@ describe('CodexSuitePage', () => {
     expect(downs[downs.length - 1]).toBeDisabled()
   })
 
-  // codex 无独立「数据」tab(数据迁移/WebDAV 已移除);antigravity 的运行时/切换历史见 AntigravitySuitePage 测试。
+  // codex 无独立「数据」tab(数据迁移/WebDAV 已移除)。antigravity 的 app 启停 + 注入目标已并入接管中心,无运行时 tab。
 })
