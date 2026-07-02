@@ -15,7 +15,8 @@ import { Button } from '@/components/ui/button'
 import * as api from '@/services/wails'
 import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
-import { BarChart3, Crown } from 'lucide-react'
+import { useState } from 'react'
+import { BarChart3, Crown, RefreshCw } from 'lucide-react'
 
 function formatUSD(value: number): string {
   const n = Math.max(0, Number(value) || 0)
@@ -115,7 +116,26 @@ export function DashboardPage() {
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
+    fetchStats,
   } = useAppStore()
+
+  // 就地刷新远端额度:GetStats 只读缓存快照,故先主动去上游强制拉一次最新余量(并上报服务端),
+  // 再 fetchStats 才能看到新值并重渲染血条。上游刷新失败不致命,照常刷新本地状态。
+  const [refreshingQuota, setRefreshingQuota] = useState(false)
+  const handleRefreshQuota = async () => {
+    if (refreshingQuota) return
+    setRefreshingQuota(true)
+    try {
+      try {
+        await api.refreshQuota()
+      } catch (err) {
+        console.error('refreshQuota failed:', err)
+      }
+      await fetchStats()
+    } finally {
+      setRefreshingQuota(false)
+    }
+  }
 
   // 显示「每个已订阅产品」一张用量卡:优先用订阅授权并集(跨所有生效订阅,故 codex+anthropic
   // 都显示);冷启动授权未知时回退到单卡 products(保持现有行为,不空屏)。
@@ -252,6 +272,17 @@ export function DashboardPage() {
               <Crown size={11} /> 尊贵 · 独享
             </span>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto h-7 gap-1.5 px-2 text-[12px] text-[var(--text-muted)]"
+            disabled={refreshingQuota}
+            onClick={handleRefreshQuota}
+            title={t('account.refresh')}
+          >
+            <RefreshCw size={13} className={cn(refreshingQuota && 'animate-spin')} />
+            {t('account.refresh')}
+          </Button>
         </CardHeader>
         <CardContent>
           {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
