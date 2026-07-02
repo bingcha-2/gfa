@@ -142,7 +142,8 @@ export function LocalWakeupTab({ api }: { api: ProviderLocalApi }) {
             disabled={busy === 'save'}
             role="switch"
             aria-checked={cfg.enabled}
-            className={cn('w-[42px] h-[24px] rounded-full relative transition-colors disabled:opacity-50', cfg.enabled ? 'bg-[var(--primary)]' : 'bg-[#cbd2dc]')}
+            aria-label="定时保活开关"
+            className={cn('w-[42px] h-[24px] rounded-full relative transition-colors disabled:opacity-50', cfg.enabled ? 'bg-[var(--primary)]' : 'bg-[var(--switch-off)]')}
           >
             <span className={cn('absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all', cfg.enabled ? 'right-[3px]' : 'left-[3px]')} />
           </button>

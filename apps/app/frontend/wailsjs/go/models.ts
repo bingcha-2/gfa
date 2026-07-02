@@ -319,24 +319,6 @@ export namespace economy {
 	        this.LowModels = source["LowModels"];
 	    }
 	}
-	export class AppSpeed {
-	    contextPreset: string;
-	    tier: string;
-	    customContextWindow?: number;
-	    customAutoCompact?: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new AppSpeed(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.contextPreset = source["contextPreset"];
-	        this.tier = source["tier"];
-	        this.customContextWindow = source["customContextWindow"];
-	        this.customAutoCompact = source["customAutoCompact"];
-	    }
-	}
 	export class SwitchConfig {
 	    Enabled: boolean;
 	    ThresholdPct: number;
@@ -826,7 +808,6 @@ export namespace manager {
 	    tags: string[];
 	    poolEnabled: boolean;
 	    priority: boolean;
-	    serviceTier: string;
 	    hourlyPercent: number;
 	    weeklyPercent: number;
 	    hourlyResetAt: number;
@@ -851,7 +832,6 @@ export namespace manager {
 	        this.tags = source["tags"];
 	        this.poolEnabled = source["poolEnabled"];
 	        this.priority = source["priority"];
-	        this.serviceTier = source["serviceTier"];
 	        this.hourlyPercent = source["hourlyPercent"];
 	        this.weeklyPercent = source["weeklyPercent"];
 	        this.hourlyResetAt = source["hourlyResetAt"];

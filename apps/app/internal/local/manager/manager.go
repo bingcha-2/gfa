@@ -31,23 +31,21 @@ type Reloader interface{ Reload() error }
 
 // AccountView 是给前端的账号视图(不含原始 token)。
 type AccountView struct {
-	ID          string   `json:"id"`
-	Email       string   `json:"email"`
-	Name        string   `json:"name"`
-	Provider    string   `json:"provider"`
-	AuthKind    string   `json:"authKind"`
-	Note        string   `json:"note"`
-	PlanType    string   `json:"planType"`
-	QuotaStatus string   `json:"quotaStatus"`
-	Tags        []string `json:"tags"`
-	PoolEnabled bool     `json:"poolEnabled"`
-	Priority    bool     `json:"priority"`
-	// ServiceTier 是按号服务档(codex 专属):""(继承/标准)| "fast"(快速=上游 priority)。
-	ServiceTier   string `json:"serviceTier"`
-	HourlyPercent int    `json:"hourlyPercent"`
-	WeeklyPercent int    `json:"weeklyPercent"`
-	HourlyResetAt int64  `json:"hourlyResetAt"`
-	WeeklyResetAt int64  `json:"weeklyResetAt"`
+	ID            string   `json:"id"`
+	Email         string   `json:"email"`
+	Name          string   `json:"name"`
+	Provider      string   `json:"provider"`
+	AuthKind      string   `json:"authKind"`
+	Note          string   `json:"note"`
+	PlanType      string   `json:"planType"`
+	QuotaStatus   string   `json:"quotaStatus"`
+	Tags          []string `json:"tags"`
+	PoolEnabled   bool     `json:"poolEnabled"`
+	Priority      bool     `json:"priority"`
+	HourlyPercent int      `json:"hourlyPercent"`
+	WeeklyPercent int      `json:"weeklyPercent"`
+	HourlyResetAt int64    `json:"hourlyResetAt"`
+	WeeklyResetAt int64    `json:"weeklyResetAt"`
 	// QuotaBuckets 是多窗口/多模型族剩余额度(antigravity gemini/claude × 5h/周);codex 为空。
 	QuotaBuckets []account.QuotaBucket `json:"quotaBuckets"`
 	LastUsedAt   int64                 `json:"lastUsedAt"`
@@ -60,7 +58,7 @@ func toView(a *account.Account) AccountView {
 	return AccountView{
 		ID: a.ID, Email: a.Email, Name: a.Name, Provider: string(a.Provider), AuthKind: string(a.AuthKind),
 		Note: a.Note, PlanType: a.PlanType, QuotaStatus: string(a.QuotaStatus), Tags: a.Tags,
-		PoolEnabled: a.PoolEnabled, Priority: a.Priority, ServiceTier: a.ServiceTier,
+		PoolEnabled: a.PoolEnabled, Priority: a.Priority,
 		HourlyPercent: a.HourlyPercent, WeeklyPercent: a.WeeklyPercent,
 		HourlyResetAt: a.HourlyResetAt, WeeklyResetAt: a.WeeklyResetAt,
 		QuotaBuckets: a.Buckets, LastUsedAt: a.LastUsedAt,
@@ -267,17 +265,6 @@ func (m *Manager) SetNote(id, note string) error {
 // SetTags 改账号标签。
 func (m *Manager) SetTags(id string, tags []string) error {
 	return m.editField(id, func(a *account.Account) { a.Tags = tags })
-}
-
-// SetServiceTier 设按号服务档(codex 专属),归一后落库并热刷网关。
-//   - "fast"/"priority"/"flex" → "fast"(出口需带 service_tier:"priority");
-//   - 空/standard/未知 → ""(继承标准档)。
-//
-// 对齐 cockpit accounts.updateAppSpeed。egress 侧真正注入 service_tier 的接线见
-// authsync 的 TODO(嵌入式 CLIProxyAPI 无逐号请求体注入钩子)。
-func (m *Manager) SetServiceTier(id, tier string) error {
-	norm := account.NormalizeServiceTier(tier)
-	return m.editField(id, func(a *account.Account) { a.ServiceTier = norm })
 }
 
 func (m *Manager) editField(id string, mut func(*account.Account)) error {

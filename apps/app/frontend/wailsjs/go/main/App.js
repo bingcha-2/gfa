@@ -310,10 +310,6 @@ export function LocalGetAntigravitySource() {
   return window['go']['main']['App']['LocalGetAntigravitySource']();
 }
 
-export function LocalGetAppSpeed() {
-  return window['go']['main']['App']['LocalGetAppSpeed']();
-}
-
 export function LocalGetCodexQuickConfig() {
   return window['go']['main']['App']['LocalGetCodexQuickConfig']();
 }
@@ -512,14 +508,6 @@ export function LocalSetAntigravitySource(arg1) {
 
 export function LocalSetAntigravityWakeupConfig(arg1, arg2) {
   return window['go']['main']['App']['LocalSetAntigravityWakeupConfig'](arg1, arg2);
-}
-
-export function LocalSetAppSpeed(arg1) {
-  return window['go']['main']['App']['LocalSetAppSpeed'](arg1);
-}
-
-export function LocalSetCodexAccountServiceTier(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetCodexAccountServiceTier'](arg1, arg2);
 }
 
 export function LocalSetCodexPriority(arg1) {

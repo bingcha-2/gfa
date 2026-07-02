@@ -34,10 +34,12 @@ func (m *Manager) RefreshQuota(id string) error {
 	return m.refreshOne(a)
 }
 
-// RefreshAllQuotas 遍历本 provider 的 pool_enabled 自有号逐个刷新,返回成功刷新数量。
-// 单号失败不中断(对齐 cockpit refresh_all_quotas:逐号独立)。
+// RefreshAllQuotas 遍历本 provider 的【全部】自有号逐个刷新,返回成功刷新数量。
+// 不再只刷在池号(对齐 cockpit refresh_all_quotas:全量、逐号独立)——未在池的号
+// 也要能一键刷额度,否则用户得逐个点。API Key 号 refreshOne 会返回错误、不计入成功数。
+// 单号失败不中断。
 func (m *Manager) RefreshAllQuotas() (int, error) {
-	list, err := m.acc.ListPoolEnabled(m.provider)
+	list, err := m.acc.List(m.provider)
 	if err != nil {
 		return 0, err
 	}

@@ -5,7 +5,7 @@ import (
 	"bcai-wails/internal/local/economy"
 )
 
-// 经济与自动化(① 超额预警 ② 自动切号 ③ 速度档)Wails 绑定 —— 仅薄薄委托给 hub。
+// 经济与自动化(① 超额预警 ② 自动切号)Wails 绑定 —— 仅薄薄委托给 hub。
 // 红线:自动切号只动 codex 自有号优先级与本机注入;不碰远程租号 / proxy.go。
 
 // ── ① 超额预警 ──
@@ -46,20 +46,4 @@ func (a *App) LocalSetSwitchConfig(cfg economy.SwitchConfig) (economy.SwitchConf
 		return economy.SwitchConfig{}, err
 	}
 	return localHub.SetSwitchConfig(cfg)
-}
-
-// ── ③ 速度档 ──
-
-func (a *App) LocalGetAppSpeed() (economy.AppSpeed, error) {
-	if err := ensureLocal(); err != nil {
-		return economy.AppSpeed{}, err
-	}
-	return localHub.GetAppSpeed(), nil
-}
-
-func (a *App) LocalSetAppSpeed(s economy.AppSpeed) (economy.AppSpeed, error) {
-	if err := ensureLocal(); err != nil {
-		return economy.AppSpeed{}, err
-	}
-	return localHub.SetAppSpeed(s)
 }

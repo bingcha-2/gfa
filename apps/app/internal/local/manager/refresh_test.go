@@ -107,7 +107,7 @@ func TestRefreshQuota_APIKeyAccountSkipped(t *testing.T) {
 	}
 }
 
-func TestRefreshAllQuotas_OnlyPoolEnabled(t *testing.T) {
+func TestRefreshAllQuotas_AllAccountsInclNonPool(t *testing.T) {
 	r := &fakeRefresher{res: quota.Result{HourlyPercent: 50, WeeklyPercent: 50, HourlyKnown: true, WeeklyKnown: true}}
 	m, acc := newMgrWithRefresher(t, r)
 	in := &account.Account{Provider: account.ProviderCodex, Email: "in@x", AuthKind: account.AuthOAuth, PoolEnabled: true}
@@ -119,15 +119,16 @@ func TestRefreshAllQuotas_OnlyPoolEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RefreshAllQuotas: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("expected 1 refreshed (pool only), got %d", n)
+	// 全量刷新:在池 + 未在池都要刷到(不再只刷在池号)。
+	if n != 2 {
+		t.Fatalf("expected 2 refreshed (all accounts), got %d", n)
 	}
 	gotIn, _ := acc.Get(in.ID)
 	gotOut, _ := acc.Get(out.ID)
 	if gotIn.HourlyPercent != 50 {
 		t.Fatalf("pool account should be refreshed: %+v", gotIn)
 	}
-	if gotOut.HourlyPercent != 0 {
-		t.Fatalf("non-pool account should be untouched: %+v", gotOut)
+	if gotOut.HourlyPercent != 50 {
+		t.Fatalf("non-pool account should ALSO be refreshed now: %+v", gotOut)
 	}
 }

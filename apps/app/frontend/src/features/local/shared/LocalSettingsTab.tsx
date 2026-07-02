@@ -65,7 +65,7 @@ function Switch({ label, desc, checked, onToggle, busy }: {
         onClick={onToggle}
         className={cn(
           'cursor-pointer w-[42px] h-[24px] rounded-full relative transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed',
-          checked ? 'bg-[var(--primary)]' : 'bg-[#cbd2dc]',
+          checked ? 'bg-[var(--primary)]' : 'bg-[var(--switch-off)]',
         )}
       >
         <span className={cn('absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all', checked ? 'right-[3px]' : 'left-[3px]')} />

@@ -1,9 +1,6 @@
 package hub
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"bcai-wails/internal/local/account"
@@ -11,9 +8,6 @@ import (
 )
 
 func TestHub_EconomyStoresRoundTrip(t *testing.T) {
-	// 沙箱化 Codex 主目录:SetAppSpeed 会真写 config.toml,不能落到开发机的 ~/.codex。
-	codexHome := t.TempDir()
-	t.Setenv("CODEX_HOME", codexHome)
 	h, _ := newHub(t)
 
 	if _, err := h.SetAlertConfig(economy.AlertConfig{Enabled: true, ThresholdPct: 15}); err != nil {
@@ -31,18 +25,6 @@ func TestHub_EconomyStoresRoundTrip(t *testing.T) {
 	}
 	if got := h.GetSwitchConfig(); !got.Enabled || got.ScopeMode != economy.ScopeSelected || len(got.SelectedAccountIDs) != 1 {
 		t.Fatalf("switch config round-trip: %+v", got)
-	}
-
-	if _, err := h.SetAppSpeed(economy.AppSpeed{ContextPreset: economy.Preset1M, Tier: economy.TierFast}); err != nil {
-		t.Fatalf("SetAppSpeed: %v", err)
-	}
-	if got := h.GetAppSpeed(); got.ContextPreset != economy.Preset1M || got.Tier != economy.TierFast {
-		t.Fatalf("speed round-trip: %+v", got)
-	}
-	// 「快速」必须真落到 config.toml,而不只是存进 app-speed.json(原 STUB bug)。
-	toml, _ := os.ReadFile(filepath.Join(codexHome, "config.toml"))
-	if !strings.Contains(string(toml), `default-service-tier = "priority"`) {
-		t.Fatalf("SetAppSpeed(fast) 应写 config.toml [desktop].default-service-tier:\n%s", toml)
 	}
 }
 

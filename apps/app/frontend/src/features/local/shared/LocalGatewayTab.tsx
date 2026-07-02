@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Power, Copy, Check, Loader2, Globe, Lock, Plug, Route, Wifi, KeyRound,
-  RotateCw, Trash2, ListFilter, Plug2, AlertTriangle, SlidersHorizontal,
+  RotateCw, Trash2, ListFilter, Plug2, AlertTriangle, SlidersHorizontal, Eye, EyeOff,
 } from 'lucide-react'
 import {
-  type LocalGatewayStatus, type ProviderLocalApi,
+  type LocalGatewayStatus, type LocalAccountView, type ProviderLocalApi,
   type RoutingStrategy, type GatewayAccessScope, type GatewayKey,
   type GatewayLogEntry, type GatewayLogFilter, type GatewayConnTestResult,
   type GatewayOpsConfig,
@@ -41,6 +41,31 @@ const STRATEGIES: [RoutingStrategy, string, string][] = [
 
 const LOG_PAGE_SIZE = 20
 
+/**
+ * 协议入口 —— 同一个网关地址同时暴露多种协议线,内嵌 CLIProxyAPI 自动做协议转换,
+ * 无需按号/按池选协议。这里列出的路径与内嵌 CLIProxyAPI v7 实际注册的路由一一对应
+ *(/v1/chat/completions、/v1/responses、/v1/messages、/v1beta/models);Ollama(/api/chat)
+ * 该版本未注册,故不列,避免给出会 404 的入口。示例模型仅占位,按你要调的模型替换。
+ */
+const PROTOCOLS: { key: string; name: string; path: string; note: string; env: (origin: string, key: string) => string }[] = [
+  {
+    key: 'openai', name: 'OpenAI 兼容', path: '/v1/chat/completions', note: 'Base URL 使用 /v1。',
+    env: (o, k) => `OPENAI_BASE_URL=${o}/v1\nOPENAI_API_KEY=${k}\nOPENAI_MODEL=gpt-5.5`,
+  },
+  {
+    key: 'responses', name: 'Responses', path: '/v1/responses', note: 'Codex 原生 Responses 入口。',
+    env: (o, k) => `OPENAI_BASE_URL=${o}/v1\nOPENAI_API_KEY=${k}\nOPENAI_MODEL=gpt-5.5\nOPENAI_WIRE_API=responses`,
+  },
+  {
+    key: 'anthropic', name: 'Anthropic Messages', path: '/v1/messages', note: '使用同一个服务 Key。',
+    env: (o, k) => `ANTHROPIC_BASE_URL=${o}\nANTHROPIC_API_KEY=${k}\nANTHROPIC_MODEL=gpt-5.5`,
+  },
+  {
+    key: 'gemini', name: 'Gemini', path: '/v1beta/models', note: 'Base URL 使用 /v1beta。',
+    env: (o, k) => `GEMINI_BASE_URL=${o}\nGEMINI_API_KEY=${k}\nGEMINI_MODEL=gpt-5.5`,
+  },
+]
+
 /** 掩码 key 值:保留前 8 与后 4,中间打码;短值则全打码。 */
 function maskKey(value: string): string {
   if (!value) return '—'
@@ -50,7 +75,7 @@ function maskKey(value: string): string {
 
 export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
   const [gw, setGw] = useState<LocalGatewayStatus>({ running: false, addr: '', port: 0 })
-  const [accounts, setAccounts] = useState(0)
+  const [accts, setAccts] = useState<LocalAccountView[]>([])
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
   const [portInput, setPortInput] = useState('')
@@ -81,6 +106,8 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     try { setOpsCfg(await saveGatewayTimeouts({ ...opsCfg.timeouts, ...patch })) } catch (e) { setErr(String(e)) } finally { setOpsBusy('') }
   }
   const [copiedKeyId, setCopiedKeyId] = useState('')
+  const [copiedProto, setCopiedProto] = useState('')
+  const [showProtoKey, setShowProtoKey] = useState(false) // 协议片段里的 Key 默认打码,防截图/录屏泄露
 
   // ── 请求日志 ──
   const [logs, setLogs] = useState<GatewayLogEntry[]>([])
@@ -101,8 +128,9 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     return Object.keys(f).length ? f : undefined
   }, [fModel, fFailedOnly])
 
-  const loadLogs = useCallback(async (append: boolean) => {
-    setLogBusy(true)
+  // silent=true 供自动轮询用:不翻转 loading、不弹错误,避免每 4s 闪「加载中」或打断界面。
+  const loadLogs = useCallback(async (append: boolean, silent = false) => {
+    if (!silent) setLogBusy(true)
     try {
       const offset = append ? logs.length : 0
       const page = await queryGatewayLogs(offset, LOG_PAGE_SIZE, buildFilter())
@@ -110,11 +138,11 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
       setLogs((prev) => (append ? [...prev, ...entries] : entries))
       setLogTotal(page.total)
       setLogsLoaded(true)
-      setErr('')
+      if (!silent) setErr('')
     } catch (e) {
-      setErr(String(e))
+      if (!silent) setErr(String(e))
     } finally {
-      setLogBusy(false)
+      if (!silent) setLogBusy(false)
     }
   }, [logs.length, buildFilter])
 
@@ -124,7 +152,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
       setGw(status)
       setPortInput((prev) => (prev === '' && status.port > 0 ? String(status.port) : prev))
       const list = await api.listAccounts()
-      setAccounts((list || []).length)
+      setAccts(list || [])
       setErr('')
     } catch (e) {
       setErr(String(e))
@@ -146,11 +174,22 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     }
   }, [])
 
+  // 用 ref 持有最新 loadLogs / 当前日志条数,让固定 4s 轮询能静默刷新第一页而不重挂 interval。
+  const loadLogsRef = useRef(loadLogs)
+  useEffect(() => { loadLogsRef.current = loadLogs }, [loadLogs])
+  const logsLenRef = useRef(0)
+  useEffect(() => { logsLenRef.current = logs.length }, [logs.length])
+
   useEffect(() => {
     void refreshStatus()
     void loadOps()
     void loadLogs(false)
-    const id = setInterval(() => { void refreshStatus() }, 4000)
+    const id = setInterval(() => {
+      void refreshStatus()
+      // 请求日志自动刷新:仅在首屏(未点「加载更多」)时静默重拉第一页,新请求自动冒出来;
+      // 已翻页浏览历史时不打断(条数 > 一页即视为在翻历史)。
+      if (logsLenRef.current <= LOG_PAGE_SIZE) void loadLogsRef.current(false, true)
+    }, 4000)
     return () => clearInterval(id)
     // loadLogs 仅首次;过滤变化由 onChange 显式触发,故此处忽略其依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,6 +329,14 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     } catch { /* 忽略 */ }
   }
 
+  const onCopyProto = async (protoKey: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedProto(protoKey)
+      setTimeout(() => setCopiedProto(''), 1500)
+    } catch { /* 忽略:剪贴板不可用时不阻断 */ }
+  }
+
   const onClearLogs = async () => {
     setLogBusy(true)
     setErr('')
@@ -317,6 +364,17 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
 
   const lanOn = scope === 'lan'
   const hasMore = logs.length < logTotal
+  // 协议兼容卡:同一网关地址 + 同一个 Key,四种协议线任选;origin 不含 /v1(各线自带路径)。
+  const protoOrigin = gw.running && gw.port > 0 ? `http://${gw.addr}` : `http://127.0.0.1:${gw.port || 8317}`
+  // 真 Key 仅用于复制;屏幕上默认打码(有真 Key 且未点「显示」时),避免截图/录屏泄露凭证。
+  const hasRealProtoKey = keys.length > 0
+  const realProtoKey = keys[0]?.value || '<先在下方新建访问 Key>'
+  const shownProtoKey = hasRealProtoKey && !showProtoKey ? maskKey(realProtoKey) : realProtoKey
+  // 服务健康:只看在池号(真正进网关服务的号)。available=在线;cooling=冷却/额度用尽;error=需重登。
+  const poolAccts = accts.filter((a) => a.poolEnabled)
+  const healthAvailable = poolAccts.filter((a) => a.quotaStatus === 'ok').length
+  const healthCooling = poolAccts.filter((a) => a.quotaStatus === 'cooling' || a.quotaStatus === 'exhausted').length
+  const healthError = poolAccts.filter((a) => a.quotaStatus === 'error').length
 
   return (
     <div className="flex flex-col gap-3">
@@ -344,7 +402,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
             </div>
             <div className="text-[11px] text-[var(--text-muted)] mt-0.5 inline-flex items-center gap-1.5">
               <span className={cn('w-1.5 h-1.5 rounded-full', gw.running ? 'bg-[var(--success)] dot-pulse' : 'bg-[var(--text-muted)]')} />
-              {gw.running ? `运行中 · ${gw.addr}` : '未运行'} · {accounts} 个号在服务
+              {gw.running ? `运行中 · ${gw.addr}` : '未运行'} · {accts.length} 个号在服务
             </div>
           </div>
         </div>
@@ -392,6 +450,33 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
           )}
         </div>
       )}
+
+      {/* 服务健康(只统计在池号:真正进网关服务的号) */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4">
+        <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide mb-2.5 inline-flex items-center gap-1.5">
+          <Plug2 size={12} /> 服务健康
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {([
+            { label: '可用账号', value: `${healthAvailable}/${poolAccts.length}`, tone: healthAvailable > 0 ? 'ok' : 'muted', hint: '在池且在线' },
+            { label: '冷却', value: String(healthCooling), tone: healthCooling > 0 ? 'warn' : 'muted', hint: '冷却中/额度用尽' },
+            { label: '需重登', value: String(healthError), tone: healthError > 0 ? 'danger' : 'muted', hint: '凭证失效' },
+            { label: '客户端 Key', value: String(keys.length), tone: keys.length > 0 ? 'ok' : 'muted', hint: '访问 key 数' },
+          ] as const).map((m) => (
+            <div key={m.label} className="rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]/40 px-3 py-2.5">
+              <div className="text-[11px] text-[var(--text-muted)]">{m.label}</div>
+              <div className={cn(
+                'text-[20px] font-bold tabular-nums mt-0.5',
+                m.tone === 'ok' ? 'text-[var(--success-strong)]'
+                  : m.tone === 'warn' ? 'text-[var(--warning-deep)]'
+                    : m.tone === 'danger' ? 'text-[var(--danger)]'
+                      : 'text-[var(--text-primary)]',
+              )}>{m.value}</div>
+              <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{m.hint}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* 路由策略 */}
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4">
@@ -478,7 +563,7 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
             role="switch"
             aria-checked={lanOn}
             aria-label="局域网访问"
-            className={cn('cursor-pointer w-[42px] h-[24px] rounded-full relative transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0', lanOn ? 'bg-[var(--primary)]' : 'bg-[#cbd2dc]')}
+            className={cn('cursor-pointer w-[42px] h-[24px] rounded-full relative transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0', lanOn ? 'bg-[var(--primary)]' : 'bg-[var(--switch-off)]')}
           >
             <span className={cn('absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all', lanOn ? 'right-[3px]' : 'left-[3px]')} />
           </button>
@@ -536,6 +621,61 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
           </div>
         </div>
       )}
+
+      {/* 协议兼容(同一地址 + 同一 Key,多协议线任选;内嵌网关自动转协议) */}
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide inline-flex items-center gap-1.5">
+            <Route size={12} /> 协议兼容
+          </div>
+          {hasRealProtoKey && (
+            <button
+              onClick={() => setShowProtoKey((v) => !v)}
+              aria-pressed={showProtoKey}
+              aria-label={showProtoKey ? '隐藏访问 Key' : '显示访问 Key'}
+              title={showProtoKey ? '隐藏 Key(防截图泄露)' : '显示 Key'}
+              className="cursor-pointer text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1.5"
+            >
+              {showProtoKey ? <EyeOff size={13} /> : <Eye size={13} />}
+              {showProtoKey ? '隐藏 Key' : '显示 Key'}
+            </button>
+          )}
+        </div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-1 mb-3">
+          同一个网关地址同时支持 OpenAI Chat、Responses、Anthropic Messages、Gemini 入口 —— 内嵌网关自动转协议,无需按号选择。
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {PROTOCOLS.map((p) => {
+            // 屏上显示打码 Key,复制按钮永远给真 Key(可直接粘进客户端)。
+            const snippet = p.env(protoOrigin, shownProtoKey)
+            const copySnippet = p.env(protoOrigin, realProtoKey)
+            const copied = copiedProto === p.key
+            return (
+              <div key={p.key} className="rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]/40 p-2.5 flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-1.5">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold text-[var(--text-primary)] truncate">{p.name}</div>
+                    <div className="text-[10px] font-mono-data text-[var(--text-muted)] truncate">{p.path}</div>
+                  </div>
+                  <button
+                    onClick={() => void onCopyProto(p.key, copySnippet)}
+                    aria-label={`复制 ${p.name} 环境变量`}
+                    title="复制环境变量片段(含完整 Key)"
+                    className="cursor-pointer w-[26px] h-[26px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center justify-center shrink-0"
+                  >
+                    {copied ? <Check size={13} className="text-[var(--success)]" /> : <Copy size={13} />}
+                  </button>
+                </div>
+                <pre className="rounded-[7px] bg-[var(--bg-card)] border border-[var(--border-light)] px-2 py-1.5 text-[10px] font-mono-data text-[var(--text-secondary)] leading-relaxed overflow-x-auto whitespace-pre">{snippet}</pre>
+                <div className="text-[10px] text-[var(--text-muted)]">{p.note}</div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-2.5">
+          模型目录:<code className="font-mono-data">/v1/models</code> · <code className="font-mono-data">/v1beta/models</code>。示例模型 <code className="font-mono-data">gpt-5.5</code> 仅占位,替换为你要调的模型。
+        </div>
+      </div>
 
       {/* 网关 API Key */}
       <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
@@ -637,6 +777,14 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
               />
               仅失败
             </label>
+            <button
+              onClick={() => void loadLogs(false)}
+              disabled={logBusy}
+              aria-label="刷新日志"
+              className="cursor-pointer text-[11px] font-semibold px-2.5 h-[28px] rounded-[8px] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--primary)] hover:text-[var(--primary)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {logBusy ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />} 刷新
+            </button>
             <button
               onClick={onClearLogs}
               disabled={logBusy || logTotal === 0}

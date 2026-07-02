@@ -1,4 +1,4 @@
-// Package economy 直接照 cockpit 移植「经济与自动化」三件套的纯逻辑 + 持久化:
+// Package economy 直接照 cockpit 移植「经济与自动化」两件套的纯逻辑 + 持久化:
 //
 //  1. 超额预警(ShouldAlert / AlertConfig)
 //     移植自 cockpit crates/cockpit-core/src/modules/codex_account.rs::run_quota_alert_if_needed —
@@ -6,14 +6,11 @@
 //  2. 自动切号(PickAutoSwitch / SwitchConfig)
 //     移植自同文件 pick_auto_switch_target_if_needed + build_switch_candidate + pick_best_candidate;
 //     当前号超额/冷却时按 (min_margin, min_percentage, average_percentage, 最久未用) 选下一个可用号。
-//  3. 速度档(AppSpeed / ResolveContextPreset / ServiceTierValue)
-//     移植自 codex_speed.rs(service tier:Fast->priority、Standard->删键)+ QuickSettingsPopover.tsx
-//     的上下文预设(default/516K/1M/自定义 -> model_context_window + model_auto_compact_token_limit)。
 //
 // 设计约束:
 //   - 本包自包含、可独立 go test:不 import account 包,改用包内 AccountView 视图,
 //     由集成层(hub/bindings)把 account.Account 适配进来。
-//   - 三件套均为纯函数 + JSON 持久化,无上游 HTTP。若后续需要上游调用,
+//   - 两件套均为纯函数 + JSON 持久化,无上游 HTTP。若后续需要上游调用,
 //     一律通过注入的 *http.Client,绝不走远程租号路径。
 package economy
 

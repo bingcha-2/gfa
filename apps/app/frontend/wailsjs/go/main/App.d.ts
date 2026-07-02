@@ -170,8 +170,6 @@ export function LocalGetAlertConfig():Promise<economy.AlertConfig>;
 
 export function LocalGetAntigravitySource():Promise<string>;
 
-export function LocalGetAppSpeed():Promise<economy.AppSpeed>;
-
 export function LocalGetCodexQuickConfig():Promise<codexsettings.QuickConfig>;
 
 export function LocalGetCodexResetCredits(arg1:string):Promise<codexbiz.ResetCreditsSnapshot>;
@@ -271,10 +269,6 @@ export function LocalSetAntigravityPriority(arg1:string):Promise<void>;
 export function LocalSetAntigravitySource(arg1:string):Promise<void>;
 
 export function LocalSetAntigravityWakeupConfig(arg1:boolean,arg2:number):Promise<void>;
-
-export function LocalSetAppSpeed(arg1:economy.AppSpeed):Promise<economy.AppSpeed>;
-
-export function LocalSetCodexAccountServiceTier(arg1:string,arg2:string):Promise<void>;
 
 export function LocalSetCodexPriority(arg1:string):Promise<void>;
 

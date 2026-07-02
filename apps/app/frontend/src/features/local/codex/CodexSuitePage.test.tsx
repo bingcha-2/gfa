@@ -25,7 +25,6 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalCancelCodexLogin: vi.fn().mockResolvedValue(undefined),
     LocalSetPoolEnabled: vi.fn().mockResolvedValue(undefined),
     LocalSetCodexPriority: vi.fn().mockResolvedValue(undefined),
-    LocalSetCodexAccountServiceTier: vi.fn().mockResolvedValue(undefined),
     LocalDeleteAccount: vi.fn().mockResolvedValue(undefined),
     LocalGatewayStart: vi.fn().mockResolvedValue({ running: true, addr: '127.0.0.1:19528', port: 19528 }),
     LocalGatewayStop: vi.fn().mockResolvedValue(undefined),
@@ -99,8 +98,6 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalSetAlertConfig: vi.fn().mockResolvedValue({ enabled: true, thresholdPct: 20 }),
     LocalGetSwitchConfig: vi.fn().mockResolvedValue({ enabled: false, thresholdPct: 5, scopeMode: 'all', selectedAccountIds: null }),
     LocalSetSwitchConfig: vi.fn().mockResolvedValue({ enabled: true, thresholdPct: 5, scopeMode: 'all', selectedAccountIds: null }),
-    LocalGetAppSpeed: vi.fn().mockResolvedValue({ contextPreset: 'default', tier: 'standard' }),
-    LocalSetAppSpeed: vi.fn().mockResolvedValue({ contextPreset: 'preset_1m', tier: 'fast' }),
     // ── codex 上游业务(Wave G · codex-only)──
     LocalRefreshCodexSubscription: vi.fn().mockResolvedValue({ AccountID: 'a1', PlanType: 'pro', SubscriptionActiveUntil: '2026-12-31' }),
     LocalGetCodexResetCredits: vi.fn().mockResolvedValue({ available_count: 2, credits: [], next_expires_at: 0 }),
@@ -708,15 +705,12 @@ describe('CodexSuitePage', () => {
 
   // ── 经济与自动化 UI(Wave G · codex-only,不污染 antigravity)──
 
-  it('账号 tab 顶部读取 alert/switch/speed 当前值', async () => {
+  it('账号 tab 顶部读取 alert/switch 当前值', async () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
     await waitFor(() => expect(app.LocalGetAlertConfig).toHaveBeenCalled())
     await waitFor(() => expect(app.LocalGetSwitchConfig).toHaveBeenCalled())
-    await waitFor(() => expect(app.LocalGetAppSpeed).toHaveBeenCalled())
-    // 当前 default 速度档 → 「默认」段控高亮
-    expect((await screen.findByRole('button', { name: '默认' })).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('超额预警开关 off→on 调 setAlertConfig(带当前阈值)', async () => {
@@ -746,36 +740,6 @@ describe('CodexSuitePage', () => {
     const sw = await screen.findByRole('switch', { name: /自动切号/ })
     fireEvent.click(sw)
     await waitFor(() => expect(app.LocalSetSwitchConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: true })))
-  })
-
-  it('速度档段控点「快速」调 setAppSpeed(tier=fast)', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(await screen.findByRole('button', { name: '快速' }))
-    await waitFor(() => expect(app.LocalSetAppSpeed).toHaveBeenCalledWith(expect.objectContaining({ tier: 'fast' })))
-  })
-
-  it('codex OAuth 号行按号服务档点「快速」调 setCodexAccountServiceTier(id, fast)', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    // 用带 aria-label 的按号档控件消歧(与顶部全局速度档区分)。
-    fireEvent.click(await screen.findByRole('button', { name: '按号服务档 快速' }))
-    await waitFor(() => expect(app.LocalSetCodexAccountServiceTier).toHaveBeenCalledWith('a1', 'fast'))
-  })
-
-  it('速度档选「自定义」露出上下文阈值输入,改值调 setAppSpeed(custom)', async () => {
-    const app = installApp()
-    render(<CodexSuitePage />)
-    await screen.findByText('yifan@example.com')
-    fireEvent.click(await screen.findByRole('button', { name: '自定义' }))
-    const ctx = await screen.findByLabelText('自定义上下文窗口') as HTMLInputElement
-    fireEvent.change(ctx, { target: { value: '516000' } })
-    fireEvent.blur(ctx)
-    await waitFor(() => expect(app.LocalSetAppSpeed).toHaveBeenCalledWith(
-      expect.objectContaining({ contextPreset: 'custom', customContextWindow: 516000 }),
-    ))
   })
 
   it('账号行「刷新订阅」调 refreshCodexSubscription(id) 并显示 plan', async () => {

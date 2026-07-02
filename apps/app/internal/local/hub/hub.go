@@ -130,10 +130,9 @@ type Hub struct {
 	modelProv   *modelprovider.Store
 	autoRefresh *autoRefresher
 
-	// 经济与自动化(① 超额预警 ② 自动切号 ③ 速度档):纯逻辑 + JSON 持久化。
+	// 经济与自动化(① 超额预警 ② 自动切号):纯逻辑 + JSON 持久化。
 	alertStore  *economy.AlertStore
 	switchStore *switchConfigStore
-	speedStore  *economy.SpeedStore
 	// codexSettings 是「Codex 设置」面板的本地持久化。
 	codexSettings *codexsettings.Store
 
@@ -164,7 +163,6 @@ func New(dir string, platform Platform) (*Hub, error) {
 
 		alertStore:    economy.NewAlertStore(dir),
 		switchStore:   newSwitchConfigStore(dir),
-		speedStore:    economy.NewSpeedStore(dir),
 		codexSettings: codexsettings.NewStore(dir),
 
 		groups: accountgroups.NewStore(dir),

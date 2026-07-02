@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, Zap, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2, Coffee } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2, Coffee } from 'lucide-react'
 import {
   type LocalAccountView, type ProviderLocalApi,
-  type AlertConfig, type SwitchConfig, type AppSpeed, type ServiceTier, type ContextPreset,
-  getAlertConfig, setAlertConfig, getSwitchConfig, setSwitchConfig, getAppSpeed, setAppSpeed,
+  type AlertConfig, type SwitchConfig,
+  getAlertConfig, setAlertConfig, getSwitchConfig, setSwitchConfig,
   refreshCodexSubscription, getCodexResetCredits, consumeCodexResetCredit,
   codexReferralEligibility, sendCodexReferralInvites,
   type CodexSubscriptionSnapshot, type CodexResetCreditsSnapshot, type CodexReferralInviteEligibility,
@@ -72,35 +72,24 @@ function Toggle({ on, label, disabled, onToggle }: { on: boolean; label: string;
   )
 }
 
-const SPEED_TIERS: [ServiceTier | 'custom', string][] = [
-  ['standard', '默认'],
-  ['fast', '快速'],
-  ['custom', '自定义'],
-]
-
 /**
- * 经济与自动化条(codex 专属):超额预警(开关+阈值)、自动切号(开关)、速度档(段控+自定义上下文)。
- * 三项后端配置均为全局(非按号),故置于列表顶部一条克制的横条,不堆卡片。
+ * 经济与自动化条(codex 专属):超额预警(开关+阈值)、自动切号(开关)。
+ * 两项后端配置均为全局(非按号),故置于列表顶部一条克制的横条,不堆卡片。
+ * (原「速度档」已删除——Codex 自身就有官方入口调这个,GFA 重复一份徒增一个「改完要重启客户端
+ * 才生效」的隐藏坑,见 local-takeover-branch-state 记忆。)
  */
 function EconomyBar() {
   const [alert, setAlertState] = useState<AlertConfig | null>(null)
   const [sw, setSwState] = useState<SwitchConfig | null>(null)
-  const [speed, setSpeedState] = useState<AppSpeed | null>(null)
-  // 段控选中态独立于服务端回显:点「自定义」即露出输入框,不被服务端归一覆盖。
-  const [tierSel, setTierSel] = useState<ServiceTier | 'custom' | null>(null)
   const [thr, setThr] = useState('')
-  const [ctx, setCtx] = useState('')
   const [err, setErr] = useState('')
 
   useEffect(() => {
     void (async () => {
       try {
-        const [a, s, sp] = await Promise.all([getAlertConfig(), getSwitchConfig(), getAppSpeed()])
+        const [a, s] = await Promise.all([getAlertConfig(), getSwitchConfig()])
         setAlertState(a); setThr(String(a.thresholdPct))
         setSwState(s)
-        setSpeedState(sp)
-        setTierSel(sp.contextPreset === 'custom' ? 'custom' : sp.tier)
-        setCtx(sp.customContextWindow ? String(sp.customContextWindow) : '')
       } catch (e) { setErr(String(e)) }
     })()
   }, [])
@@ -113,24 +102,6 @@ function EconomyBar() {
     setErr('')
     try { setSwState(await setSwitchConfig(next)) } catch (e) { setErr(String(e)) }
   }
-  const saveSpeed = async (next: AppSpeed) => {
-    setErr('')
-    try { setSpeedState(await setAppSpeed(next)) } catch (e) { setErr(String(e)) }
-  }
-
-  const onPickTier = (t: ServiceTier | 'custom') => {
-    if (!speed) return
-    setTierSel(t)
-    if (t === 'custom') {
-      const v = Number(ctx) || 0
-      void saveSpeed({ ...speed, contextPreset: 'custom', customContextWindow: v > 0 ? v : undefined })
-      return
-    }
-    const preset: ContextPreset = speed.contextPreset === 'custom' ? 'default' : speed.contextPreset
-    void saveSpeed({ ...speed, tier: t, contextPreset: preset })
-  }
-
-  const activeTier: ServiceTier | 'custom' = tierSel ?? 'standard'
 
   return (
     <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -157,41 +128,26 @@ function EconomyBar() {
         <Toggle on={!!sw?.enabled} label="自动切号" disabled={!sw} onToggle={() => sw && void saveSwitch({ ...sw, enabled: !sw.enabled })} />
         <span className="text-[12px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1"><Shuffle size={13} /> 自动切号</span>
       </div>
-
-      {/* 速度档 */}
-      <div className="flex items-center gap-2">
-        <span className="text-[12px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1"><Zap size={13} /> 速度档</span>
-        <div className="inline-flex rounded-[9px] bg-[var(--bg-tertiary)] p-0.5">
-          {SPEED_TIERS.map(([t, label]) => {
-            const active = activeTier === t
-            return (
-              <button
-                key={t}
-                type="button"
-                aria-pressed={active}
-                disabled={!speed}
-                onClick={() => onPickTier(t)}
-                className={cn('cursor-pointer text-[12px] font-semibold px-2.5 h-[26px] rounded-[7px] transition-colors disabled:opacity-50', active ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-[var(--shadow-sm)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
-        {activeTier === 'custom' && (
-          <input
-            type="number" min={1}
-            aria-label="自定义上下文窗口"
-            value={ctx}
-            placeholder="上下文窗口"
-            onChange={(e) => setCtx(e.target.value)}
-            onBlur={() => { if (speed) { const v = Number(ctx) || 0; void saveSpeed({ ...speed, contextPreset: 'custom', customContextWindow: v > 0 ? v : undefined }) } }}
-            className="w-[100px] rounded-[7px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[28px] text-[12px] font-mono-data text-[var(--text-primary)] tabular-nums outline-none focus:border-[var(--primary)]"
-          />
-        )}
-      </div>
     </div>
   )
+}
+
+/**
+ * 「名额用尽」类不可邀请原因:此时上游 should_show=false,但仍允许发送邀请
+ * (只是本次不再获得奖励/重置名额)。对齐 cockpit isCodexReferralLimitReached。
+ */
+function isReferralLimitReached(r: CodexReferralInviteEligibility | null): boolean {
+  const code = r?.ineligible_reason_code
+  return code === 'user_limit_reached' || code === 'workspace_limit_reached'
+}
+
+/**
+ * 是否放出邀请输入框:should_show=true,或虽 false 但属「名额用尽」(仍可发)。
+ * 对齐 cockpit shouldShowCodexReferralInvite —— GFA 旧版只认 should_show,
+ * 导致奖励名额用尽的号被整段隐藏、显示「当前不可邀请」而无法发送。
+ */
+function canSendReferral(r: CodexReferralInviteEligibility | null): boolean {
+  return Boolean(r?.should_show) || isReferralLimitReached(r)
 }
 
 /**
@@ -279,9 +235,13 @@ function RowExtras({ account }: { account: LocalAccountView }) {
       {referralOpen && referral && (
         <div className="rounded-[8px] border border-[var(--border-light)] bg-[var(--bg-card)] px-3 py-2 flex flex-col gap-2">
           <div className="text-[11px] text-[var(--text-muted)]">
-            {referral.should_show ? `可邀请 · 剩余 ${referral.remaining_referrals ?? 0} 个名额` : `当前不可邀请${referral.ineligible_reason_code ? ` · ${referral.ineligible_reason_code}` : ''}`}
+            {referral.should_show
+              ? `可邀请 · 剩余 ${referral.remaining_referrals ?? 0} 个名额`
+              : isReferralLimitReached(referral)
+                ? '奖励名额已用完 —— 仍可发送邀请,但本次不再获得奖励/重置名额。'
+                : `当前不可邀请${referral.ineligible_reason_code ? ` · ${referral.ineligible_reason_code}` : ''}`}
           </div>
-          {referral.should_show && (
+          {canSendReferral(referral) && (
             <div className="flex items-center gap-2">
               <input
                 value={inviteEmail}
@@ -311,6 +271,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  const [notice, setNotice] = useState('')
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -429,6 +390,21 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key)
     try { await fn(); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(null) }
+  }
+
+  // 全部刷新额度:逐号刷【全部】自有号(含未在池),回带成功数并给出可见反馈。
+  // 后端单号失败不中断(只回成功计数),故这里对比可刷新号总数(API Key 号不支持刷新、
+  // 不计入分母),明确「刷了几个/几个失败」,避免「点了没反应/没变化」。
+  const onRefreshAll = async () => {
+    setBusy('refresh-all'); setErr(''); setNotice('')
+    try {
+      const refreshable = accounts.filter((a) => a.authKind !== 'apikey').length
+      const ok = await api.refreshAllQuotas()
+      await refresh()
+      if (refreshable === 0) setNotice('没有可刷新的账号(API Key 号请在网页端查看额度)。')
+      else if (ok >= refreshable) setNotice(`已刷新 ${ok} 个账号额度。`)
+      else setNotice(`已刷新 ${ok}/${refreshable} 个账号,${refreshable - ok} 个失败(见各账号状态)。`)
+    } catch (e) { setErr(String(e)) } finally { setBusy(null) }
   }
 
   const onExport = async () => {
@@ -663,6 +639,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   return (
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
+      {notice && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/10 px-3 py-2 text-[12px] text-[var(--text-secondary)] break-all">{notice}</div>}
       {importInfo && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/5 px-3 py-2 text-[12px] text-[var(--success)]">{importInfo}</div>}
       {loginId && (
         <div className="rounded-[10px] border border-[var(--primary)] bg-[var(--primary-light)] px-3 py-2.5 flex flex-col gap-2">
@@ -729,10 +706,10 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
               <Download size={12} /> 导出
             </button>
             <button
-              onClick={() => act('refresh-all', () => api.refreshAllQuotas())}
+              onClick={() => void onRefreshAll()}
               disabled={busy === 'refresh-all' || accounts.length === 0}
               className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 disabled:opacity-40"
-              title="去上游重新拉取全部在池账号额度"
+              title="去上游重新拉取全部自有号额度(含未在池;API Key 号不支持)"
             >
               {busy === 'refresh-all' ? <Loader2 size={12} className="animate-spin" /> : <Gauge size={12} />} 全部刷新额度
             </button>
@@ -871,7 +848,7 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                     </div>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-full">
+                <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
                   <button
                     onClick={() => act(`pool-${a.id}`, () => api.setPoolEnabled(a.id, !a.poolEnabled))}
                     disabled={busy === `pool-${a.id}`}
@@ -879,25 +856,6 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                   >
                     {a.poolEnabled ? '移出池' : '加入池'}
                   </button>
-                  {api.setServiceTier && a.authKind !== 'apikey' && (
-                    <div className="inline-flex rounded-[7px] bg-[var(--bg-tertiary)] p-0.5" title="按号服务档:快速=上游 priority">
-                      {([['standard', '默认'], ['fast', '快速']] as const).map(([tv, label]) => {
-                        const on = (a.serviceTier === 'fast' ? 'fast' : 'standard') === tv
-                        return (
-                          <button
-                            key={tv}
-                            aria-label={`按号服务档 ${label}`}
-                            aria-pressed={on}
-                            disabled={busy === `tier-${a.id}`}
-                            onClick={() => act(`tier-${a.id}`, () => api.setServiceTier!(a.id, tv))}
-                            className={cn('cursor-pointer text-[11px] font-semibold px-2 h-[24px] rounded-[5px] transition-colors disabled:opacity-50', on ? 'bg-[var(--bg-card)] text-[var(--primary-strong)] shadow-[var(--shadow-sm)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
-                          >
-                            {label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
                   {!a.priority && (
                     <button
                       onClick={() => onSetCurrent(a.id)}

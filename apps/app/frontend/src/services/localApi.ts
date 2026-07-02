@@ -20,8 +20,6 @@ export interface LocalAccountView {
   tags: string[] | null
   poolEnabled: boolean
   priority: boolean
-  /** 按号服务档(codex 专属):''(继承/标准)| 'fast'(快速=上游 priority)。 */
-  serviceTier?: string
   hourlyPercent: number
   weeklyPercent: number
   hourlyResetAt: number
@@ -174,8 +172,6 @@ export interface ProviderLocalApi {
   addByApiKey(apiKey: string, baseURL: string, email: string): Promise<LocalAccountView>
   setPoolEnabled(id: string, enabled: boolean): Promise<void>
   setPriority(id: string): Promise<void>
-  /** 按号服务档(仅 codex 支持):'standard'(继承/标准)| 'fast'(快速)。 */
-  setServiceTier?(id: string, tier: ServiceTier): Promise<void>
   /** 按号额度刷新:真去上游拉额度并回填(provider 无关,按 id)。 */
   refreshQuota(id: string): Promise<void>
   /** 刷新本 provider 全部 pool_enabled 自有号额度,返回成功数量。 */
@@ -238,7 +234,6 @@ export const codexLocalApi: ProviderLocalApi = {
   addByApiKey: (key, base, email) => app().LocalAddCodexApiKey(key, base, email) as Promise<LocalAccountView>,
   setPoolEnabled: (id, e) => app().LocalSetPoolEnabled(id, e) as Promise<void>,
   setPriority: (id) => app().LocalSetCodexPriority(id) as Promise<void>,
-  setServiceTier: (id, tier) => setCodexAccountServiceTier(id, tier),
   refreshQuota: (id) => app().LocalRefreshAccountQuota(id) as Promise<void>,
   refreshAllQuotas: () => app().LocalRefreshAllQuotas('codex') as Promise<number>,
   rename: (id, name) => app().LocalRenameAccount(id, name) as Promise<void>,
@@ -479,25 +474,6 @@ export interface SwitchConfig {
   selectedAccountIds: string[] | null
 }
 
-/** ③ 上下文窗口/压缩阈值预设。 */
-export type ContextPreset = 'default' | 'preset_516k' | 'preset_1m' | 'custom'
-
-/** 官方 App 推理速度档:standard=默认(删 service tier 键) / fast=priority。 */
-export type ServiceTier = 'standard' | 'fast'
-
-/** 设某 codex 自有号的按号服务档(standard 继承/标准 | fast 快速=上游 priority)。 */
-export function setCodexAccountServiceTier(id: string, tier: ServiceTier): Promise<void> {
-  return app().LocalSetCodexAccountServiceTier(id, tier) as Promise<void>
-}
-
-/** 统一速度档配置:上下文预设(+ 自定义值)+ service tier。 */
-export interface AppSpeed {
-  contextPreset: ContextPreset
-  tier: ServiceTier
-  customContextWindow?: number
-  customAutoCompact?: number
-}
-
 /** 读取超额预警配置。 */
 export function getAlertConfig(): Promise<AlertConfig> {
   return app().LocalGetAlertConfig() as Promise<AlertConfig>
@@ -521,16 +497,6 @@ export function getSwitchConfig(): Promise<SwitchConfig> {
 /** 保存自动切号配置,返回落盘后的值。 */
 export function setSwitchConfig(cfg: SwitchConfig): Promise<SwitchConfig> {
   return app().LocalSetSwitchConfig(cfg) as Promise<SwitchConfig>
-}
-
-/** 读取速度档配置。 */
-export function getAppSpeed(): Promise<AppSpeed> {
-  return app().LocalGetAppSpeed() as Promise<AppSpeed>
-}
-
-/** 保存速度档配置,返回落盘后的值。 */
-export function setAppSpeed(s: AppSpeed): Promise<AppSpeed> {
-  return app().LocalSetAppSpeed(s) as Promise<AppSpeed>
 }
 
 // ── codex 上游业务(① 订阅 ② 主动重置次数 ③ 邀请返利) ──
