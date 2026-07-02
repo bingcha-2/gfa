@@ -6,14 +6,6 @@ export function ActivateCode(arg1) {
   return window['go']['main']['App']['ActivateCode'](arg1);
 }
 
-export function DetectCompetingClaudeConfig() {
-  return window['go']['main']['App']['DetectCompetingClaudeConfig']();
-}
-
-export function SanitizeCompetingClaudeConfig(arg1) {
-  return window['go']['main']['App']['SanitizeCompetingClaudeConfig'](arg1);
-}
-
 export function BrowseForPath(arg1) {
   return window['go']['main']['App']['BrowseForPath'](arg1);
 }
@@ -28,6 +20,10 @@ export function ClearLogs() {
 
 export function ClearStats() {
   return window['go']['main']['App']['ClearStats']();
+}
+
+export function DetectCompetingClaudeConfig() {
+  return window['go']['main']['App']['DetectCompetingClaudeConfig']();
 }
 
 export function DownloadUpdate() {
@@ -632,6 +628,10 @@ export function RestartToUpdate() {
 
 export function RestoreSelected(arg1) {
   return window['go']['main']['App']['RestoreSelected'](arg1);
+}
+
+export function SanitizeCompetingClaudeConfig(arg1) {
+  return window['go']['main']['App']['SanitizeCompetingClaudeConfig'](arg1);
 }
 
 export function SaveCodexRelayConfig(arg1, arg2, arg3, arg4, arg5) {

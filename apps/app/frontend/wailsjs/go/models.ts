@@ -524,7 +524,7 @@ export namespace hub {
 }
 
 export namespace main {
-
+	
 	export class ClaudeConfigConflict {
 	    id: string;
 	    kind: string;
@@ -532,11 +532,11 @@ export namespace main {
 	    location: string;
 	    detail: string;
 	    severity: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ClaudeConfigConflict(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -545,24 +545,6 @@ export namespace main {
 	        this.location = source["location"];
 	        this.detail = source["detail"];
 	        this.severity = source["severity"];
-	    }
-	}
-	export class SanitizeReport {
-	    cleaned: string[];
-	    skipped: string[];
-	    backupTo: string;
-	    needsUac: boolean;
-
-	    static createFrom(source: any = {}) {
-	        return new SanitizeReport(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.cleaned = source["cleaned"];
-	        this.skipped = source["skipped"];
-	        this.backupTo = source["backupTo"];
-	        this.needsUac = source["needsUac"];
 	    }
 	}
 	export class ProductQuotaWindow {
@@ -784,6 +766,24 @@ export namespace main {
 		}
 	}
 	
+	export class SanitizeReport {
+	    cleaned: string[];
+	    skipped: string[];
+	    backupTo: string;
+	    needsUac: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SanitizeReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cleaned = source["cleaned"];
+	        this.skipped = source["skipped"];
+	        this.backupTo = source["backupTo"];
+	        this.needsUac = source["needsUac"];
+	    }
+	}
 	
 	export class UpdateStatus {
 	    status: string;

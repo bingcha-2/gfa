@@ -26,6 +26,8 @@ export function ClearLogs():Promise<boolean>;
 
 export function ClearStats():Promise<boolean>;
 
+export function DetectCompetingClaudeConfig():Promise<Array<main.ClaudeConfigConflict>>;
+
 export function DownloadUpdate():Promise<void>;
 
 export function GetAccountState():Promise<Record<string, any>>;
@@ -55,10 +57,6 @@ export function GetUpdateStatus():Promise<main.UpdateStatus>;
 export function HeartbeatCheck():Promise<Record<string, any>>;
 
 export function InjectSelected(arg1:Array<string>):Promise<string>;
-
-export function DetectCompetingClaudeConfig():Promise<Array<main.ClaudeConfigConflict>>;
-
-export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
 
 export function InstallStandaloneClaude():Promise<void>;
 
@@ -331,6 +329,8 @@ export function RestartProxy():Promise<void>;
 export function RestartToUpdate():Promise<void>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
+
+export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
 
 export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Record<string, string>):Promise<void>;
 
