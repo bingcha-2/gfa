@@ -7,7 +7,7 @@
   "installerSha256": "B2609673D547F33927DD1707C3B24FA4DB183287CDF1D3FC25ADF0F8044AF622",
   "installerSize": 20931944,
   "changelog": "桌面端体验优化:修复本地反代协议卡片端口显示异常,新增请求日志刷新按钮,精简账号管理界面",
-  "minVersion": "13.0.1",
+  "minVersion": "12.6.3",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.0.1/BingchaAI-13.0.1-arm64.dmg",
