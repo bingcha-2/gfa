@@ -190,6 +190,8 @@ export class RosettaService {
   importCodexAccountCheckedFromText(payload: any) { return this.codexSvc.importCodexAccountCheckedFromText(payload); }
   importCodexAccountsCheckedFromText(payload: any) { return this.codexSvc.importCodexAccountsCheckedFromText(payload); }
   refreshCodexAccountQuota(payload: any) { return this.codexSvc.refreshCodexAccountQuota(payload); }
+  queryCodexResetCredits(payload: any) { return this.codexSvc.queryCodexResetCredits(payload); }
+  consumeCodexResetCredit(payload: any) { return this.codexSvc.consumeCodexResetCredit(payload); }
   startCodexOAuthLogin() { return this.codexSvc.startCodexOAuthLogin(); }
   getCodexOAuthLoginStatus(loginId: string) { return this.codexSvc.getCodexOAuthLoginStatus(loginId); }
   cancelCodexOAuthLogin(loginId: string) { return this.codexSvc.cancelCodexOAuthLogin(loginId); }

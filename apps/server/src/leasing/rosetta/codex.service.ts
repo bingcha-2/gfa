@@ -9,6 +9,10 @@ import * as path from "path";
 
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
 import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
+import {
+  consumeCodexResetCredit as consumeResetCreditUpstream,
+  fetchCodexResetCredits,
+} from "../remote-codex/auth/codex-reset-credits";
 import { AccessKeyService } from "./access-key.service";
 import type { RosettaContext } from "./lib/context";
 import {
@@ -371,6 +375,74 @@ export class CodexService {
         weeklyPercent: cq.weeklyPercent,
         hourlyResetTime: cq.hourlyResetTime || "",
         weeklyResetTime: cq.weeklyResetTime || "",
+      };
+    } catch (err: any) {
+      return { ok: false, email: acc.email, error: String(err?.message || err) };
+    }
+  }
+
+  /**
+   * 后台「重置次数查询」(codex 单账号)= 刷 token 后拉上游 rate-limit-reset-credits,
+   * 回带可用主动重置次数 + 最近到期时间(供前端决定要不要重置)。抄 cockpit 的口径:
+   * 只统计未兑换/未过期的 credit 为可用。
+   */
+  async queryCodexResetCredits(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    try {
+      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
+      const token = await refreshCodexAccessToken(probe);
+      acc.accessToken = token;
+      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
+      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
+      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+
+      const snap = await fetchCodexResetCredits(token, acc.proxyUrl);
+      return {
+        ok: true,
+        email: acc.email,
+        availableCount: snap.availableCount,
+        nextExpiresAt: snap.nextExpiresAt ?? null,
+        credits: snap.credits,
+      };
+    } catch (err: any) {
+      return { ok: false, email: acc.email, error: String(err?.message || err) };
+    }
+  }
+
+  /**
+   * 后台「主动重置」(codex 单账号)= 刷 token 后消耗一次 reset credit,提前重置 5h 窗口。
+   * 消耗成功后顺带拉一次额度落盘,让血条立刻反映重置结果。
+   */
+  async consumeCodexResetCredit(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    try {
+      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
+      const token = await refreshCodexAccessToken(probe);
+      acc.accessToken = token;
+      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
+      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
+      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+
+      await consumeResetCreditUpstream(token, acc.proxyUrl);
+      // 重置后额度已变,拉一次落盘(失败不影响重置本身已成功)。
+      const refreshed = await this.refreshCodexAccountQuota({ accountId }).catch(() => null);
+      return {
+        ok: true,
+        email: acc.email,
+        hourlyPercent: refreshed?.hourlyPercent,
+        weeklyPercent: refreshed?.weeklyPercent,
       };
     } catch (err: any) {
       return { ok: false, email: acc.email, error: String(err?.message || err) };

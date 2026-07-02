@@ -195,6 +195,18 @@ export class RosettaController {
     return this.rosetta.refreshCodexAccountQuota(body);
   }
 
+  // 「重置次数查询」= 拉上游 rate-limit-reset-credits,回带可用主动重置次数。
+  @Post("codex-reset-credits")
+  queryCodexResetCredits(@Body() body: any) {
+    return this.rosetta.queryCodexResetCredits(body);
+  }
+
+  // 「主动重置」= 消耗一次 reset credit,提前重置 5h 窗口。
+  @Post("codex-consume-reset-credit")
+  consumeCodexResetCredit(@Body() body: any) {
+    return this.rosetta.consumeCodexResetCredit(body);
+  }
+
   // ── Claude account pool ─────────────────────────────────────────────
   @Get("anthropic-accounts")
   async listClaudeAccounts() {

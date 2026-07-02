@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, TimerResetIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 import { consoleApiPath } from "@/lib/console/client-api";
@@ -104,6 +104,13 @@ export default function CodexAccountsPage() {
   const [autoStep, setAutoStep] = useState("");
 
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
+  // 「主动重置」弹窗:先查次数(snapshot),再决定要不要消耗一次。
+  const [resetTarget, setResetTarget] = useState<{
+    account: CodexAccount;
+    availableCount: number;
+    nextExpiresAt: number | null;
+  } | null>(null);
+  const [resetConsuming, setResetConsuming] = useState(false);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
   const [busyId, setBusyId] = useState<number | null>(null);
   // 「刷新无额度账号」批量进行中。
@@ -472,6 +479,49 @@ export default function CodexAccountsPage() {
     }
   }
 
+  // 「重置次数」= 查上游可用主动重置次数,弹窗展示后由用户决定是否消耗一次。
+  async function openReset(account: CodexAccount) {
+    setBusyId(account.id);
+    try {
+      const res = await fetch(consoleApiPath("rosetta/codex-reset-credits"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "查询失败");
+      setResetTarget({ account, availableCount: data.availableCount ?? 0, nextExpiresAt: data.nextExpiresAt ?? null });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "查询失败");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // 消耗一次主动重置次数(提前重置 5h 窗口),后端顺带刷额度。
+  async function handleConsumeReset() {
+    if (!resetTarget) return;
+    const { account } = resetTarget;
+    setResetConsuming(true);
+    try {
+      const res = await fetch(consoleApiPath("rosetta/codex-consume-reset-credit"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "重置失败");
+      const tail = typeof data.hourlyPercent === "number" ? ` · 5h ${Math.round(data.hourlyPercent)}%` : "";
+      toast.success(`#${account.id} 已重置${tail}`);
+      setResetTarget(null);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "重置失败");
+    } finally {
+      setResetConsuming(false);
+    }
+  }
+
   // 批量刷新所有「额度缺失(列表显示 —)」的账号,逐个走 codex-refresh-quota。
   // 也可当诊断用:点完看 toast 的成功/失败数,就知道拉额度接口通不通。
   async function handleRefreshMissing() {
@@ -811,6 +861,10 @@ export default function CodexAccountsPage() {
                         onClick={() => handleRefresh(a)}>
                         {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
                       </Button>
+                      <Button variant="ghost" size="icon" title="重置次数（查可用主动重置次数并可消耗一次）" disabled={busyId === a.id}
+                        onClick={() => openReset(a)}>
+                        {busyId === a.id ? <Spinner size={14} /> : <TimerResetIcon className="size-4 text-sky-500" />}
+                      </Button>
                       <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
                         onClick={() => handleReactivate(a)}>
                         <BadgeCheckIcon className="size-4 text-amber-500" />
@@ -826,6 +880,43 @@ export default function CodexAccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!resetTarget} onOpenChange={(open) => !open && !resetConsuming && setResetTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>主动重置 · Codex #{resetTarget?.account.id}</AlertDialogTitle>
+            <AlertDialogDescription>{resetTarget?.account.email}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1 text-sm">
+            <div>
+              可用主动重置次数:
+              <span className={`ml-1 font-medium ${(resetTarget?.availableCount ?? 0) > 0 ? "text-foreground" : "text-destructive"}`}>
+                {resetTarget?.availableCount ?? 0}
+              </span>
+            </div>
+            {resetTarget?.nextExpiresAt ? (
+              <div className="text-xs text-muted-foreground">最近到期:{new Date(resetTarget.nextExpiresAt * 1000).toLocaleString()}</div>
+            ) : null}
+            {(resetTarget?.availableCount ?? 0) > 0 ? (
+              <div className="pt-1 text-xs text-muted-foreground">消耗一次将提前重置该账号的 5h 限流窗口,不可撤销。</div>
+            ) : (
+              <div className="pt-1 text-xs text-muted-foreground">当前没有可用的主动重置次数。</div>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetConsuming}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resetConsuming || (resetTarget?.availableCount ?? 0) <= 0}
+              onClick={(e) => {
+                e.preventDefault();
+                handleConsumeReset();
+              }}
+            >
+              {resetConsuming ? <Spinner size={14} /> : "消耗一次并重置"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
