@@ -616,10 +616,14 @@ export class AccessKeyStore {
    * 不影响座位分配/发卡闸 —— 即「只标独享标签,不锁号」,满容量卡仍可被超卖、与他人共用。
    */
   isExclusiveCard(cardId: string): boolean {
-    const rec = this.findById(cardId) as any;
+    return this.isExclusiveRecord(this.findById(cardId));
+  }
+
+  /** 记录级独享判定(isExclusiveCard 与 publicStatus.exclusive 的同一真相源)。 */
+  private isExclusiveRecord(rec: AccessKeyRecord | undefined | null): boolean {
     if (!rec) return false;
-    if (rec.exclusive === true) return true;
-    const weight = Math.max(1, Math.floor(Number(rec.weight) || 1));
+    if ((rec as any).exclusive === true) return true;
+    const weight = Math.max(1, Math.floor(Number((rec as any).weight) || 1));
     return weight >= ACCOUNT_SHARE_CAPACITY;
   }
 
@@ -1005,8 +1009,9 @@ export class AccessKeyStore {
       // 客户端「我的卡 · 份额」条展开显示「份额 weight/shareCapacity」。
       weight: Math.max(1, Math.floor(Number((record as any).weight) || 1)),
       shareCapacity: ACCOUNT_SHARE_CAPACITY,
-      // 独享:权威标志,客户端「尊贵·独享」badge 据此(不再靠 weight>=capacity 推断)。
-      exclusive: (record as any).exclusive === true,
+      // 独享:权威标志,客户端「尊贵·独享」badge 据此。与 isExclusiveCard 同口径
+      // (显式 exclusive 或 weight≥号总份数),否则满容量卡血条走独享单层、badge 却消失。
+      exclusive: this.isExclusiveRecord(record),
     };
   }
 }

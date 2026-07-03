@@ -106,6 +106,19 @@ describe('AccessKeyStore.isExclusiveCard', () => {
     const store = makeStore([]);
     expect(store.isExclusiveCard('nope')).toBe(false);
   });
+
+  // publicStatus.exclusive 是客户端「尊贵·独享」badge 的唯一数据源,必须与 isExclusiveCard 同口径:
+  // 满容量卡(weight≥号总份数)血条已走独享单层展示,badge 也必须一起出现,否则「卡看着独享、标识却没了」。
+  it('publicStatus.exclusive 与 isExclusiveCard 同口径(满容量卡也带 badge 标志)', () => {
+    const store = makeStore([
+      { id: 'ex', key: 's0', status: 'active', exclusive: true, weight: 1 },
+      { id: 'full', key: 's1', status: 'active', weight: ACCOUNT_SHARE_CAPACITY },
+      { id: 'share', key: 's2', status: 'active', weight: 1 },
+    ]);
+    expect(store.publicStatus(store.findById('ex')!).exclusive).toBe(true);
+    expect(store.publicStatus(store.findById('full')!).exclusive).toBe(true);
+    expect(store.publicStatus(store.findById('share')!).exclusive).toBe(false);
+  });
 });
 
 // ── Basic CRUD ───────────────────────────────────────────────────────────────
