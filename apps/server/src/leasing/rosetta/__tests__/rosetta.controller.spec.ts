@@ -63,6 +63,20 @@ describe("RosettaController — 账号列表 usedShares 改用 DB 订阅口径",
   );
 });
 
+describe("RosettaController — 母号关联订阅(点 email)", () => {
+  it("按 accountId 转数字后委托给 RosettaService", async () => {
+    const rosetta: any = {
+      listClaudeAccountSubscriptions: vi.fn(async () => ({ ok: true, accountId: 7, subscriptions: [] })),
+    };
+    const controller = new RosettaController(rosetta, {} as any, {} as any, {} as any, {} as any);
+
+    const res = await controller.listClaudeAccountSubscriptions("7");
+
+    expect(rosetta.listClaudeAccountSubscriptions).toHaveBeenCalledWith(7);
+    expect(res).toEqual({ ok: true, accountId: 7, subscriptions: [] });
+  });
+});
+
 describe("RosettaController CLIProxy report", () => {
   it("is public so the shared-secret check runs before admin JWT auth", () => {
     const isPublic = Reflect.getMetadata(IS_PUBLIC_KEY, RosettaController.prototype.reportCliProxyFailure);

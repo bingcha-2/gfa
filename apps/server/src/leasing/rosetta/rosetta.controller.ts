@@ -213,6 +213,12 @@ export class RosettaController {
     return this.overlaySubscriptionShares(this.rosetta.listClaudeAccounts(), "anthropic");
   }
 
+  // 点某个母号 email → 该号绑定的 ACTIVE 订阅(客户/订单),与列表「份额用量」同口径。
+  @Get("anthropic-account-subscriptions")
+  listClaudeAccountSubscriptions(@Query("accountId") accountId: string) {
+    return this.rosetta.listClaudeAccountSubscriptions(Number(accountId));
+  }
+
   @Post("anthropic-add-account")
   addClaudeAccount(@Body() body: any) {
     return this.rosetta.addClaudeAccount(body);

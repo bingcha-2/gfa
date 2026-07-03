@@ -19,7 +19,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { AccountSubscriptionsDialog, type AccountSubscriptionsTarget } from "@/components/console/leasing/account-subscriptions-dialog";
 import { consoleApiPath } from "@/lib/console/client-api";
+import { accountStatusLabel } from "@/lib/console/account-status";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -173,6 +176,11 @@ export default function ClaudeAccountsPage() {
   const [accounts, setAccounts] = useState<ClaudeAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // 账号列表状态筛选:tone 口径复用 accountStatusLabel(green=正常/yellow=冷却中/red=失效)。
+  // 默认只看正常号,失效/冷却号需显式切换,避免一堆红号淹没日常运维。
+  const [statusFilter, setStatusFilter] = useState<"all" | "green" | "yellow" | "red">("green");
+  // 点某个母号 email 弹出的「关联订单/账户」对话框目标。
+  const [subsTarget, setSubsTarget] = useState<AccountSubscriptionsTarget | null>(null);
 
   const [email, setEmail] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
@@ -195,9 +203,6 @@ export default function ClaudeAccountsPage() {
   const [pwEditVal, setPwEditVal] = useState("");
   const [pwSaving, setPwSaving] = useState(false);
   // 指纹浏览器号行内编辑。
-  const [adspowerEditId, setAdspowerEditId] = useState<number | null>(null);
-  const [adspowerEditVal, setAdspowerEditVal] = useState("");
-  const [adspowerSaving, setAdspowerSaving] = useState(false);
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
@@ -888,31 +893,6 @@ export default function ClaudeAccountsPage() {
     }
   }
 
-  function startEditAdspower(account: ClaudeAccount) {
-    setAdspowerEditId(account.id);
-    setAdspowerEditVal(account.adspowerProfileId || "");
-  }
-
-  async function handleSaveAdspower(account: ClaudeAccount) {
-    setAdspowerSaving(true);
-    try {
-      const res = await fetch(consoleApiPath("rosetta/anthropic-set-adspower-profile"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId: account.id, adspowerProfileId: adspowerEditVal.trim() }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "保存失败");
-      toast.success(adspowerEditVal.trim() ? `#${account.id} AdsPower 浏览器号已设置` : `#${account.id} AdsPower 浏览器号已清除`);
-      setAdspowerEditId(null);
-      fetchAccounts(true);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
-    } finally {
-      setAdspowerSaving(false);
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -922,6 +902,17 @@ export default function ClaudeAccountsPage() {
   }
 
   const enabledCount = accounts.filter((a) => a.enabled).length;
+  // 每个号的状态 tone(green/yellow/red),用于列表筛选 + 计数徽标。
+  const accountTone = (a: ClaudeAccount) => accountStatusLabel(a.quotaStatus, a.quotaStatusReason).tone;
+  const toneCounts = accounts.reduce(
+    (acc, a) => {
+      acc[accountTone(a)] += 1;
+      return acc;
+    },
+    { green: 0, yellow: 0, red: 0 } as Record<"green" | "yellow" | "red", number>,
+  );
+  const visibleAccounts =
+    statusFilter === "all" ? accounts : accounts.filter((a) => accountTone(a) === statusFilter);
 
   return (
     <div className="space-y-6">
@@ -1364,15 +1355,33 @@ export default function ClaudeAccountsPage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
             <BotIcon className="size-4" /> 账号列表
           </CardTitle>
-          <span className="text-sm text-muted-foreground">{enabledCount}/{accounts.length} 启用</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <ToggleGroup
+              multiple={false}
+              value={[statusFilter]}
+              onValueChange={(value) => setStatusFilter((value[0] as typeof statusFilter) || "all")}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="green">正常 {toneCounts.green}</ToggleGroupItem>
+              <ToggleGroupItem value="yellow">冷却中 {toneCounts.yellow}</ToggleGroupItem>
+              <ToggleGroupItem value="red">失效 {toneCounts.red}</ToggleGroupItem>
+              <ToggleGroupItem value="all">全部 {accounts.length}</ToggleGroupItem>
+            </ToggleGroup>
+            <span className="text-sm text-muted-foreground">{enabledCount}/{accounts.length} 启用</span>
+          </div>
         </CardHeader>
         <CardContent>
           {!accounts.length ? (
             <div className="py-8 text-center text-sm text-muted-foreground">暂无 Anthropic 账号</div>
+          ) : !visibleAccounts.length ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              当前筛选无账号（共 {accounts.length} 个，点「全部」查看)
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -1393,7 +1402,7 @@ export default function ClaudeAccountsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {accounts.map((a) => {
+                {visibleAccounts.map((a) => {
                   const manualReason = manualLoginBlockReason(a);
                   const manualKey = manualLoginKey("account", a.id);
                   const manualBusy = manualLoginBusyKey === manualKey;
@@ -1401,7 +1410,14 @@ export default function ClaudeAccountsPage() {
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">#{a.id}</TableCell>
                     <TableCell>
-                      <div>{a.email}</div>
+                      <button
+                        type="button"
+                        className="text-left underline-offset-2 hover:underline"
+                        title="查看关联订单 / 账户"
+                        onClick={() => setSubsTarget({ id: a.id, email: a.email })}
+                      >
+                        {a.email}
+                      </button>
                       {a.alias ? <div className="text-xs text-muted-foreground">{a.alias}</div> : null}
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
@@ -1542,6 +1558,11 @@ export default function ClaudeAccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AccountSubscriptionsDialog
+        target={subsTarget}
+        onOpenChange={(open) => !open && setSubsTarget(null)}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

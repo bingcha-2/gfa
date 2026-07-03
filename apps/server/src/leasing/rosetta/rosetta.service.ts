@@ -7,7 +7,7 @@ import { AutomationService } from "../../google-family/automation/automation.ser
 import { proxyAwareFetch } from "../lease-core/egress";
 import type { CachedToken } from "./google-api";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { occupiedSharesByAccount } from "../subscription/seat";
+import { occupiedSharesByAccount, seatWeight, isExclusive } from "../subscription/seat";
 import { rowToConfig } from "../subscription/subscription-config";
 
 import { AccessKeyService } from "./access-key.service";
@@ -42,6 +42,27 @@ type RosettaServiceOptions = {
 };
 
 const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
+
+/** 后台「点 email 看关联订单/账户」返回的单条绑定订阅(见 listClaudeAccountSubscriptions)。 */
+export type ClaudeAccountSubscription = {
+  id: string;
+  customerId: string;
+  customerEmail: string;
+  customerName: string;
+  status: string;
+  exclusive: boolean;
+  weight: number;
+  startsAt: string | null;
+  expiresAt: string | null;
+  order: {
+    id: string;
+    outTradeNo: string;
+    amountCents: number;
+    payChannel: string;
+    status: string;
+    paidAt: string | null;
+  } | null;
+};
 
 /**
  * RosettaService is a thin FACADE. The actual logic lives in per-domain services
@@ -169,6 +190,72 @@ export class RosettaService {
     });
     const configs = rows.map((r: any) => ({ id: r.id, ...rowToConfig(r) }));
     return occupiedSharesByAccount(configs, product);
+  }
+
+  /**
+   * 某 Claude 母号(accountId)当前被哪些 ACTIVE 订阅绑定 —— 后台点 email 查看「这个号
+   * 服务了哪些客户/订单」的数据源。口径与 occupiedSharesFromSubscriptions 完全一致(只数
+   * config.line=bind、bindings.anthropic 命中),额外带出客户 email + 下单 PlanOrder。无
+   * prisma(单测未注入)或非法 accountId 时返回空列表。
+   */
+  async listClaudeAccountSubscriptions(
+    accountId: number,
+  ): Promise<{ ok: true; accountId: number; subscriptions: ClaudeAccountSubscription[] }> {
+    const id = Number(accountId);
+    if (!this.prisma || !(id > 0)) return { ok: true, accountId: id, subscriptions: [] };
+    const rows = await this.prisma.subscription.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true, status: true, startsAt: true, expiresAt: true, activatedFromOrderId: true,
+        // rowToConfig 口径:config 优先、空则回退 legacy 列(与座位会计一致)。
+        config: true, productEntitlements: true, bucketLimits: true, bindings: true, levels: true,
+        weight: true, deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+        customer: { select: { id: true, email: true, displayName: true } },
+      },
+    });
+    const matched = rows.filter((r: any) => {
+      const cfg = rowToConfig(r) as any;
+      return cfg.line === "bind" && Number(cfg.bindings?.anthropic) === id;
+    });
+
+    // 下单 PlanOrder 批量查一次(activatedFromOrderId 精确 order→sub 链)。
+    const orderIds = Array.from(
+      new Set(matched.map((r: any) => r.activatedFromOrderId).filter((x: unknown): x is string => Boolean(x))),
+    );
+    const orders = orderIds.length
+      ? await this.prisma.planOrder.findMany({
+          where: { id: { in: orderIds } },
+          select: { id: true, outTradeNo: true, amountCents: true, payChannel: true, status: true, paidAt: true },
+        })
+      : [];
+    const orderById = new Map<string, any>(orders.map((o: any) => [o.id, o]));
+
+    const subscriptions: ClaudeAccountSubscription[] = matched.map((r: any) => {
+      const cfg = rowToConfig(r) as any;
+      const order = r.activatedFromOrderId ? orderById.get(r.activatedFromOrderId) : null;
+      return {
+        id: r.id,
+        customerId: r.customer?.id ?? "",
+        customerEmail: r.customer?.email ?? "",
+        customerName: r.customer?.displayName ?? "",
+        status: r.status,
+        exclusive: isExclusive(cfg),
+        weight: seatWeight(cfg),
+        startsAt: r.startsAt ? new Date(r.startsAt).toISOString() : null,
+        expiresAt: r.expiresAt ? new Date(r.expiresAt).toISOString() : null,
+        order: order
+          ? {
+              id: order.id,
+              outTradeNo: order.outTradeNo ?? "",
+              amountCents: Number(order.amountCents ?? 0),
+              payChannel: order.payChannel ?? "",
+              status: order.status ?? "",
+              paidAt: order.paidAt ? new Date(order.paidAt).toISOString() : null,
+            }
+          : null,
+      };
+    });
+    return { ok: true, accountId: id, subscriptions };
   }
 
   // ── Antigravity accounts (→ AntigravityAccountService) ──────────────────
