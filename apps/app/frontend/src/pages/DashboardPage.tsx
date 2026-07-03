@@ -5,6 +5,7 @@ import { UsageBar } from '@/components/UsageBar'
 import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
 import { SubscriptionUsageCarousel } from '@/components/SubscriptionUsageCarousel'
+import { ExclusiveBadge } from '@/components/ExclusiveBadge'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts } from '@/lib/usageBars'
@@ -16,7 +17,7 @@ import * as api from '@/services/wails'
 import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
 import { useState } from 'react'
-import { BarChart3, Crown, RefreshCw } from 'lucide-react'
+import { BarChart3, RefreshCw } from 'lucide-react'
 
 function formatUSD(value: number): string {
   const n = Math.max(0, Number(value) || 0)
@@ -147,9 +148,12 @@ export function DashboardPage() {
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
   const isQuotaLikeError = /quota|limit|公平|额度|恢复|retry-after|token limit/i.test(leaserError)
   const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude') && !isQuotaLikeError
+  // 多订阅时逐订阅走 carousel,每张卡自带「尊贵 · 独享」badge(跟 quota.exclusive,混档如实标注);
+  // 顶部账户级 badge 仅在无订阅回退(单卡视图)时展示,避免用单卡口径误标整个账户。
+  const hasSubscriptions = !!(account?.subscriptions && account.subscriptions.length > 0)
   // 独享卡:整号 100% 归你。展示「尊贵 · 独享」标识。优先用后端权威 cardExclusive;
   // 缺省(旧服务端)回退到 weight>=capacity 启发式。
-  const exclusiveCard = shouldUseExclusiveDisplay({ cardWeight: cardShareSeats, cardShareCapacity, exclusive: cardExclusive, accountProblem })
+  const exclusiveCard = !hasSubscriptions && shouldUseExclusiveDisplay({ cardWeight: cardShareSeats, cardShareCapacity, exclusive: cardExclusive, accountProblem })
 
   // 独享订阅(weight≥号总份数,即就你一个人用整个号):此时「号余量」就是「你的卡额度」,
   // 把号余量条映射成卡额度真实数值/窗口,而不是只给一个 fair-share 百分比。
@@ -267,11 +271,7 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle>
-          {exclusiveCard && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-500">
-              <Crown size={11} /> 尊贵 · 独享
-            </span>
-          )}
+          {exclusiveCard && <ExclusiveBadge />}
           <Button
             size="sm"
             variant="ghost"
@@ -291,8 +291,8 @@ export function DashboardPage() {
               {t('dashboard.accountProblem', { error: leaserError })}
             </div>
           )}
-          {account?.subscriptions && account.subscriptions.length > 0 ? (
-            <SubscriptionUsageCarousel subscriptions={account.subscriptions} boundAccounts={boundAccounts} />
+          {hasSubscriptions ? (
+            <SubscriptionUsageCarousel subscriptions={account!.subscriptions} boundAccounts={boundAccounts} />
           ) : (() => {
             const PROVIDERS = [
               { id: 'antigravity', name: 'Antigravity' },

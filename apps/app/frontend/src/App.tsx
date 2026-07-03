@@ -9,6 +9,7 @@ import { TakeoverCenterPage } from '@/features/takeover/TakeoverCenterPage'
 import { CodexSuitePage } from '@/features/local/codex/CodexSuitePage'
 import { AntigravitySuitePage } from '@/features/local/antigravity/AntigravitySuitePage'
 import { ToastHost } from '@/components/ToastHost'
+import { PatronThanks } from '@/components/PatronThanks'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { usePolling } from '@/hooks/usePolling'
@@ -95,6 +96,7 @@ export default function App() {
         {renderPage()}
       </AppShell>
       <ToastHost />
+      <PatronThanks />
     </div>
   )
 }

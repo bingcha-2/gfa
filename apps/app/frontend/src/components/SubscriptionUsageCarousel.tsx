@@ -3,6 +3,7 @@ import { productLabel } from '@/lib/usageBars'
 import { formatResetDuration } from '@/lib/quotaDisplay'
 import { useT } from '@/i18n'
 import { NestedShareBar } from './NestedShareBar'
+import { ExclusiveBadge } from './ExclusiveBadge'
 
 // 后端 product 用 antigravity/codex/anthropic;旧卡可能仍带 'claude',归一到 anthropic,
 // 以便把按 product 收敛的 boundAccounts(当前实际在租的号)join 到逐订阅血条上。
@@ -124,6 +125,8 @@ function SubscriptionCard({ sub, emailByProduct }: { sub: AccountSubscription; e
   const remain = sub.remainFraction
   const pct = remain == null ? null : Math.round(remain * 100)
   const color = remain == null ? '' : healthColor(remain * 100)
+  // 独享是卡级标志(逐 product 盖同一个值);任一产品标 exclusive 即整张订阅独享 → 逐卡出 badge。
+  const exclusive = sub.products.some((p) => sub.productQuota?.[p]?.exclusive === true)
 
   return (
     <div className="rounded-[12px] border border-[var(--border-light)] p-3.5">
@@ -140,6 +143,7 @@ function SubscriptionCard({ sub, emailByProduct }: { sub: AccountSubscription; e
         ) : (
           <span className="text-[11px] text-[var(--text-secondary)]">{t('account.activeMember')}</span>
         )}
+        {exclusive && <ExclusiveBadge />}
         <span className="ml-auto text-[11px] font-mono-data text-[var(--text-muted)]">#{shortId}</span>
       </div>
 

@@ -108,6 +108,48 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.queryByText(/账号总剩余/)).not.toBeInTheDocument()
   })
 
+  it('shows the 尊贵·独享 badge only on exclusive subscription cards (mixed multi-sub)', () => {
+    const subscriptions: AccountSubscription[] = [
+      sub({
+        id: 'sub-excl-1111',
+        products: ['anthropic'],
+        productQuota: {
+          anthropic: { hourlyPercent: 100, weeklyPercent: 100, hourlyResetAt: null, weeklyResetAt: null, myShare: 1, exclusive: true },
+        },
+      }),
+      sub({
+        id: 'sub-share-2222',
+        priority: 1,
+        products: ['codex'],
+        productQuota: {
+          codex: { hourlyPercent: 50, weeklyPercent: 50, hourlyResetAt: null, weeklyResetAt: null, myShare: 0.25, exclusive: false },
+        },
+      }),
+    ]
+
+    render(<SubscriptionUsageCarousel subscriptions={subscriptions} />)
+
+    // 独享订阅一张卡带 badge;拼车订阅那张不带 —— 混档多订阅下逐卡如实标注。
+    expect(screen.getByText(/尊贵 · 独享/)).toBeInTheDocument()
+    expect(screen.getAllByText(/尊贵 · 独享/).length).toBe(1)
+  })
+
+  it('renders no 尊贵·独享 badge when no subscription is exclusive', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            productQuota: {
+              anthropic: { hourlyPercent: 80, weeklyPercent: 60, hourlyResetAt: null, weeklyResetAt: null, myShare: 0.25, exclusive: false },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.queryByText(/尊贵 · 独享/)).not.toBeInTheDocument()
+  })
+
   it('falls back to single-layer account bars when fair-share fields are absent', () => {
     render(
       <SubscriptionUsageCarousel
