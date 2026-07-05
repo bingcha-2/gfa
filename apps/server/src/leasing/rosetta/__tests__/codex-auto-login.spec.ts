@@ -79,6 +79,85 @@ describe("Codex automated login", () => {
     });
   });
 
+  it("persists failed auto-login status on the placeholder Codex account", async () => {
+    vi.mocked(runCodexBrowserLogin).mockResolvedValueOnce({
+      ok: false,
+      error: "mail-code-timeout",
+      step: "email_code_polling",
+    });
+    const svc = new CodexService({ dataDir, codexOAuthPort: 1455 } as any, stubAccessKey);
+
+    const result = svc.startAutomatedCodexLogin({
+      email: "pending@openai.test",
+      password: "mail-password",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+      adspowerProfileId: "profile-pending",
+    });
+
+    expect(result).toMatchObject({ ok: true, jobId: expect.any(String) });
+    await vi.waitFor(() => {
+      const stored = JSON.parse(fs.readFileSync(path.join(dataDir, "codex-accounts.json"), "utf8"));
+      expect(stored.accounts[0]).toMatchObject({
+        email: "pending@openai.test",
+        autoLoginStatus: "failed",
+        autoLoginStep: "email_code_polling",
+        autoLoginError: "mail-code-timeout",
+        adspowerProfileId: "profile-pending",
+      });
+    });
+
+    expect(svc.listCodexAccounts().accounts[0]).toMatchObject({
+      email: "pending@openai.test",
+      autoLoginStatus: "failed",
+      autoLoginStep: "email_code_polling",
+      autoLoginError: "mail-code-timeout",
+    });
+  });
+
+  it("clears stale auto-login failure markers after a later successful OAuth exchange", async () => {
+    writeJson(path.join(dataDir, "codex-accounts.json"), {
+      accounts: [{
+        id: 9,
+        email: "retry@openai.test",
+        refreshToken: "",
+        enabled: false,
+        proxyUrl: "socks5://user:pass@198.51.100.10:443",
+        adspowerProfileId: "profile-retry",
+        autoLoginStatus: "failed",
+        autoLoginStep: "email_code_polling",
+        autoLoginError: "mail-code-timeout",
+      }],
+    });
+    const tokenFetch = vi.fn(async () => new Response(JSON.stringify({
+      id_token: "eyJhbGciOiJub25lIn0.eyJlbWFpbCI6InJldHJ5QG9wZW5haS50ZXN0In0.sig",
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      expires_in: 3600,
+    }), { status: 200 }));
+    vi.mocked(runCodexBrowserLogin).mockResolvedValueOnce({ ok: true, code: "oauth-code" });
+    const svc = new CodexService({ dataDir, codexOAuthPort: 1455, codexOAuthFetch: tokenFetch } as any, stubAccessKey);
+
+    const result = svc.startAutomatedCodexLogin({
+      email: "retry@openai.test",
+      password: "mail-password",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+      adspowerProfileId: "profile-retry",
+    });
+
+    expect(result).toMatchObject({ ok: true, jobId: expect.any(String) });
+    await vi.waitFor(() => {
+      const stored = JSON.parse(fs.readFileSync(path.join(dataDir, "codex-accounts.json"), "utf8"));
+      expect(stored.accounts[0]).toMatchObject({
+        email: "retry@openai.test",
+        refreshToken: "refresh-token",
+        enabled: true,
+      });
+      expect(stored.accounts[0].autoLoginStatus).toBeUndefined();
+      expect(stored.accounts[0].autoLoginStep).toBeUndefined();
+      expect(stored.accounts[0].autoLoginError).toBeUndefined();
+    });
+  });
+
   it("exposes profile metadata in listCodexAccounts", () => {
     writeJson(path.join(dataDir, "codex-accounts.json"), {
       accounts: [{
@@ -87,6 +166,8 @@ describe("Codex automated login", () => {
         refreshToken: "rt",
         adspowerProfileId: "profile-3",
         adspowerProfileStatus: "active",
+        autoLoginStatus: "running",
+        autoLoginStep: "email_code_polling",
       }],
     });
     const svc = new CodexService({ dataDir } as any, stubAccessKey);
@@ -94,6 +175,8 @@ describe("Codex automated login", () => {
     expect(svc.listCodexAccounts().accounts[0]).toMatchObject({
       adspowerProfileId: "profile-3",
       adspowerProfileStatus: "active",
+      autoLoginStatus: "running",
+      autoLoginStep: "email_code_polling",
     });
   });
 });

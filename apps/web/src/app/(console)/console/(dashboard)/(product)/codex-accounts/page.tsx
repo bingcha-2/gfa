@@ -41,6 +41,9 @@ type CodexAccount = {
   adspowerProfileStatus?: string;
   adspowerProfileProvider?: string;
   adspowerProfileLastUsedAt?: string;
+  autoLoginStatus?: string;
+  autoLoginStep?: string;
+  autoLoginError?: string;
   quotaStatus?: string;
   quotaStatusReason?: string;
 };

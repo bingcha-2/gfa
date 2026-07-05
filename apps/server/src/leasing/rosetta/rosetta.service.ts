@@ -303,6 +303,7 @@ export class RosettaService {
   cancelClaudeOAuthLogin(loginId: string) { return this.claudeSvc.cancelClaudeOAuthLogin(loginId); }
   submitClaudeOAuthCallback(loginId: string, rawInput: string) { return this.claudeSvc.submitClaudeOAuthCallback(loginId, rawInput); }
   fetchClaudeMagicLink(payload: any) { return this.claudeSvc.fetchClaudeMagicLink(payload); }
+  fetchClaudeVerificationCode(payload: any) { return this.claudeSvc.fetchClaudeVerificationCode(payload); }
   followClaudeMagicLink(loginId: string, url: string) { return this.claudeSvc.followMagicLink(loginId, url); }
   startAutoClaudeOAuth(payload: any) { return this.claudeSvc.startAutoClaudeOAuth(payload); }
   getAutoClaudeOAuthStatus(taskId: string) { return this.claudeSvc.getAutoOAuthStatus(taskId); }

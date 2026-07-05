@@ -96,6 +96,31 @@ describe("startAutoClaudeOAuth SK direct login", () => {
     );
   });
 
+  it("prefers the mailbox login path when both password and sessionKey are provided", () => {
+    const svc = new ClaudeAccountService({ dataDir } as any, stubAccessKey);
+    const run = vi.spyOn(svc as any, "runAutoOAuth").mockResolvedValue(undefined);
+
+    const res = svc.startAutoClaudeOAuth({
+      email: "mail-user@example.com",
+      password: "mail-password",
+      proxyUrl: "",
+      adspowerProfileId: "k1bvbavq",
+      sessionKey: "sk-ant-sid02-AbCdEf1234567890",
+    });
+
+    expect(res.ok).toBe(true);
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      "mail-user@example.com",
+      "mail-password",
+      "",
+      "k1bvbavq",
+      undefined,
+      undefined,
+      "",
+    );
+  });
+
   it("tracks concurrent auto-OAuth tasks independently instead of clobbering", () => {
     const svc = new ClaudeAccountService({ dataDir } as any, stubAccessKey);
     vi.spyOn(svc as any, "runAutoOAuth").mockResolvedValue(undefined);

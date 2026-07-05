@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 import { AccountSubscriptionsDialog, type AccountSubscriptionsTarget } from "@/components/console/leasing/account-subscriptions-dialog";
+import { formatAutoOAuthStartError } from "@/lib/console/anthropic-auto-oauth";
 import { consoleApiPath } from "@/lib/console/client-api";
 import { accountStatusLabel } from "@/lib/console/account-status";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -669,10 +670,23 @@ export default function ClaudeAccountsPage() {
           totpSecret: importParsed.totpSecret,
         }),
       });
-      const start = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
+      const rawStart = await res.text();
+      let start: any = {};
+      try {
+        start = rawStart ? JSON.parse(rawStart) : {};
+      } catch {
+        start = { ok: false };
+      }
       if (!start.ok || !start.taskId) {
-        setAutoResult({ ok: false, error: start.error || "启动失败" });
-        toast.error(start.error || "启动失败");
+        const error = formatAutoOAuthStartError({
+          ok: res.ok,
+          status: res.status,
+          statusText: res.statusText,
+          body: start,
+          rawBody: rawStart,
+        });
+        setAutoResult({ ok: false, error });
+        toast.error(error);
         setAutoRunning(false);
         return;
       }
