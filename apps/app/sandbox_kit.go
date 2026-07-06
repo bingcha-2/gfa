@@ -20,7 +20,9 @@ const sandboxSentinelToken = "bcai-claude-proxy"
 func installSbxCommandString(goos string) string {
 	switch goos {
 	case "darwin":
-		return "brew install docker/tap/sbx"
+		// 必须先 brew trust docker/tap:Homebrew 现要求信任第三方 tap,否则 install 报
+		// 「Refusing to load cask ... from untrusted tap」。视频原始步骤即含此步。
+		return "brew trust docker/tap && brew install docker/tap/sbx"
 	case "windows":
 		return "winget install -h Docker.sbx"
 	case "linux":

@@ -8,7 +8,7 @@ import (
 
 func TestInstallSbxCommandString(t *testing.T) {
 	cases := map[string]string{
-		"darwin":  "brew install docker/tap/sbx",
+		"darwin":  "brew trust docker/tap && brew install docker/tap/sbx",
 		"windows": "winget install -h Docker.sbx",
 	}
 	for goos, want := range cases {
