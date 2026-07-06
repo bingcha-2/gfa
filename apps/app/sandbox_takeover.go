@@ -17,10 +17,11 @@ import (
 
 // SbxStatus sbx 安装状态,供卡片展示。
 type SbxStatus struct {
-	Installed bool   `json:"installed"`
-	Version   string `json:"version"`
-	KvmOK     bool   `json:"kvmOK"` // 仅 Linux 有意义
-	Note      string `json:"note"`
+	Installed   bool   `json:"installed"`
+	Version     string `json:"version"`
+	KvmOK       bool   `json:"kvmOK"`       // 仅 Linux 有意义
+	Unsupported bool   `json:"unsupported"` // 平台/硬件硬性不支持(如 Intel Mac),Note 说明原因
+	Note        string `json:"note"`
 }
 
 // sandboxKitDir 返回 kit 的固定落盘路径(<用户配置目录>/bcai/sandbox/gfa-claude)。
@@ -74,6 +75,16 @@ func resolveSbxPath() string {
 // currentInstallCommandString 当前平台的 sbx 安装命令(展示给用户复制,作 InstallSbx 的兜底)。
 func currentInstallCommandString() string { return installSbxCommandString(runtime.GOOS) }
 
+// macIsAppleSilicon 判断是否 Apple 芯片(sbx 只支持 M 系列;Intel Mac 不支持)。
+// 用 sysctl hw.optional.arm64:即使本进程在 Rosetta 下(GOARCH=amd64),它仍如实报硬件。
+func macIsAppleSilicon() bool {
+	out, err := exec.Command("sysctl", "-n", "hw.optional.arm64").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "1"
+}
+
 // InstallSbx 打开系统终端并跑安装命令(brew/winget/apt)。抑制态短路。
 // 为什么开终端而非后台静默 exec:装 sbx 常要 sudo / 先装 Xcode CLT(都需交互),
 // 且终端登录 shell 有完整 PATH(能找到 brew);后台静默 exec 这些全做不到,还没进度。
@@ -115,6 +126,10 @@ func DetectSbx() SbxStatus {
 	if appActionsSuppressed() {
 		return SbxStatus{}
 	}
+	// Intel Mac 硬性不支持:sbx 只跑在 Apple 芯片上。早退,卡片直接显示不可用。
+	if runtime.GOOS == "darwin" && !macIsAppleSilicon() {
+		return SbxStatus{Unsupported: true, Note: "sbx 需要 Apple 芯片(M 系列),此 Intel Mac 不支持沙箱模式"}
+	}
 	path := resolveSbxPath()
 	if path == "" {
 		return SbxStatus{Installed: false, Note: "未检测到 sbx"}
@@ -140,7 +155,12 @@ func ApplyPolicy(gatewayPort int) error {
 	if sbx == "" {
 		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
 	}
-	return exec.Command(sbx, policyAllowArgs(gatewayPort)...).Run()
+	// 捕获 sbx 真实输出:policy 失败(exit 1)时把它的报错透出来,而不是笼统「失败」。
+	out, err := exec.Command(sbx, policyAllowArgs(gatewayPort)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sbx policy 失败: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // writeManagedName 把当前托管沙箱名记到 kit 目录,供 Restore 精确停止(免去解析 sbx ls)。

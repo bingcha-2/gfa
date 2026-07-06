@@ -784,6 +784,7 @@ export namespace main {
 	    installed: boolean;
 	    version: string;
 	    kvmOK: boolean;
+	    unsupported: boolean;
 	    note: string;
 	
 	    static createFrom(source: any = {}) {
@@ -795,6 +796,7 @@ export namespace main {
 	        this.installed = source["installed"];
 	        this.version = source["version"];
 	        this.kvmOK = source["kvmOK"];
+	        this.unsupported = source["unsupported"];
 	        this.note = source["note"];
 	    }
 	}

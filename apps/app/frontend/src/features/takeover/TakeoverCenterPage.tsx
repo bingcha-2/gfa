@@ -304,11 +304,12 @@ function isDangerousMountPath(p: string): boolean {
   return ['/System', '/Library', '/etc', '/usr', '/bin'].includes(clean)
 }
 
-// 把后端裸错误(exec exit status、executable not found)翻成人话。
+// 把后端裸错误翻成人话。注意:别把 exit status 1 笼统当成「没装」——那会盖掉 sbx 的真实报错。
+// 只有明确「找不到可执行文件」才提示安装;其余(含 sbx policy 自身报错)原样透出,便于排查。
 function friendlySandboxError(e: unknown): string {
   const s = String(e)
-  if (/executable file not found|exit status 1|not found/i.test(s)) return '没找到 sbx 命令,请先安装 Docker sbx。'
-  if (/请先登录/.test(s)) return '请先登录账号再开启接管。'
+  if (/executable file not found|未找到 sbx/i.test(s)) return '没找到 sbx 命令,请先安装 Docker sbx。'
+  if (/请先登录账号/.test(s)) return '请先登录冰茶账号再开启接管。'
   return s.replace(/^Error:\s*/, '')
 }
 
@@ -382,6 +383,7 @@ function SandboxCard() {
   }, [refresh, checkPrereq])
 
   const installed = !!status?.installed
+  const unsupported = !!status?.unsupported // 硬性不支持(如 Intel Mac)
   // Windows 上 WHP 没启用 → sbx 起不来,先拦这一步。
   const hvBlocked = isWin && winPrereq != null && !winPrereq.hypervisorOK
 
@@ -432,18 +434,25 @@ function SandboxCard() {
         <div className="flex items-center justify-between h-[40px]">
           <div className="min-w-0">
             <div className="text-[12px] text-[var(--text-primary)] font-medium">Docker 沙箱运行时</div>
-            <div className={cn('text-[10px] truncate', installed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-              {installed ? `已就绪${status?.version ? ' · ' + status.version.trim().split('\n')[0] : ''}` : '未检测到 sbx'}
+            <div className={cn('text-[10px] truncate', unsupported ? 'text-[var(--danger)]' : installed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+              {unsupported ? '此设备不支持' : installed ? `已就绪${status?.version ? ' · ' + status.version.trim().split('\n')[0] : ''}` : '未检测到 sbx'}
             </div>
           </div>
-          {!installed && (
+          {!installed && !unsupported && (
             <Button size="sm" variant="default" disabled={busy === 'install' || installing} onClick={install} className="shrink-0 min-w-[84px]">
               {installing ? '安装中…' : '安装 sbx'}
             </Button>
           )}
         </div>
 
-        {status?.note && (
+        {unsupported && (
+          <div className="flex items-start gap-1.5 pt-2 pb-1 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+            <ShieldAlert className="w-3.5 h-3.5 mt-px shrink-0 text-[var(--danger)]" />
+            <span>{status?.note}</span>
+          </div>
+        )}
+
+        {status?.note && !unsupported && (
           <div className="flex items-start gap-1.5 pt-1 pb-2 text-[10px] text-[var(--warning-strong)]">
             <ShieldAlert className="w-3 h-3 mt-px shrink-0" />
             <span>{status.note}</span>
@@ -451,7 +460,7 @@ function SandboxCard() {
         )}
 
         {/* Windows 前置:Hypervisor Platform 没启用则沙箱起不来,先拦下 */}
-        {hvBlocked && (
+        {!unsupported && hvBlocked && (
           <div className="flex flex-col gap-2 mt-2 rounded-[9px] border border-[var(--warning)] bg-[var(--bg-tertiary)] p-3">
             <div className="flex items-start gap-1.5">
               <ShieldAlert className="w-3.5 h-3.5 mt-px shrink-0 text-[var(--warning-strong)]" />
@@ -470,7 +479,7 @@ function SandboxCard() {
           </div>
         )}
 
-        {!installed ? (
+        {unsupported ? null : !installed ? (
           <div className="flex flex-col gap-2 pt-2 pb-1">
             <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
               点「安装 sbx」冰茶会开一个终端帮你装(要密码就输一下),装完这里自动变绿。装好后即可在隔离沙箱里跑 Claude Code。
