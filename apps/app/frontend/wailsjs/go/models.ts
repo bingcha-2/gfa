@@ -748,6 +748,20 @@ export namespace main {
 		}
 	}
 	
+	export class SandboxMount {
+	    path: string;
+	    readOnly: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SandboxMount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.readOnly = source["readOnly"];
+	    }
+	}
 	export class SanitizeReport {
 	    cleaned: string[];
 	    skipped: string[];
@@ -764,6 +778,24 @@ export namespace main {
 	        this.skipped = source["skipped"];
 	        this.backupTo = source["backupTo"];
 	        this.needsUac = source["needsUac"];
+	    }
+	}
+	export class SbxStatus {
+	    installed: boolean;
+	    version: string;
+	    kvmOK: boolean;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SbxStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.version = source["version"];
+	        this.kvmOK = source["kvmOK"];
+	        this.note = source["note"];
 	    }
 	}
 	

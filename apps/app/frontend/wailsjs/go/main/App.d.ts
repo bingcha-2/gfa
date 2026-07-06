@@ -324,6 +324,16 @@ export function RestartToUpdate():Promise<void>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
+export function SandboxGetStatus():Promise<main.SbxStatus>;
+
+export function SandboxInstall():Promise<void>;
+
+export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string):Promise<string>;
+
+export function SandboxRestore():Promise<string>;
+
+export function SandboxUSTimezones():Promise<Array<string>>;
+
 export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
 
 export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Record<string, string>):Promise<void>;

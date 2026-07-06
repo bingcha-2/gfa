@@ -39,6 +39,11 @@ import {
   HeartbeatCheck as _HeartbeatCheck,
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
+  SandboxGetStatus as _SandboxGetStatus,
+  SandboxInstall as _SandboxInstall,
+  SandboxUSTimezones as _SandboxUSTimezones,
+  SandboxPrepare as _SandboxPrepare,
+  SandboxRestore as _SandboxRestore,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal / Site URLs =====
@@ -365,4 +370,25 @@ export async function saveCodexRelayConfig(
 // ===== Browser =====
 export function openURL(url: string): void {
   BrowserOpenURL(url)
+}
+
+// ===== Sandbox mode takeover (Claude Code · sbx) =====
+export async function sandboxGetStatus(): Promise<main.SbxStatus> {
+  return _SandboxGetStatus()
+}
+
+export async function sandboxInstall(): Promise<void> {
+  await _SandboxInstall()
+}
+
+export async function sandboxUSTimezones(): Promise<string[]> {
+  return _SandboxUSTimezones()
+}
+
+export async function sandboxPrepare(mounts: main.SandboxMount[], timezone: string): Promise<string> {
+  return _SandboxPrepare(mounts, timezone)
+}
+
+export async function sandboxRestore(): Promise<string> {
+  return _SandboxRestore()
 }

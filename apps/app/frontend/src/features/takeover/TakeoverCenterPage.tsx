@@ -10,6 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
+import { sandboxGetStatus, sandboxInstall, sandboxUSTimezones, sandboxPrepare, sandboxRestore, browseForPath } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users } from 'lucide-react'
 
@@ -293,6 +294,119 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
   )
 }
 
+// ── Claude Code · 沙箱模式(sbx)──────────────────────────────────────────────
+// 冰茶只准备(检测/装 sbx、生成 kit、放行 policy、递命令);交互式 sbx run 由用户在自己终端跑。
+type SandboxMountItem = { path: string; readOnly: boolean }
+
+function isDangerousMountPath(p: string): boolean {
+  const clean = p.replace(/[/\\]+$/, '')
+  if (clean === '' || clean === '/' || /^[A-Za-z]:\\?$/.test(clean)) return true
+  return ['/System', '/Library', '/etc', '/usr', '/bin'].includes(clean)
+}
+
+function SandboxCard() {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof sandboxGetStatus>> | null>(null)
+  const [mounts, setMounts] = useState<SandboxMountItem[]>([])
+  const [timezones, setTimezones] = useState<string[]>([])
+  const [tz, setTz] = useState('America/New_York')
+  const [command, setCommand] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await sandboxGetStatus()) } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
+  }, [refresh])
+
+  const install = async () => {
+    setBusy(true); setErr('')
+    try { await sandboxInstall(); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  }
+
+  const addMount = async () => {
+    try {
+      const p = await browseForPath('选择要挂载到沙箱的目录')
+      if (p) setMounts((m) => m.some((x) => x.path === p) ? m : [...m, { path: p, readOnly: false }])
+    } catch { /* cancelled */ }
+  }
+
+  const prepare = async () => {
+    setBusy(true); setErr(''); setCopied(false)
+    try { setCommand(await sandboxPrepare(mounts, tz)) } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  }
+
+  const restore = async () => {
+    setBusy(true); setErr('')
+    try { await sandboxRestore(); setCommand('') } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  }
+
+  const copy = () => {
+    navigator.clipboard.writeText(command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
+  }
+
+  return (
+    <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="Docker sbx 隔离沙箱里跑 Claude Code,请求仍经冰茶网关出口(隔离 + IP 脱敏)">
+      <div className="py-2 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] text-[var(--text-secondary)]">
+            Docker sbx:{status?.installed ? `已安装 ${status.version?.trim() || ''}` : '未检测到'}
+            {status?.note && <span className="text-[10px] text-[var(--warning)] ml-1">{status.note}</span>}
+          </span>
+          {!status?.installed && (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={install}>安装 sbx</Button>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-[var(--text-primary)]">挂载目录</span>
+            <Button size="sm" variant="ghost" onClick={addMount}>+ 添加</Button>
+          </div>
+          {mounts.length === 0 && <span className="text-[10px] text-[var(--text-muted)]">未选目录:沙箱里的 Claude 看不到任何项目文件</span>}
+          {mounts.map((m, i) => (
+            <div key={m.path} className="flex items-center gap-2 text-[11px]">
+              <span className="font-mono-data truncate flex-1 text-[var(--text-secondary)]">{m.path}</span>
+              {isDangerousMountPath(m.path) && <span className="text-[10px] text-[var(--warning)]">⚠ 越界目录</span>}
+              <button className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)]" onClick={() => setMounts((ms) => ms.map((x, j) => j === i ? { ...x, readOnly: !x.readOnly } : x))}>{m.readOnly ? '只读' : '读写'}</button>
+              <button className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)]" onClick={() => setMounts((ms) => ms.filter((_, j) => j !== i))}>移除</button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-[var(--text-secondary)]">时区</span>
+          <select className="text-[11px] bg-[var(--bg-tertiary)] rounded px-2 py-1 text-[var(--text-primary)]" value={tz} onChange={(e) => setTz(e.target.value)}>
+            {timezones.map((z) => <option key={z} value={z}>{z}</option>)}
+          </select>
+          <span className="text-[10px] text-[var(--text-muted)]">语言固定 en_US</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" disabled={busy || !status?.installed} onClick={prepare}>开启沙箱接管</Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={restore}>移除</Button>
+        </div>
+
+        {err && <div className="text-[10px] text-[var(--danger)]">{err}</div>}
+
+        {command && (
+          <div className="flex flex-col gap-1">
+            <div className="text-[10px] text-[var(--text-muted)]">复制到你自己的终端运行:</div>
+            <div className="flex items-center gap-2 bg-[var(--bg-tertiary)] rounded px-2 py-1.5">
+              <code className="font-mono-data text-[11px] truncate flex-1 text-[var(--text-primary)]">{command}</code>
+              <Button size="sm" variant="ghost" onClick={copy}>{copied ? '已复制' : '复制'}</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </ProductCard>
+  )
+}
+
 export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) => void } = {}) {
   const t = useT()
   const tk = useRemoteTakeover()
@@ -357,6 +471,9 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
             />
           )}
         </ProductCard>
+
+        {/* ── Claude Code · 沙箱模式(sbx) ── */}
+        <SandboxCard />
 
         {/* ── Codex(远程 / 本地) ── */}
         <LocalCapableCard

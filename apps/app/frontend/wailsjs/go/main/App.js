@@ -618,6 +618,26 @@ export function RestoreSelected(arg1) {
   return window['go']['main']['App']['RestoreSelected'](arg1);
 }
 
+export function SandboxGetStatus() {
+  return window['go']['main']['App']['SandboxGetStatus']();
+}
+
+export function SandboxInstall() {
+  return window['go']['main']['App']['SandboxInstall']();
+}
+
+export function SandboxPrepare(arg1, arg2) {
+  return window['go']['main']['App']['SandboxPrepare'](arg1, arg2);
+}
+
+export function SandboxRestore() {
+  return window['go']['main']['App']['SandboxRestore']();
+}
+
+export function SandboxUSTimezones() {
+  return window['go']['main']['App']['SandboxUSTimezones']();
+}
+
 export function SanitizeCompetingClaudeConfig(arg1) {
   return window['go']['main']['App']['SanitizeCompetingClaudeConfig'](arg1);
 }
