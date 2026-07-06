@@ -155,6 +155,10 @@ func ApplyPolicy(gatewayPort int) error {
 	if sbx == "" {
 		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
 	}
+	// 全局网络策略需先初始化,否则 allow 报「status 412: global network policy has not been
+	// initialized」。balanced = 默认拒绝 + 放行常见开发站点(兼顾隔离与 Claude Code 用 git/npm)。
+	// 已初始化则此步报错,忽略——由下面的 allow 决定成败。
+	_ = exec.Command(sbx, "policy", "init", "balanced").Run()
 	// 捕获 sbx 真实输出:policy 失败(exit 1)时把它的报错透出来,而不是笼统「失败」。
 	out, err := exec.Command(sbx, policyAllowArgs(gatewayPort)...).CombinedOutput()
 	if err != nil {
