@@ -73,6 +73,7 @@ var takeoverTargets = []TakeoverTarget{
 	claudeCodeTarget{},
 	claudeDesktopTarget{},
 	claudeSandboxTarget{},
+	claudeVscodeSandboxTarget{},
 }
 
 // findTakeoverTarget 按调度键或产品 id 查找。
@@ -93,7 +94,7 @@ func targetRequiredProduct(productID string) string {
 		return "codex"
 	case "antigravity_ide", "antigravity_hub":
 		return "antigravity"
-	case "claude_code", "claude_desktop", "claude_sandbox":
+	case "claude_code", "claude_desktop", "claude_sandbox", "claude_vscode_sandbox":
 		return "anthropic"
 	default:
 		return ""

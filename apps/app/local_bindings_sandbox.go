@@ -1,6 +1,10 @@
 package main
 
-import "github.com/wailsapp/wails/v2/pkg/runtime"
+import (
+	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
 
 // 沙箱模式接管 Wails 绑定。冰茶只准备(装/配/递命令),交互式 sbx run 由用户在自己终端跑。
 // 触机器动作在 sandbox_takeover.go 已过 appActionsSuppressed() 短路。
@@ -34,23 +38,65 @@ func (a *App) SandboxEnableHypervisor() error { return enableWindowsHypervisor()
 // SandboxLogin 开终端跑 sbx login(Docker Hub 登录,首次使用必做)。
 func (a *App) SandboxLogin() error { return SbxLogin() }
 
-// SandboxUSTimezones 供前端时区下拉。
-func (a *App) SandboxUSTimezones() []string { return usTimezones() }
+// ── VSCode 扩展沙箱接管(第 7 目标)──
+// SandboxVscodeStatus 卡片状态(VSCode 装没、sbx 装没、是否已接管)。
+func (a *App) SandboxVscodeStatus() VscodeSandboxStatus { return vscodeSandboxStatus() }
 
-// SandboxPrepare 生成带挂载/时区的 kit + 放行 policy,返回给用户复制到终端的命令。
-// timezone 空则用默认(America/New_York)。Phase 2 会在此处按出口 IP 覆盖 timezone。
-func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermissions bool) (string, error) {
+// SandboxVscodeEnable 接管:写 wrapper 脚本 + claudeProcessWrapper 设置(沙箱由扩展下次启动惰性建)。
+func (a *App) SandboxVscodeEnable() (string, error) {
 	if err := validateTakeoverPrereqs(LoadConfig()); err != nil {
 		return "", err
 	}
+	return claudeVscodeSandboxTarget{}.Inject(effectiveProxyPort())
+}
+
+// SandboxVscodeDisable 还原:清设置 + 删脚本。
+func (a *App) SandboxVscodeDisable() (string, error) { return claudeVscodeSandboxTarget{}.Restore() }
+
+// SandboxUSTimezones 供前端时区下拉。
+func (a *App) SandboxUSTimezones() []string { return usTimezones() }
+
+// SandboxModelCfg 自定义模型配置。Custom=false(默认)→ 走冰茶网关租号;
+// Custom=true → 沙箱里的 Claude Code 直连自定义 Anthropic 兼容端点(如火山方舟 kimi)。
+type SandboxModelCfg struct {
+	Custom  bool   `json:"custom"`
+	BaseURL string `json:"baseURL"` // ANTHROPIC_BASE_URL(须 Anthropic 兼容,如 .../api/plan)
+	Token   string `json:"token"`   // ANTHROPIC_AUTH_TOKEN
+	Model   string `json:"model"`   // ANTHROPIC_MODEL(如 kimi-k2.6)
+}
+
+// SandboxCreate 生成 kit + 放行 policy + 后台建 box(sbx create,box 建完 stopped,不进入)。
+// 返回建好的 box 名,前端据此进列表 / 拿「进入」命令。进入的交互 TUI 才需终端,建 box 冰茶后台干。
+// model.Custom=false 走冰茶网关(默认);=true 直连自定义模型端点。
+// openNetwork=true → 沙箱网络全放开(caps.network.allow=**);文件隔离不受影响(microVM 只见挂载目录)。
+func (a *App) SandboxCreate(mounts []SandboxMount, timezone string, model SandboxModelCfg, openNetwork bool) (string, error) {
+	custom := model.Custom && strings.TrimSpace(model.BaseURL) != ""
+	// 自定义模型不依赖冰茶租号,故不强制登录冰茶账号;冰茶托管才校验。
+	if !custom {
+		if err := validateTakeoverPrereqs(LoadConfig()); err != nil {
+			return "", err
+		}
+	}
 	port := effectiveProxyPort()
 	o := defaultKitOptions(port)
+	if custom {
+		o.BaseURL = strings.TrimSpace(model.BaseURL)
+		o.AuthToken = strings.TrimSpace(model.Token)
+		o.Model = strings.TrimSpace(model.Model)
+		if h := hostFromURL(o.BaseURL); h != "" {
+			o.NetworkAllow = h // 放行自定义模型域名;冰茶网关 localhost 由 ApplyPolicy 顺带放行,无害
+		}
+	}
+	if openNetwork {
+		o.NetworkAllow = "**" // 该沙箱全放开网络(仅此沙箱,不动全局;文件仍只见挂载目录)
+	}
 	if timezone != "" {
-		// 用户在 UI 显式选了时区 → 尊重用户。
 		o.Timezone = timezone
-	} else if tz, err := probeExitTimezone(GetLeaser().CurrentEgressProxyURL()); err == nil {
-		// Phase 2:未指定则按当前粘性租约的出口 IP 探一次地理时区(失败回退默认美东)。
-		o.Timezone = tz
+	} else if !custom {
+		// 冰茶托管:未指定则按粘性租约出口 IP 探时区。自定义模型无租约,保持默认美东。
+		if tz, err := probeExitTimezone(GetLeaser().CurrentEgressProxyURL()); err == nil {
+			o.Timezone = tz
+		}
 	}
 	kitDir, err := GenerateKit(o)
 	if err != nil {
@@ -59,20 +105,28 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermiss
 	if err := ApplyPolicy(port); err != nil {
 		return "", err
 	}
-	// 固定命名(gfa-claude-<项目名>);沙箱真实存在与否由 SandboxList 直接查 sbx ls,不再本地记名单。
 	name := sandboxName(mounts)
-	return runCommandString(name, kitDir, mounts, skipPermissions), nil
-}
-
-// SandboxList 真实存在的托管沙箱(查 sbx ls -q,只认 gfa-claude- 前缀)。永不返回 nil。
-func (a *App) SandboxList() []string {
-	if names := listManagedNames(); names != nil {
-		return names
+	if err := createSandbox(name, kitDir, mounts); err != nil {
+		return "", err
 	}
-	return []string{}
+	return name, nil
 }
 
-// SandboxStopOne 停止单个托管沙箱(sbx rm)。安全线只动 gfa- 前缀;失败原因透给前端。
+// SandboxEnterCommand 「进入」命令(复制到终端)。box 已由 SandboxCreate 建好(kit/工作区/挂载烧进 spec),
+// 故进入只需 sbx run --name;skipPermissions 时给沙箱里的 claude 加 --dangerously-skip-permissions。
+func (a *App) SandboxEnterCommand(name string, skipPermissions bool) string {
+	return enterCommandString(name, skipPermissions)
+}
+
+// SandboxList 真实存在的托管沙箱(查 sbx ls --json,只认 gfa- 前缀,含状态/工作区/来源)。永不返回 nil。
+func (a *App) SandboxList() []SandboxInfo {
+	if infos := listManagedSandboxes(); infos != nil {
+		return infos
+	}
+	return []SandboxInfo{}
+}
+
+// SandboxStopOne 停止并移除单个托管沙箱(sbx rm --force)。安全线只动 gfa- 前缀;失败原因透给前端。
 // 停完前端会重查 sbx ls,列表自然反映真实状态。
 func (a *App) SandboxStopOne(name string) error { return stopSandbox(name) }
 

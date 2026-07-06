@@ -44,12 +44,16 @@ import {
   SandboxInstallCommand as _SandboxInstallCommand,
   SandboxBrowseDir as _SandboxBrowseDir,
   SandboxList as _SandboxList,
+  SandboxCreate as _SandboxCreate,
+  SandboxEnterCommand as _SandboxEnterCommand,
   SandboxStopOne as _SandboxStopOne,
   SandboxWindowsPrereq as _SandboxWindowsPrereq,
   SandboxEnableHypervisor as _SandboxEnableHypervisor,
   SandboxLogin as _SandboxLogin,
+  SandboxVscodeStatus as _SandboxVscodeStatus,
+  SandboxVscodeEnable as _SandboxVscodeEnable,
+  SandboxVscodeDisable as _SandboxVscodeDisable,
   SandboxUSTimezones as _SandboxUSTimezones,
-  SandboxPrepare as _SandboxPrepare,
   SandboxRestore as _SandboxRestore,
 } from '../../wailsjs/go/main/App'
 
@@ -396,7 +400,7 @@ export async function sandboxBrowseDir(title: string): Promise<string> {
   return _SandboxBrowseDir(title)
 }
 
-export async function sandboxList(): Promise<string[]> {
+export async function sandboxList(): Promise<main.SandboxInfo[]> {
   return _SandboxList()
 }
 
@@ -416,12 +420,28 @@ export async function sandboxLogin(): Promise<void> {
   await _SandboxLogin()
 }
 
+export async function sandboxVscodeStatus(): Promise<main.VscodeSandboxStatus> {
+  return _SandboxVscodeStatus()
+}
+
+export async function sandboxVscodeEnable(): Promise<string> {
+  return _SandboxVscodeEnable()
+}
+
+export async function sandboxVscodeDisable(): Promise<string> {
+  return _SandboxVscodeDisable()
+}
+
 export async function sandboxUSTimezones(): Promise<string[]> {
   return _SandboxUSTimezones()
 }
 
-export async function sandboxPrepare(mounts: main.SandboxMount[], timezone: string, skipPermissions: boolean): Promise<string> {
-  return _SandboxPrepare(mounts, timezone, skipPermissions)
+export async function sandboxCreate(mounts: main.SandboxMount[], timezone: string, model: main.SandboxModelCfg, openNetwork: boolean): Promise<string> {
+  return _SandboxCreate(mounts, timezone, model, openNetwork)
+}
+
+export async function sandboxEnterCommand(name: string, skipPermissions: boolean): Promise<string> {
+  return _SandboxEnterCommand(name, skipPermissions)
 }
 
 export async function sandboxRestore(): Promise<string> {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { Button } from '@/components/ui/button'
-import { Modal } from '@/components/Modal'
+import { Modal, useModal } from '@/components/Modal'
 import { CompetingRelayDialog } from '@/components/CompetingRelayDialog'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import { ProviderLogo } from '@/components/ProviderLogo'
@@ -10,7 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxPrepare, sandboxRestore, sandboxList, sandboxStopOne } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
@@ -354,20 +354,77 @@ function CopyBox({ text }: { text: string }) {
   )
 }
 
+// ── Claude Code · VSCode 沙箱模式(第 7 目标,Phase 1)──
+function VscodeSandboxCard() {
+  const [st, setSt] = useState<Awaited<ReturnType<typeof sandboxVscodeStatus>> | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  const refresh = useCallback(async () => {
+    try { setSt(await sandboxVscodeStatus()) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { refresh() }, [refresh])
+
+  const run = (fn: () => Promise<string>) => {
+    setBusy(true); setErr(''); setMsg('')
+    fn().then(setMsg).catch((e) => setErr(friendlySandboxError(e))).finally(() => { setBusy(false); refresh() })
+  }
+
+  const editors = st?.editors ?? []
+  const enabled = !!st?.enabled
+  const canEnable = editors.length > 0 && !!st?.sbxInstalled
+
+  return (
+    <ProductCard name="Claude Code · VSCode 沙箱模式" provider="anthropic" note="VSCode/Cursor/Antigravity 等的 Claude 面板不动,底层 claude 进沙箱跑(隔离 + 请求经冰茶)">
+      <div className="flex flex-col gap-2.5 py-1">
+        <div className="flex items-center justify-between h-[38px]">
+          <div className="min-w-0 text-[10px] leading-tight">
+            <span className={cn(editors.length > 0 ? 'text-[var(--text-secondary)]' : 'text-[var(--text-muted)]')} title={editors.join('、')}>编辑器:{editors.length > 0 ? editors.join('、') : '未检测到'}</span>
+            <span className="mx-1.5 text-[var(--border)]">·</span>
+            <span className={cn(st?.sbxInstalled ? 'text-[var(--text-secondary)]' : 'text-[var(--warning-strong)]')}>sbx:{st?.sbxInstalled ? '已装' : '未装'}</span>
+            {enabled && <span className="ml-1.5 text-[var(--success)]">· 已接管</span>}
+          </div>
+          {enabled ? (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(sandboxVscodeDisable)} className="shrink-0">
+              {busy ? '处理中…' : '关闭接管'}
+            </Button>
+          ) : (
+            <Button size="sm" variant="default" disabled={busy || !canEnable} onClick={() => run(sandboxVscodeEnable)} className="shrink-0 min-w-[92px]">
+              {busy ? '处理中…' : '开启接管'}
+            </Button>
+          )}
+        </div>
+        {!st?.sbxInstalled && <p className="text-[10px] text-[var(--text-muted)]">需先在上面「Claude Code · 沙箱模式」卡里装好 sbx。</p>}
+        {enabled && <p className="text-[10px] text-[var(--text-muted)]">重开 VSCode 的 Claude 面板生效;首次会拉沙箱镜像。native diff / 选区上下文(Phase 2)暂不可用。</p>}
+        {msg && <p className="text-[10px] text-[var(--success)]">{msg}</p>}
+        {err && <p className="text-[10px] text-[var(--danger)]">{err}</p>}
+      </div>
+    </ProductCard>
+  )
+}
+
 function SandboxCard() {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof sandboxGetStatus>> | null>(null)
   const [mounts, setMounts] = useState<SandboxMountItem[]>([])
   const [timezones, setTimezones] = useState<string[]>([])
   const [tz, setTz] = useState('America/New_York')
-  const [command, setCommand] = useState('')
+  const [msg, setMsg] = useState('') // 创建成功后的提示(替代原来复制一把梭命令)
   const [installCmd, setInstallCmd] = useState('')
   const [installing, setInstalling] = useState(false)
-  const [skipPerms, setSkipPerms] = useState(true) // 沙箱已隔离,默认跳过 Claude 权限确认(YOLO)
-  const [managed, setManaged] = useState<string[]>([]) // 已托管沙箱名单(多项目)
+  const [skipPerms, setSkipPerms] = useState(true) // 沙箱已隔离,进入命令默认带 --dangerously-skip-permissions
+  const [customModel, setCustomModel] = useState(false) // 默认冰茶托管;开则用自定义模型端点
+  const [openNet, setOpenNet] = useState(true) // 网络全放开(默认);文件隔离不受影响
+  const [modelBase, setModelBase] = useState('')
+  const [modelToken, setModelToken] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [managed, setManaged] = useState<Awaited<ReturnType<typeof sandboxList>>>([]) // 已托管沙箱(名/状态/来源/工作区)
   const [stopping, setStopping] = useState('') // 正在停止的沙箱名(给按钮即时反馈)
+  const [copiedName, setCopiedName] = useState('') // 刚复制了进入命令的沙箱名
   const [winPrereq, setWinPrereq] = useState<Awaited<ReturnType<typeof sandboxWindowsPrereq>> | null>(null)
-  const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
+  const [busy, setBusy] = useState<'' | 'install' | 'create' | 'restore'>('')
   const [err, setErr] = useState('')
+  const { modalProps, showConfirm } = useModal() // Wails webview 下 window.confirm 是 no-op,破坏性操作用它确认
 
   const isWin = isWindowsPlatform()
 
@@ -384,6 +441,9 @@ function SandboxCard() {
     // Go 空 slice 会序列化成 null,兜成 [] —— 否则 managed.length 抛异常整页白屏。
     try { setManaged((await sandboxList()) ?? []) } catch { /* ignore */ }
   }, [])
+
+  // 装 sbx 期间轮询,顺带刷沙箱列表(create 后 box 立即出现)。
+  useEffect(() => { const id = setInterval(refreshList, 6000); return () => clearInterval(id) }, [refreshList])
 
   useEffect(() => {
     refresh()
@@ -404,7 +464,7 @@ function SandboxCard() {
     return () => clearInterval(id)
   }, [installing, installed, refresh])
 
-  const run = (kind: 'install' | 'prepare' | 'restore', fn: () => Promise<void>) => {
+  const run = (kind: 'install' | 'create' | 'restore', fn: () => Promise<void>) => {
     setBusy(kind); setErr('')
     fn().catch((e) => setErr(friendlySandboxError(e))).finally(() => setBusy(''))
   }
@@ -419,14 +479,31 @@ function SandboxCard() {
       setInstallCmd(await sandboxInstallCommand())
     }
   })
-  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz, skipPerms)); await refreshList() })
+  // 创建 = 冰茶后台直接把 box 建出来(sbx create,box 建完 stopped);建好即进「已托管沙箱」列表,
+  // 进入靠列表里的「进入」按钮复制命令。首次会拉镜像,故 busy 期间显示「创建中…」。
+  const create = () => run('create', async () => {
+    setMsg('')
+    const name = await sandboxCreate(mounts, tz, { custom: customModel, baseURL: modelBase, token: modelToken, model: modelName } as never, openNet)
+    await refreshList()
+    setMsg(`✓ 已创建沙箱 ${name.replace(/^gfa-/, '')},在下方「已托管沙箱」点「进入」复制命令到终端启动`)
+  })
   const stopOne = async (name: string) => {
     setErr(''); setStopping(name)
     try { await sandboxStopOne(name); await refreshList() } catch (e) { setErr(friendlySandboxError(e)) } finally { setStopping('') }
   }
-  const restore = () => {
-    if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
-    run('restore', async () => { await sandboxRestore(); setCommand('') })
+  // 进入 = 复制「进入该沙箱」的命令到剪贴板(box 已建好,sbx run --name 即读 spec 起 claude 在其工作区),
+  // 用户自己贴到终端。skipPerms 决定是否给 claude 加 --dangerously-skip-permissions。
+  const attach = async (name: string) => {
+    try {
+      const cmd = await sandboxEnterCommand(name, skipPerms)
+      await navigator.clipboard.writeText(cmd)
+      setCopiedName(name); setTimeout(() => setCopiedName(''), 1600)
+    } catch (e) { setErr(friendlySandboxError(e)) }
+  }
+  const restore = async () => {
+    const ok = await showConfirm('移除全部沙箱', '将停止并移除所有冰茶托管的沙箱(正在运行的会话会被终止),并撤销网关放行、删除 kit。确定继续?', { confirmLabel: '移除全部', cancelLabel: '取消' })
+    if (!ok) return
+    run('restore', async () => { await sandboxRestore(); setMsg(''); await refreshList() })
   }
 
   const addMount = async () => {
@@ -442,6 +519,7 @@ function SandboxCard() {
   const login = async () => { setErr(''); try { await sandboxLogin() } catch (e) { setErr(friendlySandboxError(e)) } }
 
   return (
+    <>
     <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="在 Docker 沙箱里隔离运行 Claude Code,请求仍经冰茶网关出口">
       <div className="flex flex-col">
         {/* 运行时状态(对齐 RemoteRow 的行式) */}
@@ -526,20 +604,25 @@ function SandboxCard() {
               <Button size="sm" variant="secondary" onClick={login} className="shrink-0">打开终端登录</Button>
             </div>
 
-            {/* 已托管沙箱:真查 sbx ls -q,只列 gfa-claude- 前缀。终端里起的沙箱点「刷新」拉进来 */}
+            {/* 已托管沙箱:真查 sbx ls --json,只列 gfa- 前缀(CLI + VSCode 合到一处,Source 标签区分)。 */}
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-[var(--text-primary)]">已托管沙箱</span>
                 <button onClick={refreshList} className="text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">刷新</button>
               </div>
               {managed.length === 0 ? (
-                <p className="text-[10px] text-[var(--text-muted)]">暂无 · 在终端跑 sbx run 起沙箱后点「刷新」</p>
+                <p className="text-[10px] text-[var(--text-muted)]">暂无 · 下方「新建项目沙箱」创建,或 VSCode 沙箱接管后惰性生成</p>
               ) : (
-                managed.map((name) => (
-                  <div key={name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
-                    <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-/, '')}</span>
-                    <Button size="sm" variant="ghost" disabled={stopping === name} onClick={() => stopOne(name)} className="shrink-0 min-w-[56px]">
-                      {stopping === name ? '停止中…' : '停止'}
+                managed.map((s) => (
+                  <div key={s.name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
+                    <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <span className={cn('inline-block w-1.5 h-1.5 rounded-full shrink-0', s.status === 'running' ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} title={s.status || '未知'} />
+                      <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate" title={s.workspace || s.name}>{s.label}</span>
+                      <span className="text-[9px] font-semibold text-[var(--text-muted)] shrink-0">{s.source === 'vscode' ? 'VSCode' : 'CLI'}</span>
+                    </span>
+                    <Button size="sm" variant="secondary" onClick={() => attach(s.name)} className="shrink-0 min-w-[56px]" title="复制进入命令到剪贴板">{copiedName === s.name ? '已复制' : '进入'}</Button>
+                    <Button size="sm" variant="ghost" disabled={stopping === s.name} onClick={() => stopOne(s.name)} className="shrink-0 min-w-[56px]">
+                      {stopping === s.name ? '停止中…' : '停止'}
                     </Button>
                   </div>
                 ))
@@ -585,6 +668,36 @@ function SandboxCard() {
               )}
             </div>
 
+            {/* 模型来源:默认冰茶托管;自定义 = 沙箱直连你的 Anthropic 兼容端点(如火山方舟 kimi) */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-[var(--text-primary)]">模型来源</span>
+                <div className="inline-flex bg-[var(--bg-tertiary)] rounded-[7px] p-[2px] shrink-0">
+                  {([['冰茶托管', false], ['自定义模型', true]] as const).map(([label, v]) => (
+                    <button
+                      key={label}
+                      onClick={() => setCustomModel(v)}
+                      className={cn('px-2.5 py-[3px] rounded-[5px] text-[10px] font-semibold transition-colors cursor-pointer',
+                        customModel === v ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {customModel && (
+                <div className="flex flex-col gap-1.5 rounded-[8px] bg-[var(--bg-tertiary)] p-2.5">
+                  <input value={modelBase} onChange={(e) => setModelBase(e.target.value)} placeholder="Base URL(Anthropic 兼容,如 https://ark.cn-beijing.volces.com/api/plan)"
+                    className="text-[11px] font-mono-data bg-[var(--bg-card)] border border-[var(--border)] rounded-[6px] h-[28px] px-2.5 text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]" />
+                  <input value={modelToken} onChange={(e) => setModelToken(e.target.value)} placeholder="API Key" type="password"
+                    className="text-[11px] font-mono-data bg-[var(--bg-card)] border border-[var(--border)] rounded-[6px] h-[28px] px-2.5 text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]" />
+                  <input value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="模型名(如 kimi-k2.6)"
+                    className="text-[11px] font-mono-data bg-[var(--bg-card)] border border-[var(--border)] rounded-[6px] h-[28px] px-2.5 text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]" />
+                  <span className="text-[10px] text-[var(--text-muted)]">直连此端点,不走冰茶租号。端点须 Anthropic Messages API 兼容(火山用 /api/plan,不是 /api/v3)</span>
+                </div>
+              )}
+            </div>
+
             {/* 出口时区 */}
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-semibold text-[var(--text-primary)]">出口时区</span>
@@ -604,6 +717,23 @@ function SandboxCard() {
               </div>
             </div>
 
+            {/* 网络全放开(默认开):文件隔离不受影响,沙箱仍只见挂载目录 */}
+            <label className="flex items-center justify-between gap-2 cursor-pointer">
+              <div className="min-w-0">
+                <span className="text-[11px] font-semibold text-[var(--text-primary)]">网络全放开</span>
+                <span className="block text-[10px] text-[var(--text-muted)] leading-tight mt-0.5">沙箱可访问任意网站(fetch 文档、装包等)。文件隔离不变——本地文件/Cookie 仍碰不到,只见你挂的目录。关则仅放行模型+常见开发站点</span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={openNet}
+                onClick={() => setOpenNet((v) => !v)}
+                className={cn('relative w-9 h-5 rounded-full transition-colors shrink-0', openNet ? 'bg-[var(--primary-strong)]' : 'bg-[var(--switch-off)]')}
+              >
+                <span className={cn('absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform', openNet && 'translate-x-4')} />
+              </button>
+            </label>
+
             {/* 跳过权限确认(沙箱内相对安全,默认开) */}
             <label className="flex items-center justify-between gap-2 cursor-pointer">
               <div className="min-w-0">
@@ -621,25 +751,19 @@ function SandboxCard() {
               </button>
             </label>
 
-            {/* 操作 */}
+            {/* 操作:创建 = 冰茶后台直接建 box(不再复制一把梭命令);移除 = 停全部+撤配置 */}
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="default" disabled={busy !== ''} onClick={prepare} className="min-w-[104px]">
-                {busy === 'prepare' ? '生成中…' : command ? '重新生成' : '开启沙箱接管'}
+              <Button size="sm" variant="default" disabled={busy !== '' || mounts.length === 0} onClick={create} className="min-w-[104px]">
+                {busy === 'create' ? '创建中…' : '创建沙箱'}
               </Button>
-              {command && (
+              {managed.length > 0 && (
                 <Button size="sm" variant="ghost" disabled={busy !== ''} onClick={restore}>
-                  {busy === 'restore' ? '移除中…' : '移除'}
+                  {busy === 'restore' ? '移除中…' : '移除全部'}
                 </Button>
               )}
             </div>
-
-            {/* 生成的命令 */}
-            {command && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-[10px] text-[var(--text-muted)]">复制到你自己的终端运行:</div>
-                <CopyBox text={command} />
-              </div>
-            )}
+            {mounts.length === 0 && <p className="text-[10px] text-[var(--text-muted)]">先在上面「挂载目录」选一个项目目录,才能创建沙箱</p>}
+            {msg && <p className="text-[10px] text-[var(--success)]">{msg}</p>}
           </div>
         )}
 
@@ -651,6 +775,8 @@ function SandboxCard() {
         )}
       </div>
     </ProductCard>
+    <Modal {...modalProps} />
+    </>
   )
 }
 
@@ -721,6 +847,9 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
 
         {/* ── Claude Code · 沙箱模式(sbx) ── */}
         <SandboxCard />
+
+        {/* ── Claude Code · VSCode 沙箱模式(第 7 目标) ── */}
+        <VscodeSandboxCard />
 
         {/* ── Codex(远程 / 本地) ── */}
         <LocalCapableCard

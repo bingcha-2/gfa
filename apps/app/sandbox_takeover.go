@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -157,20 +158,29 @@ func ApplyPolicy(gatewayPort int) error {
 	// 已初始化则此步报错,忽略——由下面的 allow 决定成败。
 	_ = exec.Command(sbx, "policy", "init", "balanced").Run()
 	// 捕获 sbx 真实输出:policy 失败(exit 1)时把它的报错透出来,而不是笼统「失败」。
-	out, err := exec.Command(sbx, policyAllowArgs(gatewayPort)...).CombinedOutput()
+	out, err := exec.Command(sbx, policyAllowArgs(fmt.Sprintf("localhost:%d", gatewayPort))...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sbx policy 失败: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-// ── 托管沙箱名单(真查 sbx ls,支持多项目)────────────────────────────────────
-// 直接问 sbx 真实存在哪些沙箱(sbx ls -q,一行一个名),只认 gfa-claude- 前缀 = 冰茶托管的。
-// 这样列表 = 真实状态,而非「冰茶以为你配过啥」;绝不列/管用户自己 sbx run 起的沙箱。
+// ── 托管沙箱名单(真查 sbx ls --json,支持多项目)──────────────────────────────
+// 直接问 sbx 真实存在哪些沙箱(sbx ls --json:含 name/status/workspaces),只认 gfa- 前缀 =
+// 冰茶托管的。列表 = 真实状态,而非「冰茶以为你配过啥」;绝不列/管用户自己 sbx run 起的沙箱。
 
-// listManagedNames 返回真实存在的、冰茶托管(gfa-claude- 前缀)的沙箱名。
+// SandboxInfo 统一列表一行:CLI 与 VSCode 沙箱合到一处,靠 Source 标签区分。
+type SandboxInfo struct {
+	Name      string `json:"name"`      // 原始 gfa-... 名(停止/进入用)
+	Label     string `json:"label"`     // 可读名(优先工作区目录名)
+	Source    string `json:"source"`    // "cli" | "vscode" | "other"
+	Status    string `json:"status"`    // running | stopped | ""(查不到)
+	Workspace string `json:"workspace"` // 首个挂载工作区完整路径(空=无)
+}
+
+// listManagedSandboxes 返回真实存在的、冰茶托管(gfa- 前缀)的沙箱(含状态/工作区)。
 // 抑制态(go test)/ 未装 sbx / 查询失败 → 空。
-func listManagedNames() []string {
+func listManagedSandboxes() []SandboxInfo {
 	if appActionsSuppressed() {
 		return nil
 	}
@@ -178,17 +188,63 @@ func listManagedNames() []string {
 	if sbx == "" {
 		return nil
 	}
-	out, err := exec.Command(sbx, "ls", "-q").Output()
+	out, err := exec.Command(sbx, "ls", "--json").Output()
 	if err != nil {
 		return nil
 	}
-	var names []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line = strings.TrimSpace(line); isGfaManagedSandbox(line) {
-			names = append(names, line)
+	var payload struct {
+		Sandboxes []struct {
+			Name       string   `json:"name"`
+			Status     string   `json:"status"`
+			Workspaces []string `json:"workspaces"`
+		} `json:"sandboxes"`
+	}
+	if json.Unmarshal(out, &payload) != nil {
+		return nil
+	}
+	var infos []SandboxInfo
+	for _, s := range payload.Sandboxes {
+		if !isGfaManagedSandbox(s.Name) {
+			continue
 		}
+		ws := ""
+		if len(s.Workspaces) > 0 {
+			ws = s.Workspaces[0]
+		}
+		infos = append(infos, SandboxInfo{
+			Name: s.Name, Label: sandboxLabel(s.Name, ws),
+			Source: sandboxSource(s.Name), Status: s.Status, Workspace: ws,
+		})
+	}
+	return infos
+}
+
+// listManagedNames 只取托管沙箱名(Restore 全停时用)。
+func listManagedNames() []string {
+	infos := listManagedSandboxes()
+	names := make([]string, 0, len(infos))
+	for _, i := range infos {
+		names = append(names, i.Name)
 	}
 	return names
+}
+
+// createSandbox 后台建 box(sbx create,不进入)。box 建完是 stopped,进入靠 enterCommandString 的
+// sbx run --name。首次会拉 kit 镜像(慢),故此调用可能阻塞;交互式进入才需 TTY,建 box 不需要。
+// 抑制态短路;sbx 找不到则报错。
+func createSandbox(name, kitDir string, mounts []SandboxMount) error {
+	if appActionsSuppressed() {
+		return nil
+	}
+	sbx := resolveSbxPath()
+	if sbx == "" {
+		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
+	}
+	out, err := exec.Command(sbx, createCommandArgs(name, kitDir, mounts)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sbx create 失败: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // stopSandbox 停止并移除一个沙箱。安全线:只动 gfa-claude- 前缀(冰茶托管)的,

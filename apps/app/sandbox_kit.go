@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -34,22 +35,34 @@ func installSbxCommandString(goos string) string {
 	}
 }
 
-// KitOptions 生成 gfa-claude kit 的入参。
+// KitOptions 生成 kit 的入参。默认指向冰茶网关;自定义模型时覆盖 BaseURL/AuthToken/Model/NetworkAllow。
 type KitOptions struct {
-	GatewayPort   int
-	Lang          string
-	Timezone      string
-	SentinelToken string
+	Lang         string
+	Timezone     string
+	BaseURL      string // ANTHROPIC_BASE_URL
+	AuthToken    string // ANTHROPIC_AUTH_TOKEN
+	Model        string // ANTHROPIC_MODEL(空则不写这行,用 claude 默认)
+	NetworkAllow string // caps.network.allow 条目(localhost:端口 / 自定义域名)
 }
 
-// defaultKitOptions Phase 1 固定默认:英语 + 美东。Phase 2 可覆盖 Timezone。
+// defaultKitOptions 冰茶托管默认:英语 + 美东,指向宿主网关(host.docker.internal:端口)。
 func defaultKitOptions(gatewayPort int) KitOptions {
 	return KitOptions{
-		GatewayPort:   gatewayPort,
-		Lang:          "en_US.UTF-8",
-		Timezone:      "America/New_York",
-		SentinelToken: sandboxSentinelToken,
+		Lang:         "en_US.UTF-8",
+		Timezone:     "America/New_York",
+		BaseURL:      fmt.Sprintf("http://host.docker.internal:%d", gatewayPort),
+		AuthToken:    sandboxSentinelToken,
+		NetworkAllow: fmt.Sprintf("localhost:%d", gatewayPort),
 	}
+}
+
+// hostFromURL 从 base URL 取 host[:port](供自定义模型的网络放行)。
+func hostFromURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Host
 }
 
 // usTimezones 供前端下拉。
@@ -60,28 +73,37 @@ func usTimezones() []string {
 }
 
 // kitSpecYAML 渲染 sbx kit 清单(spec.yaml,经 sbx kit validate 实测确认的 schema)。
-// kind: mixin = 叠加到 claude agent 上;ANTHROPIC_BASE_URL/AUTH_TOKEN 直接设成沙箱环境变量,
-// Claude Code 从 env 即读到,无需再写 ~/.claude/settings.json。网络放行用 caps.network.allow
-// (kit-spec v2;旧 network.allowedDomains 已弃用)。
+// kind: mixin = 叠加到 claude agent 上;ANTHROPIC_* 设成沙箱环境变量,Claude Code 从 env 直接读。
+// 网络放行用 caps.network.allow(kit-spec v2)。
 func kitSpecYAML(o KitOptions) string {
-	return fmt.Sprintf(`schemaVersion: 1
-kind: mixin
-name: gfa-claude
-environment:
-  variables:
-    LANG: %s
-    TZ: %s
-    ANTHROPIC_BASE_URL: http://host.docker.internal:%d
-    ANTHROPIC_AUTH_TOKEN: %s
-caps:
-  network:
-    allow: [ "localhost:%d" ]
-`, o.Lang, o.Timezone, o.GatewayPort, o.SentinelToken, o.GatewayPort)
+	var b strings.Builder
+	b.WriteString("schemaVersion: 1\nkind: mixin\nname: gfa-claude\nenvironment:\n  variables:\n")
+	fmt.Fprintf(&b, "    LANG: %s\n", o.Lang)
+	fmt.Fprintf(&b, "    TZ: %s\n", o.Timezone)
+	fmt.Fprintf(&b, "    ANTHROPIC_BASE_URL: %s\n", o.BaseURL)
+	fmt.Fprintf(&b, "    ANTHROPIC_AUTH_TOKEN: %s\n", o.AuthToken)
+	if strings.TrimSpace(o.Model) != "" {
+		fmt.Fprintf(&b, "    ANTHROPIC_MODEL: %s\n", o.Model)
+	}
+	fmt.Fprintf(&b, "caps:\n  network:\n    allow: [ %q ]\n", o.NetworkAllow)
+	// 创建时:①装 locales + 生成目标 LANG(镜像默认只有 C/C.utf8,否则一设 LANG 就报 locale 警告);
+	// ②TZ 三重钉死 —— sbx 会把宿主时区(如 CST-8)进程级注入 agent、盖过 kit 的 TZ env。唯一能压过它的
+	// 是官方 env 通道 /etc/sandbox-persistent.sh(agent 用 sbx run 启动时 source,后于注入生效,实测有效);
+	// 再加 /etc/localtime 兜底读 localtime 的程序。等 apt 锁空闲再装,失败不阻塞(|| true)。
+	// 实测:balanced 放行 apt 源,agent 有免密 sudo。
+	startup := // TZ 必须最先写(几毫秒),赶在 agent 启动 source sandbox-persistent.sh 之前;apt 装 locale 慢,放后面:
+		`grep -q '^export TZ=' /etc/sandbox-persistent.sh 2>/dev/null || echo 'export TZ=` + o.Timezone + `' | sudo tee -a /etc/sandbox-persistent.sh >/dev/null; ` +
+			`sudo ln -sf /usr/share/zoneinfo/` + o.Timezone + ` /etc/localtime 2>/dev/null; ` +
+			`for i in $(seq 1 60); do sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || break; sleep 2; done; ` +
+			`sudo apt-get install -y locales >/dev/null 2>&1 && sudo locale-gen ` + o.Lang + ` >/dev/null 2>&1; true`
+	b.WriteString("commands:\n  startup:\n")
+	b.WriteString(`    - command: ["sh","-c","` + startup + `"]` + "\n")
+	return b.String()
 }
 
-// policyAllowArgs 返回放行宿主网关端口的 sbx policy 参数。
-func policyAllowArgs(gatewayPort int) []string {
-	return []string{"policy", "allow", "network", fmt.Sprintf("localhost:%d", gatewayPort)}
+// policyAllowArgs 返回放行某网络目标(localhost:端口 / 域名)的 sbx policy 参数。
+func policyAllowArgs(allow string) []string {
+	return []string{"policy", "allow", "network", allow}
 }
 
 // SandboxMount 一个挂载项。ReadOnly=true → sbx run 位置参数追加 :ro。
@@ -151,16 +173,40 @@ func isGfaManagedSandbox(name string) bool {
 	return strings.HasPrefix(name, managedSandboxPrefix)
 }
 
-// runCommandArgs 拼 `sbx` 之后的参数:run --name <name> --kit <kit> claude <挂载...> [-- --dangerously-skip-permissions]。
-// skipPerms=true 时把 --dangerously-skip-permissions 透传给沙箱里的 claude(沙箱已隔离,跳权限确认相对安全)。
-// 语法:sbx run [flags] claude [PATH...] [-- AGENT_ARGS...],故挂载在前、-- 之后才是 claude 的参数。
-func runCommandArgs(name, kitPath string, mounts []SandboxMount, skipPerms bool) []string {
-	args := []string{"run", "--name", name, "--kit", kitPath, "claude"}
-	args = append(args, mountArgs(mounts)...)
-	if skipPerms {
-		args = append(args, "--", "--dangerously-skip-permissions")
+// sandboxSource 由沙箱名前缀判来源:CLI(冰茶新建项目沙箱)还是 VSCode(扩展 wrapper 惰性建)。
+// 供统一列表打「来源」标签。非 gfa- 前缀不该走到这(已被安全线滤掉),兜底 other。
+func sandboxSource(name string) string {
+	switch {
+	case strings.HasPrefix(name, "gfa-vscode-"):
+		return "vscode"
+	case strings.HasPrefix(name, sandboxNamePrefix): // gfa-claude-
+		return "cli"
+	default:
+		return "other"
 	}
-	return args
+}
+
+// sandboxLabel 列表里给人看的可读名:优先用工作区目录名(最直观),无工作区才去前缀留名字主体。
+func sandboxLabel(name, workspace string) string {
+	if workspace != "" {
+		if b := filepath.Base(strings.TrimRight(workspace, `/\`)); b != "" && b != "." && b != string(filepath.Separator) {
+			return b
+		}
+	}
+	for _, p := range []string{sandboxNamePrefix, "gfa-vscode-", managedSandboxPrefix} {
+		if strings.HasPrefix(name, p) {
+			return strings.TrimPrefix(name, p)
+		}
+	}
+	return name
+}
+
+// createCommandArgs 拼 `sbx` 之后的参数:create --name <name> --kit <kit> claude <挂载...>。
+// 冰茶后台跑它直接把 box 建出来(无 TTY 需求);create 只建不进入,box 建完是 stopped。
+// 语法:sbx create [flags] AGENT PATH...,挂载即工作区,烧进 box 的 spec,进入时无需再传。
+func createCommandArgs(name, kitPath string, mounts []SandboxMount) []string {
+	args := []string{"create", "--name", name, "--kit", kitPath, "claude"}
+	return append(args, mountArgs(mounts)...)
 }
 
 // shellQuote 给含空格/特殊字符的参数加单引号(供用户复制到 shell)。macOS「Application Support」
@@ -180,12 +226,14 @@ func shellQuote(s string) string {
 	return s
 }
 
-// runCommandString 给用户复制的完整命令。前缀 SBX_NO_TELEMETRY=1 关 sbx 遥测(仅此次运行,
-// 不污染用户 shell 配置);含空格的路径正确加引号。
-func runCommandString(name, kitPath string, mounts []SandboxMount, skipPerms bool) string {
-	out := "SBX_NO_TELEMETRY=1 sbx"
-	for _, a := range runCommandArgs(name, kitPath, mounts, skipPerms) {
-		out += " " + shellQuote(a)
+// enterCommandString 给用户复制到终端的「进入」命令。box 已由 create 建好(kit/工作区/挂载都烧进 spec),
+// 故进入极短 —— 只需 sbx run --name;claude 从 spec 读、跑在已挂载的工作区。skipPerms 时透传
+// --dangerously-skip-permissions(它是 claude 的参数,故走 -- 之后,属进入时而非建时)。
+// 前缀 SBX_NO_TELEMETRY=1 关 sbx 遥测(仅此次运行,不污染用户 shell)。
+func enterCommandString(name string, skipPerms bool) string {
+	out := "SBX_NO_TELEMETRY=1 sbx run --name " + shellQuote(name)
+	if skipPerms {
+		out += " -- --dangerously-skip-permissions"
 	}
 	return out
 }

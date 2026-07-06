@@ -326,7 +326,11 @@ export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
 export function SandboxBrowseDir(arg1:string):Promise<string>;
 
+export function SandboxCreate(arg1:Array<main.SandboxMount>,arg2:string,arg3:main.SandboxModelCfg,arg4:boolean):Promise<string>;
+
 export function SandboxEnableHypervisor():Promise<void>;
+
+export function SandboxEnterCommand(arg1:string,arg2:boolean):Promise<string>;
 
 export function SandboxGetStatus():Promise<main.SbxStatus>;
 
@@ -334,17 +338,21 @@ export function SandboxInstall():Promise<void>;
 
 export function SandboxInstallCommand():Promise<string>;
 
-export function SandboxList():Promise<Array<string>>;
+export function SandboxList():Promise<Array<main.SandboxInfo>>;
 
 export function SandboxLogin():Promise<void>;
-
-export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string,arg3:boolean):Promise<string>;
 
 export function SandboxRestore():Promise<string>;
 
 export function SandboxStopOne(arg1:string):Promise<void>;
 
 export function SandboxUSTimezones():Promise<Array<string>>;
+
+export function SandboxVscodeDisable():Promise<string>;
+
+export function SandboxVscodeEnable():Promise<string>;
+
+export function SandboxVscodeStatus():Promise<main.VscodeSandboxStatus>;
 
 export function SandboxWindowsPrereq():Promise<main.WinPrereq>;
 

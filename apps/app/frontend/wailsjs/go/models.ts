@@ -748,6 +748,44 @@ export namespace main {
 		}
 	}
 	
+	export class SandboxInfo {
+	    name: string;
+	    label: string;
+	    source: string;
+	    status: string;
+	    workspace: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SandboxInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.label = source["label"];
+	        this.source = source["source"];
+	        this.status = source["status"];
+	        this.workspace = source["workspace"];
+	    }
+	}
+	export class SandboxModelCfg {
+	    custom: boolean;
+	    baseURL: string;
+	    token: string;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SandboxModelCfg(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.custom = source["custom"];
+	        this.baseURL = source["baseURL"];
+	        this.token = source["token"];
+	        this.model = source["model"];
+	    }
+	}
 	export class SandboxMount {
 	    path: string;
 	    readOnly: boolean;
@@ -823,6 +861,22 @@ export namespace main {
 	        this.percent = source["percent"];
 	        this.error = source["error"];
 	        this.canSkip = source["canSkip"];
+	    }
+	}
+	export class VscodeSandboxStatus {
+	    editors: string[];
+	    sbxInstalled: boolean;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new VscodeSandboxStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.editors = source["editors"];
+	        this.sbxInstalled = source["sbxInstalled"];
+	        this.enabled = source["enabled"];
 	    }
 	}
 	export class WinPrereq {

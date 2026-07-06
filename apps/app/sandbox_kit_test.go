@@ -25,26 +25,58 @@ func TestInstallSbxCommandString(t *testing.T) {
 
 func TestKitSpecYAML(t *testing.T) {
 	// schema 经真机 sbx kit validate 确认:spec.yaml + schemaVersion + kind:mixin + caps.network.allow。
-	o := KitOptions{GatewayPort: 48800, Lang: "en_US.UTF-8", Timezone: "America/New_York", SentinelToken: "bcai-claude-proxy"}
-	got := kitSpecYAML(o)
+	got := kitSpecYAML(defaultKitOptions(48800))
 	for _, want := range []string{
-		"schemaVersion: 1",
-		"kind: mixin",
-		"name: gfa-claude",
-		"LANG: en_US.UTF-8",
-		"TZ: America/New_York",
+		"schemaVersion: 1", "kind: mixin", "name: gfa-claude",
+		"LANG: en_US.UTF-8", "TZ: America/New_York",
 		"ANTHROPIC_BASE_URL: http://host.docker.internal:48800",
 		"ANTHROPIC_AUTH_TOKEN: bcai-claude-proxy",
 		`allow: [ "localhost:48800" ]`,
+		"commands:", "locale-gen en_US.UTF-8", // 创建时自动生成 locale,消除 LANG 警告
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("kitSpecYAML missing %q\n---\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "ANTHROPIC_MODEL") {
+		t.Error("default kit should not set ANTHROPIC_MODEL")
+	}
+}
+
+func TestKitSpecYAMLCustomModel(t *testing.T) {
+	o := KitOptions{
+		Lang: "en_US.UTF-8", Timezone: "America/New_York",
+		BaseURL: "https://ark.cn-beijing.volces.com/api/plan", AuthToken: "ark-x",
+		Model: "kimi-k2.6", NetworkAllow: "ark.cn-beijing.volces.com",
+	}
+	got := kitSpecYAML(o)
+	for _, want := range []string{
+		"ANTHROPIC_BASE_URL: https://ark.cn-beijing.volces.com/api/plan",
+		"ANTHROPIC_AUTH_TOKEN: ark-x",
+		"ANTHROPIC_MODEL: kimi-k2.6",
+		`allow: [ "ark.cn-beijing.volces.com" ]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("custom kitSpecYAML missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestHostFromURL(t *testing.T) {
+	cases := map[string]string{
+		"https://ark.cn-beijing.volces.com/api/plan": "ark.cn-beijing.volces.com",
+		"http://host.docker.internal:48800":          "host.docker.internal:48800",
+		"not a url":                                  "",
+	}
+	for in, want := range cases {
+		if got := hostFromURL(in); got != want {
+			t.Errorf("hostFromURL(%q)=%q want %q", in, got, want)
+		}
+	}
 }
 
 func TestPolicyAllowArgs(t *testing.T) {
-	got := policyAllowArgs(48800)
+	got := policyAllowArgs("localhost:48800")
 	want := []string{"policy", "allow", "network", "localhost:48800"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("got %v want %v", got, want)
@@ -81,37 +113,50 @@ func TestMountArgs(t *testing.T) {
 	}
 }
 
-func TestRunCommandArgs(t *testing.T) {
-	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, false)
-	want := []string{"run", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj"}
+func TestCreateCommandArgs(t *testing.T) {
+	// create --name --kit claude <挂载...>:后台建 box 用,不带 --(skipPerms 属进入时)。
+	got := createCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}, {Path: "/refs", ReadOnly: true}})
+	want := []string{"create", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj", "/refs:ro"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("got %v want %v", got, want)
 	}
 }
 
-func TestRunCommandArgsSkipPerms(t *testing.T) {
-	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, true)
-	want := []string{"run", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj", "--", "--dangerously-skip-permissions"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("got %v want %v", got, want)
-	}
-}
-
-func TestRunCommandString(t *testing.T) {
-	got := runCommandString("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, false)
-	if got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj --kit /kits/gfa claude /proj" {
+func TestEnterCommandString(t *testing.T) {
+	// box 已建好,进入只需 sbx run --name;工作区/kit 都从 spec 读,不再重复传。
+	if got := enterCommandString("gfa-claude-proj", false); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj" {
 		t.Errorf("got %q", got)
 	}
+	if got := enterCommandString("gfa-claude-proj", true); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj -- --dangerously-skip-permissions" {
+		t.Errorf("skipPerms got %q", got)
+	}
+	// 名字含特殊字符要引用(防 shell 拆坏);gfa-claude- 前缀名本身安全,故构造一个越界名验引用。
+	if got := enterCommandString("gfa claude", false); got != "SBX_NO_TELEMETRY=1 sbx run --name 'gfa claude'" {
+		t.Errorf("quote got %q", got)
+	}
 }
 
-func TestRunCommandStringQuotesSpaces(t *testing.T) {
-	// macOS「Application Support」带空格的 kit / 挂载路径必须加引号,否则命令被 shell 拆坏。
-	got := runCommandString("gfa-claude-domio",
-		"/Users/a/Library/Application Support/bcai/sandbox/gfa-claude",
-		[]SandboxMount{{Path: "/Users/a/My Docs"}}, false)
-	want := "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-domio --kit '/Users/a/Library/Application Support/bcai/sandbox/gfa-claude' claude '/Users/a/My Docs'"
-	if got != want {
-		t.Errorf("\n got %q\nwant %q", got, want)
+func TestSandboxSource(t *testing.T) {
+	cases := map[string]string{
+		"gfa-claude-proj-abc123": "cli",
+		"gfa-vscode-domio-def456": "vscode",
+		"gfa-kimi-x":              "other",
+	}
+	for name, want := range cases {
+		if got := sandboxSource(name); got != want {
+			t.Errorf("sandboxSource(%q)=%q want %q", name, got, want)
+		}
+	}
+}
+
+func TestSandboxLabel(t *testing.T) {
+	// 有工作区 → 用目录名(最可读)
+	if got := sandboxLabel("gfa-claude-timer-java-fda3f9", "/Users/a/huohua/timer-java"); got != "timer-java" {
+		t.Errorf("with workspace got %q", got)
+	}
+	// 无工作区 → 去前缀留主体
+	if got := sandboxLabel("gfa-vscode-domio-b20f97", ""); got != "domio-b20f97" {
+		t.Errorf("no workspace got %q", got)
 	}
 }
 
@@ -149,7 +194,9 @@ func TestIsGfaManagedSandbox(t *testing.T) {
 
 func TestDefaultKitOptions(t *testing.T) {
 	o := defaultKitOptions(48800)
-	if o.Lang != "en_US.UTF-8" || o.Timezone != "America/New_York" || o.SentinelToken != "bcai-claude-proxy" || o.GatewayPort != 48800 {
+	if o.Lang != "en_US.UTF-8" || o.Timezone != "America/New_York" ||
+		o.AuthToken != "bcai-claude-proxy" || o.BaseURL != "http://host.docker.internal:48800" ||
+		o.NetworkAllow != "localhost:48800" || o.Model != "" {
 		t.Errorf("bad defaults: %+v", o)
 	}
 }
