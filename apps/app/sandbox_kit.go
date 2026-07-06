@@ -156,10 +156,16 @@ func isGfaManagedSandbox(name string) bool {
 	return strings.HasPrefix(name, sandboxNamePrefix)
 }
 
-// runCommandArgs 拼 `sbx` 之后的参数:run --name <name> --kit <kit> claude <挂载...>。
-func runCommandArgs(name, kitPath string, mounts []SandboxMount) []string {
+// runCommandArgs 拼 `sbx` 之后的参数:run --name <name> --kit <kit> claude <挂载...> [-- --dangerously-skip-permissions]。
+// skipPerms=true 时把 --dangerously-skip-permissions 透传给沙箱里的 claude(沙箱已隔离,跳权限确认相对安全)。
+// 语法:sbx run [flags] claude [PATH...] [-- AGENT_ARGS...],故挂载在前、-- 之后才是 claude 的参数。
+func runCommandArgs(name, kitPath string, mounts []SandboxMount, skipPerms bool) []string {
 	args := []string{"run", "--name", name, "--kit", kitPath, "claude"}
-	return append(args, mountArgs(mounts)...)
+	args = append(args, mountArgs(mounts)...)
+	if skipPerms {
+		args = append(args, "--", "--dangerously-skip-permissions")
+	}
+	return args
 }
 
 // shellQuote 给含空格/特殊字符的参数加单引号(供用户复制到 shell)。macOS「Application Support」
@@ -179,10 +185,11 @@ func shellQuote(s string) string {
 	return s
 }
 
-// runCommandString 给用户复制的完整命令(含空格的路径会正确加引号)。
-func runCommandString(name, kitPath string, mounts []SandboxMount) string {
-	out := "sbx"
-	for _, a := range runCommandArgs(name, kitPath, mounts) {
+// runCommandString 给用户复制的完整命令。前缀 SBX_NO_TELEMETRY=1 关 sbx 遥测(仅此次运行,
+// 不污染用户 shell 配置);含空格的路径正确加引号。
+func runCommandString(name, kitPath string, mounts []SandboxMount, skipPerms bool) string {
+	out := "SBX_NO_TELEMETRY=1 sbx"
+	for _, a := range runCommandArgs(name, kitPath, mounts, skipPerms) {
 		out += " " + shellQuote(a)
 	}
 	return out

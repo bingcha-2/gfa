@@ -362,6 +362,7 @@ function SandboxCard() {
   const [command, setCommand] = useState('')
   const [installCmd, setInstallCmd] = useState('')
   const [installing, setInstalling] = useState(false)
+  const [skipPerms, setSkipPerms] = useState(true) // 沙箱已隔离,默认跳过 Claude 权限确认(YOLO)
   const [winPrereq, setWinPrereq] = useState<Awaited<ReturnType<typeof sandboxWindowsPrereq>> | null>(null)
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
@@ -410,7 +411,7 @@ function SandboxCard() {
       setInstallCmd(await sandboxInstallCommand())
     }
   })
-  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz)) })
+  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz, skipPerms)) })
   const restore = () => {
     if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
     run('restore', async () => { await sandboxRestore(); setCommand('') })
@@ -568,6 +569,23 @@ function SandboxCard() {
                 </div>
               </div>
             </div>
+
+            {/* 跳过权限确认(沙箱内相对安全,默认开) */}
+            <label className="flex items-center justify-between gap-2 cursor-pointer">
+              <div className="min-w-0">
+                <span className="text-[11px] font-semibold text-[var(--text-primary)]">跳过权限确认</span>
+                <span className="block text-[10px] text-[var(--text-muted)] leading-tight mt-0.5">给 Claude 加 --dangerously-skip-permissions,不再逐条问;沙箱已隔离宿主,只能改你挂的目录</span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={skipPerms}
+                onClick={() => setSkipPerms((v) => !v)}
+                className={cn('relative w-9 h-5 rounded-full transition-colors shrink-0', skipPerms ? 'bg-[var(--primary-strong)]' : 'bg-[var(--switch-off)]')}
+              >
+                <span className={cn('absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform', skipPerms && 'translate-x-4')} />
+              </button>
+            </label>
 
             {/* 操作 */}
             <div className="flex items-center gap-2">

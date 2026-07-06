@@ -39,7 +39,7 @@ func (a *App) SandboxUSTimezones() []string { return usTimezones() }
 
 // SandboxPrepare 生成带挂载/时区的 kit + 放行 policy,返回给用户复制到终端的命令。
 // timezone 空则用默认(America/New_York)。Phase 2 会在此处按出口 IP 覆盖 timezone。
-func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string) (string, error) {
+func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermissions bool) (string, error) {
 	if err := validateTakeoverPrereqs(LoadConfig()); err != nil {
 		return "", err
 	}
@@ -64,7 +64,7 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string) (string, er
 	if err := writeManagedName(name); err != nil {
 		Log("[sandbox] 记录托管沙箱名失败(不致命): %v", err)
 	}
-	return runCommandString(name, kitDir, mounts), nil
+	return runCommandString(name, kitDir, mounts, skipPermissions), nil
 }
 
 // SandboxRestore 移除沙箱配置(删 kit + 撤 policy)。

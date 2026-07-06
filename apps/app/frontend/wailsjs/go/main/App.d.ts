@@ -336,7 +336,7 @@ export function SandboxInstallCommand():Promise<string>;
 
 export function SandboxLogin():Promise<void>;
 
-export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string):Promise<string>;
+export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string,arg3:boolean):Promise<string>;
 
 export function SandboxRestore():Promise<string>;
 

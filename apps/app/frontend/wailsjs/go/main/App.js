@@ -642,8 +642,8 @@ export function SandboxLogin() {
   return window['go']['main']['App']['SandboxLogin']();
 }
 
-export function SandboxPrepare(arg1, arg2) {
-  return window['go']['main']['App']['SandboxPrepare'](arg1, arg2);
+export function SandboxPrepare(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SandboxPrepare'](arg1, arg2, arg3);
 }
 
 export function SandboxRestore() {

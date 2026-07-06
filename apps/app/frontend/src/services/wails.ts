@@ -410,8 +410,8 @@ export async function sandboxUSTimezones(): Promise<string[]> {
   return _SandboxUSTimezones()
 }
 
-export async function sandboxPrepare(mounts: main.SandboxMount[], timezone: string): Promise<string> {
-  return _SandboxPrepare(mounts, timezone)
+export async function sandboxPrepare(mounts: main.SandboxMount[], timezone: string, skipPermissions: boolean): Promise<string> {
+  return _SandboxPrepare(mounts, timezone, skipPermissions)
 }
 
 export async function sandboxRestore(): Promise<string> {

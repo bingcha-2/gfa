@@ -96,16 +96,24 @@ func TestMountArgs(t *testing.T) {
 }
 
 func TestRunCommandArgs(t *testing.T) {
-	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}})
+	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, false)
 	want := []string{"run", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("got %v want %v", got, want)
 	}
 }
 
+func TestRunCommandArgsSkipPerms(t *testing.T) {
+	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, true)
+	want := []string{"run", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj", "--", "--dangerously-skip-permissions"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
 func TestRunCommandString(t *testing.T) {
-	got := runCommandString("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}})
-	if got != "sbx run --name gfa-claude-proj --kit /kits/gfa claude /proj" {
+	got := runCommandString("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}}, false)
+	if got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj --kit /kits/gfa claude /proj" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -114,8 +122,8 @@ func TestRunCommandStringQuotesSpaces(t *testing.T) {
 	// macOS「Application Support」带空格的 kit / 挂载路径必须加引号,否则命令被 shell 拆坏。
 	got := runCommandString("gfa-claude-domio",
 		"/Users/a/Library/Application Support/bcai/sandbox/gfa-claude",
-		[]SandboxMount{{Path: "/Users/a/My Docs"}})
-	want := "sbx run --name gfa-claude-domio --kit '/Users/a/Library/Application Support/bcai/sandbox/gfa-claude' claude '/Users/a/My Docs'"
+		[]SandboxMount{{Path: "/Users/a/My Docs"}}, false)
+	want := "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-domio --kit '/Users/a/Library/Application Support/bcai/sandbox/gfa-claude' claude '/Users/a/My Docs'"
 	if got != want {
 		t.Errorf("\n got %q\nwant %q", got, want)
 	}
