@@ -59,12 +59,23 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermiss
 	if err := ApplyPolicy(port); err != nil {
 		return "", err
 	}
-	// 固定命名(gfa-claude-<项目名>)+ 记下,供关闭接管时精确停止托管沙箱。
+	// 固定命名(gfa-claude-<项目名>)+ 记进名单(多项目:不覆盖,支持列表管理)。
 	name := sandboxName(mounts)
-	if err := writeManagedName(name); err != nil {
+	if err := addManagedName(name); err != nil {
 		Log("[sandbox] 记录托管沙箱名失败(不致命): %v", err)
 	}
 	return runCommandString(name, kitDir, mounts, skipPermissions), nil
+}
+
+// SandboxList 已托管的沙箱名单(gfa-claude-<项目名>)。
+func (a *App) SandboxList() []string { return listManagedNames() }
+
+// SandboxStopOne 停止单个托管沙箱(sbx rm,尽力而为)并从名单移除。安全线只动 gfa- 前缀。
+func (a *App) SandboxStopOne(name string) error {
+	if err := stopSandbox(name); err != nil {
+		Log("[sandbox] 停止沙箱 %s 失败(仍从名单移除): %v", name, err)
+	}
+	return removeManagedName(name)
 }
 
 // SandboxRestore 移除沙箱配置(删 kit + 撤 policy)。

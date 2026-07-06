@@ -334,11 +334,15 @@ export function SandboxInstall():Promise<void>;
 
 export function SandboxInstallCommand():Promise<string>;
 
+export function SandboxList():Promise<Array<string>>;
+
 export function SandboxLogin():Promise<void>;
 
 export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string,arg3:boolean):Promise<string>;
 
 export function SandboxRestore():Promise<string>;
+
+export function SandboxStopOne(arg1:string):Promise<void>;
 
 export function SandboxUSTimezones():Promise<Array<string>>;
 

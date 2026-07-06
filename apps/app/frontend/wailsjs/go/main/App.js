@@ -638,6 +638,10 @@ export function SandboxInstallCommand() {
   return window['go']['main']['App']['SandboxInstallCommand']();
 }
 
+export function SandboxList() {
+  return window['go']['main']['App']['SandboxList']();
+}
+
 export function SandboxLogin() {
   return window['go']['main']['App']['SandboxLogin']();
 }
@@ -648,6 +652,10 @@ export function SandboxPrepare(arg1, arg2, arg3) {
 
 export function SandboxRestore() {
   return window['go']['main']['App']['SandboxRestore']();
+}
+
+export function SandboxStopOne(arg1) {
+  return window['go']['main']['App']['SandboxStopOne'](arg1);
 }
 
 export function SandboxUSTimezones() {

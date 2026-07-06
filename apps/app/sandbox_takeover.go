@@ -167,29 +167,66 @@ func ApplyPolicy(gatewayPort int) error {
 	return nil
 }
 
-// writeManagedName 把当前托管沙箱名记到 kit 目录,供 Restore 精确停止(免去解析 sbx ls)。
-func writeManagedName(name string) error {
+// ── 托管沙箱名单(支持多项目)──────────────────────────────────────────────
+// 每建一个项目沙箱记一个名(不覆盖),供列表展示 + 单独/批量停止。免解析 sbx ls。
+
+func managedListPath() (string, error) {
 	dir, err := sandboxKitDir()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, ".sandbox-name"), []byte(name), 0o644)
+	return filepath.Join(dir, ".sandboxes"), nil
 }
 
-// readManagedName 读回上次记录的托管沙箱名(空=没记过)。
-func readManagedName() string {
-	dir, err := sandboxKitDir()
+// listManagedNames 读回所有托管沙箱名(每行一个;只认 gfa-claude- 前缀)。
+func listManagedNames() []string {
+	p, err := managedListPath()
 	if err != nil {
-		return ""
+		return nil
 	}
-	b, err := os.ReadFile(filepath.Join(dir, ".sandbox-name"))
+	b, err := os.ReadFile(p)
 	if err != nil {
-		return ""
+		return nil
 	}
-	return strings.TrimSpace(string(b))
+	var names []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" && isGfaManagedSandbox(line) {
+			names = append(names, line)
+		}
+	}
+	return names
+}
+
+func writeManagedList(names []string) error {
+	p, err := managedListPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(strings.Join(names, "\n")+"\n"), 0o644)
+}
+
+// addManagedName 记一个托管沙箱名(去重)。
+func addManagedName(name string) error {
+	for _, n := range listManagedNames() {
+		if n == name {
+			return nil
+		}
+	}
+	return writeManagedList(append(listManagedNames(), name))
+}
+
+// removeManagedName 从名单移除一个名。
+func removeManagedName(name string) error {
+	var out []string
+	for _, n := range listManagedNames() {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	return writeManagedList(out)
 }
 
 // stopSandbox 停止并移除一个沙箱。安全线:只动 gfa-claude- 前缀(冰茶托管)的,
@@ -268,17 +305,20 @@ func (claudeSandboxTarget) Inject(proxyPort int) (string, error) {
 }
 
 func (claudeSandboxTarget) Restore() (string, error) {
-	// 先停掉冰茶托管的沙箱(会终止用户正在跑的会话),再撤 policy + 删 kit。
-	name := readManagedName()
-	if err := stopSandbox(name); err != nil {
-		Log("[sandbox] 停止沙箱失败(不阻塞移除): %v", err)
+	// 全局关闭:停掉所有冰茶托管的沙箱(会终止用户正在跑的会话),再撤 policy + 删 kit
+	// (删 kit 目录连带清空 .sandboxes 名单)。
+	names := listManagedNames()
+	for _, n := range names {
+		if err := stopSandbox(n); err != nil {
+			Log("[sandbox] 停止沙箱 %s 失败(不阻塞移除): %v", n, err)
+		}
 	}
 	if err := revokeSandbox(effectiveProxyPort()); err != nil {
 		return "", err
 	}
 	msg := "沙箱模式: ✓ 已撤销放行、移除 kit"
-	if name != "" {
-		msg += ",并停止沙箱 " + name
+	if len(names) > 0 {
+		msg += fmt.Sprintf(",并停止 %d 个沙箱", len(names))
 	}
 	return msg, nil
 }

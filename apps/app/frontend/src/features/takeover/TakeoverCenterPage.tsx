@@ -10,7 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxPrepare, sandboxRestore, sandboxList, sandboxStopOne } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
@@ -363,6 +363,7 @@ function SandboxCard() {
   const [installCmd, setInstallCmd] = useState('')
   const [installing, setInstalling] = useState(false)
   const [skipPerms, setSkipPerms] = useState(true) // 沙箱已隔离,默认跳过 Claude 权限确认(YOLO)
+  const [managed, setManaged] = useState<string[]>([]) // 已托管沙箱名单(多项目)
   const [winPrereq, setWinPrereq] = useState<Awaited<ReturnType<typeof sandboxWindowsPrereq>> | null>(null)
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
@@ -378,11 +379,16 @@ function SandboxCard() {
     try { setWinPrereq(await sandboxWindowsPrereq()) } catch { /* ignore */ }
   }, [isWin])
 
+  const refreshList = useCallback(async () => {
+    try { setManaged(await sandboxList()) } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     refresh()
     checkPrereq()
+    refreshList()
     sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
-  }, [refresh, checkPrereq])
+  }, [refresh, checkPrereq, refreshList])
 
   const installed = !!status?.installed
   const unsupported = !!status?.unsupported // 硬性不支持(如 Intel Mac)
@@ -411,7 +417,11 @@ function SandboxCard() {
       setInstallCmd(await sandboxInstallCommand())
     }
   })
-  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz, skipPerms)) })
+  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz, skipPerms)); await refreshList() })
+  const stopOne = async (name: string) => {
+    setErr('')
+    try { await sandboxStopOne(name); await refreshList() } catch (e) { setErr(friendlySandboxError(e)) }
+  }
   const restore = () => {
     if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
     run('restore', async () => { await sandboxRestore(); setCommand('') })
@@ -513,6 +523,23 @@ function SandboxCard() {
               <span className="text-[11px] text-[var(--text-secondary)]">首次使用需登录 Docker Hub(<span className="font-mono-data">sbx login</span>)</span>
               <Button size="sm" variant="secondary" onClick={login} className="shrink-0">打开终端登录</Button>
             </div>
+
+            {/* 已托管沙箱(多项目,每个一行,可单独停止) */}
+            {managed.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-semibold text-[var(--text-primary)]">已托管沙箱</span>
+                {managed.map((name) => (
+                  <div key={name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
+                    <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-claude-/, '')}</span>
+                    <Button size="sm" variant="ghost" onClick={() => stopOne(name)} className="shrink-0">停止</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {managed.length > 0 && (
+              <div className="text-[11px] font-semibold text-[var(--text-primary)] pt-1 border-t border-[var(--border-light)]">新建项目沙箱</div>
+            )}
 
             {/* 挂载目录 */}
             <div className="flex flex-col gap-2">
