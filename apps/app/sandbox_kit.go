@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -124,20 +126,22 @@ const sandboxNamePrefix = "gfa-claude-"
 
 var unsafeSandboxNameChar = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
-// sandboxName 由首个挂载目录名派生一个稳定的托管沙箱名(gfa-claude-<项目名>)。
-// 无挂载 → gfa-claude-default。同一项目复用同名沙箱。
+// sandboxName 由首个挂载目录派生一个稳定的托管沙箱名:gfa-claude-<项目名>-<完整路径短哈希>。
+// 哈希后缀是防撞:同一目录 → 名字稳定 → sbx run 复用同一沙箱;不同目录哪怕同名(如两个 app)
+// → 哈希不同 → 各自独立,不会重连到别人的沙箱、挂错项目。无挂载 → gfa-claude-default-<空哈希>。
 func sandboxName(mounts []SandboxMount) string {
-	base := "default"
+	base, full := "default", ""
 	if len(mounts) > 0 {
+		full = filepath.Clean(mounts[0].Path)
 		if b := filepath.Base(strings.TrimRight(mounts[0].Path, `/\`)); b != "" && b != "." && b != string(filepath.Separator) {
 			base = b
 		}
 	}
-	base = unsafeSandboxNameChar.ReplaceAllString(base, "-")
-	if base == "" {
+	if base = unsafeSandboxNameChar.ReplaceAllString(base, "-"); base == "" {
 		base = "default"
 	}
-	return sandboxNamePrefix + base
+	sum := sha256.Sum256([]byte(full))
+	return sandboxNamePrefix + base + "-" + hex.EncodeToString(sum[:])[:6]
 }
 
 // isGfaManagedSandbox 安全线:只有 gfa-claude- 前缀的才是冰茶托管、可被冰茶停止/移除的。

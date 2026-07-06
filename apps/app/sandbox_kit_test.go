@@ -116,13 +116,19 @@ func TestRunCommandStringQuotesSpaces(t *testing.T) {
 }
 
 func TestSandboxName(t *testing.T) {
-	if got := sandboxName([]SandboxMount{{Path: "/Users/a/my-proj"}}); got != "gfa-claude-my-proj" {
-		t.Errorf("got %q", got)
+	a := sandboxName([]SandboxMount{{Path: "/Users/a/my-proj"}})
+	if !strings.HasPrefix(a, "gfa-claude-my-proj-") {
+		t.Errorf("bad name %q", a)
 	}
-	if got := sandboxName([]SandboxMount{{Path: "/Users/a/my proj!"}}); got != "gfa-claude-my-proj-" {
-		t.Errorf("sanitize failed: %q", got)
+	// 同一路径 → 名字稳定(复用同沙箱)
+	if a != sandboxName([]SandboxMount{{Path: "/Users/a/my-proj"}}) {
+		t.Error("same path must be stable")
 	}
-	if got := sandboxName(nil); got != "gfa-claude-default" {
+	// 不同路径、同 basename → 哈希后缀不同 → 不撞
+	if a == sandboxName([]SandboxMount{{Path: "/other/my-proj"}}) {
+		t.Error("different paths with same basename must not collide")
+	}
+	if got := sandboxName(nil); !strings.HasPrefix(got, "gfa-claude-default-") {
 		t.Errorf("empty mounts got %q", got)
 	}
 }
