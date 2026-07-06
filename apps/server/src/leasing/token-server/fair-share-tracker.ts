@@ -688,6 +688,25 @@ export class FairShareTracker {
         : flagged.size > 0
           ? this.lockedFromParticipants(accountId, flagged, storedD)
           : this.computeLocked(accountId, storedD);
+      // 独享号重启自愈:与冷启动回补(applySnapshot §3a)同源,但补在 load 期。冷启动回补只在
+      // primed=false 那一刻跑,而 load 无条件 primed:true → 修复上线【前】被冷启动写坏的行
+      // (lastFraction=重启那刻母号余量、T=0)重启读回也修不好,血条虚高一整周(周窗口 7 天不 reset,
+      // app 归并路径也碰不到回补)。归属无歧义的独占情形回补:号上只有这一张卡、是独享、占满整号
+      // (e≈1,w≥D)时,已烧的 (1−lastFraction) 必是它自己烧的 → 补进 T。
+      // 「只抬不压」(burned>cur):已正确落库的行(cur≈burned)跳过、窗口内已烧更多的行(cur>burned)
+      // 不被压回,避免二次归因把 T 打低致血条回弹。拼车/超卖/未占满(e<1)仍走 scale 护栏自愈,不回补。
+      if (locked && locked.participants.size === 1) {
+        const only = [...locked.participants][0];
+        const burned = 1 - lf;
+        const cur = attributed.get(only) || 0;
+        if (
+          burned > cur &&
+          this.opts.isExclusive?.(only) &&
+          clamp01(Math.max(0, this.opts.getCardWeight(only)) / locked.D) >= 1
+        ) {
+          attributed.set(only, clamp01(burned));
+        }
+      }
       bucketMap.set(bucket, {
         windowMs,
         windowStart: expired ? now : windowStart,
