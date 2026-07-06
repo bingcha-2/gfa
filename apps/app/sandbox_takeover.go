@@ -71,8 +71,44 @@ func resolveSbxPath() string {
 	return ""
 }
 
-// currentInstallCommandString 当前平台的 sbx 安装命令(展示给用户复制)。
+// currentInstallCommandString 当前平台的 sbx 安装命令(展示给用户复制,作 InstallSbx 的兜底)。
 func currentInstallCommandString() string { return installSbxCommandString(runtime.GOOS) }
+
+// InstallSbx 打开系统终端并跑安装命令(brew/winget/apt)。抑制态短路。
+// 为什么开终端而非后台静默 exec:装 sbx 常要 sudo / 先装 Xcode CLT(都需交互),
+// 且终端登录 shell 有完整 PATH(能找到 brew);后台静默 exec 这些全做不到,还没进度。
+// 返回 error → 前端回退到「复制命令自己装」。
+func InstallSbx() error {
+	if appActionsSuppressed() {
+		return nil
+	}
+	cmd := installSbxCommandString(runtime.GOOS)
+	if cmd == "" {
+		return fmt.Errorf("当前平台不支持一键安装 sbx")
+	}
+	return openTerminalRunning(cmd)
+}
+
+// openTerminalRunning 打开系统终端并在其中运行 shellCmd(可见、可交互)。
+func openTerminalRunning(shellCmd string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		script := fmt.Sprintf("tell application \"Terminal\"\n\tactivate\n\tdo script %q\nend tell", shellCmd)
+		return exec.Command("osascript", "-e", script).Start()
+	case "windows":
+		// 新开 PowerShell 窗口跑命令;-NoExit 保留窗口看结果。
+		return exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", shellCmd).Start()
+	case "linux":
+		for _, term := range []string{"x-terminal-emulator", "gnome-terminal", "konsole", "xterm"} {
+			if p, err := exec.LookPath(term); err == nil {
+				return exec.Command(p, "-e", "bash", "-lc", shellCmd+"; exec bash").Start()
+			}
+		}
+		return fmt.Errorf("未找到终端模拟器")
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
+}
 
 // DetectSbx 检测 sbx 是否可用。抑制态(go test)直接返回未装,不 exec。
 func DetectSbx() SbxStatus {

@@ -626,6 +626,10 @@ export function SandboxGetStatus() {
   return window['go']['main']['App']['SandboxGetStatus']();
 }
 
+export function SandboxInstall() {
+  return window['go']['main']['App']['SandboxInstall']();
+}
+
 export function SandboxInstallCommand() {
   return window['go']['main']['App']['SandboxInstallCommand']();
 }

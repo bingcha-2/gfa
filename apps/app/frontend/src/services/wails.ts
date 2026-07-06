@@ -40,6 +40,7 @@ import {
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
   SandboxGetStatus as _SandboxGetStatus,
+  SandboxInstall as _SandboxInstall,
   SandboxInstallCommand as _SandboxInstallCommand,
   SandboxBrowseDir as _SandboxBrowseDir,
   SandboxUSTimezones as _SandboxUSTimezones,
@@ -376,6 +377,10 @@ export function openURL(url: string): void {
 // ===== Sandbox mode takeover (Claude Code · sbx) =====
 export async function sandboxGetStatus(): Promise<main.SbxStatus> {
   return _SandboxGetStatus()
+}
+
+export async function sandboxInstall(): Promise<void> {
+  await _SandboxInstall()
 }
 
 export async function sandboxInstallCommand(): Promise<string> {

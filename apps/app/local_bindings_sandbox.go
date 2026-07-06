@@ -8,7 +8,11 @@ import "github.com/wailsapp/wails/v2/pkg/runtime"
 // SandboxGetStatus 卡片状态(sbx 是否装、版本、Linux KVM)。
 func (a *App) SandboxGetStatus() SbxStatus { return DetectSbx() }
 
-// SandboxInstallCommand 返回给用户复制到终端安装 sbx 的命令(展示用,不由冰茶静默 exec)。
+// SandboxInstall 打开系统终端并跑 sbx 安装命令(可见、可交互)。失败(开不了终端)由前端
+// 回退到 SandboxInstallCommand 让用户手动复制。
+func (a *App) SandboxInstall() error { return InstallSbx() }
+
+// SandboxInstallCommand 返回安装 sbx 的命令(SandboxInstall 开终端失败时的兜底,让用户手动复制)。
 func (a *App) SandboxInstallCommand() string { return currentInstallCommandString() }
 
 // SandboxBrowseDir 弹「目录」选择框(挂载目录用),返回所选目录(空=取消)。

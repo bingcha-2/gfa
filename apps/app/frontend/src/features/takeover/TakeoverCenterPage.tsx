@@ -10,7 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstallCommand, sandboxBrowseDir, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
@@ -359,6 +359,7 @@ function SandboxCard() {
   const [tz, setTz] = useState('America/New_York')
   const [command, setCommand] = useState('')
   const [installCmd, setInstallCmd] = useState('')
+  const [installing, setInstalling] = useState(false)
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
 
@@ -371,13 +372,30 @@ function SandboxCard() {
     sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
   }, [refresh])
 
+  const installed = !!status?.installed
+
+  // 装 sbx 期间轮询侦测:终端里装完,卡片自动变绿(无需用户手点重新检测)。
+  useEffect(() => {
+    if (!installing || installed) { if (installed) setInstalling(false); return }
+    const id = setInterval(refresh, 4000)
+    return () => clearInterval(id)
+  }, [installing, installed, refresh])
+
   const run = (kind: 'install' | 'prepare' | 'restore', fn: () => Promise<void>) => {
     setBusy(kind); setErr('')
     fn().catch((e) => setErr(friendlySandboxError(e))).finally(() => setBusy(''))
   }
 
-  // 装 sbx 交给用户终端(GUI 静默 exec brew 不可靠):点一下亮出命令让他复制。
-  const showInstall = () => run('install', async () => { setInstallCmd(await sandboxInstallCommand()) })
+  // 帮用户装:开系统终端跑安装命令(要密码就输,看得见进度),装完自动侦测。
+  // 开终端失败(如 Linux 无终端模拟器)→ 回退亮出命令让用户手动复制。
+  const install = () => run('install', async () => {
+    try {
+      await sandboxInstall()
+      setInstalling(true)
+    } catch {
+      setInstallCmd(await sandboxInstallCommand())
+    }
+  })
   const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz)) })
   const restore = () => {
     if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
@@ -391,8 +409,6 @@ function SandboxCard() {
     } catch { /* cancelled */ }
   }
 
-  const installed = !!status?.installed
-
   return (
     <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="在 Docker 沙箱里隔离运行 Claude Code,请求仍经冰茶网关出口">
       <div className="flex flex-col">
@@ -405,8 +421,8 @@ function SandboxCard() {
             </div>
           </div>
           {!installed && (
-            <Button size="sm" variant="default" disabled={busy === 'install'} onClick={showInstall} className="shrink-0 min-w-[84px]">
-              安装 sbx
+            <Button size="sm" variant="default" disabled={busy === 'install' || installing} onClick={install} className="shrink-0 min-w-[84px]">
+              {installing ? '安装中…' : '安装 sbx'}
             </Button>
           )}
         </div>
@@ -421,11 +437,18 @@ function SandboxCard() {
         {!installed ? (
           <div className="flex flex-col gap-2 pt-2 pb-1">
             <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-              装好 Docker sbx 后,冰茶会自动生成配置,你在自己的终端一条命令即可在隔离沙箱里跑 Claude Code。
+              点「安装 sbx」冰茶会开一个终端帮你装(要密码就输一下),装完这里自动变绿。装好后即可在隔离沙箱里跑 Claude Code。
             </p>
+            {installing && (
+              <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary-strong)] animate-pulse" />
+                已打开终端安装,完成后自动检测…
+                <button onClick={refresh} className="font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">立即检测</button>
+              </div>
+            )}
             {installCmd && (
               <>
-                <div className="text-[10px] text-[var(--text-muted)]">在终端运行这条安装:</div>
+                <div className="text-[10px] text-[var(--text-muted)]">开终端失败,请手动在终端运行:</div>
                 <CopyBox text={installCmd} />
                 <button
                   onClick={refresh}

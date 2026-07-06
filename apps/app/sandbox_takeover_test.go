@@ -43,6 +43,13 @@ func TestInstallSbxCommandStringCurrent(t *testing.T) {
 	}
 }
 
+func TestInstallSbxSuppressed(t *testing.T) {
+	// 抑制态(go test)不真开终端,短路返回 nil。
+	if err := InstallSbx(); err != nil {
+		t.Errorf("InstallSbx under test should no-op, got %v", err)
+	}
+}
+
 func TestDetectSbxSuppressed(t *testing.T) {
 	// 抑制态返回未装,不 exec sbx。
 	if st := DetectSbx(); st.Installed {
