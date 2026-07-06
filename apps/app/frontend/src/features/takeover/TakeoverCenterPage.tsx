@@ -309,6 +309,7 @@ function isDangerousMountPath(p: string): boolean {
 function friendlySandboxError(e: unknown): string {
   const s = String(e)
   if (/executable file not found|未找到 sbx/i.test(s)) return '没找到 sbx 命令,请先安装 Docker sbx。'
+  if (/not authenticated|sbx login/i.test(s)) return '还没登录 Docker。点上方「打开终端登录」跑一次 sbx login,登录后再点开启接管。'
   if (/请先登录账号/.test(s)) return '请先登录冰茶账号再开启接管。'
   return s.replace(/^Error:\s*/, '')
 }
