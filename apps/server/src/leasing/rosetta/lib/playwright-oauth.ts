@@ -178,7 +178,7 @@ export class PlaywrightOAuthSession {
     private adspowerOpts?: { client: AdsPowerClient; profileId: string },
   ) {}
 
-  async consumeMagicLink(magicLinkUrl: string, timeoutMs = 60_000): Promise<ConsumeResult> {
+  async consumeMagicLink(magicLinkUrl: string, timeoutMs = 60_000, authorizeUrl?: string): Promise<ConsumeResult> {
     try {
       const callbackPattern = /\/oauth\/code\/callback\?/;
 
@@ -217,6 +217,34 @@ export class PlaywrightOAuthSession {
         await allowBtn.click();
       } catch {
         // No consent button — flow might auto-redirect
+      }
+
+      if (authorizeUrl) {
+        const settleMs = Math.min(12_000, Math.max(50, Math.floor(timeoutMs / 3)));
+        const initial = await Promise.race([
+          codePromise.then((result) => ({ kind: "code" as const, result })),
+          new Promise<{ kind: "settled" }>((resolve) => setTimeout(() => resolve({ kind: "settled" }), settleMs)),
+        ]);
+
+        if (initial.kind === "code") {
+          const result = initial.result;
+          return {
+            ok: Boolean(result.code),
+            code: result.code,
+            state: result.state,
+            callbackUrl: result.url,
+            error: result.code ? undefined : "回调中未包含 code",
+          };
+        }
+
+        await this.page.goto(authorizeUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+        try {
+          const allowBtn = this.page.getByRole("button", { name: /allow|authorize|accept|confirm|continue|同意|授权/i });
+          await allowBtn.waitFor({ timeout: 15_000 });
+          await allowBtn.click();
+        } catch {
+          // No consent button: authorized sessions may redirect immediately.
+        }
       }
 
       const result = await codePromise;
@@ -1146,7 +1174,7 @@ async function waitForEmailInput(page: Page, timeoutMs: number) {
   return null;
 }
 
-async function clickEmailSubmit(page: Page): Promise<boolean> {
+export async function clickEmailSubmit(page: Page): Promise<boolean> {
   const buttonTexts = [
     /continue with email/i,
     /continue/i,
@@ -1163,14 +1191,14 @@ async function clickEmailSubmit(page: Page): Promise<boolean> {
   for (const text of buttonTexts) {
     const btn = page.getByRole("button", { name: text });
     if (await btn.isVisible().catch(() => false)) {
-      await btn.click();
+      await clickButtonWithDomFallback(page, btn, text);
       return true;
     }
   }
 
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.isVisible().catch(() => false)) {
-    await submitBtn.click();
+    await clickButtonWithDomFallback(page, submitBtn);
     return true;
   }
 
@@ -1182,4 +1210,37 @@ async function clickEmailSubmit(page: Page): Promise<boolean> {
 
   await page.keyboard.press("Enter");
   return true;
+}
+
+async function clickButtonWithDomFallback(page: Page, locator: any, text?: RegExp): Promise<void> {
+  try {
+    await locator.click();
+    return;
+  } catch (err) {
+    if (!isNativeClickTimeout(err)) throw err;
+  }
+
+  const clicked = await page.evaluate(({ source, flags }) => {
+    const matcher = source ? new RegExp(source, flags) : null;
+    const isVisible = (el: HTMLElement) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    const candidates = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+    const button = candidates.find((candidate) => {
+      if (candidate.disabled || !isVisible(candidate)) return false;
+      if (!matcher) return candidate.type === "submit";
+      return matcher.test((candidate.textContent || "").trim());
+    });
+    if (!button) return false;
+    button.scrollIntoView({ block: "center", inline: "center" });
+    HTMLElement.prototype.click.call(button);
+    return true;
+  }, { source: text?.source || "", flags: text?.flags || "" });
+
+  if (!clicked) {
+    await page.keyboard.press("Enter");
+  }
+}
+
+function isNativeClickTimeout(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /locator\.click: Timeout|performing click action|Timeout .*click/i.test(message);
 }

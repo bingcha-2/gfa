@@ -191,8 +191,13 @@ export class RosettaController {
 
   // 「刷新」= 强制刷 token + 拉上游额度(合并为一个动作)。
   @Post("codex-refresh-quota")
-  refreshCodexAccountQuota(@Body() body: any) {
-    return this.rosetta.refreshCodexAccountQuota(body);
+  async refreshCodexAccountQuota(@Body() body: any) {
+    const result = await this.rosetta.refreshCodexAccountQuota(body);
+    if (result?.ok) {
+      const { reactivated } = this.remoteCodex.reactivateIfAuthDead(Number(body?.accountId));
+      return { ...result, reactivated };
+    }
+    return result;
   }
 
   // 「重置次数查询」= 拉上游 rate-limit-reset-credits,回带可用主动重置次数。
@@ -340,6 +345,11 @@ export class RosettaController {
   @Post("anthropic-fetch-magic-link")
   fetchClaudeMagicLink(@Body() body: any) {
     return this.rosetta.fetchClaudeMagicLink(body);
+  }
+
+  @Post("anthropic-verification-code")
+  fetchClaudeVerificationCode(@Body() body: any) {
+    return this.rosetta.fetchClaudeVerificationCode(body);
   }
 
   @Post("anthropic-follow-magic-link")

@@ -517,6 +517,31 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(acct.quotaStatus).toBe("ok"); // 瞬时错误不改额度状态
   });
 
+  it("external model 404 blocks only that model, not the whole account", async () => {
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "alpha@example.com", refreshToken: "rt-alpha", projectId: "proj-alpha", enabled: true },
+      ],
+    });
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload("gemini-3-flash"));
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "gemini-3-flash",
+      status: 404,
+      reason: "Requested entity was not found.",
+    })).toEqual({ ok: true, action: "model_not_found" });
+
+    await expect(service.leaseToken(REQ, leasePayload("gemini-3-flash")))
+      .rejects.toMatchObject({ statusCode: 503 });
+
+    const fallback = await service.leaseToken(REQ, leasePayload("gemini-2.5-flash-lite"));
+    expect(fallback.ok).toBe(true);
+    expect(fallback.accountId).toBe(r.accountId);
+  });
+
   it("rejects an external report with an invalid accountId", () => {
     const service = makeService();
     expect((service as any).applyExternalAccountFailure({

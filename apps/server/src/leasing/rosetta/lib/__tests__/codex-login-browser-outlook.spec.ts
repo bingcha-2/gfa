@@ -71,12 +71,20 @@ class FakePage {
   private stage = "blank";
   private codeFilled = false;
   private mailboxSnapshotAvailable = false;
+  private microsoftSetupDone = false;
+  readonly gotoUrls: string[] = [];
+  clickedOpenOutlook = false;
 
   constructor(private readonly role: "auth" | "outlook") {}
 
   async goto(url: string) {
+    this.gotoUrls.push(url);
     if (this.role === "auth") {
       this.stage = "auth-email";
+      return;
+    }
+    if (!this.microsoftSetupDone && !url.includes("outlook.live.com/mail")) {
+      this.stage = "microsoft-privacy-notice";
       return;
     }
     this.stage = url.includes("outlook.live.com/mail") ? "outlook-mail" : "microsoft-account";
@@ -92,6 +100,8 @@ class FakePage {
       return "https://auth.openai.com/log-in";
     }
     if (this.stage === "outlook-mail") return "https://outlook.live.com/mail/0/inbox";
+    if (this.stage === "microsoft-account") return "https://account.microsoft.com/?lang=en-US&refd=account.live.com";
+    if (this.stage === "microsoft-pending-security") return "https://account.microsoft.com/account-checkup";
     return "https://account.microsoft.com/?refd=account.live.com";
   }
 
@@ -123,13 +133,26 @@ class FakePage {
       this.mailboxSnapshotAvailable = false;
       return "Inbox Focused Other ChatGPT Your temporary ChatGPT login code Enter this temporary verification code to continue: 123456";
     }
-    if (this.stage === "microsoft-account") return "Account Never lose access to your Microsoft account Add a recovery email";
+    if (this.stage === "microsoft-privacy-notice") {
+      return "A quick note about your Microsoft account Your privacy is our priority OK";
+    }
+    if (this.stage === "microsoft-pending-security") {
+      return "You have a pending security action Add a recovery email address";
+    }
+    if (this.stage === "microsoft-account") {
+      return "Account Never lose access to your Microsoft account Add a recovery email Outlook Open Outlook.com";
+    }
     return "";
   }
 
   countFor(selector: string) {
     if (selector === "body") return 1;
-    if (this.role !== "auth") return 0;
+    if (this.role === "outlook") {
+      if (this.stage === "microsoft-privacy-notice" && selector.includes("OK")) return 1;
+      if (this.stage === "microsoft-pending-security" && selector.includes("Close")) return 1;
+      if (this.stage === "microsoft-account" && selector.includes("Open Outlook.com")) return 1;
+      return 0;
+    }
     if (this.stage === "auth-email" && selector.includes("email")) return 1;
     if (this.stage === "auth-code" && selector.includes("code")) return 1;
     if (selector.includes("button") || selector.includes("submit")) return 1;
@@ -137,7 +160,22 @@ class FakePage {
   }
 
   clickFor(selector: string) {
-    if (this.role !== "auth") return;
+    if (this.role === "outlook") {
+      if (this.stage === "microsoft-privacy-notice" && selector.includes("OK")) {
+        this.stage = "microsoft-pending-security";
+        return;
+      }
+      if (this.stage === "microsoft-pending-security" && selector.includes("Close")) {
+        this.stage = "microsoft-account";
+        this.microsoftSetupDone = true;
+        return;
+      }
+      if (this.stage === "microsoft-account" && selector.includes("Open Outlook.com")) {
+        this.clickedOpenOutlook = true;
+        return;
+      }
+      return;
+    }
     if ((selector.includes("button") || selector.includes("submit")) && this.stage === "auth-email") {
       this.stage = "auth-code";
       return;
@@ -193,5 +231,7 @@ describe("runCodexBrowserLogin Outlook email code handling", () => {
     const result = await resultPromise;
 
     expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+    expect(outlookPage.clickedOpenOutlook).toBe(false);
+    expect(outlookPage.gotoUrls).toContain("https://outlook.live.com/mail/0/inbox");
   });
 });

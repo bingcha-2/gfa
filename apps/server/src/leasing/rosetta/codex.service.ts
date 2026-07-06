@@ -60,6 +60,8 @@ type CodexAutoLoginJob = {
   email: string;
   error: string;
   accountId?: number;
+  proxyUrl?: string;
+  adspowerProfileId?: string;
   createdAt: number;
   expiresAt: number;
 };
@@ -72,6 +74,79 @@ export class CodexService {
   private autoLoginJobs = new Map<string, CodexAutoLoginJob>();
 
   constructor(private readonly ctx: RosettaContext, private readonly accessKey: AccessKeyService) {}
+
+  private clearCodexAutoLoginFields(account: any) {
+    delete account.autoLoginStatus;
+    delete account.autoLoginStep;
+    delete account.autoLoginError;
+  }
+
+  private persistCodexAutoLoginState(
+    email: string,
+    state: {
+      proxyUrl?: string;
+      adspowerProfileId?: string;
+      autoLoginStatus?: "running" | "failed";
+      autoLoginStep?: string;
+      autoLoginError?: string;
+      clearAutoLogin?: boolean;
+    },
+  ) {
+    if (!email) return { accountId: 0 };
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    let account = accounts.find((item: any) => String(item.email || "").toLowerCase() === email.toLowerCase());
+    if (!account) {
+      const maxId = accounts.reduce((max: number, item: any) => Math.max(max, Number(item.id || 0)), 0);
+      account = {
+        id: maxId + 1,
+        email,
+        refreshToken: "",
+        enabled: false,
+        alias: "",
+        planType: "",
+      };
+      accounts.push(account);
+    }
+    if (state.proxyUrl !== undefined) {
+      const proxyUrl = String(state.proxyUrl || "").trim();
+      if (proxyUrl) account.proxyUrl = proxyUrl;
+    }
+    if (state.adspowerProfileId !== undefined) {
+      const profileId = String(state.adspowerProfileId || "").trim();
+      if (profileId) {
+        account.adspowerProfileId = profileId;
+        account.adspowerProfileStatus = "active";
+        account.adspowerProfileProvider = "codex";
+        account.adspowerProfileLastUsedAt = nowIso();
+      }
+    }
+    if (state.clearAutoLogin) {
+      this.clearCodexAutoLoginFields(account);
+    } else if (state.autoLoginStatus) {
+      account.autoLoginStatus = state.autoLoginStatus;
+      if (state.autoLoginStep) account.autoLoginStep = state.autoLoginStep;
+      if (state.autoLoginError) account.autoLoginError = state.autoLoginError;
+      else delete account.autoLoginError;
+    }
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { accountId: Number(account.id || 0) };
+  }
+
+  private failCodexAutoLoginJob(job: CodexAutoLoginJob, error: string, step = job.step) {
+    job.status = "failed";
+    job.step = step || job.step;
+    job.error = error;
+    const { accountId } = this.persistCodexAutoLoginState(job.email, {
+      proxyUrl: job.proxyUrl,
+      adspowerProfileId: job.adspowerProfileId,
+      autoLoginStatus: "failed",
+      autoLoginStep: job.step,
+      autoLoginError: error,
+    });
+    if (accountId) job.accountId = accountId;
+  }
 
   listCodexAccounts() {
     const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
@@ -90,6 +165,9 @@ export class CodexService {
       adspowerProfileStatus: String(account.adspowerProfileStatus || ""),
       adspowerProfileProvider: String(account.adspowerProfileProvider || ""),
       adspowerProfileLastUsedAt: String(account.adspowerProfileLastUsedAt || ""),
+      autoLoginStatus: account.autoLoginStatus ? String(account.autoLoginStatus) : undefined,
+      autoLoginStep: account.autoLoginStep ? String(account.autoLoginStep) : undefined,
+      autoLoginError: account.autoLoginError ? String(account.autoLoginError) : undefined,
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
       boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
       usedShares: shares.get(Number(account.id || 0)) || 0,
@@ -128,6 +206,7 @@ export class CodexService {
         if (profileId) existing.adspowerProfileId = profileId;
         else delete existing.adspowerProfileId;
       }
+      this.clearCodexAutoLoginFields(existing);
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -187,6 +266,7 @@ export class CodexService {
     let accountId: number;
     if (existing) {
       Object.assign(existing, updates);
+      this.clearCodexAutoLoginFields(existing);
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -345,6 +425,7 @@ export class CodexService {
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
+      this.clearCodexAutoLoginFields(acc);
 
       const snap = await fetchCodexQuotaUpstream(token, acc.proxyUrl);
       if (!snap) {
@@ -693,10 +774,19 @@ export class CodexService {
       step: "starting",
       email,
       error: "",
+      proxyUrl: proxyUrl || undefined,
+      adspowerProfileId: adspowerProfileId || undefined,
       createdAt: Date.now(),
       expiresAt: Date.now() + CODEX_OAUTH_TIMEOUT_MS,
     };
     this.autoLoginJobs.set(jobId, job);
+    const { accountId } = this.persistCodexAutoLoginState(email, {
+      proxyUrl,
+      adspowerProfileId,
+      autoLoginStatus: "running",
+      autoLoginStep: job.step,
+    });
+    if (accountId) job.accountId = accountId;
 
     // 后台异步执行，不阻塞 HTTP 响应。
     void this.runAutoLoginJob(job, pending, { email, password, totpSecret, phoneNumber, smsUrl, proxyUrl, adspowerProfileId, headless: payload?.headless === true });
@@ -723,6 +813,11 @@ export class CodexService {
       let proxyUrl = creds.proxyUrl;
       if (!adspowerProfileId) {
         job.step = "creating_adspower_profile";
+        this.persistCodexAutoLoginState(creds.email, {
+          proxyUrl,
+          autoLoginStatus: "running",
+          autoLoginStep: job.step,
+        });
         const draft: any = { id: 0, email: creds.email, proxyUrl };
         const profile = await ensureAdspowerProfileForAccount({
           dataDir: this.ctx.dataDir,
@@ -731,13 +826,17 @@ export class CodexService {
           client: makeDefaultAdsPowerClient(),
         });
         if (!profile.ok) {
-          job.status = "failed";
-          job.error = profile.error;
+          this.failCodexAutoLoginJob(job, profile.error);
           return;
         }
         adspowerProfileId = profile.profileId;
+        job.adspowerProfileId = adspowerProfileId;
         proxyUrl = String(draft.proxyUrl || proxyUrl || "");
-        this.reserveCodexProfileBinding(creds.email, proxyUrl, adspowerProfileId);
+        job.proxyUrl = proxyUrl || undefined;
+        this.reserveCodexProfileBinding(creds.email, proxyUrl, adspowerProfileId, {
+          autoLoginStatus: "running",
+          autoLoginStep: job.step,
+        });
       }
 
       const res = await runCodexBrowserLogin({
@@ -751,15 +850,30 @@ export class CodexService {
         proxyUrl,
         adspowerProfileId,
         headless: creds.headless,
-        onStep: (step) => { job.step = step; },
+        onStep: (step) => {
+          job.step = step;
+          const { accountId } = this.persistCodexAutoLoginState(creds.email, {
+            proxyUrl,
+            adspowerProfileId,
+            autoLoginStatus: "running",
+            autoLoginStep: step,
+          });
+          if (accountId) job.accountId = accountId;
+        },
       });
       if (!res.ok || !res.code) {
-        job.status = "failed";
+        this.failCodexAutoLoginJob(job, res.error || "鐧诲綍澶辫触", res.step || job.step);
         job.error = res.error || "登录失败";
         if (res.step) job.step = res.step;
         return;
       }
       job.step = "exchanging_token";
+      this.persistCodexAutoLoginState(creds.email, {
+        proxyUrl,
+        adspowerProfileId,
+        autoLoginStatus: "running",
+        autoLoginStep: job.step,
+      });
       const result = await this.completeCodexOAuthLogin(pending, res.code);
       // 把出口代理写到该账号（运行时用），与手动「设置代理」同款归一化。
       if (result.accountId != null) {
@@ -774,8 +888,7 @@ export class CodexService {
       job.email = result.email;
       job.accountId = result.accountId;
     } catch (err) {
-      job.status = "failed";
-      job.error = err instanceof Error ? err.message : String(err);
+      this.failCodexAutoLoginJob(job, err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -786,6 +899,7 @@ export class CodexService {
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const account = accounts.find((item: any) => Number(item.id) === accountId);
     if (!account) return;
+    this.clearCodexAutoLoginFields(account);
     if (adspowerProfileId) {
       account.adspowerProfileId = adspowerProfileId;
       account.adspowerProfileStatus = "active";
@@ -795,37 +909,33 @@ export class CodexService {
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
   }
 
-  private reserveCodexProfileBinding(email: string, proxyUrl: string, adspowerProfileId: string) {
+  private reserveCodexProfileBinding(
+    email: string,
+    proxyUrl: string,
+    adspowerProfileId: string,
+    state?: {
+      autoLoginStatus?: "running" | "failed";
+      autoLoginStep?: string;
+      autoLoginError?: string;
+      clearAutoLogin?: boolean;
+    },
+  ) {
     if (!email || !adspowerProfileId) return;
-    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
-    const data = readJson(filePath, { accounts: [] });
-    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-    let account = accounts.find((item: any) => String(item.email || "").toLowerCase() === email.toLowerCase());
-    if (!account) {
-      const maxId = accounts.reduce((max: number, item: any) => Math.max(max, Number(item.id || 0)), 0);
-      account = {
-        id: maxId + 1,
-        email,
-        refreshToken: "",
-        enabled: false,
-        alias: "",
-        planType: "",
-      };
-      accounts.push(account);
-    }
-    if (proxyUrl) account.proxyUrl = proxyUrl;
-    account.adspowerProfileId = adspowerProfileId;
-    account.adspowerProfileStatus = "active";
-    account.adspowerProfileProvider = "codex";
-    account.adspowerProfileLastUsedAt = nowIso();
-    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    this.persistCodexAutoLoginState(email, {
+      proxyUrl,
+      adspowerProfileId,
+      autoLoginStatus: state?.autoLoginStatus,
+      autoLoginStep: state?.autoLoginStep,
+      autoLoginError: state?.autoLoginError,
+      clearAutoLogin: state?.clearAutoLogin,
+    });
   }
 
   getAutomatedCodexLoginStatus(jobId: string) {
     const job = this.autoLoginJobs.get(String(jobId || ""));
     if (!job) return { ok: false, status: "missing", error: "任务不存在或已过期" };
     if (job.status === "running" && Date.now() > job.expiresAt) {
-      job.status = "failed";
+      this.failCodexAutoLoginJob(job, job.error || "鑷姩涓婂彿瓒呮椂");
       job.error = job.error || "自动上号超时";
     }
     return {

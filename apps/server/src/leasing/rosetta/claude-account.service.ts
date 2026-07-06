@@ -21,6 +21,7 @@ import {
   ensureAdspowerProfileForAccount,
   makeDefaultAdsPowerClient,
 } from "./lib/adspower-profile-manager";
+import { fetchClaudeVerificationCode as fetchClaudeVerificationCodeViaMail } from "./lib/claude-verification-code";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
 import {
@@ -770,6 +771,18 @@ export class ClaudeAccountService {
     return imap.ok ? imap : { ok: false, error: `web: ${web.error}; imap: ${imap.error}` };
   }
 
+  async fetchClaudeVerificationCode(payload: any) {
+    return fetchClaudeVerificationCodeViaMail({
+      email: String(payload?.email || ""),
+      password: String(payload?.password || ""),
+      adspowerProfileId: String(payload?.adspowerProfileId || ""),
+      proxyUrl: payload?.proxyUrl ? String(payload.proxyUrl) : undefined,
+      sinceMs: payload?.sinceMs ? Number(payload.sinceMs) : undefined,
+      waitMs: payload?.waitMs ? Number(payload.waitMs) : undefined,
+      closeCodeTab: payload?.closeCodeTab !== false,
+    });
+  }
+
   // ── 全自动 Playwright OAuth (异步) ──────────────────────────────────────
   // The full flow (browser → CF challenge → fill email → fetch mail → consume
   // magic link → token) takes 30-120s. Next.js dev proxy drops connections
@@ -786,7 +799,9 @@ export class ClaudeAccountService {
     recoveryEmail?: string;
     totpSecret?: string;
   }) {
-    const { email, password, proxyUrl } = payload;
+    const email = String(payload.email || "").trim();
+    const password = String(payload.password || "").trim();
+    const proxyUrl = String(payload.proxyUrl || "").trim();
     if (!email) return { ok: false, error: "email 必填" };
 
     let storedAdspowerProfileId: string | undefined;
@@ -809,7 +824,13 @@ export class ClaudeAccountService {
     }
 
     const adspowerProfileId = resolveAnthropicAdspowerProfileId(payload.adspowerProfileId, storedAdspowerProfileId);
-    const sessionKey = String(payload.sessionKey || "").trim();
+    const rawSessionKey = String(payload.sessionKey || "").trim();
+    const sessionKey = password ? "" : rawSessionKey;
+    console.log(
+      `[auto-oauth] start requested: email=${email || "(empty)"}, mode=${sessionKey ? "sk" : "password"}, ` +
+      `hasPassword=${Boolean(password)}, hasSessionKey=${Boolean(rawSessionKey)}, ` +
+      `hasProxy=${Boolean(proxyUrl)}, adspowerProfileId=${adspowerProfileId || "(none)"}`
+    );
 
     if (!adspowerProfileId && !proxyUrl) {
       return { ok: false, error: "未使用指纹浏览器时，proxyUrl 必填" };
@@ -983,7 +1004,7 @@ export class ClaudeAccountService {
       }
 
       // 4. Consume magic link in browser → OAuth code
-      const consume = await session.consumeMagicLink(mailResultUrl, 60_000);
+      const consume = await session.consumeMagicLink(mailResultUrl, 60_000, pending.authUrl);
       await session.close().catch(() => {});
       session = null;
 

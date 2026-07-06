@@ -194,6 +194,7 @@ const QUOTA_RESET_MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // 403 冷却的封顶(也是无 retry-after 时的默认)。短 —— 403 多为瞬时验证挑战/反滥用,
 // 绑定卡无备号,长冷却=该模型几小时不可用。瞬时挑战 ~60s 内自愈。
 const FORBIDDEN_COOLDOWN_MS = 60 * 1000;
+const MODEL_NOT_FOUND_COOLDOWN_MS = 30 * 60 * 1000;
 // reason 模糊时区分瞬时限速 / 配额耗尽的 retry-after 分界线:瞬时限速恢复以秒~分钟计,
 // 配额窗口(5h/周)恢复以小时~天计。上游给的 retry-after 远超此值 = 配额耗尽,绝非瞬时限速
 // —— 此时信上游明说的 retry-after,胜过信本地可能过时的额度余量快照。
@@ -203,6 +204,15 @@ const RATE_LIMIT_MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
 const REPORT_GRACE_MS = 60 * 1000;
 const ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
+
+function isExternalModelNotFound(status: number, reason: string): boolean {
+  if (status !== 404) return false;
+  const text = String(reason || "").toLowerCase();
+  return text.includes("requested entity was not found") ||
+    text.includes("not_found") ||
+    text.includes("model_not_found") ||
+    /model.*not found/.test(text);
+}
 
 /** Base HTTP error. Provider-specific services subclass this so controllers can
  * route on `instanceof`. */
@@ -2083,6 +2093,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       return { ok: true, action: "auth_dead" };
     }
 
+    if (modelKey && isExternalModelNotFound(status, reason)) {
+      this.markAccountModelNotFound(accountId, modelKey);
+      return { ok: true, action: "model_not_found" };
+    }
+
     if (status === 429 || status === 503) {
       const classifiedReason = reason || (status === 429 ? "quota" : "capacity");
       const cooldownMs = this.cooldownForExhaustion(status, classifiedReason, retryAfterMs, accountId, modelKey);
@@ -2122,6 +2137,29 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       this.modelGates.blockAccountForModel(accountId, normalized, reason, REMOTE_TRANSIENT_ERROR_COOLDOWN_MS);
     }
 
+    state.exhaustedUntil = Math.max(
+      blockedUntil,
+      ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),
+    );
+  }
+
+  private markAccountModelNotFound(accountId: number, modelKey: string) {
+    const normalized = normalizeModelKey(modelKey);
+    if (!normalized) {
+      this.markAccountTransientError(accountId, modelKey, "model_not_found");
+      return;
+    }
+
+    const state = this.ensureRuntime(accountId);
+    const now = this.now();
+    const blockedUntil = now + MODEL_NOT_FOUND_COOLDOWN_MS;
+    const reason = "model_not_found";
+
+    state.quotaStatus = "cooling";
+    state.quotaStatusReason = reason;
+    state.exhaustedAt = now;
+    state.blockedModels.set(normalized, { modelKey: normalized, reason, blockedAt: now, blockedUntil });
+    this.modelGates.blockAccountForModel(accountId, normalized, reason, MODEL_NOT_FOUND_COOLDOWN_MS);
     state.exhaustedUntil = Math.max(
       blockedUntil,
       ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),

@@ -106,6 +106,40 @@ describe("RosettaController CLIProxy report", () => {
   });
 });
 
+describe("RosettaController Codex quota refresh", () => {
+  it("reactivates an auth-dead Codex account after a successful token refresh", async () => {
+    const rosetta: any = {
+      refreshCodexAccountQuota: vi.fn(async () => ({ ok: true, accountId: 8, tokenValid: true })),
+    };
+    const remoteCodex: any = {
+      reactivateIfAuthDead: vi.fn(() => ({ ok: true, reactivated: true })),
+    };
+    const controller = new RosettaController(rosetta, {} as any, {} as any, remoteCodex, {} as any);
+
+    const result = await controller.refreshCodexAccountQuota({ accountId: 8 });
+
+    expect(remoteCodex.reactivateIfAuthDead).toHaveBeenCalledWith(8);
+    expect(result).toEqual({ ok: true, accountId: 8, tokenValid: true, reactivated: true });
+  });
+});
+
+describe("RosettaController Claude verification code", () => {
+  it("delegates verification-code requests to RosettaService", async () => {
+    const rosetta: any = {
+      fetchClaudeVerificationCode: vi.fn(async () => ({ ok: true, code: "123456" })),
+    };
+    const controller = new RosettaController(rosetta, {} as any, {} as any, {} as any, {} as any);
+    const body = {
+      email: "mail-user@example.com",
+      password: "pw",
+      adspowerProfileId: "k1e8c364",
+    };
+
+    await expect(controller.fetchClaudeVerificationCode(body)).resolves.toEqual({ ok: true, code: "123456" });
+    expect(rosetta.fetchClaudeVerificationCode).toHaveBeenCalledWith(body);
+  });
+});
+
 describe("RosettaController CLIProxy reconcile", () => {
   it("delegates reconcile requests to RosettaService", () => {
     const { controller, rosetta } = makeController();

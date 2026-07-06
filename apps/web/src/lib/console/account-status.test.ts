@@ -60,4 +60,28 @@ describe("accountStatusLabel", () => {
     expect(accountStatusLabel("ok", "").tone).toBe("green");
     expect(accountStatusLabel("", "").tone).toBe("green");
   });
+
+  it("shows an in-progress Codex auto-login as yellow instead of healthy", () => {
+    expect(
+      accountStatusLabel("ok", "", {
+        autoLoginStatus: "running",
+        autoLoginStep: "email_code_polling",
+      }),
+    ).toEqual({
+      tone: "yellow",
+      label: "上号中 · 邮箱验证码",
+    });
+  });
+
+  it("shows a failed Codex auto-login as red instead of healthy", () => {
+    expect(
+      accountStatusLabel("ok", "", {
+        autoLoginStatus: "failed",
+        autoLoginStep: "email_code_polling",
+      }),
+    ).toEqual({
+      tone: "red",
+      label: "上号失败 · 邮箱验证码",
+    });
+  });
 });

@@ -452,6 +452,21 @@ export class FairShareTracker {
     if (!tracker.primed) {
       tracker.primed = true;
       tracker.lastFraction = clamp01(fraction);
+      // 真·独占号冷启动回补:号上只有这一张卡、且它占满整号(e≈1)时,冷启动前已烧的 (1−fraction)
+      // 归属无歧义 —— 必是这张卡自己烧的,补进它的 T。否则周窗口会把「重启那刻的母号余量」误当满血
+      // 基线整整一周(独享血条跳过 scale 护栏,不像拼车会被 Σ 封顶自愈 → 血条虚高,见独享周窗口复现)。
+      // 仅此一种归属无歧义的情形回补;拼车/超卖/未占满(e<1,余量可能是别人或未认领烧的)仍走原
+      // 冷启动从宽(T=0)+ scale 护栏,避免把别人的账砸给单卡。
+      // 仅对独享卡回补:独享血条跳过 scale 护栏,冷启动丢历史无处自愈才会虚高;拼车/普通卡走
+      // scale 护栏(Σ 封顶=母号)已自愈,维持原冷启动从宽(T=0),不改其归因语义。
+      const locked = this.ensureLocked(accountId, tracker);
+      if (locked.participants.size === 1) {
+        const only = [...locked.participants][0];
+        const burned = 1 - tracker.lastFraction;
+        if (burned > 0 && this.opts.isExclusive?.(only) && this.shareFor(accountId, tracker, only) >= 1) {
+          tracker.attributed.set(only, clamp01(burned));
+        }
+      }
       // 冷启动对齐上游窗口:首个快照带上游 resetAt 时,采纳真实窗口起点(即便在过去)。
       // 冷窗口的 windowStart 只是 getOrCreate/自计时的猜测(now);下方 forward-only reset 规则
       // 只认前移,会拒绝把它后移到真实起点 → 周窗口要等下个上游 reset(最多 7 天)才对齐,
@@ -673,6 +688,25 @@ export class FairShareTracker {
         : flagged.size > 0
           ? this.lockedFromParticipants(accountId, flagged, storedD)
           : this.computeLocked(accountId, storedD);
+      // 独享号重启自愈:与冷启动回补(applySnapshot §3a)同源,但补在 load 期。冷启动回补只在
+      // primed=false 那一刻跑,而 load 无条件 primed:true → 修复上线【前】被冷启动写坏的行
+      // (lastFraction=重启那刻母号余量、T=0)重启读回也修不好,血条虚高一整周(周窗口 7 天不 reset,
+      // app 归并路径也碰不到回补)。归属无歧义的独占情形回补:号上只有这一张卡、是独享、占满整号
+      // (e≈1,w≥D)时,已烧的 (1−lastFraction) 必是它自己烧的 → 补进 T。
+      // 「只抬不压」(burned>cur):已正确落库的行(cur≈burned)跳过、窗口内已烧更多的行(cur>burned)
+      // 不被压回,避免二次归因把 T 打低致血条回弹。拼车/超卖/未占满(e<1)仍走 scale 护栏自愈,不回补。
+      if (locked && locked.participants.size === 1) {
+        const only = [...locked.participants][0];
+        const burned = 1 - lf;
+        const cur = attributed.get(only) || 0;
+        if (
+          burned > cur &&
+          this.opts.isExclusive?.(only) &&
+          clamp01(Math.max(0, this.opts.getCardWeight(only)) / locked.D) >= 1
+        ) {
+          attributed.set(only, clamp01(burned));
+        }
+      }
       bucketMap.set(bucket, {
         windowMs,
         windowStart: expired ? now : windowStart,

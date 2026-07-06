@@ -292,6 +292,28 @@ async function outlookLoginIfNeeded(page: Page, email: string, password: string)
       await clickFirst(page, ['button:has-text("No")', 'input[value="No"]']);
       continue;
     }
+    if (/A quick note about your Microsoft account|Your privacy is our priority/i.test(text)) {
+      const clicked = await clickFirst(page, [
+        'button:has-text("OK")',
+        'input[value="OK"]',
+        '[role="button"]:has-text("OK")',
+      ]);
+      if (!clicked) return false;
+      continue;
+    }
+    if (/You have a pending security action|Add a recovery email address/i.test(text)) {
+      const dismissed = await clickFirst(page, [
+        'button[aria-label="Close"]',
+        'button[title="Close"]',
+        'button:has-text("Close")',
+      ]);
+      if (!dismissed) return false;
+      continue;
+    }
+    if (/account\.microsoft\.com/i.test(url) && /Open Outlook\.com|Outlook/i.test(text)) {
+      await page.goto("https://outlook.live.com/mail/0/inbox", { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+      continue;
+    }
     if (/Help us protect your account|Verify your identity|Enter code|security code/i.test(text)) {
       return false;
     }
