@@ -162,7 +162,28 @@ func runCommandArgs(name, kitPath string, mounts []SandboxMount) []string {
 	return append(args, mountArgs(mounts)...)
 }
 
-// runCommandString 给用户复制的完整命令。
+// shellQuote 给含空格/特殊字符的参数加单引号(供用户复制到 shell)。macOS「Application Support」
+// 这类带空格的路径不加引号会被 shell 拆成多个参数,命令直接坏掉。
+// 注:单引号是 bash/zsh 口径;Windows(cmd/powershell)引用规则不同,待 Windows 真机验证时另处理。
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '/' || r == '.' || r == '_' || r == '-' || r == ':') {
+			// 含需要引用的字符 → 单引号包裹,内部单引号转义为 '\''
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}
+
+// runCommandString 给用户复制的完整命令(含空格的路径会正确加引号)。
 func runCommandString(name, kitPath string, mounts []SandboxMount) string {
-	return "sbx " + strings.Join(runCommandArgs(name, kitPath, mounts), " ")
+	out := "sbx"
+	for _, a := range runCommandArgs(name, kitPath, mounts) {
+		out += " " + shellQuote(a)
+	}
+	return out
 }
