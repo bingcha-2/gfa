@@ -341,6 +341,7 @@ function SandboxCard() {
   }
 
   const restore = async () => {
+    if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
     setBusy(true); setErr('')
     try { await sandboxRestore(); setCommand('') } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }

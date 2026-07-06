@@ -105,17 +105,39 @@ func TestMountArgs(t *testing.T) {
 }
 
 func TestRunCommandArgs(t *testing.T) {
-	got := runCommandArgs("/kits/gfa", []SandboxMount{{Path: "/proj"}})
-	want := []string{"run", "--kit", "/kits/gfa", "claude", "/proj"}
+	got := runCommandArgs("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}})
+	want := []string{"run", "--name", "gfa-claude-proj", "--kit", "/kits/gfa", "claude", "/proj"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("got %v want %v", got, want)
 	}
 }
 
 func TestRunCommandString(t *testing.T) {
-	got := runCommandString("/kits/gfa", []SandboxMount{{Path: "/proj"}})
-	if got != "sbx run --kit /kits/gfa claude /proj" {
+	got := runCommandString("gfa-claude-proj", "/kits/gfa", []SandboxMount{{Path: "/proj"}})
+	if got != "sbx run --name gfa-claude-proj --kit /kits/gfa claude /proj" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestSandboxName(t *testing.T) {
+	if got := sandboxName([]SandboxMount{{Path: "/Users/a/my-proj"}}); got != "gfa-claude-my-proj" {
+		t.Errorf("got %q", got)
+	}
+	if got := sandboxName([]SandboxMount{{Path: "/Users/a/my proj!"}}); got != "gfa-claude-my-proj-" {
+		t.Errorf("sanitize failed: %q", got)
+	}
+	if got := sandboxName(nil); got != "gfa-claude-default" {
+		t.Errorf("empty mounts got %q", got)
+	}
+}
+
+func TestIsGfaManagedSandbox(t *testing.T) {
+	if !isGfaManagedSandbox("gfa-claude-x") {
+		t.Error("gfa-claude-x should be managed")
+	}
+	// 用户自己 sbx run 起的默认名(claude-<workdir>)绝不能被判为托管 → 冰茶不会误杀。
+	if isGfaManagedSandbox("claude-userproj") {
+		t.Error("user's own sandbox must NOT be treated as managed")
 	}
 }
 

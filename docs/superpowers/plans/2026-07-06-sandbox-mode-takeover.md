@@ -1006,10 +1006,27 @@ func TestTimezoneFromGeo(t *testing.T) {
 - [ ] `SandboxPrepare` 里,读当前粘性租约的出口代理(`GetLeaser()` 的 cachedToken → `AccountProxyUrl`,只读,不新建锁定机制),`probeExitTimezone` 得到时区覆盖 `o.Timezone`;探测失败回退固定默认。补测试(注入假 lease + 抑制态)。
 - [ ] 提交 `feat(sandbox): 开场按出口 IP 定沙箱时区`
 
-### Task 15: 换号挑同区偏好
+### Task 15:(已决定不做)锁号 / 同区换号
 
-- [ ] 在 leaser 额度用尽换号(`excludeAccountIds`)处,加「优先同地区」偏好(需服务端支持地区筛选或客户端拿到候选号地区);若服务端暂不支持,记为 follow-up,Phase 2 先只做 Task 13–14。
-- [ ] 提交或记 follow-up。
+**决定**:不动共享 `leaser.go` 的轮换逻辑。理由:①账号本已粘性(`cachedToken` + `StartAutoLease` 续租);②沙箱时区**每次 `sbx run` 重新探**(`SandboxPrepare` 每次都探),每场开始一定对;③唯一漂移窗口是「一场没结束、号在后台被换掉」,而号池若为纯美区则换号仍美区、漂移极小。投入产出不划算,且改核心租号逻辑无法真机验证、风险高。真机若实测出跨区漂移再议。「同区换号」需服务端地区筛选,一并搁置。
+
+---
+
+## 生命周期托管(已实现)
+
+### Task 16: 沙箱命名 + 关闭真清理
+
+**Files:** `sandbox_kit.go`(纯函数)、`sandbox_takeover.go`、`local_bindings_sandbox.go`、前端。
+
+- [x] `sandboxName(mounts)` 纯函数:`gfa-claude-<项目名>`(首个挂载目录名,非法字符替 `-`,无挂载=default)。
+- [x] `isGfaManagedSandbox(name)` **安全线**:只有 `gfa-claude-` 前缀的才可被冰茶停止/移除,**绝不碰用户自己 `sbx run` 起的**(默认名 `claude-<workdir>`)。
+- [x] `runCommandArgs/String` 带 `--name <name>`,同一项目复用同名沙箱。
+- [x] `writeManagedName`/`readManagedName`:把托管沙箱名记进 kit 目录(免解析 `sbx ls`);`SandboxPrepare` 生成命令时写入。
+- [x] `stopSandbox(name)`:安全校验前缀后 `sbx rm name`(抑制态短路;`sbx rm` 确切 flag 待 Phase 0 真机确认)。
+- [x] `Restore()`:先 `stopSandbox(readManagedName())`(终止托管沙箱)→ 撤 policy → 删 kit。
+- [x] 前端「移除」按钮加 `window.confirm`:「会停止托管沙箱、终止运行中会话」。
+
+**Phase 0 追加验证**:`sbx rm <name>` 是否需先 `sbx stop`/是否需 `-f`;`sbx run --name` 对已存在同名沙箱是复用 attach 还是报错(决定「重建」按钮是否要先 rm)。
 
 ---
 

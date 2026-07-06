@@ -34,7 +34,12 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string) (string, er
 	if err := ApplyPolicy(port); err != nil {
 		return "", err
 	}
-	return runCommandString(kitDir, mounts), nil
+	// 固定命名(gfa-claude-<项目名>)+ 记下,供关闭接管时精确停止托管沙箱。
+	name := sandboxName(mounts)
+	if err := writeManagedName(name); err != nil {
+		Log("[sandbox] 记录托管沙箱名失败(不致命): %v", err)
+	}
+	return runCommandString(name, kitDir, mounts), nil
 }
 
 // SandboxRestore 移除沙箱配置(删 kit + 撤 policy)。

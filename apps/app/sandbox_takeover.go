@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // ─── 沙箱模式接管 · 触机器 + target 层 ─────────────────────────────────────────
@@ -95,6 +96,48 @@ func InstallSbx() error {
 	return exec.Command(name, args...).Run()
 }
 
+// writeManagedName 把当前托管沙箱名记到 kit 目录,供 Restore 精确停止(免去解析 sbx ls)。
+func writeManagedName(name string) error {
+	dir, err := sandboxKitDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, ".sandbox-name"), []byte(name), 0o644)
+}
+
+// readManagedName 读回上次记录的托管沙箱名(空=没记过)。
+func readManagedName() string {
+	dir, err := sandboxKitDir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".sandbox-name"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// stopSandbox 停止并移除一个沙箱。安全线:只动 gfa-claude- 前缀(冰茶托管)的,
+// 绝不碰用户自己 sbx run 起的沙箱。抑制态短路。
+// 注:sbx rm 的确切 flag(是否需先 stop / -f)待 Phase 0 真机确认后微调。
+func stopSandbox(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if !isGfaManagedSandbox(name) {
+		return fmt.Errorf("拒绝停止非冰茶托管的沙箱: %s", name)
+	}
+	if appActionsSuppressed() {
+		return nil
+	}
+	return exec.Command("sbx", "rm", name).Run()
+}
+
 // revokeSandbox 删 kit 目录 + 撤 policy(抑制态只删目录不 exec)。
 func revokeSandbox(gatewayPort int) error {
 	if dir, err := sandboxKitDir(); err == nil {
@@ -145,8 +188,17 @@ func (claudeSandboxTarget) Inject(proxyPort int) (string, error) {
 }
 
 func (claudeSandboxTarget) Restore() (string, error) {
+	// 先停掉冰茶托管的沙箱(会终止用户正在跑的会话),再撤 policy + 删 kit。
+	name := readManagedName()
+	if err := stopSandbox(name); err != nil {
+		Log("[sandbox] 停止沙箱失败(不阻塞移除): %v", err)
+	}
 	if err := revokeSandbox(effectiveProxyPort()); err != nil {
 		return "", err
 	}
-	return "沙箱模式: ✓ 已移除 kit", nil
+	msg := "沙箱模式: ✓ 已撤销放行、移除 kit"
+	if name != "" {
+		msg += ",并停止沙箱 " + name
+	}
+	return msg, nil
 }

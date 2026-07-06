@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -122,13 +123,43 @@ func mountArgs(mounts []SandboxMount) []string {
 	return args
 }
 
-// runCommandArgs 拼 `sbx` 之后的参数:run --kit <kit> claude <挂载...>。
-func runCommandArgs(kitPath string, mounts []SandboxMount) []string {
-	args := []string{"run", "--kit", kitPath, "claude"}
+// ── 沙箱命名 + 生命周期安全线 ──────────────────────────────────────────────
+//
+// 冰茶托管的沙箱统一 gfa-claude- 前缀:①开沙箱带固定 --name,冰茶据此复用/停止;
+// ②isGfaManagedSandbox 是安全线,冰茶【只】动自己前缀的沙箱,绝不碰用户自己 sbx run 起的。
+
+const sandboxNamePrefix = "gfa-claude-"
+
+var unsafeSandboxNameChar = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// sandboxName 由首个挂载目录名派生一个稳定的托管沙箱名(gfa-claude-<项目名>)。
+// 无挂载 → gfa-claude-default。同一项目复用同名沙箱。
+func sandboxName(mounts []SandboxMount) string {
+	base := "default"
+	if len(mounts) > 0 {
+		if b := filepath.Base(strings.TrimRight(mounts[0].Path, `/\`)); b != "" && b != "." && b != string(filepath.Separator) {
+			base = b
+		}
+	}
+	base = unsafeSandboxNameChar.ReplaceAllString(base, "-")
+	if base == "" {
+		base = "default"
+	}
+	return sandboxNamePrefix + base
+}
+
+// isGfaManagedSandbox 安全线:只有 gfa-claude- 前缀的才是冰茶托管、可被冰茶停止/移除的。
+func isGfaManagedSandbox(name string) bool {
+	return strings.HasPrefix(name, sandboxNamePrefix)
+}
+
+// runCommandArgs 拼 `sbx` 之后的参数:run --name <name> --kit <kit> claude <挂载...>。
+func runCommandArgs(name, kitPath string, mounts []SandboxMount) []string {
+	args := []string{"run", "--name", name, "--kit", kitPath, "claude"}
 	return append(args, mountArgs(mounts)...)
 }
 
 // runCommandString 给用户复制的完整命令。
-func runCommandString(kitPath string, mounts []SandboxMount) string {
-	return "sbx " + strings.Join(runCommandArgs(kitPath, mounts), " ")
+func runCommandString(name, kitPath string, mounts []SandboxMount) string {
+	return "sbx " + strings.Join(runCommandArgs(name, kitPath, mounts), " ")
 }
