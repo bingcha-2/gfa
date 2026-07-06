@@ -146,7 +146,11 @@ func revokeSandbox(gatewayPort int) error {
 	if appActionsSuppressed() {
 		return nil
 	}
-	return exec.Command("sbx", "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run()
+	// 撤 policy 尽力而为:sbx 未装 / policy 本就不存在都不该让「移除」报错(kit 已删才是关键)。
+	if err := exec.Command("sbx", "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run(); err != nil {
+		Log("[sandbox] 撤销 policy 失败(不阻塞移除,sbx 可能未安装): %v", err)
+	}
+	return nil
 }
 
 // ── 接管中心注册表目标 ──────────────────────────────────────────────────────

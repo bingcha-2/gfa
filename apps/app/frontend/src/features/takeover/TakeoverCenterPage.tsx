@@ -12,7 +12,7 @@ import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityL
 import { useRemoteTakeover } from './useRemoteTakeover'
 import { sandboxGetStatus, sandboxInstall, sandboxUSTimezones, sandboxPrepare, sandboxRestore, browseForPath } from '@/services/wails'
 import type { PageId } from '@/types'
-import { ArrowRight, Users } from 'lucide-react'
+import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
 /**
  * 接管中心 —— 统一控制面。每个产品一张卡:决定该产品走「远程托管」还是「本地自有号」接管,
@@ -304,13 +304,41 @@ function isDangerousMountPath(p: string): boolean {
   return ['/System', '/Library', '/etc', '/usr', '/bin'].includes(clean)
 }
 
+// 把后端裸错误(exec exit status、executable not found)翻成人话。
+function friendlySandboxError(e: unknown): string {
+  const s = String(e)
+  if (/executable file not found|exit status 1|not found/i.test(s)) return '没找到 sbx 命令,请先安装 Docker sbx。'
+  if (/请先登录/.test(s)) return '请先登录账号再开启接管。'
+  return s.replace(/^Error:\s*/, '')
+}
+
+// 挂载读写段控:对齐 ProductCard 的模式段控视觉。
+function MountRwToggle({ readOnly, onChange }: { readOnly: boolean; onChange: (ro: boolean) => void }) {
+  return (
+    <div className="inline-flex bg-[var(--bg-tertiary)] rounded-[7px] p-[2px] shrink-0">
+      {([false, true] as const).map((ro) => (
+        <button
+          key={String(ro)}
+          onClick={() => onChange(ro)}
+          className={cn(
+            'px-2 py-[3px] rounded-[5px] text-[10px] font-semibold transition-colors cursor-pointer',
+            readOnly === ro ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
+          )}
+        >
+          {ro ? '只读' : '读写'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function SandboxCard() {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof sandboxGetStatus>> | null>(null)
   const [mounts, setMounts] = useState<SandboxMountItem[]>([])
   const [timezones, setTimezones] = useState<string[]>([])
   const [tz, setTz] = useState('America/New_York')
   const [command, setCommand] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
 
@@ -323,9 +351,16 @@ function SandboxCard() {
     sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
   }, [refresh])
 
-  const install = async () => {
-    setBusy(true); setErr('')
-    try { await sandboxInstall(); await refresh() } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  const run = (kind: 'install' | 'prepare' | 'restore', fn: () => Promise<void>) => {
+    setBusy(kind); setErr('')
+    fn().catch((e) => setErr(friendlySandboxError(e))).finally(() => setBusy(''))
+  }
+
+  const install = () => run('install', async () => { await sandboxInstall(); await refresh() })
+  const prepare = () => run('prepare', async () => { setCopied(false); setCommand(await sandboxPrepare(mounts, tz)) })
+  const restore = () => {
+    if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
+    run('restore', async () => { await sandboxRestore(); setCommand('') })
   }
 
   const addMount = async () => {
@@ -335,72 +370,136 @@ function SandboxCard() {
     } catch { /* cancelled */ }
   }
 
-  const prepare = async () => {
-    setBusy(true); setErr(''); setCopied(false)
-    try { setCommand(await sandboxPrepare(mounts, tz)) } catch (e) { setErr(String(e)) } finally { setBusy(false) }
-  }
-
-  const restore = async () => {
-    if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
-    setBusy(true); setErr('')
-    try { await sandboxRestore(); setCommand('') } catch (e) { setErr(String(e)) } finally { setBusy(false) }
-  }
-
   const copy = () => {
-    navigator.clipboard.writeText(command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
+    navigator.clipboard.writeText(command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) }).catch(() => {})
   }
+
+  const installed = !!status?.installed
 
   return (
-    <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="Docker sbx 隔离沙箱里跑 Claude Code,请求仍经冰茶网关出口(隔离 + IP 脱敏)">
-      <div className="py-2 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <span className="text-[12px] text-[var(--text-secondary)]">
-            Docker sbx:{status?.installed ? `已安装 ${status.version?.trim() || ''}` : '未检测到'}
-            {status?.note && <span className="text-[10px] text-[var(--warning)] ml-1">{status.note}</span>}
-          </span>
-          {!status?.installed && (
-            <Button size="sm" variant="secondary" disabled={busy} onClick={install}>安装 sbx</Button>
+    <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="在 Docker 沙箱里隔离运行 Claude Code,请求仍经冰茶网关出口">
+      <div className="flex flex-col">
+        {/* 运行时状态(对齐 RemoteRow 的行式) */}
+        <div className="flex items-center justify-between h-[40px]">
+          <div className="min-w-0">
+            <div className="text-[12px] text-[var(--text-primary)] font-medium">Docker 沙箱运行时</div>
+            <div className={cn('text-[10px] truncate', installed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+              {installed ? `已就绪${status?.version ? ' · ' + status.version.trim().split('\n')[0] : ''}` : '未检测到 sbx'}
+            </div>
+          </div>
+          {!installed && (
+            <Button size="sm" variant="default" disabled={busy === 'install'} onClick={install} className="shrink-0 min-w-[84px]">
+              {busy === 'install' ? '安装中…' : '安装 sbx'}
+            </Button>
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-[var(--text-primary)]">挂载目录</span>
-            <Button size="sm" variant="ghost" onClick={addMount}>+ 添加</Button>
+        {status?.note && (
+          <div className="flex items-start gap-1.5 pt-1 pb-2 text-[10px] text-[var(--warning-strong)]">
+            <ShieldAlert className="w-3 h-3 mt-px shrink-0" />
+            <span>{status.note}</span>
           </div>
-          {mounts.length === 0 && <span className="text-[10px] text-[var(--text-muted)]">未选目录:沙箱里的 Claude 看不到任何项目文件</span>}
-          {mounts.map((m, i) => (
-            <div key={m.path} className="flex items-center gap-2 text-[11px]">
-              <span className="font-mono-data truncate flex-1 text-[var(--text-secondary)]">{m.path}</span>
-              {isDangerousMountPath(m.path) && <span className="text-[10px] text-[var(--warning)]">⚠ 越界目录</span>}
-              <button className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)]" onClick={() => setMounts((ms) => ms.map((x, j) => j === i ? { ...x, readOnly: !x.readOnly } : x))}>{m.readOnly ? '只读' : '读写'}</button>
-              <button className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)]" onClick={() => setMounts((ms) => ms.filter((_, j) => j !== i))}>移除</button>
+        )}
+
+        {!installed ? (
+          <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed pt-2 pb-1">
+            装好 Docker sbx 后,冰茶会自动生成配置,你在自己的终端一条命令即可在隔离沙箱里跑 Claude Code。
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4 pt-3.5 mt-0.5 border-t border-[var(--border-light)]">
+            {/* 挂载目录 */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-[var(--text-primary)]">挂载目录</span>
+                <button
+                  onClick={addMount}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> 添加目录
+                </button>
+              </div>
+              {mounts.length === 0 ? (
+                <p className="text-[10px] text-[var(--text-muted)]">未选目录 · 沙箱里的 Claude 看不到任何项目文件</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {mounts.map((m, i) => (
+                    <div key={m.path} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1.5 py-1.5">
+                      <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={m.path}>{m.path}</span>
+                      {isDangerousMountPath(m.path) && (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-[var(--warning-strong)] shrink-0" title="挂了家目录/系统盘,沙箱里的 Claude 能改这些文件">
+                          <ShieldAlert className="w-2.5 h-2.5" /> 越界
+                        </span>
+                      )}
+                      <MountRwToggle readOnly={m.readOnly} onChange={(ro) => setMounts((ms) => ms.map((x, j) => (j === i ? { ...x, readOnly: ro } : x)))} />
+                      <button
+                        onClick={() => setMounts((ms) => ms.filter((_, j) => j !== i))}
+                        className="p-1 rounded-[6px] text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition-colors shrink-0 cursor-pointer"
+                        aria-label={`移除挂载 ${m.path}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-[var(--text-secondary)]">时区</span>
-          <select className="text-[11px] bg-[var(--bg-tertiary)] rounded px-2 py-1 text-[var(--text-primary)]" value={tz} onChange={(e) => setTz(e.target.value)}>
-            {timezones.map((z) => <option key={z} value={z}>{z}</option>)}
-          </select>
-          <span className="text-[10px] text-[var(--text-muted)]">语言固定 en_US</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={busy || !status?.installed} onClick={prepare}>开启沙箱接管</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={restore}>移除</Button>
-        </div>
-
-        {err && <div className="text-[10px] text-[var(--danger)]">{err}</div>}
-
-        {command && (
-          <div className="flex flex-col gap-1">
-            <div className="text-[10px] text-[var(--text-muted)]">复制到你自己的终端运行:</div>
-            <div className="flex items-center gap-2 bg-[var(--bg-tertiary)] rounded px-2 py-1.5">
-              <code className="font-mono-data text-[11px] truncate flex-1 text-[var(--text-primary)]">{command}</code>
-              <Button size="sm" variant="ghost" onClick={copy}>{copied ? '已复制' : '复制'}</Button>
+            {/* 出口时区 */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--text-primary)]">出口时区</span>
+              <div className="flex items-center gap-2.5">
+                <span className="text-[10px] text-[var(--text-muted)]">语言 en_US</span>
+                <div className="relative">
+                  <select
+                    value={tz}
+                    onChange={(e) => setTz(e.target.value)}
+                    aria-label="沙箱时区"
+                    className="appearance-none text-[11px] font-mono-data text-[var(--text-primary)] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-[7px] h-[28px] pl-2.5 pr-7 hover:border-[var(--primary)] focus:outline-none focus:border-[var(--primary)] transition-colors cursor-pointer"
+                  >
+                    {timezones.map((z) => <option key={z} value={z}>{z}</option>)}
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-[var(--text-muted)] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
             </div>
+
+            {/* 操作 */}
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="default" disabled={busy !== ''} onClick={prepare} className="min-w-[104px]">
+                {busy === 'prepare' ? '生成中…' : command ? '重新生成' : '开启沙箱接管'}
+              </Button>
+              {command && (
+                <Button size="sm" variant="ghost" disabled={busy !== ''} onClick={restore}>
+                  {busy === 'restore' ? '移除中…' : '移除'}
+                </Button>
+              )}
+            </div>
+
+            {/* 生成的命令 */}
+            {command && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[10px] text-[var(--text-muted)]">复制到你自己的终端运行:</div>
+                <div className="relative rounded-[9px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]">
+                  <pre className="font-mono-data text-[11px] leading-relaxed text-[var(--text-primary)] px-3 py-2.5 pr-[68px] overflow-x-auto whitespace-pre">{command}</pre>
+                  <button
+                    onClick={copy}
+                    className={cn(
+                      'absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-[6px] text-[10px] font-semibold transition-colors cursor-pointer',
+                      copied ? 'text-[var(--success)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
+                    )}
+                  >
+                    {copied ? <><Check className="w-3 h-3" /> 已复制</> : <><Copy className="w-3 h-3" /> 复制</>}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && (
+          <div className="flex items-start gap-1.5 pt-2.5 text-[10px] text-[var(--danger)]">
+            <ShieldAlert className="w-3 h-3 mt-px shrink-0" />
+            <span>{err}</span>
           </div>
         )}
       </div>
