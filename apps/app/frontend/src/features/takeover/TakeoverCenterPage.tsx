@@ -380,7 +380,8 @@ function SandboxCard() {
   }, [isWin])
 
   const refreshList = useCallback(async () => {
-    try { setManaged(await sandboxList()) } catch { /* ignore */ }
+    // Go 空 slice 会序列化成 null,兜成 [] —— 否则 managed.length 抛异常整页白屏。
+    try { setManaged((await sandboxList()) ?? []) } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {

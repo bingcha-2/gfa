@@ -67,8 +67,13 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermiss
 	return runCommandString(name, kitDir, mounts, skipPermissions), nil
 }
 
-// SandboxList 已托管的沙箱名单(gfa-claude-<项目名>)。
-func (a *App) SandboxList() []string { return listManagedNames() }
+// SandboxList 已托管的沙箱名单(gfa-claude-<项目名>)。永不返回 nil(避免前端 null.length 白屏)。
+func (a *App) SandboxList() []string {
+	if names := listManagedNames(); names != nil {
+		return names
+	}
+	return []string{}
+}
 
 // SandboxStopOne 停止单个托管沙箱(sbx rm,尽力而为)并从名单移除。安全线只动 gfa- 前缀。
 func (a *App) SandboxStopOne(name string) error {
