@@ -364,6 +364,7 @@ function SandboxCard() {
   const [installing, setInstalling] = useState(false)
   const [skipPerms, setSkipPerms] = useState(true) // 沙箱已隔离,默认跳过 Claude 权限确认(YOLO)
   const [managed, setManaged] = useState<string[]>([]) // 已托管沙箱名单(多项目)
+  const [stopping, setStopping] = useState('') // 正在停止的沙箱名(给按钮即时反馈)
   const [winPrereq, setWinPrereq] = useState<Awaited<ReturnType<typeof sandboxWindowsPrereq>> | null>(null)
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
@@ -420,8 +421,8 @@ function SandboxCard() {
   })
   const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz, skipPerms)); await refreshList() })
   const stopOne = async (name: string) => {
-    setErr('')
-    try { await sandboxStopOne(name); await refreshList() } catch (e) { setErr(friendlySandboxError(e)) }
+    setErr(''); setStopping(name)
+    try { await sandboxStopOne(name); await refreshList() } catch (e) { setErr(friendlySandboxError(e)) } finally { setStopping('') }
   }
   const restore = () => {
     if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
@@ -537,7 +538,9 @@ function SandboxCard() {
                 managed.map((name) => (
                   <div key={name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
                     <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-claude-/, '')}</span>
-                    <Button size="sm" variant="ghost" onClick={() => stopOne(name)} className="shrink-0">停止</Button>
+                    <Button size="sm" variant="ghost" disabled={stopping === name} onClick={() => stopOne(name)} className="shrink-0 min-w-[56px]">
+                      {stopping === name ? '停止中…' : '停止'}
+                    </Button>
                   </div>
                 ))
               )}
