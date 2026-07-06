@@ -134,12 +134,16 @@ func TestSandboxName(t *testing.T) {
 }
 
 func TestIsGfaManagedSandbox(t *testing.T) {
-	if !isGfaManagedSandbox("gfa-claude-x") {
-		t.Error("gfa-claude-x should be managed")
+	for _, ok := range []string{"gfa-claude-x", "gfa-kimi-domio", "gfa-anything"} {
+		if !isGfaManagedSandbox(ok) {
+			t.Errorf("%q should be managed", ok)
+		}
 	}
-	// 用户自己 sbx run 起的默认名(claude-<workdir>)绝不能被判为托管 → 冰茶不会误杀。
-	if isGfaManagedSandbox("claude-userproj") {
-		t.Error("user's own sandbox must NOT be treated as managed")
+	// 用户自己 sbx run 起的(claude-<workdir> 等非 gfa- 前缀)绝不能被判为托管 → 冰茶不误杀。
+	for _, no := range []string{"claude-userproj", "my-sandbox", "gfaclaude"} {
+		if isGfaManagedSandbox(no) {
+			t.Errorf("%q must NOT be treated as managed", no)
+		}
 	}
 }
 

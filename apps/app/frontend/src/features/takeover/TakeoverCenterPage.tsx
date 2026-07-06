@@ -537,7 +537,7 @@ function SandboxCard() {
               ) : (
                 managed.map((name) => (
                   <div key={name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
-                    <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-claude-/, '')}</span>
+                    <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-/, '')}</span>
                     <Button size="sm" variant="ghost" disabled={stopping === name} onClick={() => stopOne(name)} className="shrink-0 min-w-[56px]">
                       {stopping === name ? '停止中…' : '停止'}
                     </Button>

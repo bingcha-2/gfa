@@ -122,7 +122,8 @@ func mountArgs(mounts []SandboxMount) []string {
 // 冰茶托管的沙箱统一 gfa-claude- 前缀:①开沙箱带固定 --name,冰茶据此复用/停止;
 // ②isGfaManagedSandbox 是安全线,冰茶【只】动自己前缀的沙箱,绝不碰用户自己 sbx run 起的。
 
-const sandboxNamePrefix = "gfa-claude-"
+const sandboxNamePrefix = "gfa-claude-"  // claude 沙箱命名前缀
+const managedSandboxPrefix = "gfa-"       // 冰茶托管的所有沙箱(claude/kimi/…)共同前缀 = 安全线
 
 var unsafeSandboxNameChar = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
@@ -144,9 +145,10 @@ func sandboxName(mounts []SandboxMount) string {
 	return sandboxNamePrefix + base + "-" + hex.EncodeToString(sum[:])[:6]
 }
 
-// isGfaManagedSandbox 安全线:只有 gfa-claude- 前缀的才是冰茶托管、可被冰茶停止/移除的。
+// isGfaManagedSandbox 安全线:只有 gfa- 前缀的才是冰茶托管(claude/kimi/…)、可被冰茶
+// 列出/停止/移除的;绝不碰用户自己 sbx run 起的沙箱。
 func isGfaManagedSandbox(name string) bool {
-	return strings.HasPrefix(name, sandboxNamePrefix)
+	return strings.HasPrefix(name, managedSandboxPrefix)
 }
 
 // runCommandArgs 拼 `sbx` 之后的参数:run --name <name> --kit <kit> claude <挂载...> [-- --dangerously-skip-permissions]。
