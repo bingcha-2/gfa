@@ -209,8 +209,9 @@ func stopSandbox(name string) error {
 	if sbx == "" {
 		return nil // sbx 都没了,自然也没托管沙箱可停
 	}
-	// 捕获真实输出:区分「没这个沙箱(用户没跑过 sbx run,无害)」还是别的原因(需要 stop / -f)。
-	out, err := exec.Command(sbx, "rm", name).CombinedOutput()
+	// --force:跳过确认(非交互,无 stdin 会报 "stdin is not a terminal")。sbx rm 会先停后删,
+	// 一条搞定,无需另跑 sbx stop。捕获输出:区分「没这个沙箱(无害)」还是别的原因。
+	out, err := exec.Command(sbx, "rm", "--force", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
