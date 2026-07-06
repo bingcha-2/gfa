@@ -167,66 +167,31 @@ func ApplyPolicy(gatewayPort int) error {
 	return nil
 }
 
-// ── 托管沙箱名单(支持多项目)──────────────────────────────────────────────
-// 每建一个项目沙箱记一个名(不覆盖),供列表展示 + 单独/批量停止。免解析 sbx ls。
+// ── 托管沙箱名单(真查 sbx ls,支持多项目)────────────────────────────────────
+// 直接问 sbx 真实存在哪些沙箱(sbx ls -q,一行一个名),只认 gfa-claude- 前缀 = 冰茶托管的。
+// 这样列表 = 真实状态,而非「冰茶以为你配过啥」;绝不列/管用户自己 sbx run 起的沙箱。
 
-func managedListPath() (string, error) {
-	dir, err := sandboxKitDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, ".sandboxes"), nil
-}
-
-// listManagedNames 读回所有托管沙箱名(每行一个;只认 gfa-claude- 前缀)。
+// listManagedNames 返回真实存在的、冰茶托管(gfa-claude- 前缀)的沙箱名。
+// 抑制态(go test)/ 未装 sbx / 查询失败 → 空。
 func listManagedNames() []string {
-	p, err := managedListPath()
-	if err != nil {
+	if appActionsSuppressed() {
 		return nil
 	}
-	b, err := os.ReadFile(p)
+	sbx := resolveSbxPath()
+	if sbx == "" {
+		return nil
+	}
+	out, err := exec.Command(sbx, "ls", "-q").Output()
 	if err != nil {
 		return nil
 	}
 	var names []string
-	for _, line := range strings.Split(string(b), "\n") {
-		if line = strings.TrimSpace(line); line != "" && isGfaManagedSandbox(line) {
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); isGfaManagedSandbox(line) {
 			names = append(names, line)
 		}
 	}
 	return names
-}
-
-func writeManagedList(names []string) error {
-	p, err := managedListPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(p, []byte(strings.Join(names, "\n")+"\n"), 0o644)
-}
-
-// addManagedName 记一个托管沙箱名(去重)。
-func addManagedName(name string) error {
-	for _, n := range listManagedNames() {
-		if n == name {
-			return nil
-		}
-	}
-	return writeManagedList(append(listManagedNames(), name))
-}
-
-// removeManagedName 从名单移除一个名。
-func removeManagedName(name string) error {
-	var out []string
-	for _, n := range listManagedNames() {
-		if n != name {
-			out = append(out, n)
-		}
-	}
-	return writeManagedList(out)
 }
 
 // stopSandbox 停止并移除一个沙箱。安全线:只动 gfa-claude- 前缀(冰茶托管)的,

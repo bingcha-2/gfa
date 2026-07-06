@@ -525,22 +525,25 @@ function SandboxCard() {
               <Button size="sm" variant="secondary" onClick={login} className="shrink-0">打开终端登录</Button>
             </div>
 
-            {/* 已托管沙箱(多项目,每个一行,可单独停止) */}
-            {managed.length > 0 && (
-              <div className="flex flex-col gap-1.5">
+            {/* 已托管沙箱:真查 sbx ls -q,只列 gfa-claude- 前缀。终端里起的沙箱点「刷新」拉进来 */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-[var(--text-primary)]">已托管沙箱</span>
-                {managed.map((name) => (
+                <button onClick={refreshList} className="text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">刷新</button>
+              </div>
+              {managed.length === 0 ? (
+                <p className="text-[10px] text-[var(--text-muted)]">暂无 · 在终端跑 sbx run 起沙箱后点「刷新」</p>
+              ) : (
+                managed.map((name) => (
                   <div key={name} className="flex items-center gap-2 rounded-[8px] bg-[var(--bg-tertiary)] pl-2.5 pr-1 py-1">
                     <span className="font-mono-data text-[11px] text-[var(--text-secondary)] truncate flex-1" title={name}>{name.replace(/^gfa-claude-/, '')}</span>
                     <Button size="sm" variant="ghost" onClick={() => stopOne(name)} className="shrink-0">停止</Button>
                   </div>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
 
-            {managed.length > 0 && (
-              <div className="text-[11px] font-semibold text-[var(--text-primary)] pt-1 border-t border-[var(--border-light)]">新建项目沙箱</div>
-            )}
+            <div className="text-[11px] font-semibold text-[var(--text-primary)] pt-1 border-t border-[var(--border-light)]">新建项目沙箱</div>
 
             {/* 挂载目录 */}
             <div className="flex flex-col gap-2">

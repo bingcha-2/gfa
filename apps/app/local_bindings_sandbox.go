@@ -59,15 +59,12 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string, skipPermiss
 	if err := ApplyPolicy(port); err != nil {
 		return "", err
 	}
-	// 固定命名(gfa-claude-<项目名>)+ 记进名单(多项目:不覆盖,支持列表管理)。
+	// 固定命名(gfa-claude-<项目名>);沙箱真实存在与否由 SandboxList 直接查 sbx ls,不再本地记名单。
 	name := sandboxName(mounts)
-	if err := addManagedName(name); err != nil {
-		Log("[sandbox] 记录托管沙箱名失败(不致命): %v", err)
-	}
 	return runCommandString(name, kitDir, mounts, skipPermissions), nil
 }
 
-// SandboxList 已托管的沙箱名单(gfa-claude-<项目名>)。永不返回 nil(避免前端 null.length 白屏)。
+// SandboxList 真实存在的托管沙箱(查 sbx ls -q,只认 gfa-claude- 前缀)。永不返回 nil。
 func (a *App) SandboxList() []string {
 	if names := listManagedNames(); names != nil {
 		return names
@@ -75,13 +72,9 @@ func (a *App) SandboxList() []string {
 	return []string{}
 }
 
-// SandboxStopOne 停止单个托管沙箱(sbx rm,尽力而为)并从名单移除。安全线只动 gfa- 前缀。
-func (a *App) SandboxStopOne(name string) error {
-	if err := stopSandbox(name); err != nil {
-		Log("[sandbox] 停止沙箱 %s 失败(仍从名单移除): %v", name, err)
-	}
-	return removeManagedName(name)
-}
+// SandboxStopOne 停止单个托管沙箱(sbx rm)。安全线只动 gfa- 前缀;失败原因透给前端。
+// 停完前端会重查 sbx ls,列表自然反映真实状态。
+func (a *App) SandboxStopOne(name string) error { return stopSandbox(name) }
 
 // SandboxRestore 移除沙箱配置(删 kit + 撤 policy)。
 func (a *App) SandboxRestore() (string, error) {
