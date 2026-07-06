@@ -247,7 +247,12 @@ func stopSandbox(name string) error {
 	if sbx == "" {
 		return nil // sbx 都没了,自然也没托管沙箱可停
 	}
-	return exec.Command(sbx, "rm", name).Run()
+	// 捕获真实输出:区分「没这个沙箱(用户没跑过 sbx run,无害)」还是别的原因(需要 stop / -f)。
+	out, err := exec.Command(sbx, "rm", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // revokeSandbox 删 kit 目录 + 撤 policy(抑制态只删目录不 exec)。
