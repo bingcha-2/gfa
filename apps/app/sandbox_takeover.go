@@ -55,13 +55,32 @@ func GenerateKit(o KitOptions) (string, error) {
 	return dir, nil
 }
 
+// resolveSbxPath 找 sbx 可执行文件的绝对路径(空=没装)。
+// 关键:macOS/Linux 的 GUI 进程 PATH 常只有 /usr/bin:/bin,不含 brew 目录
+// (/opt/homebrew/bin、/usr/local/bin),LookPath 会漏判「已装却找不到」。故 LookPath 失败后
+// 再探常见安装位置。之后所有 exec sbx 都走这个绝对路径,而非裸 "sbx" 依赖 PATH。
+func resolveSbxPath() string {
+	if p, err := exec.LookPath("sbx"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/opt/homebrew/bin/sbx", "/usr/local/bin/sbx", "/usr/bin/sbx"} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// currentInstallCommandString 当前平台的 sbx 安装命令(展示给用户复制)。
+func currentInstallCommandString() string { return installSbxCommandString(runtime.GOOS) }
+
 // DetectSbx 检测 sbx 是否可用。抑制态(go test)直接返回未装,不 exec。
 func DetectSbx() SbxStatus {
 	if appActionsSuppressed() {
 		return SbxStatus{}
 	}
-	path, err := exec.LookPath("sbx")
-	if err != nil {
+	path := resolveSbxPath()
+	if path == "" {
 		return SbxStatus{Installed: false, Note: "未检测到 sbx"}
 	}
 	out, _ := exec.Command(path, "version").Output()
@@ -76,24 +95,16 @@ func DetectSbx() SbxStatus {
 	return st
 }
 
-// ApplyPolicy 放行宿主网关端口。抑制态短路。
+// ApplyPolicy 放行宿主网关端口。抑制态短路;sbx 找不到则报错(前端会提示先装)。
 func ApplyPolicy(gatewayPort int) error {
 	if appActionsSuppressed() {
 		return nil
 	}
-	return exec.Command("sbx", policyAllowArgs(gatewayPort)...).Run()
-}
-
-// InstallSbx 按平台装 sbx。抑制态短路。
-func InstallSbx() error {
-	if appActionsSuppressed() {
-		return nil
+	sbx := resolveSbxPath()
+	if sbx == "" {
+		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
 	}
-	name, args, err := installSbxCommand(runtime.GOOS)
-	if err != nil {
-		return err
-	}
-	return exec.Command(name, args...).Run()
+	return exec.Command(sbx, policyAllowArgs(gatewayPort)...).Run()
 }
 
 // writeManagedName 把当前托管沙箱名记到 kit 目录,供 Restore 精确停止(免去解析 sbx ls)。
@@ -135,7 +146,11 @@ func stopSandbox(name string) error {
 	if appActionsSuppressed() {
 		return nil
 	}
-	return exec.Command("sbx", "rm", name).Run()
+	sbx := resolveSbxPath()
+	if sbx == "" {
+		return nil // sbx 都没了,自然也没托管沙箱可停
+	}
+	return exec.Command(sbx, "rm", name).Run()
 }
 
 // revokeSandbox 删 kit 目录 + 撤 policy(抑制态只删目录不 exec)。
@@ -147,8 +162,12 @@ func revokeSandbox(gatewayPort int) error {
 		return nil
 	}
 	// 撤 policy 尽力而为:sbx 未装 / policy 本就不存在都不该让「移除」报错(kit 已删才是关键)。
-	if err := exec.Command("sbx", "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run(); err != nil {
-		Log("[sandbox] 撤销 policy 失败(不阻塞移除,sbx 可能未安装): %v", err)
+	sbx := resolveSbxPath()
+	if sbx == "" {
+		return nil
+	}
+	if err := exec.Command(sbx, "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run(); err != nil {
+		Log("[sandbox] 撤销 policy 失败(不阻塞移除): %v", err)
 	}
 	return nil
 }
@@ -166,10 +185,7 @@ func (claudeSandboxTarget) Name() string          { return "Claude Code · 沙�
 func (claudeSandboxTarget) InjectionType() string { return "sandbox" }
 
 func (claudeSandboxTarget) DetectPath() string {
-	if p, err := exec.LookPath("sbx"); err == nil {
-		return p
-	}
-	return ""
+	return resolveSbxPath()
 }
 
 func (claudeSandboxTarget) IsInjected(_ int) bool {

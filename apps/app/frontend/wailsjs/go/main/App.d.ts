@@ -324,9 +324,11 @@ export function RestartToUpdate():Promise<void>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
+export function SandboxBrowseDir(arg1:string):Promise<string>;
+
 export function SandboxGetStatus():Promise<main.SbxStatus>;
 
-export function SandboxInstall():Promise<void>;
+export function SandboxInstallCommand():Promise<string>;
 
 export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string):Promise<string>;
 

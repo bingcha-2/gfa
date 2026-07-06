@@ -618,12 +618,16 @@ export function RestoreSelected(arg1) {
   return window['go']['main']['App']['RestoreSelected'](arg1);
 }
 
+export function SandboxBrowseDir(arg1) {
+  return window['go']['main']['App']['SandboxBrowseDir'](arg1);
+}
+
 export function SandboxGetStatus() {
   return window['go']['main']['App']['SandboxGetStatus']();
 }
 
-export function SandboxInstall() {
-  return window['go']['main']['App']['SandboxInstall']();
+export function SandboxInstallCommand() {
+  return window['go']['main']['App']['SandboxInstallCommand']();
 }
 
 export function SandboxPrepare(arg1, arg2) {

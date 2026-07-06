@@ -1,13 +1,25 @@
 package main
 
+import "github.com/wailsapp/wails/v2/pkg/runtime"
+
 // 沙箱模式接管 Wails 绑定。冰茶只准备(装/配/递命令),交互式 sbx run 由用户在自己终端跑。
 // 触机器动作在 sandbox_takeover.go 已过 appActionsSuppressed() 短路。
 
 // SandboxGetStatus 卡片状态(sbx 是否装、版本、Linux KVM)。
 func (a *App) SandboxGetStatus() SbxStatus { return DetectSbx() }
 
-// SandboxInstall 代装 sbx(平台分支:brew / winget / curl+apt)。
-func (a *App) SandboxInstall() error { return InstallSbx() }
+// SandboxInstallCommand 返回给用户复制到终端安装 sbx 的命令(展示用,不由冰茶静默 exec)。
+func (a *App) SandboxInstallCommand() string { return currentInstallCommandString() }
+
+// SandboxBrowseDir 弹「目录」选择框(挂载目录用),返回所选目录(空=取消)。
+// 用 OpenDirectoryDialog 而非 BrowseForPath(那是选 .app/.exe 文件的,选不了文件夹)。
+func (a *App) SandboxBrowseDir(title string) string {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: title})
+	if err != nil {
+		return ""
+	}
+	return dir
+}
 
 // SandboxUSTimezones 供前端时区下拉。
 func (a *App) SandboxUSTimezones() []string { return usTimezones() }

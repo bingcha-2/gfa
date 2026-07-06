@@ -10,7 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxUSTimezones, sandboxPrepare, sandboxRestore, browseForPath } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstallCommand, sandboxBrowseDir, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
@@ -332,15 +332,35 @@ function MountRwToggle({ readOnly, onChange }: { readOnly: boolean; onChange: (r
   )
 }
 
+// 终端命令块 + 悬浮复制(装 sbx / sbx run 两处复用)。
+function CopyBox({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) }).catch(() => {})
+  return (
+    <div className="relative rounded-[9px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]">
+      <pre className="font-mono-data text-[11px] leading-relaxed text-[var(--text-primary)] px-3 py-2.5 pr-[68px] overflow-x-auto whitespace-pre">{text}</pre>
+      <button
+        onClick={copy}
+        className={cn(
+          'absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-[6px] text-[10px] font-semibold transition-colors cursor-pointer',
+          copied ? 'text-[var(--success)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
+        )}
+      >
+        {copied ? <><Check className="w-3 h-3" /> 已复制</> : <><Copy className="w-3 h-3" /> 复制</>}
+      </button>
+    </div>
+  )
+}
+
 function SandboxCard() {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof sandboxGetStatus>> | null>(null)
   const [mounts, setMounts] = useState<SandboxMountItem[]>([])
   const [timezones, setTimezones] = useState<string[]>([])
   const [tz, setTz] = useState('America/New_York')
   const [command, setCommand] = useState('')
+  const [installCmd, setInstallCmd] = useState('')
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
-  const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(async () => {
     try { setStatus(await sandboxGetStatus()) } catch { /* ignore */ }
@@ -356,8 +376,9 @@ function SandboxCard() {
     fn().catch((e) => setErr(friendlySandboxError(e))).finally(() => setBusy(''))
   }
 
-  const install = () => run('install', async () => { await sandboxInstall(); await refresh() })
-  const prepare = () => run('prepare', async () => { setCopied(false); setCommand(await sandboxPrepare(mounts, tz)) })
+  // 装 sbx 交给用户终端(GUI 静默 exec brew 不可靠):点一下亮出命令让他复制。
+  const showInstall = () => run('install', async () => { setInstallCmd(await sandboxInstallCommand()) })
+  const prepare = () => run('prepare', async () => { setCommand(await sandboxPrepare(mounts, tz)) })
   const restore = () => {
     if (!window.confirm('关闭沙箱接管会停止冰茶托管的沙箱,正在运行的会话会被终止。继续?')) return
     run('restore', async () => { await sandboxRestore(); setCommand('') })
@@ -365,13 +386,9 @@ function SandboxCard() {
 
   const addMount = async () => {
     try {
-      const p = await browseForPath('选择要挂载到沙箱的目录')
+      const p = await sandboxBrowseDir('选择要挂载到沙箱的目录')
       if (p) setMounts((m) => m.some((x) => x.path === p) ? m : [...m, { path: p, readOnly: false }])
     } catch { /* cancelled */ }
-  }
-
-  const copy = () => {
-    navigator.clipboard.writeText(command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) }).catch(() => {})
   }
 
   const installed = !!status?.installed
@@ -388,8 +405,8 @@ function SandboxCard() {
             </div>
           </div>
           {!installed && (
-            <Button size="sm" variant="default" disabled={busy === 'install'} onClick={install} className="shrink-0 min-w-[84px]">
-              {busy === 'install' ? '安装中…' : '安装 sbx'}
+            <Button size="sm" variant="default" disabled={busy === 'install'} onClick={showInstall} className="shrink-0 min-w-[84px]">
+              安装 sbx
             </Button>
           )}
         </div>
@@ -402,9 +419,23 @@ function SandboxCard() {
         )}
 
         {!installed ? (
-          <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed pt-2 pb-1">
-            装好 Docker sbx 后,冰茶会自动生成配置,你在自己的终端一条命令即可在隔离沙箱里跑 Claude Code。
-          </p>
+          <div className="flex flex-col gap-2 pt-2 pb-1">
+            <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+              装好 Docker sbx 后,冰茶会自动生成配置,你在自己的终端一条命令即可在隔离沙箱里跑 Claude Code。
+            </p>
+            {installCmd && (
+              <>
+                <div className="text-[10px] text-[var(--text-muted)]">在终端运行这条安装:</div>
+                <CopyBox text={installCmd} />
+                <button
+                  onClick={refresh}
+                  className="self-start text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer"
+                >
+                  装好了?点这里重新检测
+                </button>
+              </>
+            )}
+          </div>
         ) : (
           <div className="flex flex-col gap-4 pt-3.5 mt-0.5 border-t border-[var(--border-light)]">
             {/* 挂载目录 */}
@@ -479,18 +510,7 @@ function SandboxCard() {
             {command && (
               <div className="flex flex-col gap-1.5">
                 <div className="text-[10px] text-[var(--text-muted)]">复制到你自己的终端运行:</div>
-                <div className="relative rounded-[9px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]">
-                  <pre className="font-mono-data text-[11px] leading-relaxed text-[var(--text-primary)] px-3 py-2.5 pr-[68px] overflow-x-auto whitespace-pre">{command}</pre>
-                  <button
-                    onClick={copy}
-                    className={cn(
-                      'absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-[6px] text-[10px] font-semibold transition-colors cursor-pointer',
-                      copied ? 'text-[var(--success)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
-                    )}
-                  >
-                    {copied ? <><Check className="w-3 h-3" /> 已复制</> : <><Copy className="w-3 h-3" /> 复制</>}
-                  </button>
-                </div>
+                <CopyBox text={command} />
               </div>
             )}
           </div>

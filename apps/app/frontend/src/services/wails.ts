@@ -40,7 +40,8 @@ import {
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
   SandboxGetStatus as _SandboxGetStatus,
-  SandboxInstall as _SandboxInstall,
+  SandboxInstallCommand as _SandboxInstallCommand,
+  SandboxBrowseDir as _SandboxBrowseDir,
   SandboxUSTimezones as _SandboxUSTimezones,
   SandboxPrepare as _SandboxPrepare,
   SandboxRestore as _SandboxRestore,
@@ -377,8 +378,12 @@ export async function sandboxGetStatus(): Promise<main.SbxStatus> {
   return _SandboxGetStatus()
 }
 
-export async function sandboxInstall(): Promise<void> {
-  await _SandboxInstall()
+export async function sandboxInstallCommand(): Promise<string> {
+  return _SandboxInstallCommand()
+}
+
+export async function sandboxBrowseDir(title: string): Promise<string> {
+  return _SandboxBrowseDir(title)
 }
 
 export async function sandboxUSTimezones(): Promise<string[]> {

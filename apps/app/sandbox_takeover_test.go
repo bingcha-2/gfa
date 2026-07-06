@@ -36,9 +36,10 @@ func TestApplyPolicySuppressed(t *testing.T) {
 	}
 }
 
-func TestInstallSbxSuppressed(t *testing.T) {
-	if err := InstallSbx(); err != nil {
-		t.Errorf("InstallSbx under test should no-op, got %v", err)
+func TestInstallSbxCommandStringCurrent(t *testing.T) {
+	// 当前平台应有安装命令(darwin/windows/linux 之一),不为空。
+	if currentInstallCommandString() == "" {
+		t.Error("currentInstallCommandString empty on supported platform")
 	}
 }
 

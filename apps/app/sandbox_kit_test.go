@@ -6,30 +6,21 @@ import (
 	"testing"
 )
 
-func TestInstallSbxCommand(t *testing.T) {
-	cases := map[string]struct {
-		goos string
-		name string
-		args []string
-	}{
-		"darwin":  {"darwin", "brew", []string{"install", "docker/tap/sbx"}},
-		"windows": {"windows", "winget", []string{"install", "-h", "Docker.sbx"}},
-		"linux":   {"linux", "sh", []string{"-c", "curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh && sudo apt-get install -y docker-sbx"}},
+func TestInstallSbxCommandString(t *testing.T) {
+	cases := map[string]string{
+		"darwin":  "brew install docker/tap/sbx",
+		"windows": "winget install -h Docker.sbx",
 	}
 	for goos, want := range cases {
-		name, args, err := installSbxCommand(want.goos)
-		if err != nil {
-			t.Fatalf("%s: unexpected err %v", goos, err)
-		}
-		if name != want.name {
-			t.Errorf("%s: name=%q want %q", goos, name, want.name)
-		}
-		if strings.Join(args, "\x00") != strings.Join(want.args, "\x00") {
-			t.Errorf("%s: args=%v want %v", goos, args, want.args)
+		if got := installSbxCommandString(goos); got != want {
+			t.Errorf("%s: %q want %q", goos, got, want)
 		}
 	}
-	if _, _, err := installSbxCommand("plan9"); err == nil {
-		t.Errorf("expected error for unsupported goos")
+	if got := installSbxCommandString("linux"); !strings.Contains(got, "docker-sbx") {
+		t.Errorf("linux missing docker-sbx: %q", got)
+	}
+	if got := installSbxCommandString("plan9"); got != "" {
+		t.Errorf("unsupported goos should be empty: %q", got)
 	}
 }
 

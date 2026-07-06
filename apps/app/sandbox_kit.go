@@ -15,17 +15,18 @@ import (
 
 const sandboxSentinelToken = "bcai-claude-proxy"
 
-// installSbxCommand 按平台返回安装 sbx 的命令(name + args)。
-func installSbxCommand(goos string) (string, []string, error) {
+// installSbxCommandString 按平台返回给用户复制到终端安装 sbx 的命令(展示用)。
+// 不由冰茶静默 exec:GUI 进程 PATH 常不含 brew 目录、装 brew 又慢又无反馈,交给用户终端更可靠。
+func installSbxCommandString(goos string) string {
 	switch goos {
 	case "darwin":
-		return "brew", []string{"install", "docker/tap/sbx"}, nil
+		return "brew install docker/tap/sbx"
 	case "windows":
-		return "winget", []string{"install", "-h", "Docker.sbx"}, nil
+		return "winget install -h Docker.sbx"
 	case "linux":
-		return "sh", []string{"-c", "curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh && sudo apt-get install -y docker-sbx"}, nil
+		return "curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh && sudo apt-get install -y docker-sbx"
 	default:
-		return "", nil, fmt.Errorf("unsupported platform: %s", goos)
+		return ""
 	}
 }
 
