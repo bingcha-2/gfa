@@ -1,0 +1,39 @@
+package main
+
+// 沙箱模式接管 Wails 绑定。冰茶只准备(装/配/递命令),交互式 sbx run 由用户在自己终端跑。
+// 触机器动作在 sandbox_takeover.go 已过 appActionsSuppressed() 短路。
+
+// SandboxGetStatus 卡片状态(sbx 是否装、版本、Linux KVM)。
+func (a *App) SandboxGetStatus() SbxStatus { return DetectSbx() }
+
+// SandboxInstall 代装 sbx(平台分支:brew / winget / curl+apt)。
+func (a *App) SandboxInstall() error { return InstallSbx() }
+
+// SandboxUSTimezones 供前端时区下拉。
+func (a *App) SandboxUSTimezones() []string { return usTimezones() }
+
+// SandboxPrepare 生成带挂载/时区的 kit + 放行 policy,返回给用户复制到终端的命令。
+// timezone 空则用默认(America/New_York)。Phase 2 会在此处按出口 IP 覆盖 timezone。
+func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string) (string, error) {
+	if err := validateTakeoverPrereqs(LoadConfig()); err != nil {
+		return "", err
+	}
+	port := effectiveProxyPort()
+	o := defaultKitOptions(port)
+	if timezone != "" {
+		o.Timezone = timezone
+	}
+	kitDir, err := GenerateKit(o)
+	if err != nil {
+		return "", err
+	}
+	if err := ApplyPolicy(port); err != nil {
+		return "", err
+	}
+	return runCommandString(kitDir, mounts), nil
+}
+
+// SandboxRestore 移除沙箱配置(删 kit + 撤 policy)。
+func (a *App) SandboxRestore() (string, error) {
+	return claudeSandboxTarget{}.Restore()
+}
