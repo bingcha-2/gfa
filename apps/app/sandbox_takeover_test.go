@@ -13,19 +13,14 @@ func TestGenerateKitWritesFiles(t *testing.T) {
 	if err := generateKitInto(dir, o); err != nil {
 		t.Fatalf("generateKitInto: %v", err)
 	}
-	kit, err := os.ReadFile(filepath.Join(dir, "kit.yaml"))
+	spec, err := os.ReadFile(filepath.Join(dir, "spec.yaml"))
 	if err != nil {
-		t.Fatalf("read kit.yaml: %v", err)
+		t.Fatalf("read spec.yaml: %v", err)
 	}
-	if !strings.Contains(string(kit), "ANTHROPIC_BASE_URL: http://host.docker.internal:48800") {
-		t.Errorf("kit.yaml wrong:\n%s", kit)
-	}
-	settings, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if err != nil {
-		t.Fatalf("read settings.json: %v", err)
-	}
-	if !strings.Contains(string(settings), "host.docker.internal:48800") {
-		t.Errorf("settings.json wrong:\n%s", settings)
+	for _, want := range []string{"kind: mixin", "ANTHROPIC_BASE_URL: http://host.docker.internal:48800", `allow: [ "localhost:48800" ]`} {
+		if !strings.Contains(string(spec), want) {
+			t.Errorf("spec.yaml missing %q:\n%s", want, spec)
+		}
 	}
 }
 

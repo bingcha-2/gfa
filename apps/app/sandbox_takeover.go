@@ -33,15 +33,12 @@ func sandboxKitDir() (string, error) {
 	return filepath.Join(base, "bcai", "sandbox", "gfa-claude"), nil
 }
 
-// generateKitInto 把 kit.yaml + settings.json 写进 dir。纯 IO,便于用 temp 目录测试。
+// generateKitInto 把 spec.yaml 写进 dir(sbx kit 要求文件名 spec.yaml)。纯 IO,便于 temp 目录测试。
 func generateKitInto(dir string, o KitOptions) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "kit.yaml"), []byte(kitYAML(o)), 0o644); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "settings.json"), []byte(sandboxSettingsJSON(o.GatewayPort)), 0o644)
+	return os.WriteFile(filepath.Join(dir, "spec.yaml"), []byte(kitSpecYAML(o)), 0o644)
 }
 
 // GenerateKit 用默认落盘路径生成 kit,返回 kit 目录。
@@ -260,7 +257,7 @@ func (claudeSandboxTarget) IsInjected(_ int) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(filepath.Join(dir, "kit.yaml"))
+	_, err = os.Stat(filepath.Join(dir, "spec.yaml"))
 	return err == nil
 }
 

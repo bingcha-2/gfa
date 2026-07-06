@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -24,36 +23,23 @@ func TestInstallSbxCommandString(t *testing.T) {
 	}
 }
 
-func TestKitYAML(t *testing.T) {
+func TestKitSpecYAML(t *testing.T) {
+	// schema 经真机 sbx kit validate 确认:spec.yaml + schemaVersion + kind:mixin + caps.network.allow。
 	o := KitOptions{GatewayPort: 48800, Lang: "en_US.UTF-8", Timezone: "America/New_York", SentinelToken: "bcai-claude-proxy"}
-	got := kitYAML(o)
+	got := kitSpecYAML(o)
 	for _, want := range []string{
+		"schemaVersion: 1",
+		"kind: mixin",
+		"name: gfa-claude",
 		"LANG: en_US.UTF-8",
 		"TZ: America/New_York",
 		"ANTHROPIC_BASE_URL: http://host.docker.internal:48800",
 		"ANTHROPIC_AUTH_TOKEN: bcai-claude-proxy",
-		`allowedDomains: [ "localhost:48800" ]`,
-		"mkdir -p /home/agent/.claude",
-		"cp {{KIT}}/settings.json /home/agent/.claude/settings.json",
+		`allow: [ "localhost:48800" ]`,
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("kitYAML missing %q\n---\n%s", want, got)
+			t.Errorf("kitSpecYAML missing %q\n---\n%s", want, got)
 		}
-	}
-}
-
-func TestSandboxSettingsJSON(t *testing.T) {
-	got := sandboxSettingsJSON(48800)
-	var m map[string]any
-	if err := json.Unmarshal([]byte(got), &m); err != nil {
-		t.Fatalf("not valid json: %v", err)
-	}
-	env, _ := m["env"].(map[string]any)
-	if env["ANTHROPIC_BASE_URL"] != "http://host.docker.internal:48800" {
-		t.Errorf("base url wrong: %v", env["ANTHROPIC_BASE_URL"])
-	}
-	if env["ANTHROPIC_AUTH_TOKEN"] != "bcai-claude-proxy" {
-		t.Errorf("auth token wrong: %v", env["ANTHROPIC_AUTH_TOKEN"])
 	}
 }
 
