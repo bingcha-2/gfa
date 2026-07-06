@@ -162,6 +162,17 @@ func GetLeaser() *Leaser {
 	return globalLeaser
 }
 
+// CurrentEgressProxyURL 返回当前持有的粘性租约的出口代理 URL(空=未租到/未绑定)。
+// 只读快照,供沙箱模式开场探出口 IP 定时区用;不触发租号,不改状态。
+func (l *Leaser) CurrentEgressProxyURL() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.cachedToken == nil {
+		return ""
+	}
+	return l.cachedToken.ProxyURL
+}
+
 // ConnectViaProxy creates a TCP connection through an HTTP CONNECT proxy
 func ConnectViaProxy(proxyUrlStr, targetHost string, targetPort int, timeout time.Duration) (net.Conn, error) {
 	proxyUrl, err := url.Parse(proxyUrlStr)

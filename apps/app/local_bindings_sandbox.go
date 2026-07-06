@@ -21,7 +21,11 @@ func (a *App) SandboxPrepare(mounts []SandboxMount, timezone string) (string, er
 	port := effectiveProxyPort()
 	o := defaultKitOptions(port)
 	if timezone != "" {
+		// 用户在 UI 显式选了时区 → 尊重用户。
 		o.Timezone = timezone
+	} else if tz, err := probeExitTimezone(GetLeaser().CurrentEgressProxyURL()); err == nil {
+		// Phase 2:未指定则按当前粘性租约的出口 IP 探一次地理时区(失败回退默认美东)。
+		o.Timezone = tz
 	}
 	kitDir, err := GenerateKit(o)
 	if err != nil {
