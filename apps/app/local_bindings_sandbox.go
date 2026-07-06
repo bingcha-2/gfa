@@ -25,6 +25,15 @@ func (a *App) SandboxBrowseDir(title string) string {
 	return dir
 }
 
+// SandboxWindowsPrereq Windows 前置检查(WHP + 固件虚拟化)。非 Windows 返回全 OK。
+func (a *App) SandboxWindowsPrereq() WinPrereq { return windowsPrereq() }
+
+// SandboxEnableHypervisor 弹 UAC 启用 Windows Hypervisor Platform(启用后需重启)。
+func (a *App) SandboxEnableHypervisor() error { return enableWindowsHypervisor() }
+
+// SandboxLogin 开终端跑 sbx login(Docker Hub 登录,首次使用必做)。
+func (a *App) SandboxLogin() error { return SbxLogin() }
+
 // SandboxUSTimezones 供前端时区下拉。
 func (a *App) SandboxUSTimezones() []string { return usTimezones() }
 

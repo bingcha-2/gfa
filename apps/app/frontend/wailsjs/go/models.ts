@@ -823,6 +823,22 @@ export namespace main {
 	        this.canSkip = source["canSkip"];
 	    }
 	}
+	export class WinPrereq {
+	    hypervisorOK: boolean;
+	    firmwareVirtOK: boolean;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WinPrereq(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hypervisorOK = source["hypervisorOK"];
+	        this.firmwareVirtOK = source["firmwareVirtOK"];
+	        this.note = source["note"];
+	    }
+	}
 
 }
 

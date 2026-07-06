@@ -326,17 +326,23 @@ export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
 export function SandboxBrowseDir(arg1:string):Promise<string>;
 
+export function SandboxEnableHypervisor():Promise<void>;
+
 export function SandboxGetStatus():Promise<main.SbxStatus>;
 
 export function SandboxInstall():Promise<void>;
 
 export function SandboxInstallCommand():Promise<string>;
 
+export function SandboxLogin():Promise<void>;
+
 export function SandboxPrepare(arg1:Array<main.SandboxMount>,arg2:string):Promise<string>;
 
 export function SandboxRestore():Promise<string>;
 
 export function SandboxUSTimezones():Promise<Array<string>>;
+
+export function SandboxWindowsPrereq():Promise<main.WinPrereq>;
 
 export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
 

@@ -10,7 +10,7 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxPrepare, sandboxRestore } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
 
@@ -360,19 +360,30 @@ function SandboxCard() {
   const [command, setCommand] = useState('')
   const [installCmd, setInstallCmd] = useState('')
   const [installing, setInstalling] = useState(false)
+  const [winPrereq, setWinPrereq] = useState<Awaited<ReturnType<typeof sandboxWindowsPrereq>> | null>(null)
   const [busy, setBusy] = useState<'' | 'install' | 'prepare' | 'restore'>('')
   const [err, setErr] = useState('')
+
+  const isWin = isWindowsPlatform()
 
   const refresh = useCallback(async () => {
     try { setStatus(await sandboxGetStatus()) } catch { /* ignore */ }
   }, [])
 
+  const checkPrereq = useCallback(async () => {
+    if (!isWin) return
+    try { setWinPrereq(await sandboxWindowsPrereq()) } catch { /* ignore */ }
+  }, [isWin])
+
   useEffect(() => {
     refresh()
+    checkPrereq()
     sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
-  }, [refresh])
+  }, [refresh, checkPrereq])
 
   const installed = !!status?.installed
+  // Windows 上 WHP 没启用 → sbx 起不来,先拦这一步。
+  const hvBlocked = isWin && winPrereq != null && !winPrereq.hypervisorOK
 
   // 装 sbx 期间轮询侦测:终端里装完,卡片自动变绿(无需用户手点重新检测)。
   useEffect(() => {
@@ -409,6 +420,11 @@ function SandboxCard() {
     } catch { /* cancelled */ }
   }
 
+  // Windows:弹 UAC 启用 Hypervisor Platform(启用后需重启)。
+  const enableHv = async () => { setErr(''); try { await sandboxEnableHypervisor() } catch (e) { setErr(friendlySandboxError(e)) } }
+  // 开终端跑 sbx login(Docker Hub 登录,首次必做)。
+  const login = async () => { setErr(''); try { await sandboxLogin() } catch (e) { setErr(friendlySandboxError(e)) } }
+
   return (
     <ProductCard name="Claude Code · 沙箱模式" provider="anthropic" note="在 Docker 沙箱里隔离运行 Claude Code,请求仍经冰茶网关出口">
       <div className="flex flex-col">
@@ -431,6 +447,26 @@ function SandboxCard() {
           <div className="flex items-start gap-1.5 pt-1 pb-2 text-[10px] text-[var(--warning-strong)]">
             <ShieldAlert className="w-3 h-3 mt-px shrink-0" />
             <span>{status.note}</span>
+          </div>
+        )}
+
+        {/* Windows 前置:Hypervisor Platform 没启用则沙箱起不来,先拦下 */}
+        {hvBlocked && (
+          <div className="flex flex-col gap-2 mt-2 rounded-[9px] border border-[var(--warning)] bg-[var(--bg-tertiary)] p-3">
+            <div className="flex items-start gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 mt-px shrink-0 text-[var(--warning-strong)]" />
+              <div className="text-[11px] text-[var(--text-primary)] leading-relaxed">
+                <span className="font-semibold">需要启用 Windows Hypervisor Platform</span> —— 沙箱靠它起虚拟机,没开 sbx 跑不起来。
+                {winPrereq && !winPrereq.firmwareVirtOK && (
+                  <span className="block mt-1 text-[var(--warning-strong)]">另外:{winPrereq.note}</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="default" onClick={enableHv}>一键启用</Button>
+              <button onClick={checkPrereq} className="text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">重启后点这里重新检查</button>
+            </div>
+            <p className="text-[10px] text-[var(--text-muted)]">点后会弹管理员授权;启用完成需<span className="font-semibold text-[var(--text-secondary)]">重启电脑</span>才生效。</p>
           </div>
         )}
 
@@ -461,6 +497,12 @@ function SandboxCard() {
           </div>
         ) : (
           <div className="flex flex-col gap-4 pt-3.5 mt-0.5 border-t border-[var(--border-light)]">
+            {/* Docker Hub 登录(首次必做;无法可靠检测登录态,故常驻提示) */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-[var(--text-secondary)]">首次使用需登录 Docker Hub(<span className="font-mono-data">sbx login</span>)</span>
+              <Button size="sm" variant="secondary" onClick={login} className="shrink-0">打开终端登录</Button>
+            </div>
+
             {/* 挂载目录 */}
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">

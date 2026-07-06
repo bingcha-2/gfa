@@ -43,6 +43,9 @@ import {
   SandboxInstall as _SandboxInstall,
   SandboxInstallCommand as _SandboxInstallCommand,
   SandboxBrowseDir as _SandboxBrowseDir,
+  SandboxWindowsPrereq as _SandboxWindowsPrereq,
+  SandboxEnableHypervisor as _SandboxEnableHypervisor,
+  SandboxLogin as _SandboxLogin,
   SandboxUSTimezones as _SandboxUSTimezones,
   SandboxPrepare as _SandboxPrepare,
   SandboxRestore as _SandboxRestore,
@@ -389,6 +392,18 @@ export async function sandboxInstallCommand(): Promise<string> {
 
 export async function sandboxBrowseDir(title: string): Promise<string> {
   return _SandboxBrowseDir(title)
+}
+
+export async function sandboxWindowsPrereq(): Promise<main.WinPrereq> {
+  return _SandboxWindowsPrereq()
+}
+
+export async function sandboxEnableHypervisor(): Promise<void> {
+  await _SandboxEnableHypervisor()
+}
+
+export async function sandboxLogin(): Promise<void> {
+  await _SandboxLogin()
 }
 
 export async function sandboxUSTimezones(): Promise<string[]> {

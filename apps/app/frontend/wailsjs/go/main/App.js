@@ -622,6 +622,10 @@ export function SandboxBrowseDir(arg1) {
   return window['go']['main']['App']['SandboxBrowseDir'](arg1);
 }
 
+export function SandboxEnableHypervisor() {
+  return window['go']['main']['App']['SandboxEnableHypervisor']();
+}
+
 export function SandboxGetStatus() {
   return window['go']['main']['App']['SandboxGetStatus']();
 }
@@ -634,6 +638,10 @@ export function SandboxInstallCommand() {
   return window['go']['main']['App']['SandboxInstallCommand']();
 }
 
+export function SandboxLogin() {
+  return window['go']['main']['App']['SandboxLogin']();
+}
+
 export function SandboxPrepare(arg1, arg2) {
   return window['go']['main']['App']['SandboxPrepare'](arg1, arg2);
 }
@@ -644,6 +652,10 @@ export function SandboxRestore() {
 
 export function SandboxUSTimezones() {
   return window['go']['main']['App']['SandboxUSTimezones']();
+}
+
+export function SandboxWindowsPrereq() {
+  return window['go']['main']['App']['SandboxWindowsPrereq']();
 }
 
 export function SanitizeCompetingClaudeConfig(arg1) {
