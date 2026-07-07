@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -18,8 +19,14 @@ import (
 
 const sandboxSentinelToken = "bcai-claude-proxy"
 
-// installSbxCommandString 按平台返回给用户复制到终端安装 sbx 的命令(展示用)。
+// sbxWindowsMsiURL 是 sbx 官方 Windows MSI 的稳定直链(GitHub latest/download 自动 302 到最新版)。
+// 为什么不用 winget:目标 Windows 常没装 App Installer(精简版/LTSC/Server 默认都没有),winget 路子
+// 会「窗口一闪就退、永远装不上」。官方文档明示可手动从 sbx-releases 直接下二进制,故改走 MSI 直下。
+const sbxWindowsMsiURL = "https://github.com/docker/sbx-releases/releases/latest/download/DockerSandboxes.msi"
+
+// installSbxCommandString 按平台返回给用户复制到终端安装 sbx 的命令(展示用 / 一键失败时的兜底)。
 // 不由冰茶静默 exec:GUI 进程 PATH 常不含 brew 目录、装 brew 又慢又无反馈,交给用户终端更可靠。
+// (Windows 例外:冰茶一键装走 Go 直下 MSI,见 installSbxWindowsMSI;这里的命令仅作复制兜底。)
 func installSbxCommandString(goos string) string {
 	switch goos {
 	case "darwin":
@@ -27,12 +34,59 @@ func installSbxCommandString(goos string) string {
 		// 「Refusing to load cask ... from untrusted tap」。视频原始步骤即含此步。
 		return "brew trust docker/tap && brew install docker/tap/sbx"
 	case "windows":
-		return "winget install -h Docker.sbx"
+		// 直下官方 MSI 再 msiexec 装(绕开 winget);-ArgumentList 数组式传参,避开嵌套引号。
+		// 供用户复制到 PowerShell;msiexec 装 Program Files 会自行弹 UAC 提权。
+		return `$m="$env:TEMP\DockerSandboxes.msi"; Invoke-WebRequest '` + sbxWindowsMsiURL +
+			`' -OutFile $m; Start-Process msiexec -ArgumentList '/i',$m,'/qb' -Wait`
 	case "linux":
 		return "curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh && sudo apt-get install -y docker-sbx"
 	default:
 		return ""
 	}
+}
+
+// ── Windows 沙箱前置判定 · 纯函数(供 windowsPrereq / DetectSbx 单测)────────────────
+
+// hypervisorStatus 由「WHP 功能状态」+「hypervisor 是否真在运行(Win32_ComputerSystem.HypervisorPresent)」
+// 判三态,供卡片精确提示:
+//   "ready"   功能已启用 且 hypervisor 已加载运行 → 可直接用
+//   "pending" 已启用但未重启(EnablePending;或功能 Enabled 却尚未加载)→ 必须重启才生效
+//   "off"     未启用(Disabled/未知)→ 需点一键启用
+// 为何两信号合判:光看功能 State 分不清「刚点完启用待重启(EnablePending)」和「压根没启用(Disabled)」——
+// 二者都不 ready 但给用户的提示天差地别;HypervisorPresent 直报 hypervisor 此刻跑没跑,是「能不能用」的真信号。
+// 关键子串:"EnablePending" 小写去空格="enablepending",不含 "enabled"(enable 后是 p 非 d),故先判它。
+func hypervisorStatus(featureState string, hypervisorPresent bool) string {
+	s := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(featureState)), " ", "")
+	switch {
+	case hypervisorPresent && strings.Contains(s, "enabled"):
+		return "ready"
+	case strings.Contains(s, "enablepending"):
+		return "pending" // 已启用,待重启
+	case strings.Contains(s, "enabled"):
+		return "pending" // 功能 Enabled 但 hypervisor 尚未加载 → 仍需重启(边界)
+	default:
+		return "off"
+	}
+}
+
+// osSupportsSbx 判 Windows 是否满足 sbx 硬前提:Win11(build ≥ 22000)且非 Server SKU。
+// Win10 / Windows Server 装了 sbx 也起不了 microVM(官方只支持 Win11),故在装之前就拦下。
+func osSupportsSbx(caption string, build int) bool {
+	if strings.Contains(strings.ToLower(caption), "server") {
+		return false
+	}
+	return build >= 22000
+}
+
+// parseOSInfo 解析 "Caption|BuildNumber"(windowsSupportsSbx 用一条 PowerShell 同时取两者)。
+// 查不到 → 返回空串 + 0,交调用方 fail-open(别因一次查询失败假装不支持、误弹硬墙)。
+func parseOSInfo(raw string) (caption string, build int) {
+	parts := strings.SplitN(strings.TrimSpace(raw), "|", 2)
+	caption = strings.TrimSpace(parts[0])
+	if len(parts) == 2 {
+		build, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
+	}
+	return caption, build
 }
 
 // KitOptions 生成 kit 的入参。默认指向冰茶网关;自定义模型时覆盖 BaseURL/AuthToken/Model/NetworkAllow。

@@ -6,20 +6,75 @@ import (
 )
 
 func TestInstallSbxCommandString(t *testing.T) {
-	cases := map[string]string{
-		"darwin":  "brew trust docker/tap && brew install docker/tap/sbx",
-		"windows": "winget install -h Docker.sbx",
+	if got := installSbxCommandString("darwin"); got != "brew trust docker/tap && brew install docker/tap/sbx" {
+		t.Errorf("darwin: %q", got)
 	}
-	for goos, want := range cases {
-		if got := installSbxCommandString(goos); got != want {
-			t.Errorf("%s: %q want %q", goos, got, want)
+	// Windows 不再依赖 winget(目标机常没有)→ 改为直下官方 MSI + msiexec。
+	win := installSbxCommandString("windows")
+	for _, want := range []string{"DockerSandboxes.msi", "msiexec", sbxWindowsMsiURL} {
+		if !strings.Contains(win, want) {
+			t.Errorf("windows install cmd missing %q: %q", want, win)
 		}
+	}
+	if strings.Contains(win, "winget") {
+		t.Errorf("windows install cmd must not use winget: %q", win)
 	}
 	if got := installSbxCommandString("linux"); !strings.Contains(got, "docker-sbx") {
 		t.Errorf("linux missing docker-sbx: %q", got)
 	}
 	if got := installSbxCommandString("plan9"); got != "" {
 		t.Errorf("unsupported goos should be empty: %q", got)
+	}
+}
+
+func TestHypervisorStatus(t *testing.T) {
+	cases := []struct {
+		state   string
+		present bool
+		want    string
+	}{
+		{"Enabled", true, "ready"},        // 启用 + hypervisor 在跑 → 可用
+		{"Enabled\r\n", true, "ready"},    // 带换行也认
+		{"Enabled", false, "pending"},     // 功能 Enabled 但 hypervisor 没跑 → 待重启
+		{"EnablePending", false, "pending"},   // 刚点完启用,待重启
+		{"Enable Pending", false, "pending"},  // 带空格变体也认
+		{"Disabled", false, "off"},        // 压根没启用
+		{"DisablePending", false, "off"},  // 正在禁用,不算 enable-pending
+		{"", false, "off"},                // 查不到 → 当未启用
+	}
+	for _, c := range cases {
+		if got := hypervisorStatus(c.state, c.present); got != c.want {
+			t.Errorf("hypervisorStatus(%q,%v)=%q want %q", c.state, c.present, got, c.want)
+		}
+	}
+}
+
+func TestOSSupportsSbx(t *testing.T) {
+	cases := []struct {
+		caption string
+		build   int
+		want    bool
+	}{
+		{"Microsoft Windows 11 Pro", 22631, true},
+		{"Microsoft Windows 11 Home", 22000, true},
+		{"Microsoft Windows 10 Pro", 19045, false},              // Win10 不支持
+		{"Microsoft Windows Server 2022 Standard", 20348, false}, // Server 不支持
+		{"Microsoft Windows Server 2025", 26100, false},          // Server 即使 build 高也拦
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		if got := osSupportsSbx(c.caption, c.build); got != c.want {
+			t.Errorf("osSupportsSbx(%q,%d)=%v want %v", c.caption, c.build, got, c.want)
+		}
+	}
+}
+
+func TestParseOSInfo(t *testing.T) {
+	if c, b := parseOSInfo("Microsoft Windows 11 Pro|22631\r\n"); c != "Microsoft Windows 11 Pro" || b != 22631 {
+		t.Errorf("got %q %d", c, b)
+	}
+	if c, b := parseOSInfo(""); c != "" || b != 0 { // fail-open 依据
+		t.Errorf("empty got %q %d", c, b)
 	}
 }
 

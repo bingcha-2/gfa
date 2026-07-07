@@ -881,6 +881,7 @@ export namespace main {
 	}
 	export class WinPrereq {
 	    hypervisorOK: boolean;
+	    hypervisorState: string;
 	    firmwareVirtOK: boolean;
 	    note: string;
 	
@@ -891,6 +892,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hypervisorOK = source["hypervisorOK"];
+	        this.hypervisorState = source["hypervisorState"];
 	        this.firmwareVirtOK = source["firmwareVirtOK"];
 	        this.note = source["note"];
 	    }

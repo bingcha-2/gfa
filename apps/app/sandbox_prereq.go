@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -15,30 +14,47 @@ import (
 
 // WinPrereq Windows 沙箱前置状态(非 Windows 平台字段无意义,统一返回 OK 不打扰)。
 type WinPrereq struct {
-	HypervisorOK   bool   `json:"hypervisorOK"`   // Windows Hypervisor Platform 已启用
-	FirmwareVirtOK bool   `json:"firmwareVirtOK"` // BIOS/UEFI CPU 虚拟化(VT-x/AMD-V)已开
-	Note           string `json:"note"`
+	HypervisorOK    bool   `json:"hypervisorOK"`    // 兼容旧字段:== (HypervisorState=="ready")
+	HypervisorState string `json:"hypervisorState"` // "ready"(可用) | "pending"(已启用·待重启) | "off"(需启用)
+	FirmwareVirtOK  bool   `json:"firmwareVirtOK"`  // BIOS/UEFI CPU 虚拟化(VT-x/AMD-V)已开
+	Note            string `json:"note"`
 }
 
-// windowsPrereq 查 WHP 是否启用 + 固件虚拟化是否开。仅 Windows 真查;抑制态/非 Windows
-// 返回全 OK(其它平台由 KvmOK / Apple 芯片各自的检查覆盖,这里不干扰)。
+// windowsPrereq 查 WHP 三态(功能 State + hypervisor 是否真在跑)+ 固件虚拟化是否开。仅 Windows 真查;
+// 抑制态/非 Windows 返回全 OK(其它平台由 KvmOK / Apple 芯片各自的检查覆盖,这里不干扰)。
 func windowsPrereq() WinPrereq {
 	if appActionsSuppressed() || runtime.GOOS != "windows" {
-		return WinPrereq{HypervisorOK: true, FirmwareVirtOK: true}
+		return WinPrereq{HypervisorOK: true, HypervisorState: "ready", FirmwareVirtOK: true}
 	}
 	p := WinPrereq{}
-	// WHP 功能状态:(...).State 打印 "Enabled" / "Disabled"。("disabled" 不含子串 "enabled")
-	out, _ := exec.Command("powershell", "-NoProfile", "-Command",
+	// WHP 功能状态:(...).State 打印 "Enabled" / "Disabled" / "EnablePending"。
+	state, _ := hideCmd("powershell", "-NoProfile", "-Command",
 		"(Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State").Output()
-	p.HypervisorOK = strings.Contains(strings.ToLower(string(out)), "enabled")
+	// hypervisor 是否真在运行(重启后才 True):HypervisorPresent = 「能不能用」的真信号,分辨「待重启」与「未启用」。
+	present, _ := hideCmd("powershell", "-NoProfile", "-Command",
+		"(Get-CimInstance Win32_ComputerSystem).HypervisorPresent").Output()
+	p.HypervisorState = hypervisorStatus(string(state), strings.Contains(strings.ToLower(string(present)), "true"))
+	p.HypervisorOK = p.HypervisorState == "ready"
 	// 固件虚拟化:Win32_Processor.VirtualizationFirmwareEnabled → True/False
-	out2, _ := exec.Command("powershell", "-NoProfile", "-Command",
+	out2, _ := hideCmd("powershell", "-NoProfile", "-Command",
 		"(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled").Output()
 	p.FirmwareVirtOK = strings.Contains(strings.ToLower(string(out2)), "true")
 	if !p.FirmwareVirtOK {
 		p.Note = "CPU 虚拟化未在 BIOS/UEFI 开启,需自行进 BIOS 打开(VT-x / AMD-V),软件改不了"
 	}
 	return p
+}
+
+// windowsSupportsSbx 查 OS 是否满足 sbx 硬前提(Win11 非 Server)。仅供 DetectSbx。
+// fail-open:查询失败(空输出)→ 返回支持,别因一次读取失败误弹「不支持」硬墙。
+func windowsSupportsSbx() (ok bool, osName string) {
+	out, _ := hideCmd("powershell", "-NoProfile", "-Command",
+		`$o=Get-CimInstance Win32_OperatingSystem; "$($o.Caption)|$($o.BuildNumber)"`).Output()
+	caption, build := parseOSInfo(string(out))
+	if caption == "" && build == 0 {
+		return true, "" // 查不到 → fail-open,不硬拦
+	}
+	return osSupportsSbx(caption, build), caption
 }
 
 // enableWindowsHypervisor 弹 UAC 提权启用 WHP(-NoRestart:不自动重启,由用户手动重启)。
@@ -52,7 +68,8 @@ func enableWindowsHypervisor() error {
 	}
 	inner := "Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All -NoRestart"
 	elevate := fmt.Sprintf("Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-Command','%s'", inner)
-	return exec.Command("powershell", "-NoProfile", "-Command", elevate).Start()
+	// hideCmd 藏掉发起提权的 launcher 黑框;真正干活的是它 Start-Process 起的提权 PowerShell(UAC 弹窗照常)。
+	return hideCmd("powershell", "-NoProfile", "-Command", elevate).Start()
 }
 
 // SbxLogin 开终端跑 sbx login(交互式:走浏览器/设备码鉴权,必须在终端里,不能静默)。

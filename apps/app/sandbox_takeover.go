@@ -67,6 +67,21 @@ func resolveSbxPath() string {
 			return p
 		}
 	}
+	// Windows:MSI 装后往 PATH 加了 sbx,但运行中的冰茶进程 env 是旧的,LookPath 会漏判「已装却找不到」。
+	// 探常见安装目录兜底;仍找不到时可靠路子是重启冰茶让 PATH 刷新。确切安装目录待真机核对。
+	if runtime.GOOS == "windows" {
+		for _, base := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")} {
+			if base == "" {
+				continue
+			}
+			for _, sub := range []string{`Docker\sbx\sbx.exe`, `Docker Sandboxes\sbx.exe`, `sbx\sbx.exe`} {
+				p := filepath.Join(base, sub)
+				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+					return p
+				}
+			}
+		}
+	}
 	return ""
 }
 
@@ -83,19 +98,47 @@ func macIsAppleSilicon() bool {
 	return strings.TrimSpace(string(out)) == "1"
 }
 
-// InstallSbx 打开系统终端并跑安装命令(brew/winget/apt)。抑制态短路。
-// 为什么开终端而非后台静默 exec:装 sbx 常要 sudo / 先装 Xcode CLT(都需交互),
-// 且终端登录 shell 有完整 PATH(能找到 brew);后台静默 exec 这些全做不到,还没进度。
+// InstallSbx 一键装 sbx。抑制态短路。
+// macOS/Linux:开系统终端跑 brew/apt(常要 sudo / 先装 Xcode CLT,需交互,且登录 shell 有完整 PATH)。
+// Windows:走 Go 直下 MSI(installSbxWindowsMSI),不依赖 winget(目标机常没有)。
 // 返回 error → 前端回退到「复制命令自己装」。
 func InstallSbx() error {
 	if appActionsSuppressed() {
 		return nil
+	}
+	if runtime.GOOS == "windows" {
+		return installSbxWindowsMSI()
 	}
 	cmd := installSbxCommandString(runtime.GOOS)
 	if cmd == "" {
 		return fmt.Errorf("当前平台不支持一键安装 sbx")
 	}
 	return openTerminalRunning(cmd)
+}
+
+// installSbxWindowsMSI 提权运行一段 PowerShell:下载官方 MSI + msiexec 静默安装(不依赖 winget)。
+// 为什么落 .ps1 文件再跑,而非直接 exec msiexec 或 cmd/start 拼命令:
+//  ① MSI 装 Program Files 需管理员 → -Verb RunAs 弹一次 UAC 提权;
+//  ② 下载 URL + 变量 + 引号若经 `cmd /c start powershell -Command "…"` 传递,会被 start/cmd 二次解析
+//     拆坏 →「窗口一闪就没」正是这个引号地狱;把脚本落文件、-File 跑,彻底规避。
+// 装完 sbx 的 PATH 更新不会回灌到运行中的冰茶进程,故提示用户重启冰茶再识别(见前端文案)。
+func installSbxWindowsMSI() error {
+	script := "$ErrorActionPreference='Stop'\r\n" +
+		"$m = \"$env:TEMP\\DockerSandboxes.msi\"\r\n" +
+		"Write-Host '[冰茶] 正在下载 sbx 安装包...'\r\n" +
+		"Invoke-WebRequest '" + sbxWindowsMsiURL + "' -OutFile $m\r\n" +
+		"Write-Host '[冰茶] 正在安装 sbx...'\r\n" +
+		"Start-Process msiexec -ArgumentList '/i',$m,'/qb' -Wait\r\n" +
+		"Write-Host '[冰茶] sbx 安装完成。请重启冰茶客户端以识别 sbx,然后点「打开终端登录」。'\r\n"
+	path := filepath.Join(os.TempDir(), "bcai-install-sbx.ps1")
+	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+		return fmt.Errorf("写安装脚本失败: %w", err)
+	}
+	// 提权开 PowerShell 跑脚本(-NoExit 留窗口看结果);脚本内 msiexec 因父进程已提权,不再二次弹 UAC。
+	// hideCmd:藏掉这个「发起提权」的 launcher 自身的黑框(本进程是 GUI Wails app);真正干活的
+	// 是它 Start-Process 起的那个提权 PowerShell,自带可见窗口,不受影响。
+	inner := fmt.Sprintf("Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','%s'", path)
+	return hideCmd("powershell", "-NoProfile", "-Command", inner).Start()
 }
 
 // openTerminalRunning 打开系统终端并在其中运行 shellCmd(可见、可交互)。
@@ -105,7 +148,10 @@ func openTerminalRunning(shellCmd string) error {
 		script := fmt.Sprintf("tell application \"Terminal\"\n\tactivate\n\tdo script %q\nend tell", shellCmd)
 		return exec.Command("osascript", "-e", script).Start()
 	case "windows":
-		// 新开 PowerShell 窗口跑命令;-NoExit 保留窗口看结果。
+		// 新开 PowerShell 窗口跑命令;-NoExit 保留窗口看结果。这里【不能】用 hideCmd:
+		// 本函数在 Windows 上只被 SbxLogin 用(sbx login 走浏览器/设备码交互授权),窗口必须可见;
+		// 且 `start` 是 cmd 内建,另开的新控制台会继承 cmd 的 SW_HIDE,一 hide 连登录窗一起藏掉。
+		// 代价只是 cmd launcher 一闪(瞬时即退),可接受。
 		return exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", shellCmd).Start()
 	case "linux":
 		for _, term := range []string{"x-terminal-emulator", "gnome-terminal", "konsole", "xterm"} {
@@ -128,11 +174,18 @@ func DetectSbx() SbxStatus {
 	if runtime.GOOS == "darwin" && !macIsAppleSilicon() {
 		return SbxStatus{Unsupported: true, Note: "sbx 需要 Apple 芯片(M 系列),此 Intel Mac 不支持沙箱模式"}
 	}
+	// Windows 硬前提:sbx 官方只支持 Win11(非 Server)。Win10 / Windows Server 装了也起不了 microVM,
+	// 故在「安装」之前就当硬性不支持拦下,别让用户装完 sbx、到 sbx run 那步才炸。fail-open:查不到不拦。
+	if runtime.GOOS == "windows" {
+		if ok, osName := windowsSupportsSbx(); !ok {
+			return SbxStatus{Unsupported: true, Note: "沙箱需要 Windows 11(当前:" + osName + ");sbx 不支持 Windows 10 / Windows Server,请换 Win11 机器"}
+		}
+	}
 	path := resolveSbxPath()
 	if path == "" {
 		return SbxStatus{Installed: false, Note: "未检测到 sbx"}
 	}
-	out, _ := exec.Command(path, "version").Output()
+	out, _ := hideCmd(path, "version").Output()
 	st := SbxStatus{Installed: true, Version: string(out)}
 	if runtime.GOOS == "linux" {
 		if _, err := os.Stat("/dev/kvm"); err == nil {
@@ -156,9 +209,9 @@ func ApplyPolicy(gatewayPort int) error {
 	// 全局网络策略需先初始化,否则 allow 报「status 412: global network policy has not been
 	// initialized」。balanced = 默认拒绝 + 放行常见开发站点(兼顾隔离与 Claude Code 用 git/npm)。
 	// 已初始化则此步报错,忽略——由下面的 allow 决定成败。
-	_ = exec.Command(sbx, "policy", "init", "balanced").Run()
+	_ = hideCmd(sbx, "policy", "init", "balanced").Run()
 	// 捕获 sbx 真实输出:policy 失败(exit 1)时把它的报错透出来,而不是笼统「失败」。
-	out, err := exec.Command(sbx, policyAllowArgs(fmt.Sprintf("localhost:%d", gatewayPort))...).CombinedOutput()
+	out, err := hideCmd(sbx, policyAllowArgs(fmt.Sprintf("localhost:%d", gatewayPort))...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sbx policy 失败: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -188,7 +241,7 @@ func listManagedSandboxes() []SandboxInfo {
 	if sbx == "" {
 		return nil
 	}
-	out, err := exec.Command(sbx, "ls", "--json").Output()
+	out, err := hideCmd(sbx, "ls", "--json").Output()
 	if err != nil {
 		return nil
 	}
@@ -240,7 +293,7 @@ func createSandbox(name, kitDir string, mounts []SandboxMount) error {
 	if sbx == "" {
 		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
 	}
-	out, err := exec.Command(sbx, createCommandArgs(name, kitDir, mounts)...).CombinedOutput()
+	out, err := hideCmd(sbx, createCommandArgs(name, kitDir, mounts)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sbx create 失败: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -267,7 +320,7 @@ func stopSandbox(name string) error {
 	}
 	// --force:跳过确认(非交互,无 stdin 会报 "stdin is not a terminal")。sbx rm 会先停后删,
 	// 一条搞定,无需另跑 sbx stop。捕获输出:区分「没这个沙箱(无害)」还是别的原因。
-	out, err := exec.Command(sbx, "rm", "--force", name).CombinedOutput()
+	out, err := hideCmd(sbx, "rm", "--force", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -287,7 +340,7 @@ func revokeSandbox(gatewayPort int) error {
 	if sbx == "" {
 		return nil
 	}
-	if err := exec.Command(sbx, "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run(); err != nil {
+	if err := hideCmd(sbx, "policy", "deny", "network", fmt.Sprintf("localhost:%d", gatewayPort)).Run(); err != nil {
 		Log("[sandbox] 撤销 policy 失败(不阻塞移除): %v", err)
 	}
 	return nil

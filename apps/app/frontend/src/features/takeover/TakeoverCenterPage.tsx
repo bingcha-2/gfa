@@ -453,9 +453,11 @@ function SandboxCard() {
   }, [refresh, checkPrereq, refreshList])
 
   const installed = !!status?.installed
-  const unsupported = !!status?.unsupported // 硬性不支持(如 Intel Mac)
-  // Windows 上 WHP 没启用 → sbx 起不来,先拦这一步。
-  const hvBlocked = isWin && winPrereq != null && !winPrereq.hypervisorOK
+  const unsupported = !!status?.unsupported // 硬性不支持(如 Intel Mac / 非 Win11)
+  // Windows WHP 三态:off=需启用、pending=已启用待重启、ready=可用。off/pending 都拦,但提示不同。
+  const hvState = isWin ? (winPrereq?.hypervisorState ?? 'ready') : 'ready'
+  const hvBlocked = hvState !== 'ready'
+  const hvPending = hvState === 'pending' // 已启用,就差一次重启
 
   // 装 sbx 期间轮询侦测:终端里装完,卡片自动变绿(无需用户手点重新检测)。
   useEffect(() => {
@@ -557,29 +559,39 @@ function SandboxCard() {
             <div className="flex items-start gap-1.5">
               <ShieldAlert className="w-3.5 h-3.5 mt-px shrink-0 text-[var(--warning-strong)]" />
               <div className="text-[11px] text-[var(--text-primary)] leading-relaxed">
-                <span className="font-semibold">需要启用 Windows Hypervisor Platform</span> —— 沙箱靠它起虚拟机,没开 sbx 跑不起来。
+                {hvPending ? (
+                  <><span className="font-semibold">已启用 Windows Hypervisor Platform,重启电脑后生效</span> —— hypervisor 要开机时加载,重启前沙箱还起不来。</>
+                ) : (
+                  <><span className="font-semibold">需要启用 Windows Hypervisor Platform</span> —— 沙箱靠它起虚拟机,没开 sbx 跑不起来。</>
+                )}
                 {winPrereq && !winPrereq.firmwareVirtOK && (
                   <span className="block mt-1 text-[var(--warning-strong)]">另外:{winPrereq.note}</span>
                 )}
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="default" onClick={enableHv}>一键启用</Button>
+              {!hvPending && <Button size="sm" variant="default" onClick={enableHv}>一键启用</Button>}
               <button onClick={checkPrereq} className="text-[11px] font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">重启后点这里重新检查</button>
             </div>
-            <p className="text-[10px] text-[var(--text-muted)]">点后会弹管理员授权;启用完成需<span className="font-semibold text-[var(--text-secondary)]">重启电脑</span>才生效。</p>
+            <p className="text-[10px] text-[var(--text-muted)]">
+              {hvPending
+                ? <>请<span className="font-semibold text-[var(--text-secondary)]">重启电脑</span>,重启后点上方「重新检查」即可,无需再点启用。</>
+                : <>点后会弹管理员授权;启用完成需<span className="font-semibold text-[var(--text-secondary)]">重启电脑</span>才生效。</>}
+            </p>
           </div>
         )}
 
         {unsupported ? null : !installed ? (
           <div className="flex flex-col gap-2 pt-2 pb-1">
             <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-              点「安装 sbx」冰茶会开一个终端帮你装(要密码就输一下),装完这里自动变绿。装好后即可在隔离沙箱里跑 Claude Code。
+              {isWin
+                ? <>点「安装 sbx」冰茶会提权下载官方安装包帮你装(弹一次管理员授权即可,<span className="font-semibold text-[var(--text-secondary)]">不用 winget</span>)。装完请<span className="font-semibold text-[var(--warning-strong)]">重启冰茶客户端</span>才能识别到 sbx。</>
+                : '点「安装 sbx」冰茶会开一个终端帮你装(要密码就输一下),装完这里自动变绿。装好后即可在隔离沙箱里跑 Claude Code。'}
             </p>
             {installing && (
               <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary-strong)] animate-pulse" />
-                已打开终端安装,完成后自动检测…
+                {isWin ? '已开始下载安装,装完请重启冰茶再识别…' : '已打开终端安装,完成后自动检测…'}
                 <button onClick={refresh} className="font-medium text-[var(--primary-strong)] hover:text-[var(--primary-hover)] transition-colors cursor-pointer">立即检测</button>
               </div>
             )}
