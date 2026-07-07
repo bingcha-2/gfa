@@ -355,9 +355,16 @@ export class TokenUsageStatsService {
   // ── 母号封号分析:按母号(account)聚合用量/反代/扇出 ────────────────────
 
   // RequestLog 是逐请求热表(保留 5 天,行数上限 300 万)。把整窗口全捞进内存会 OOM /
-  // 阻塞事件循环 → 拖停服务。这里硬封顶扫描行数,并按 at 倒序只取最近 N 条:低量时即全量
+  // 阻塞事件循环 → 拖停发号服务。这里硬封顶扫描行数,并按 at 倒序只取最近 N 条:低量时即全量
   // (精确),高量时退化为"最近 N 条请求"的近似(峰值/IP/用户仍足够指示),且绝不爆内存。
-  static readonly REQUEST_LOG_SCAN_CAP = 200_000;
+  // cap 定在 10 万而非 20 万:20 万行物化(Prisma 引擎缓冲 + Node 反序列化 + JS 对象/Set/Map)
+  // 是几百 MB 的瞬时尖峰、把主线程一个核焊满几秒。看板实际一次只有一个人看(并发≈1),
+  // 配合下面的分片 yield + getBanAnalysis 的 single-flight,10 万单次可控;比 5 万多留一截
+  // 精度给高量母号的多样性/峰值(取证看板的本职),又比 20 万把内存/持锁时间砍掉一半。
+  static readonly REQUEST_LOG_SCAN_CAP = 100_000;
+  // 聚合是同步 for 循环,一口气跑完会长时间独占事件循环 → 发号/租号全排队卡顿。每处理
+  // 一个分片就 setImmediate 让位一次,把大遍历切成"多段短活",发号请求得以在段间插进来。
+  static readonly REQUEST_LOG_AGG_CHUNK = 10_000;
 
   /**
    * 一次扫描 RequestLog(封顶 REQUEST_LOG_SCAN_CAP 行),按 母号(provider+email)聚合:
@@ -376,7 +383,11 @@ export class TokenUsageStatsService {
       this.logger.warn(`requestLogStatsByAccount hit scan cap (${cap}); 峰值/IP/用户 仅按最近 ${cap} 条请求计算`);
     }
     const m: RequestLogStats = new Map();
-    for (const r of logs) {
+    const chunk = TokenUsageStatsService.REQUEST_LOG_AGG_CHUNK;
+    for (let i = 0; i < logs.length; i++) {
+      // 每满一个分片让出事件循环一次(macrotask),让发号请求在段间插进来,别被大遍历焊死主线程。
+      if (i > 0 && i % chunk === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      const r = logs[i];
       const key = `${r.provider} ${r.accountEmail}`;
       let s = m.get(key);
       if (!s) { s = { sources: new Set(), exits: new Set(), users: new Set(), cli: 0, desktop: 0, ide: 0, total: 0, minutes: new Map(), sessionMinutes: new Map(), customers: new Map() }; m.set(key, s); }
@@ -768,16 +779,23 @@ export class TokenUsageStatsService {
   // 内存里的,留在控制器每次实时 join,所以"重的缓存、状态仍新鲜"。
   static readonly BAN_ANALYSIS_TTL_MS = 90_000;
   private readonly banAnalysisCache = new Map<number, { at: number; data: Awaited<ReturnType<TokenUsageStatsService["computeBanAnalysis"]>> }>();
+  // 冷算去重:缓存 miss 时,同一 days 的并发请求共享一次 compute,而不是各自扫一遍 RequestLog。
+  // 没有这层,TTL 过期/冷启动的瞬间 N 个并发(多管理员、切档)会叠成 N 倍内存与 N 个全扫 → 雪崩。
+  private readonly banAnalysisInflight = new Map<number, Promise<Awaited<ReturnType<TokenUsageStatsService["computeBanAnalysis"]>>>>();
 
-  /** 封号分析页一次取齐:定因对比 + 母号风险榜 + 封号事件流(带 TTL 缓存)。 */
+  /** 封号分析页一次取齐:定因对比 + 母号风险榜 + 封号事件流(带 TTL 缓存 + 冷算 single-flight)。 */
   async getBanAnalysis(opts: { days?: number } = {}): Promise<Awaited<ReturnType<TokenUsageStatsService["computeBanAnalysis"]>>> {
     const days = Math.max(1, Math.min(30, opts.days || 7));
-    const cached = this.banAnalysisCache.get(days);
     const now = this.nowMs();
+    const cached = this.banAnalysisCache.get(days);
     if (cached && now - cached.at < TokenUsageStatsService.BAN_ANALYSIS_TTL_MS) return cached.data;
-    const data = await this.computeBanAnalysis(days);
-    this.banAnalysisCache.set(days, { at: now, data });
-    return data;
+    const inflight = this.banAnalysisInflight.get(days);
+    if (inflight) return inflight; // 已有并发在冷算 → 搭同一趟车
+    const p = this.computeBanAnalysis(days)
+      .then((data) => { this.banAnalysisCache.set(days, { at: now, data }); return data; })
+      .finally(() => { this.banAnalysisInflight.delete(days); }); // 成败都释放,失败下次可重试
+    this.banAnalysisInflight.set(days, p);
+    return p;
   }
 
   /** 注入点:测试可覆盖时钟。默认用真实时间。 */

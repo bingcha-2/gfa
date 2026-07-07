@@ -228,6 +228,60 @@ describe("getBanAnalysis — TTL 缓存(避免每次全量扫 RequestLog)", () =
   });
 });
 
+describe("getBanAnalysis — single-flight(并发去重,防冷算雪崩)", () => {
+  it("并发调用同一 days 只冷算一次 RequestLog(共享 in-flight)", async () => {
+    let resolveLog!: (v: unknown[]) => void;
+    const logPromise = new Promise<unknown[]>((r) => { resolveLog = r; });
+    const requestLogFind = vi.fn().mockReturnValue(logPromise);
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue([]) },
+      requestLog: { findMany: requestLogFind },
+      accountBanEvent: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const svc = makeService(prisma);
+    // 两次并发命中冷算窗口(第一次还没算完)
+    const p1 = svc.getBanAnalysis({ days: 3 });
+    const p2 = svc.getBanAnalysis({ days: 3 });
+    resolveLog([]);
+    const [a, b] = await Promise.all([p1, p2]);
+    expect(requestLogFind).toHaveBeenCalledTimes(1); // 没有各扫一遍
+    expect(a).toBe(b); // 共享同一份结果
+  });
+
+  it("compute 失败后清空 in-flight,下次可重试", async () => {
+    const requestLogFind = vi.fn()
+      .mockRejectedValueOnce(new Error("db down"))
+      .mockResolvedValueOnce([]);
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue([]) },
+      requestLog: { findMany: requestLogFind },
+      accountBanEvent: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const svc = makeService(prisma);
+    await expect(svc.getBanAnalysis({ days: 3 })).rejects.toThrow("db down");
+    await expect(svc.getBanAnalysis({ days: 3 })).resolves.toBeTruthy(); // in-flight 已清,重算成功
+    expect(requestLogFind).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("requestLogStatsByAccount — 分片 yield 不丢行", () => {
+  it("行数跨越分片边界仍全量聚合", async () => {
+    const n = TokenUsageStatsService.REQUEST_LOG_AGG_CHUNK + 1; // 跨一个分片边界
+    const at = new Date("2026-06-23T00:00:05Z");
+    const logRows = Array.from({ length: n }, () => ({
+      provider: "anthropic", accountEmail: "a@x.com", surface: "cli", sourceIp: "1.1.1.1", at,
+    }));
+    const prisma = {
+      cardUsageHourly: { findMany: vi.fn().mockResolvedValue([
+        { accountEmail: "a@x.com", accessKeyId: "k1", bucket: "anthropic-claude", requests: n, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0 },
+      ]) },
+      requestLog: { findMany: vi.fn().mockResolvedValue(logRows) },
+    };
+    const res = await makeService(prisma).getAccountBanAnalysis({ days: 7 });
+    expect(res.accounts[0].peakReqPerMin).toBe(n); // 全在同一分钟,一条不丢
+  });
+});
+
 describe("deriveAccountHealth — 母号状态压成标签", () => {
   it("不在池 / 禁用 / Token失效 / 永久死亡 / 配额 / 正常", () => {
     expect(deriveAccountHealth({ found: false }).label).toBe(""); // 不在池 → 不展示
