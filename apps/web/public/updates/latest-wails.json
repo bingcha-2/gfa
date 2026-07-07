@@ -7,7 +7,7 @@
   "installerSha256": "C007366F99077BDF8C7F45BB3EDA5F00EFED2AEE40BE37E58B3BB604918DD67F",
   "installerSize": 20962312,
   "changelog": "桌面端体验优化与稳定性修复",
-  "minVersion": "13.1.1",
+  "minVersion": "12.6.3",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.1.1/BingchaAI-13.1.1-arm64.dmg",
