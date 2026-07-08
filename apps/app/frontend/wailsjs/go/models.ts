@@ -867,16 +867,18 @@ export namespace main {
 	    editors: string[];
 	    sbxInstalled: boolean;
 	    enabled: boolean;
-	
+	    supported: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new VscodeSandboxStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.editors = source["editors"];
 	        this.sbxInstalled = source["sbxInstalled"];
 	        this.enabled = source["enabled"];
+	        this.supported = source["supported"];
 	    }
 	}
 	export class WinPrereq {

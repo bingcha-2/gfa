@@ -373,7 +373,8 @@ function VscodeSandboxCard() {
 
   const editors = st?.editors ?? []
   const enabled = !!st?.enabled
-  const canEnable = editors.length > 0 && !!st?.sbxInstalled
+  const supported = st?.supported ?? true // Windows=false:.sh wrapper 在 Windows 上 spawn 会 EFTYPE,禁用接管
+  const canEnable = supported && editors.length > 0 && !!st?.sbxInstalled
 
   return (
     <ProductCard name="Claude Code · VSCode 沙箱模式" provider="anthropic" note="VSCode/Cursor/Antigravity 等的 Claude 面板不动,底层 claude 进沙箱跑(隔离 + 请求经冰茶)">
@@ -395,7 +396,8 @@ function VscodeSandboxCard() {
             </Button>
           )}
         </div>
-        {!st?.sbxInstalled && <p className="text-[10px] text-[var(--text-muted)]">需先在上面「Claude Code · 沙箱模式」卡里装好 sbx。</p>}
+        {!supported && <p className="text-[10px] text-[var(--warning-strong)]">Windows 暂不支持:官方扩展无法执行沙箱 wrapper(点登录会报 spawn EFTYPE)。请改用上面「Claude Code · 沙箱模式」在终端里跑,或在 WSL 内使用。</p>}
+        {supported && !st?.sbxInstalled && <p className="text-[10px] text-[var(--text-muted)]">需先在上面「Claude Code · 沙箱模式」卡里装好 sbx。</p>}
         {enabled && <p className="text-[10px] text-[var(--text-muted)]">重开 VSCode 的 Claude 面板生效;首次会拉沙箱镜像。native diff / 选区上下文(Phase 2)暂不可用。</p>}
         {msg && <p className="text-[10px] text-[var(--success)]">{msg}</p>}
         {err && <p className="text-[10px] text-[var(--danger)]">{err}</p>}

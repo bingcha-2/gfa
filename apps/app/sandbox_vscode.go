@@ -214,6 +214,14 @@ func isVscodeSandboxInjected() bool {
 	return false
 }
 
+// vscodeSandboxSupportedOS 报某 OS 是否支持 VSCode 沙箱接管。抽 goos 形参便于测试。
+// Windows 不支持:接管靠往 claudeProcessWrapper 写一个 #!/bin/sh 脚本(vscodeWrapperScript),
+// 官方扩展启动 claude(含点「登录」时)会 spawn 这个脚本 —— 但 Windows 无法执行 .sh(非 PE 格式),
+// 当场报 `spawn ...claude-in-sbx.sh EFTYPE`;且脚本内全是 POSIX 命令(shasum/case/exec…)。
+// 要在 Windows 真正跑通需换 Windows 可 spawn 的 wrapper + 真机验证 sbx/Docker,属未做的 Phase。
+// 在此之前 Windows 一律禁用接管、绝不注入 wrapper,避免把用户的 Claude 面板搞崩。
+func vscodeSandboxSupportedOS(goos string) bool { return goos != "windows" }
+
 // ── 接管中心注册表目标 ──────────────────────────────────────────────────────
 
 type claudeVscodeSandboxTarget struct{}
@@ -238,6 +246,7 @@ type VscodeSandboxStatus struct {
 	Editors      []string `json:"editors"`      // 检测到的 VSCode 家族编辑器名(VSCode/Cursor/Antigravity IDE…)
 	SbxInstalled bool     `json:"sbxInstalled"` // sbx 已装(沙箱前置)
 	Enabled      bool     `json:"enabled"`      // 任一编辑器已注入 wrapper
+	Supported    bool     `json:"supported"`    // 当前 OS 是否支持接管(Windows=false,见 vscodeSandboxSupportedOS)
 }
 
 func vscodeSandboxStatus() VscodeSandboxStatus {
@@ -252,6 +261,7 @@ func vscodeSandboxStatus() VscodeSandboxStatus {
 		Editors:      names,
 		SbxInstalled: resolveSbxPath() != "",
 		Enabled:      isVscodeSandboxInjected(),
+		Supported:    vscodeSandboxSupportedOS(runtime.GOOS),
 	}
 }
 
@@ -260,6 +270,10 @@ func vscodeSandboxStatus() VscodeSandboxStatus {
 func (claudeVscodeSandboxTarget) Inject(proxyPort int) (string, error) {
 	if appActionsSuppressed() {
 		return "", nil
+	}
+	// Windows 直接拒绝、绝不注入 .sh wrapper:否则扩展点「登录」时 spawn 该脚本必 EFTYPE,把面板搞崩。
+	if !vscodeSandboxSupportedOS(runtime.GOOS) {
+		return "", fmt.Errorf("Windows 暂不支持 VSCode 沙箱接管:官方扩展无法执行冰茶的 /bin/sh wrapper(点登录会 spawn EFTYPE)。请改用「Claude Code · 沙箱模式」在终端里跑,或在 WSL 内使用")
 	}
 	sbx := resolveSbxPath()
 	if sbx == "" {

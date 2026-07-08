@@ -25,6 +25,19 @@ func TestVscodeWrapperScript(t *testing.T) {
 	}
 }
 
+func TestVscodeSandboxSupportedOS(t *testing.T) {
+	// Windows 不支持:wrapper 是 #!/bin/sh 脚本,官方扩展在 Windows 上 spawn 它会 EFTYPE
+	// (Windows 无法执行 .sh),点登录即炸。故 Windows 上直接禁用接管,绝不注入 wrapper。
+	if vscodeSandboxSupportedOS("windows") {
+		t.Error("Windows 不应支持 VSCode 沙箱接管(.sh wrapper 会 spawn EFTYPE)")
+	}
+	for _, goos := range []string{"darwin", "linux"} {
+		if !vscodeSandboxSupportedOS(goos) {
+			t.Errorf("%s 应支持 VSCode 沙箱接管", goos)
+		}
+	}
+}
+
 func TestVscodeFamilyEditors(t *testing.T) {
 	eds := vscodeFamilyEditors()
 	if len(eds) < 4 {
