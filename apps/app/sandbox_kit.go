@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -49,9 +50,11 @@ func installSbxCommandString(goos string) string {
 
 // hypervisorStatus 由「WHP 功能状态」+「hypervisor 是否真在运行(Win32_ComputerSystem.HypervisorPresent)」
 // 判三态,供卡片精确提示:
-//   "ready"   功能已启用 且 hypervisor 已加载运行 → 可直接用
-//   "pending" 已启用但未重启(EnablePending;或功能 Enabled 却尚未加载)→ 必须重启才生效
-//   "off"     未启用(Disabled/未知)→ 需点一键启用
+//
+//	"ready"   功能已启用 且 hypervisor 已加载运行 → 可直接用
+//	"pending" 已启用但未重启(EnablePending;或功能 Enabled 却尚未加载)→ 必须重启才生效
+//	"off"     未启用(Disabled/未知)→ 需点一键启用
+//
 // 为何两信号合判:光看功能 State 分不清「刚点完启用待重启(EnablePending)」和「压根没启用(Disabled)」——
 // 二者都不 ready 但给用户的提示天差地别;HypervisorPresent 直报 hypervisor 此刻跑没跑,是「能不能用」的真信号。
 // 关键子串:"EnablePending" 小写去空格="enablepending",不含 "enabled"(enable 后是 p 非 d),故先判它。
@@ -198,8 +201,8 @@ func mountArgs(mounts []SandboxMount) []string {
 // 冰茶托管的沙箱统一 gfa-claude- 前缀:①开沙箱带固定 --name,冰茶据此复用/停止;
 // ②isGfaManagedSandbox 是安全线,冰茶【只】动自己前缀的沙箱,绝不碰用户自己 sbx run 起的。
 
-const sandboxNamePrefix = "gfa-claude-"  // claude 沙箱命名前缀
-const managedSandboxPrefix = "gfa-"       // 冰茶托管的所有沙箱(claude/kimi/…)共同前缀 = 安全线
+const sandboxNamePrefix = "gfa-claude-" // claude 沙箱命名前缀
+const managedSandboxPrefix = "gfa-"     // 冰茶托管的所有沙箱(claude/kimi/…)共同前缀 = 安全线
 
 var unsafeSandboxNameChar = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
@@ -283,11 +286,31 @@ func shellQuote(s string) string {
 // enterCommandString 给用户复制到终端的「进入」命令。box 已由 create 建好(kit/工作区/挂载都烧进 spec),
 // 故进入极短 —— 只需 sbx run --name;claude 从 spec 读、跑在已挂载的工作区。skipPerms 时透传
 // --dangerously-skip-permissions(它是 claude 的参数,故走 -- 之后,属进入时而非建时)。
-// 前缀 SBX_NO_TELEMETRY=1 关 sbx 遥测(仅此次运行,不污染用户 shell)。
+// SBX_NO_TELEMETRY=1 关 sbx 遥测。按当前系统选 shell 口径(见 enterCommandStringForOS)。
 func enterCommandString(name string, skipPerms bool) string {
-	out := "SBX_NO_TELEMETRY=1 sbx run --name " + shellQuote(name)
+	return enterCommandStringForOS(runtime.GOOS, name, skipPerms)
+}
+
+// enterCommandStringForOS 按目标 shell 口径拼「进入」命令。抽 goos 形参便于测试两条分支。
+// Windows(sbx 只支持 Win11 → 粘贴目标恒为 PowerShell):PowerShell【不支持】bash 的 `VAR=1 cmd`
+// 内联前缀,会把 `SBX_NO_TELEMETRY=1` 当命令名去找 → CommandNotFoundException(用户实测报错)。
+// 改用 `$env:VAR=1; cmd`;引用走 PowerShell 单引号(内部 ' → ”)。代价:该 env 对整个会话生效
+// 而非仅此命令,但只是关遥测、无害,且是用户为跑 sbx 新开的终端。
+// 其余(macOS/Linux):保持 bash/zsh 的 `VAR=1 cmd` 前缀 + POSIX 单引号。
+func enterCommandStringForOS(goos, name string, skipPerms bool) string {
+	var out string
+	if goos == "windows" {
+		out = "$env:SBX_NO_TELEMETRY=1; sbx run --name " + psQuote(name)
+	} else {
+		out = "SBX_NO_TELEMETRY=1 sbx run --name " + shellQuote(name)
+	}
 	if skipPerms {
 		out += " -- --dangerously-skip-permissions"
 	}
 	return out
+}
+
+// psQuote 给参数加 PowerShell 单引号(内部 ' → ”)。PowerShell 单引号内不做变量/转义展开,最安全。
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

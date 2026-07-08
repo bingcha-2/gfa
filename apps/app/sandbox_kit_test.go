@@ -33,14 +33,14 @@ func TestHypervisorStatus(t *testing.T) {
 		present bool
 		want    string
 	}{
-		{"Enabled", true, "ready"},        // 启用 + hypervisor 在跑 → 可用
-		{"Enabled\r\n", true, "ready"},    // 带换行也认
-		{"Enabled", false, "pending"},     // 功能 Enabled 但 hypervisor 没跑 → 待重启
-		{"EnablePending", false, "pending"},   // 刚点完启用,待重启
-		{"Enable Pending", false, "pending"},  // 带空格变体也认
-		{"Disabled", false, "off"},        // 压根没启用
-		{"DisablePending", false, "off"},  // 正在禁用,不算 enable-pending
-		{"", false, "off"},                // 查不到 → 当未启用
+		{"Enabled", true, "ready"},           // 启用 + hypervisor 在跑 → 可用
+		{"Enabled\r\n", true, "ready"},       // 带换行也认
+		{"Enabled", false, "pending"},        // 功能 Enabled 但 hypervisor 没跑 → 待重启
+		{"EnablePending", false, "pending"},  // 刚点完启用,待重启
+		{"Enable Pending", false, "pending"}, // 带空格变体也认
+		{"Disabled", false, "off"},           // 压根没启用
+		{"DisablePending", false, "off"},     // 正在禁用,不算 enable-pending
+		{"", false, "off"},                   // 查不到 → 当未启用
 	}
 	for _, c := range cases {
 		if got := hypervisorStatus(c.state, c.present); got != c.want {
@@ -57,7 +57,7 @@ func TestOSSupportsSbx(t *testing.T) {
 	}{
 		{"Microsoft Windows 11 Pro", 22631, true},
 		{"Microsoft Windows 11 Home", 22000, true},
-		{"Microsoft Windows 10 Pro", 19045, false},              // Win10 不支持
+		{"Microsoft Windows 10 Pro", 19045, false},               // Win10 不支持
 		{"Microsoft Windows Server 2022 Standard", 20348, false}, // Server 不支持
 		{"Microsoft Windows Server 2025", 26100, false},          // Server 即使 build 高也拦
 		{"", 0, false},
@@ -179,21 +179,37 @@ func TestCreateCommandArgs(t *testing.T) {
 
 func TestEnterCommandString(t *testing.T) {
 	// box 已建好,进入只需 sbx run --name;工作区/kit 都从 spec 读,不再重复传。
-	if got := enterCommandString("gfa-claude-proj", false); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj" {
+	// 用 ForOS 显式指定平台,让断言与测试机 GOOS 无关。
+	if got := enterCommandStringForOS("linux", "gfa-claude-proj", false); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj" {
 		t.Errorf("got %q", got)
 	}
-	if got := enterCommandString("gfa-claude-proj", true); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj -- --dangerously-skip-permissions" {
+	if got := enterCommandStringForOS("linux", "gfa-claude-proj", true); got != "SBX_NO_TELEMETRY=1 sbx run --name gfa-claude-proj -- --dangerously-skip-permissions" {
 		t.Errorf("skipPerms got %q", got)
 	}
 	// 名字含特殊字符要引用(防 shell 拆坏);gfa-claude- 前缀名本身安全,故构造一个越界名验引用。
-	if got := enterCommandString("gfa claude", false); got != "SBX_NO_TELEMETRY=1 sbx run --name 'gfa claude'" {
+	if got := enterCommandStringForOS("linux", "gfa claude", false); got != "SBX_NO_TELEMETRY=1 sbx run --name 'gfa claude'" {
 		t.Errorf("quote got %q", got)
+	}
+}
+
+func TestEnterCommandStringWindows(t *testing.T) {
+	// 回归:PowerShell 不支持 bash 的 `VAR=1 cmd` 内联前缀(会把 SBX_NO_TELEMETRY=1 当命令找 →
+	// CommandNotFoundException)。Windows 口径必须走 `$env:VAR=1; cmd` + PowerShell 单引号。
+	if got := enterCommandStringForOS("windows", "gfa-claude-005weixin-9057b4", true); got != "$env:SBX_NO_TELEMETRY=1; sbx run --name 'gfa-claude-005weixin-9057b4' -- --dangerously-skip-permissions" {
+		t.Errorf("windows skipPerms got %q", got)
+	}
+	if got := enterCommandStringForOS("windows", "gfa-claude-proj", false); got != "$env:SBX_NO_TELEMETRY=1; sbx run --name 'gfa-claude-proj'" {
+		t.Errorf("windows got %q", got)
+	}
+	// PowerShell 单引号转义:内部 ' → ''。
+	if got := psQuote("a'b"); got != "'a''b'" {
+		t.Errorf("psQuote got %q", got)
 	}
 }
 
 func TestSandboxSource(t *testing.T) {
 	cases := map[string]string{
-		"gfa-claude-proj-abc123": "cli",
+		"gfa-claude-proj-abc123":  "cli",
 		"gfa-vscode-domio-def456": "vscode",
 		"gfa-kimi-x":              "other",
 	}
