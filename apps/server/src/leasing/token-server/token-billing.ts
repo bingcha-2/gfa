@@ -311,16 +311,24 @@ export function billableTokenUsageTotal(usage: any = {}, modelKey = ''): number 
  * input 为 gross(computeUsageDetail 已 normalizeUsageToGross,netInput=input-cached)。
  * 无 input/output 拆分的异常/legacy 事件 → 退回原始计费,不臆测方向(避免把总量当输出 8× 高估)。
  */
+/** Codex 快速档(service_tier=priority)对卡 CU 计费的成本乘数,对齐 fair-share
+ *  CODEX_PRIORITY_FAIR_SHARE_MULTIPLIER 与客户端 codexFastCostMultiplier(均 1.5x)。 */
+export const CODEX_FAST_CU_MULTIPLIER = 1.5;
+function fastCostMultiplier(item: any): number {
+  return String(item?.serviceTier || '').trim().toLowerCase() === 'priority' ? CODEX_FAST_CU_MULTIPLIER : 1;
+}
+
 export function eventWeightedCost(item: any = {}): number {
+  const mult = fastCostMultiplier(item);
   const inputTokens = readTokenCount(item?.inputTokens);
   const outputTokens = readTokenCount(item?.outputTokens);
   if (inputTokens === 0 && outputTokens === 0) {
-    return billableTokenUsageTotal(item, String(item?.modelKey || ''));
+    return billableTokenUsageTotal(item, String(item?.modelKey || '')) * mult;
   }
   const cachedInputTokens = readTokenCount(item?.cachedInputTokens) || readTokenCount(item?.cachedTokens);
   const w = quotaWeightFor(String(item?.modelKey || '') || eventBucket(item));
   const netInput = Math.max(0, inputTokens - cachedInputTokens);
-  return netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
+  return (netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache) * mult;
 }
 
 /**

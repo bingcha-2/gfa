@@ -86,11 +86,18 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 		"status":       0, // 非生成上报,仅用于刷新额度
 		"accountQuota": snap,
 	}
-	if _, _, err := postCodexBcai("/report-result", payload, card, upstreamProxy); err != nil {
+	body, _, err := postCodexBcai("/report-result", payload, card, upstreamProxy)
+	if err != nil {
 		Log("[codex-quota] 即时额度上报失败(不致命): %v", err)
 		return
 	}
+	applyCodexReportResponse(body)
 	Log("[codex-quota] ✓ 上报成功 [codex] account#%d", lease.AccountId)
+}
+
+func applyCodexReportResponse(body []byte) {
+	recordAccountBuckets(body)
+	recordFairShareQuota(body)
 }
 
 // 上游额度拉取的最小间隔(地板)。拉取由上报触发(reportResult → fetchCodexQuotaAsync),

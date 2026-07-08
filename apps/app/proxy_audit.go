@@ -47,7 +47,10 @@ type proxyAudit struct {
 	path      string
 	target    string // 实际转发到的上游地址(发送到哪里)
 	model     string
-	accountID int
+	// serviceTier 是真正发往上游的服务档(codex):"priority"=放行了快速;空=标准/已被门控剥回。
+	// 打进审计行,方便确认"开了 fast 到底有没有生效"(没生效多半是服务端授权闸没开)。
+	serviceTier string
+	accountID   int
 	token     string // access token(emit 时打码)
 	status    int
 	inTokens  int64
@@ -90,6 +93,9 @@ func (a *proxyAudit) emit() {
 	}
 	if a.model != "" {
 		fmt.Fprintf(&b, " model=%s", a.model)
+	}
+	if a.serviceTier != "" {
+		fmt.Fprintf(&b, " 档=%s", a.serviceTier)
 	}
 	if a.accountID > 0 {
 		fmt.Fprintf(&b, " acct=%d", a.accountID)

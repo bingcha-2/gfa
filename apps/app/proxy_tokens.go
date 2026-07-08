@@ -166,7 +166,7 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 		if netInput < 0 {
 			netInput = 0
 		}
-		GetUsageStats().AddModelTokens(category, modelKey, netInput, outputTokens, cachedTokens, rawTotal)
+		GetUsageStats().AddModelTokens(category, modelKey, netInput, outputTokens, cachedTokens, rawTotal, false)
 	}
 
 	return TokenUsageResult{

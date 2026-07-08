@@ -32,6 +32,8 @@ import {
   GetFaqData,
   GetCodexRelayConfig as _GetCodexRelayConfig,
   SaveCodexRelayConfig as _SaveCodexRelayConfig,
+  GetCodexFastMode as _GetCodexFastMode,
+  SetCodexFastMode as _SetCodexFastMode,
   UserLogin as _UserLogin,
   UserLogout as _UserLogout,
   GetAccountState as _GetAccountState,
@@ -53,7 +55,6 @@ import {
   SandboxVscodeStatus as _SandboxVscodeStatus,
   SandboxVscodeEnable as _SandboxVscodeEnable,
   SandboxVscodeDisable as _SandboxVscodeDisable,
-  SandboxUSTimezones as _SandboxUSTimezones,
   SandboxRestore as _SandboxRestore,
 } from '../../wailsjs/go/main/App'
 
@@ -378,6 +379,15 @@ export async function saveCodexRelayConfig(
   await _SaveCodexRelayConfig(mode, baseURL, apiKey, protocol, modelMap)
 }
 
+// ===== Codex 桌面「快速档」(service_tier=priority) =====
+export async function getCodexFastMode(): Promise<boolean> {
+  return _GetCodexFastMode()
+}
+
+export async function setCodexFastMode(fast: boolean): Promise<void> {
+  await _SetCodexFastMode(fast)
+}
+
 // ===== Browser =====
 export function openURL(url: string): void {
   BrowserOpenURL(url)
@@ -432,12 +442,8 @@ export async function sandboxVscodeDisable(): Promise<string> {
   return _SandboxVscodeDisable()
 }
 
-export async function sandboxUSTimezones(): Promise<string[]> {
-  return _SandboxUSTimezones()
-}
-
-export async function sandboxCreate(mounts: main.SandboxMount[], timezone: string, model: main.SandboxModelCfg, openNetwork: boolean): Promise<string> {
-  return _SandboxCreate(mounts, timezone, model, openNetwork)
+export async function sandboxCreate(mounts: main.SandboxMount[], model: main.SandboxModelCfg, openNetwork: boolean): Promise<string> {
+  return _SandboxCreate(mounts, model, openNetwork)
 }
 
 export async function sandboxEnterCommand(name: string, skipPermissions: boolean): Promise<string> {

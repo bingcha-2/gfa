@@ -976,6 +976,29 @@ describe("周窗口 + 自动补全", () => {
     expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))?.perCard.c1).toBeCloseTo(150, 5);
   });
 
+  it("周窗口首个有效快照前不下发我的周份额,避免把未知显示成满血", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "c1", weight: 1 }] }, seats: { 1: 8 }, trackWeekly: true }));
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
+
+    expect(t.getCardWeeklyQuotaFractions(1, "c1")).toEqual({});
+
+    t.applyWeeklyAccountQuotaSnapshot(1, "anthropic-claude", 0.6, T + WEEKLY_MS);
+    expect(t.getCardWeeklyQuotaFractions(1, "c1")["anthropic-claude"].fraction).toBeGreaterThan(0);
+  });
+
+  it("周快照下降时即使 resetAt 小幅后移也归因,不能误判为 reset 清账", () => {
+    const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "c1", weight: 1 }] }, seats: { 1: 1 }, trackWeekly: true }));
+    const firstReset = T + 4 * 24 * 60 * 60 * 1000;
+    t.applyWeeklyAccountQuotaSnapshot(1, "anthropic-claude", 1.0, firstReset);
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 0, 0, "claude-opus-4-8");
+
+    t.applyWeeklyAccountQuotaSnapshot(1, "anthropic-claude", 0.9, firstReset + 2 * 60 * 1000);
+
+    const st = t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"));
+    expect(st?.lastFraction).toBeCloseTo(0.9, 6);
+    expect(st?.attributed.c1).toBeCloseTo(0.1, 6);
+  });
+
   it("★#63 周超 5h 不超 → 被周拦", () => {
     const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "c1", weight: 1 }] }, seats: { 1: 1 }, trackWeekly: true }));
     t.applyAccountQuotaSnapshot(1, "anthropic-claude", 1.0);

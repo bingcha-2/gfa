@@ -171,6 +171,30 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.queryByText(/我的总剩余/)).not.toBeInTheDocument()
   })
 
+  it('keeps one decimal place for account-window percentages', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            remainFraction: null,
+            productQuota: {
+              anthropic: {
+                hourlyPercent: 49.5,
+                weeklyPercent: 49.9,
+                hourlyResetAt: null,
+                weeklyResetAt: null,
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('49.5%')).toBeInTheDocument()
+    expect(screen.getByText('49.9%')).toBeInTheDocument()
+    expect(screen.queryByText('50%')).not.toBeInTheDocument()
+  })
+
   it('renders separate quota cards for Codex and Anthropic subscriptions at the same time', () => {
     const subscriptions: AccountSubscription[] = [
       {

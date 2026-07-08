@@ -349,6 +349,32 @@ func (a *App) SaveCodexRelayConfig(mode, baseURL, apiKey, protocol string, model
 	return nil
 }
 
+// ======================== Codex 桌面「快速档」====================
+
+// GetCodexFastMode 返回桌面快速档开关(供接管界面回显)。
+func (a *App) GetCodexFastMode() bool {
+	return LoadConfig().CodexFastMode
+}
+
+// SetCodexFastMode 持久化「快速档」开关并热生效到代理:开+被租号支持时,代理对每条生成请求
+// 注入 service_tier=priority(自定义 provider 接管模式下 Codex 自己不发,只能代理注入,
+// 见 codex_service_tier.go / applyCodexServiceTier)。无需重启 Codex,下一条请求即生效。
+// 前端接管界面开关调用此方法。
+func (a *App) SetCodexFastMode(fast bool) error {
+	a.lock.Lock()
+	cfg := LoadConfig()
+	cfg.CodexFastMode = fast
+	if err := SaveConfig(cfg); err != nil {
+		a.lock.Unlock()
+		Log("[app] 保存 Codex 快速档开关失败: %v", err)
+		return err
+	}
+	a.lock.Unlock()
+	GetCodexProxy().ApplyConfig(cfg) // 热生效:下一条 codex 请求即按快速档注入/剥离
+	Log("[app] Codex 快速档已%s", map[bool]string{true: "开启", false: "关闭"}[fast])
+	return nil
+}
+
 // ======================== IDE 注入相关方法 ========================
 
 // GetIDEStatus 获取 IDE 注入状态

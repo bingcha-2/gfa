@@ -100,6 +100,29 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
     tracker.destroy();
   });
 
+  it("快速档 priorityTokens:仅 serviceTier=priority 的请求累加计费 token", async () => {
+    const prisma = makePrisma();
+    const tracker = new TokenUsageTracker(prisma);
+    const base = {
+      accessKeyId: "sub-1", customerId: "c", accountEmail: "a@x.com",
+      modelKey: "gpt-5-codex", bucket: "codex", status: 200,
+      inputTokens: 1, outputTokens: 1, cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 10, totalTokens: 10,
+      timestamp: at,
+    } as any;
+    (tracker as any).queue.push(
+      { ...base, serviceTier: "priority" },
+      { ...base, serviceTier: "" }, // 标准档,不计入 priorityTokens
+      { ...base, serviceTier: "priority" },
+    );
+    await tracker.flush();
+
+    const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
+    // 3 条请求共 30 计费 token;其中 2 条走 fast → priorityTokens=20。
+    expect(arg.create).toMatchObject({ requests: 3, totalTokens: 30, priorityTokens: 20 });
+    expect(arg.update.priorityTokens).toEqual({ increment: 20 });
+    tracker.destroy();
+  });
+
   it("record(reverseProxy) 透传进队列,flush 落到 upsert", async () => {
     const prisma = makePrisma();
     const tracker = new TokenUsageTracker(prisma);

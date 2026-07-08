@@ -138,6 +138,92 @@ func TestCodexProxyResponsesForwardsWithLeasedToken(t *testing.T) {
 	}
 }
 
+// 快速档开 + 被租号 plan 支持(pro):Codex 自己不发 service_tier,代理注入 priority 到上游,
+// 且用量上报带 ServiceTier=priority(供服务端按 fast 乘数扣份额)。
+func TestCodexProxyInjectsFastServiceTierWhenEntitled(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	var gotTier string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]interface{}
+		_ = json.Unmarshal(body, &m)
+		gotTier, _ = m["service_tier"].(string)
+		codexUsageJSON(w)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		fastMode:     true, // 用户开了快速档
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "tok", AccountId: 7, LeaseId: "lease-7", PlanType: "pro"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	// body 无 service_tier(Codex 自定义 provider 模式不发)→ 代理应注入。
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if gotTier != "priority" {
+		t.Fatalf("上游收到 service_tier = %q, want priority(应注入)", gotTier)
+	}
+	select {
+	case d := <-reported:
+		if d.ServiceTier != "priority" {
+			t.Fatalf("report ServiceTier = %q, want priority", d.ServiceTier)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
+// 被租号 plan 不支持(plus)时,即便快速档开、body 自带 priority 也必须被剥掉,
+// 且上报 ServiceTier 为空(按标准档计量)。
+func TestCodexProxyStripsFastServiceTierWhenNotEntitled(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	var hasTier bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]interface{}
+		_ = json.Unmarshal(body, &m)
+		_, hasTier = m["service_tier"]
+		codexUsageJSON(w)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		fastMode:     true, // 快速档开,但下面的号是 plus 不支持
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "tok", AccountId: 7, LeaseId: "lease-7", PlanType: "plus"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	// 客户端 body 自带 priority(模拟用户在自己 Codex 里开了 Fast)。
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi","service_tier":"priority"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if hasTier {
+		t.Fatal("未授权时残留的 priority 应被剥掉,上游不应收到 service_tier")
+	}
+	select {
+	case d := <-reported:
+		if d.ServiceTier != "" {
+			t.Fatalf("report ServiceTier = %q, want empty", d.ServiceTier)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
 // 非生成请求(插件列表等)应被本地吞掉:不调 lease、不打上游、GET 不被 405 拒,
 // 返回 200 空集 JSON。这样 Codex 不会因这些可选杂活失败而死循环重试。
 func TestCodexProxyNonGenerationSwallowed(t *testing.T) {

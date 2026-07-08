@@ -4,7 +4,7 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
-import { FairShareTracker } from "../token-server/fair-share-tracker";
+import { FairShareTracker, fairShareCostMultiplierForServiceTier } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
@@ -49,6 +49,7 @@ export type TokenUsageTracker = {
     rawTotalTokens?: number;
     totalTokens?: number;
     reverseProxy?: boolean;
+    serviceTier?: string;
   }) => void;
 };
 
@@ -307,7 +308,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "12.5.1";
+    this.minClientVersion = options.minClientVersion ?? "13.1.4";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.tokenUsageTracker = options.tokenUsageTracker || null;
@@ -742,18 +743,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       : rawFairShare;
 
     // 周血条:仅启用周窗口的线(codex/anthropic)下发,结构与 fairShareQuota 平行(同 bucket 键)。
-    // 旧客户端忽略该字段、不受影响。空数据(首次激活/重启)同样回落 100% 满条。
+    // 空数据(首次激活/重启/半途加入)保持省略,不能伪造 100%,否则客户端会把未知周份额画成满血。
     const weeklyTracked = hardPinnedAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
     const rawWeeklyFairShare = weeklyTracked
       ? this.fairShareTracker!.getCardWeeklyQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
-    const weeklyFairShareQuota = !weeklyTracked
+    const weeklyFairShareQuota = !weeklyTracked || !rawWeeklyFairShare || Object.keys(rawWeeklyFairShare).length === 0
       ? undefined
-      : (rawWeeklyFairShare && Object.keys(rawWeeklyFairShare).length === 0)
-        ? Object.fromEntries(
-            Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: Date.now() + 7 * 24 * 60 * 60 * 1000 }]),
-          )
-        : rawWeeklyFairShare;
+      : rawWeeklyFairShare;
 
     return {
       ok: true,
@@ -870,13 +867,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const rawWeeklyFairShare = weeklyTracked
       ? this.fairShareTracker!.getCardWeeklyQuotaFractions(boundAccountId, record.id)
       : undefined;
-    const weeklyFairShareQuota = !weeklyTracked
+    const weeklyFairShareQuota = !weeklyTracked || !rawWeeklyFairShare || Object.keys(rawWeeklyFairShare).length === 0
       ? undefined
-      : (rawWeeklyFairShare && Object.keys(rawWeeklyFairShare).length === 0)
-        ? Object.fromEntries(
-            Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 7 * 24 * 60 * 60 * 1000, share: 1 }]),
-          )
-        : rawWeeklyFairShare;
+      : rawWeeklyFairShare;
 
     return {
       accountBucketsData,
@@ -1107,7 +1100,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
     const usage = this.usageForBilling(payload);
-    const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id);
+    const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""));
     if (!wasNew) {
       return {
         ok: true, ignored: true, reason: "already_reported",
@@ -1122,10 +1115,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         const bucket = bucketKey(this.provider.id, modelKey);
+        // Codex 快速档(service_tier=priority)按乘数多扣份额,反映其占用稀缺的共享快速容量。
+        const tierMult = fairShareCostMultiplierForServiceTier(String(payload?.serviceTier || ""));
         this.fairShareTracker.recordUsage(
           accountId, cardId, bucket,
           detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
           modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
+          tierMult,
         );
       }
     }
@@ -1170,6 +1166,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           // 反代嫌疑(客户端 detectClaudeCodeClient 命中:非真 Claude Code 客户端)。
           // 随小时聚合落 CardUsageHourly.reverseProxyHits → 后台可查"哪张卡在反代"。
           reverseProxy: Boolean(payload?.clientFlag),
+          // Codex 快速档(service_tier=priority)→ 聚合落 CardUsageHourly.priorityTokens,查 fast 用量占比。
+          serviceTier: String(payload?.serviceTier || ""),
         });
       }
     }

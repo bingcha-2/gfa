@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, RefreshCw } from 'lucide-react'
 import {
-  type SessionRecord, type SessionTokenStats, type TrashedSessionRecord,
+  type SessionRecord, type SessionTokenStats, type TrashedSessionRecord, type HistoryVisibilitySummary,
   listCodexSessions, codexSessionTokenStats, moveCodexSessionsToTrash,
-  listTrashedCodexSessions, restoreCodexSessionsFromTrash,
+  listTrashedCodexSessions, restoreCodexSessionsFromTrash, repairCodexSessionVisibility,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +22,7 @@ export function LocalSessionsTab() {
   const [stats, setStats] = useState<Record<string, SessionTokenStats>>({})
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [repairInfo, setRepairInfo] = useState<HistoryVisibilitySummary | null>(null)
 
   const loadActive = useCallback(async (q = '') => {
     setBusy(true)
@@ -41,6 +42,8 @@ export function LocalSessionsTab() {
 
   const toggle = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const selectedIds = useMemo(() => Array.from(selected), [selected])
+  const currentIds = useMemo(() => (view === 'active' ? sessions.map((s) => s.sessionId) : trashed.map((s) => s.sessionId)), [view, sessions, trashed])
+  const allSelected = currentIds.length > 0 && currentIds.every((id) => selected.has(id))
 
   const onTokenStats = async () => {
     if (selectedIds.length === 0) return
@@ -62,6 +65,12 @@ export function LocalSessionsTab() {
     setBusy(true)
     try { await restoreCodexSessionsFromTrash(selectedIds); setSelected(new Set()); await loadTrash() } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
+  const onSelectAll = () => setSelected(allSelected ? new Set() : new Set(currentIds))
+  const onRefresh = () => { if (view === 'active') void loadActive(titleQuery); else void loadTrash() }
+  const onRepairVisibility = async () => {
+    setBusy(true)
+    try { setRepairInfo(await repairCodexSessionVisibility()); setErr('') } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -82,6 +91,7 @@ export function LocalSessionsTab() {
             ))}
           </div>
           <div className="flex items-center gap-1.5">
+            <button onClick={onSelectAll} disabled={busy || currentIds.length === 0} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">全选</button>
             {view === 'active' ? (
               <>
                 <input
@@ -97,8 +107,15 @@ export function LocalSessionsTab() {
             ) : (
               <button onClick={() => void onRestore()} disabled={busy || selectedIds.length === 0} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1 disabled:opacity-50"><RotateCcw size={12} /> 恢复</button>
             )}
+            <button onClick={onRefresh} disabled={busy} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1 disabled:opacity-50"><RefreshCw size={12} /> 刷新</button>
+            <button onClick={() => void onRepairVisibility()} disabled={busy} className="text-[11px] font-semibold px-2.5 h-[28px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">修复可见性</button>
           </div>
         </div>
+        {repairInfo && (
+          <div className="px-4 py-1.5 text-[11px] text-[var(--text-secondary)] border-t border-[var(--border-light)] bg-[var(--bg-tertiary)]/50">
+            已修复 provider={repairInfo.targetProvider}:重写 {repairInfo.changedRolloutFiles} 个 rollout 文件,更新 {repairInfo.updatedSqliteRows} 行 state_5.sqlite{repairInfo.skippedSqlite ? '(sqlite 已跳过)' : ''}
+          </div>
+        )}
 
         {view === 'active' ? (
           sessions.length === 0 ? (

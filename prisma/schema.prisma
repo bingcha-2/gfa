@@ -475,6 +475,7 @@ model CardUsageHourly {
   rawTotalTokens    Int      @default(0)
   totalTokens       Int      @default(0)          // 计费 token(扣缓存折扣后)
   reverseProxyHits  Int      @default(0)          // 命中反代检测(非真 Claude Code 客户端)的请求数;查"哪张卡在反代"
+  priorityTokens    Int      @default(0)          // 走「快速档」(codex service_tier=priority)的计费 token;查 fast 用量占比、为按 fast 计费留数据
   updatedAt         DateTime @updatedAt
 
   @@unique([hourStart, accessKeyId, accountEmail, customerId, modelKey, bucket])

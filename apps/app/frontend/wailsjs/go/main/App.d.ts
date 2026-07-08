@@ -36,6 +36,8 @@ export function GetAnnouncement():Promise<string>;
 
 export function GetAppVersion():Promise<string>;
 
+export function GetCodexFastMode():Promise<boolean>;
+
 export function GetCodexRelayConfig():Promise<Record<string, any>>;
 
 export function GetConfig():Promise<main.Config>;
@@ -236,6 +238,8 @@ export function LocalReorderAntigravityAccounts(arg1:Array<string>):Promise<void
 
 export function LocalReorderCodexAccounts(arg1:Array<string>):Promise<void>;
 
+export function LocalRepairCodexSessionVisibility():Promise<main.HistoryVisibilitySummary>;
+
 export function LocalResolveAccountGroups():Promise<Record<string, string>>;
 
 export function LocalRestoreCodexSessionsFromTrash(arg1:Array<string>):Promise<sessionsync.RestoreSummary>;
@@ -326,7 +330,7 @@ export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
 export function SandboxBrowseDir(arg1:string):Promise<string>;
 
-export function SandboxCreate(arg1:Array<main.SandboxMount>,arg2:string,arg3:main.SandboxModelCfg,arg4:boolean):Promise<string>;
+export function SandboxCreate(arg1:Array<main.SandboxMount>,arg2:main.SandboxModelCfg,arg3:boolean):Promise<string>;
 
 export function SandboxEnableHypervisor():Promise<void>;
 
@@ -346,8 +350,6 @@ export function SandboxRestore():Promise<string>;
 
 export function SandboxStopOne(arg1:string):Promise<void>;
 
-export function SandboxUSTimezones():Promise<Array<string>>;
-
 export function SandboxVscodeDisable():Promise<string>;
 
 export function SandboxVscodeEnable():Promise<string>;
@@ -363,6 +365,8 @@ export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:st
 export function SaveConfig(arg1:main.Config):Promise<void>;
 
 export function SetClaudeDesktopMockLogin(arg1:boolean):Promise<boolean>;
+
+export function SetCodexFastMode(arg1:boolean):Promise<void>;
 
 export function SetSubscriptionPriority(arg1:string,arg2:number):Promise<void>;
 

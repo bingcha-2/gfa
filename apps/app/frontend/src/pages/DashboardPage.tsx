@@ -71,6 +71,7 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
             <th className="text-right">缓存读</th>
             <th className="text-right">缓存写</th>
             <th className="text-right">合计 Token</th>
+            <th className="text-right">其中 fast</th>
             <th className="text-right">官方 API 价估算</th>
             <th className="text-right">占今日成本比例</th>
           </tr>
@@ -90,6 +91,11 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cachedTokens)}</td>
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cacheWriteTokens)}</td>
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatTokens(row.totalTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums" title="走快速档(priority)请求的原始 token(与合计同口径),成本已按 1.5x 计">
+                {row.fastTokens > 0
+                  ? <span className="text-[var(--primary)]">{formatTokens(row.fastTokens)}</span>
+                  : <span className="text-[var(--text-muted)]">—</span>}
+              </td>
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatUSD(row.estimatedCostUSD)}</td>
               <td className="px-3 py-2.5">
                 <div className="flex items-center justify-end gap-2">

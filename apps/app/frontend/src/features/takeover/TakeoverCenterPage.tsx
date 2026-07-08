@@ -10,9 +10,9 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxUSTimezones, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode } from '@/services/wails'
 import type { PageId } from '@/types'
-import { ArrowRight, Users, Plus, X, Copy, Check, ChevronDown, ShieldAlert } from 'lucide-react'
+import { ArrowRight, Users, Plus, X, Copy, Check, ShieldAlert } from 'lucide-react'
 
 /**
  * 接管中心 —— 统一控制面。每个产品一张卡:决定该产品走「远程托管」还是「本地自有号」接管,
@@ -67,6 +67,60 @@ function RemoteRow({ spec, busy, onToggle }: { spec: RemoteRowSpec; busy: string
       >
         {busy === target ? '...' : injected ? t('takeover.stop') : t('takeover.takeover')}
       </Button>
+    </div>
+  )
+}
+
+/**
+ * Codex 桌面「快速档(Fast)」开关。仅远程接管生效后有意义:开启时写 ~/.codex 桌面档位
+ * (config.toml [desktop].default-service-tier=priority + 全局态),Codex 每条生成请求带
+ * service_tier=priority;是否真放行仍由服务端授权 + 被租号能力门控(不满足则被剥回标准)。
+ * 切换会重启已接管的 Codex 使其重读档位。未接管时禁用(接管后才有意义)。
+ */
+function CodexFastToggle({ injected }: { injected: boolean }) {
+  const [fast, setFast] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void getCodexFastMode().then(setFast).catch(() => {})
+  }, [])
+
+  const choose = async (next: boolean) => {
+    if (busy || next === fast) return
+    setBusy(true)
+    setFast(next) // 乐观更新
+    try {
+      await setCodexFastMode(next)
+    } catch {
+      setFast(!next) // 回滚
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={cn('flex items-center justify-between h-[40px]', !injected && 'opacity-40')}>
+      <div className="min-w-0">
+        <div className="text-[12px] text-[var(--text-primary)] font-medium">快速档 (Fast)</div>
+        <div className="text-[10px] text-[var(--text-muted)] leading-tight">
+          {injected ? '优先算力更快出字 · 需号支持且已授权,否则自动回标准' : '接管 Codex 后可用'}
+        </div>
+      </div>
+      <div className={cn('inline-flex bg-[var(--bg-tertiary)] rounded-[7px] p-[2px] shrink-0', (!injected || busy) && 'pointer-events-none')}>
+        {([false, true] as const).map((v) => (
+          <button
+            key={String(v)}
+            onClick={() => void choose(v)}
+            disabled={!injected || busy}
+            className={cn(
+              'px-2.5 py-[3px] rounded-[5px] text-[10px] font-semibold transition-colors cursor-pointer',
+              fast === v ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
+            )}
+          >
+            {v ? '快速' : '标准'}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -128,13 +182,14 @@ const AG_VARIANTS = [
  * 反代(cliproxy 网关)是单独功能,在各 suite 的「反代」tab 自开自关,与此处接管无关。
  * localDesc 描述该产品注入到哪(本地模式下作头部副标题)。
  */
-function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk, onManageAccounts }: {
+function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, remoteExtra, tk, onManageAccounts }: {
   name: string
   provider: string
   note?: string
   localDesc: string
   api: ProviderLocalApi
   remoteRows: RemoteRowSpec[]
+  remoteExtra?: ReactNode // 远程模式下、行下方追加的产品专属控件(如 Codex 快速档开关)
   tk: Tk
   onManageAccounts?: () => void
 }) {
@@ -227,9 +282,12 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, tk
   return (
     <ProductCard name={name} provider={provider} note={mode === 'local' ? localDesc : note} mode={mode} onModeChange={setMode}>
       {mode === 'remote' ? (
-        remoteRows.map((spec) => (
-          <RemoteRow key={spec.target} spec={spec} busy={tk.busy} onToggle={() => onToggleRemote(spec)} />
-        ))
+        <>
+          {remoteRows.map((spec) => (
+            <RemoteRow key={spec.target} spec={spec} busy={tk.busy} onToggle={() => onToggleRemote(spec)} />
+          ))}
+          {remoteExtra}
+        </>
       ) : isAntigravity ? (
         <>
           {/* 按 app 独立接管:IDE + 独立版 各一行,和远程那两行对称;各注入自己的 state.vscdb,互不影响。 */}
@@ -409,8 +467,6 @@ function VscodeSandboxCard() {
 function SandboxCard() {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof sandboxGetStatus>> | null>(null)
   const [mounts, setMounts] = useState<SandboxMountItem[]>([])
-  const [timezones, setTimezones] = useState<string[]>([])
-  const [tz, setTz] = useState('America/New_York')
   const [msg, setMsg] = useState('') // 创建成功后的提示(替代原来复制一把梭命令)
   const [installCmd, setInstallCmd] = useState('')
   const [installing, setInstalling] = useState(false)
@@ -451,7 +507,6 @@ function SandboxCard() {
     refresh()
     checkPrereq()
     refreshList()
-    sandboxUSTimezones().then((z) => { if (z?.length) { setTimezones(z); setTz(z[0]) } }).catch(() => {})
   }, [refresh, checkPrereq, refreshList])
 
   const installed = !!status?.installed
@@ -487,7 +542,7 @@ function SandboxCard() {
   // 进入靠列表里的「进入」按钮复制命令。首次会拉镜像,故 busy 期间显示「创建中…」。
   const create = () => run('create', async () => {
     setMsg('')
-    const name = await sandboxCreate(mounts, tz, { custom: customModel, baseURL: modelBase, token: modelToken, model: modelName } as never, openNet)
+    const name = await sandboxCreate(mounts, { custom: customModel, baseURL: modelBase, token: modelToken, model: modelName } as never, openNet)
     await refreshList()
     setMsg(`✓ 已创建沙箱 ${name.replace(/^gfa-/, '')},在下方「已托管沙箱」点「进入」复制命令到终端启动`)
   })
@@ -712,25 +767,6 @@ function SandboxCard() {
               )}
             </div>
 
-            {/* 出口时区 */}
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold text-[var(--text-primary)]">出口时区</span>
-              <div className="flex items-center gap-2.5">
-                <span className="text-[10px] text-[var(--text-muted)]">语言 en_US</span>
-                <div className="relative">
-                  <select
-                    value={tz}
-                    onChange={(e) => setTz(e.target.value)}
-                    aria-label="沙箱时区"
-                    className="appearance-none text-[11px] font-mono-data text-[var(--text-primary)] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-[7px] h-[28px] pl-2.5 pr-7 hover:border-[var(--primary)] focus:outline-none focus:border-[var(--primary)] transition-colors cursor-pointer"
-                  >
-                    {timezones.map((z) => <option key={z} value={z}>{z}</option>)}
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-[var(--text-muted)] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-            </div>
-
             {/* 网络全放开(默认开):文件隔离不受影响,沙箱仍只见挂载目录 */}
             <label className="flex items-center justify-between gap-2 cursor-pointer">
               <div className="min-w-0">
@@ -873,6 +909,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           localDesc="本地自有号 · 注入 ~/.codex/auth.json,codex CLI 直连 OpenAI(不走反代)"
           api={codexLocalApi}
           remoteRows={codexRows}
+          remoteExtra={<CodexFastToggle injected={!!codexApp?.injected} />}
           tk={tk}
           onManageAccounts={() => onNavigate?.('local_codex')}
         />

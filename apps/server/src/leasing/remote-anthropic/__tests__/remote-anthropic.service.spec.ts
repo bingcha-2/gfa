@@ -262,6 +262,63 @@ describe("RemoteAnthropicService", () => {
     expect(weekly?.totalAttributed).toBeCloseTo(0.5, 5);
   });
 
+  it("returns updated weekly fair-share quota from a Claude usage report with weekly quota", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    writeJson(accessKeysFilePath, {
+      keys: [
+        {
+          id: "claude-card-1",
+          key: "claude-secret-card",
+          status: "active",
+          durationMs: 60 * 60 * 1000,
+          bindings: { anthropic: 21 },
+        },
+      ],
+    });
+    const service = makeService();
+    const lease = await service.leaseToken(
+      sessionReqFor("claude-card-1"),
+      { clientId: "client-a", modelKey: MODEL },
+    );
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+
+    await service.reportResult(sessionReqFor("claude-card-1"), {
+      leaseId: lease.leaseId,
+      reportId: "prime-weekly",
+      status: 200,
+      modelKey: MODEL,
+      accountQuota: {
+        claudeQuota: {
+          hourlyPercent: 100,
+          weeklyPercent: 100,
+          hourlyResetTime: hourlyReset,
+          weeklyResetTime: weeklyReset,
+        },
+      },
+    });
+
+    const report = await service.reportResult(sessionReqFor("claude-card-1"), {
+      leaseId: lease.leaseId,
+      reportId: "usage-weekly",
+      status: 200,
+      modelKey: MODEL,
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      accountQuota: {
+        claudeQuota: {
+          hourlyPercent: 95,
+          weeklyPercent: 90,
+          hourlyResetTime: hourlyReset,
+          weeklyResetTime: weeklyReset,
+        },
+      },
+    });
+
+    const r = report as any;
+    expect(r.weeklyFairShareQuota?.["anthropic-claude"]?.fraction).toBeLessThan(1);
+  });
+
   it("returns fair-share quota windows on lease-time 429 rejection", async () => {
     tokenProvider.mockResolvedValue("claude-access-token-alpha");
     writeJson(accessKeysFilePath, {

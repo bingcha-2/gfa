@@ -17,8 +17,12 @@ type CodexTokenLease struct {
 	LeaseId     string `json:"leaseId"`
 	EmailHint   string `json:"emailHint"`
 	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
-	ExpiresAt   int64  `json:"expiresAt"`
-	LeasedAt    int64  `json:"leasedAt"`
+	// FastAllowed 是服务端下发的「快速档授权闸」:该租约是否被允许吃快速(priority)服务档。
+	// 默认 false(号池共享,不能谁租到都白嫖 fast);由服务端策略/能力决定。与本地能力闸
+	// (codexPlanSupportsFast)叠加才注入 service_tier=priority。
+	FastAllowed bool  `json:"fastAllowed"`
+	ExpiresAt   int64 `json:"expiresAt"`
+	LeasedAt    int64 `json:"leasedAt"`
 	// EgressInfo 是服务端下发的出口策略。codex 为 optional:绑定代理则走它,
 	// 没绑定就本地直连;绑定代理传输失败则降级本地直连再切号(见 doUpstreamWithFallback)。
 	EgressInfo
@@ -35,6 +39,7 @@ type codexLeaseTokenResp struct {
 	LeaseId      string          `json:"leaseId"`
 	EmailHint    string          `json:"emailHint"`
 	PlanType     string          `json:"planType"`
+	FastAllowed  bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
 	ExpiresAt    string          `json:"expiresAt"`
 	BoundAccount *struct {
 		Id       int     `json:"id"`
@@ -169,6 +174,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		LeaseId:     leaseResp.LeaseId,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,
+		FastAllowed: leaseResp.FastAllowed,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
@@ -250,6 +256,10 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 		"rawTotalTokens":    details.RawTotalTokens,
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
+	}
+	// 快速档:仅在本次生效 priority 时带上,供服务端 fair-share 按 fast 乘数扣份额。
+	if details.ServiceTier != "" {
+		payload["serviceTier"] = details.ServiceTier
 	}
 	// 接管面 + 过滤后请求头:随上报落 per-request 热表(封号定因)。仅有值时带上。
 	if details.Surface != "" {

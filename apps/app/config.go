@@ -48,6 +48,13 @@ type Config struct {
 	CodexRelayKey      string            `json:"codexRelayKey"`      // 中转卡密(Authorization: Bearer)
 	CodexRelayProtocol string            `json:"codexRelayProtocol"` // "" / "responses" (默认) 或 "chat"(通用 OpenAI 中转)
 	CodexModelMap      map[string]string `json:"codexModelMap"`      // 可选:客户端模型名 → 中转模型名
+
+	// 接管时给 Codex 桌面版写「快速(Fast)」服务档:config.toml [desktop].default-service-tier=
+	// "priority" + 同步 .codex-global-state.json 原子态(对齐 cockpit codex_speed)。桌面版 Codex
+	// 没有逐次的 fast 选择器,速度档是全局配置,这样它每条生成请求都会带 service_tier=priority;
+	// 真正是否放行仍由代理按服务端授权闸 + 被租号能力门控(见 codex_service_tier.go / applyCodexServiceTier)。
+	// 默认 false(标准档,零行为变化);置 true 开启桌面快速档。
+	CodexFastMode bool `json:"codexFastMode"`
 }
 
 // SubscriptionSnapshot 是单个生效订阅的客户端展示快照。catalog 化后订阅无 planName,

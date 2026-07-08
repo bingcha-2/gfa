@@ -818,6 +818,19 @@ export function restoreCodexSessionsFromTrash(sessionIds: string[]): Promise<Res
   return app().LocalRestoreCodexSessionsFromTrash(sessionIds) as Promise<RestoreSummary>
 }
 
+/** 会话可见性修复结果摘要(旧版接管曾把 provider 改到 bingchaai,污染历史元数据的自愈)。 */
+export interface HistoryVisibilitySummary {
+  targetProvider: string
+  changedRolloutFiles: number
+  updatedSqliteRows: number
+  skippedSqlite: boolean
+}
+
+/** 手动重跑一次 codex 历史会话可见性修复(provider 元数据对齐)。 */
+export function repairCodexSessionVisibility(): Promise<HistoryVisibilitySummary> {
+  return app().LocalRepairCodexSessionVisibility() as Promise<HistoryVisibilitySummary>
+}
+
 // ── Antigravity 本地接管(按 app 独立)——IDE / 独立版 各自可单独注入自有号到其 state.vscdb ──
 // 两个 app 互不影响(和远程那两行对称);只影响本地注入落点,与远程租号 / 网关出口无关。
 

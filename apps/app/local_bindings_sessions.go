@@ -39,3 +39,9 @@ func (a *App) LocalRestoreCodexSessionsFromTrash(sessionIDs []string) (sessionsy
 	}
 	return localHub.RestoreSessionsFromTrash(sessionIDs)
 }
+
+// LocalRepairCodexSessionVisibility 手动重跑一次历史会话可见性修复(把 rollout/state_5.sqlite
+// 里残留的旧版 provider 元数据对齐回官方 openai)。直接操作默认 codex home,不经 hub。
+func (a *App) LocalRepairCodexSessionVisibility() (HistoryVisibilitySummary, error) {
+	return AlignCodexHistoryVisibility(codexHomeDir(), codexDefaultProvider)
+}

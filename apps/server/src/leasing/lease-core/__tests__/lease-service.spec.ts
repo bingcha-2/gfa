@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
 import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
+import { FairShareTracker } from "../../token-server/fair-share-tracker";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -799,6 +800,43 @@ describe("LeaseService (generic core)", () => {
     expect(r.accessKeyStatus.tokenWindowResetMs).toBeLessThanOrEqual(4 * 60 * 60 * 1000);
   });
 
+  it("does not fabricate full weekly fair-share quota before the weekly tracker has real data", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "a@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        modelQuotaFractions: { codex: 0.29 },
+      }],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { codex: 1 } }],
+    });
+    const fairShareTracker = new FairShareTracker({
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "card-1", weight: 1 }],
+      getSeatCapacity: () => 8,
+      trackWeekly: true,
+      provider: "codex",
+      now: () => Date.now(),
+    });
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "codex"),
+      { accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "", fairShareTracker },
+    ));
+
+    try {
+      const r: any = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+      expect(r.accountBuckets["codex-gpt"].fraction).toBeCloseTo(0.29, 5);
+      expect(r.weeklyFairShareQuota).toBeUndefined();
+    } finally {
+      fairShareTracker.destroy();
+    }
+  });
+
   it("keeps the bound Claude hourly reset in report-result accessKeyStatus", async () => {
     refreshToken.mockResolvedValue("tok");
     const now = Date.now();
@@ -899,13 +937,13 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     }));
 
-    // Below the in-code floor (now 12.5.1) must be rejected (426 upgrade required) —
-    // even the prior release 12.5.0 is now below the new minimum…
+    // Below the in-code floor (now 13.1.4) must be rejected (426 upgrade required) —
+    // even the prior release 13.1.3 is now below the new minimum…
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "12.5.0" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.1.3" }),
     ).rejects.toThrow();
     // …while the floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "12.5.1" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.1.4" });
     expect(ok.ok).toBe(true);
   });
 

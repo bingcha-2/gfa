@@ -122,13 +122,6 @@ func hostFromURL(raw string) string {
 	return u.Host
 }
 
-// usTimezones 供前端下拉。
-func usTimezones() []string {
-	return []string{
-		"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-	}
-}
-
 // kitSpecYAML 渲染 sbx kit 清单(spec.yaml,经 sbx kit validate 实测确认的 schema)。
 // kind: mixin = 叠加到 claude agent 上;ANTHROPIC_* 设成沙箱环境变量,Claude Code 从 env 直接读。
 // 网络放行用 caps.network.allow(kit-spec v2)。

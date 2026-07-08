@@ -3,14 +3,14 @@
  *
  * 与 token-usage-tracker 同范式:reportResult 热路径只做内存 push,
  * 周期性批量 flush 到 Prisma(no-WAL 下避免每事件一锁)。额外做 **on-change 去重**:
- * 水位变化 < 1% 且 reset 时间未变就不入队(Antigravity 上游 20% 粒度 → 写入很稀疏)。
+ * 水位变化 < 0.1% 且 reset 时间未变就不入队(Antigravity 上游 20% 粒度 → 写入很稀疏)。
  *
  * 三家(antigravity/codex/anthropic)归一成统一字段(hourlyPercent/weeklyPercent/reset)。
  * 失败静默丢弃 —— 这是可观测历史,非关键计费。
  */
 
 const FLUSH_INTERVAL_MS = 10_000; // 10 秒
-const CHANGE_THRESHOLD_PCT = 1; // 水位变化 ≥1% 才记一笔
+const CHANGE_THRESHOLD_PCT = 0.1; // 水位变化 ≥0.1% 才记一笔
 
 export interface AccountQuotaSnapshotInput {
   provider: string;
@@ -49,7 +49,7 @@ function numOrNull(v: unknown): number | null {
 function pctChanged(a: number | null, b: number | null): boolean {
   if (a === null && b === null) return false;
   if (a === null || b === null) return true;
-  return Math.abs(a - b) >= CHANGE_THRESHOLD_PCT;
+  return Math.abs(a - b) + 1e-9 >= CHANGE_THRESHOLD_PCT;
 }
 
 export class AccountQuotaSnapshotTracker {

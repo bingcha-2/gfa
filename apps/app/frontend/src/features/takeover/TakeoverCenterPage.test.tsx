@@ -8,6 +8,8 @@ const { apiMocks } = vi.hoisted(() => ({
     restoreSelected: vi.fn(),
     openSystemPermissionSettings: vi.fn(),
     openURL: vi.fn(),
+    getCodexFastMode: vi.fn().mockResolvedValue(false),
+    setCodexFastMode: vi.fn().mockResolvedValue(undefined),
     // 默认无第三方中转冲突,不弹 relay 窗;需要测门控的用例用 mockResolvedValueOnce 覆盖。
     detectCompetingClaudeConfig: vi.fn().mockResolvedValue([]),
     sanitizeCompetingClaudeConfig: vi.fn().mockResolvedValue({ cleaned: [], skipped: [], backupTo: '' }),
@@ -18,6 +20,8 @@ vi.mock('@/services/wails', () => ({
   restoreSelected: apiMocks.restoreSelected,
   openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
   openURL: apiMocks.openURL,
+  getCodexFastMode: apiMocks.getCodexFastMode,
+  setCodexFastMode: apiMocks.setCodexFastMode,
   detectCompetingClaudeConfig: apiMocks.detectCompetingClaudeConfig,
   sanitizeCompetingClaudeConfig: apiMocks.sanitizeCompetingClaudeConfig,
 }))

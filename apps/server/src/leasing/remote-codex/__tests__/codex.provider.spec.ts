@@ -3,6 +3,24 @@ import { describe, expect, it } from "vitest";
 import { CodexProvider } from "../codex.provider";
 import { getModelQuotaFraction } from "../../token-server/lease-scheduler";
 
+describe("CodexProvider.leaseResponseExtras codexFastAllowed", () => {
+  const provider = new CodexProvider();
+
+  it("emits codexFastAllowed=true iff plan is fast-capable (no server env gate)", () => {
+    expect(provider.leaseResponseExtras({ planType: "pro" } as any).codexFastAllowed).toBe(true);
+    // plus is not fast-capable → omitted
+    expect(provider.leaseResponseExtras({ planType: "plus" } as any).codexFastAllowed).toBeUndefined();
+  });
+
+  it("still carries codexWindows alongside the flag", () => {
+    const extras = provider.leaseResponseExtras({
+      planType: "pro", codexHourlyPercent: 80, codexWeeklyPercent: 30,
+    } as any);
+    expect(extras.codexFastAllowed).toBe(true);
+    expect(extras.codexWindows).toBeDefined();
+  });
+});
+
 describe("CodexProvider.applyQuotaSnapshot", () => {
   function snap(quota: any) {
     const provider = new CodexProvider();

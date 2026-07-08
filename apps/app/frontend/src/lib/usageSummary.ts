@@ -17,6 +17,7 @@ export interface ModelUsageStats {
   cacheWriteTokens?: number
   totalTokens?: number
   estimatedCostUSD?: number
+  fastTokens?: number // 走「快速档」(priority)请求的原始 token(与 totalTokens 同口径);成本已含 1.5x 溢价
 }
 
 export interface UsageOverview {
@@ -88,6 +89,7 @@ export function buildModelUsageRows(
         cacheWriteTokens,
         totalTokens,
         estimatedCostUSD,
+        fastTokens: safeNumber(raw.fastTokens),
         costShare: costBase > 0 ? estimatedCostUSD / costBase : 0,
       }
     })

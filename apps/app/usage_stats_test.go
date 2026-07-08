@@ -17,7 +17,7 @@ func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
 
-	s.AddModelTokens("claude", "claude-sonnet-4-20250514", 100, 260, 3000, 42360)
+	s.AddModelTokens("claude", "claude-sonnet-4-20250514", 100, 260, 3000, 42360, false)
 
 	rec := s.GetTodayRecord()
 	row := rec.ByModel["claude-sonnet-4-20250514"]
@@ -58,7 +58,7 @@ func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
 
-	s.AddModelTokens("gpt", "", 1_000_000, 0, 0, 1_000_000)
+	s.AddModelTokens("gpt", "", 1_000_000, 0, 0, 1_000_000, false)
 
 	row := s.GetTodayRecord().ByModel["gpt"]
 	if row == nil {
@@ -69,6 +69,31 @@ func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
 	}
 	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 1.25 {
 		t.Fatalf("fallback usage = %+v", row)
+	}
+}
+
+// 快速档(fast=true):成本按 1.5x 溢价计,且原始 token 记入 FastTokens(与 TotalTokens 同口径)。
+func TestAddModelTokensFastAppliesPremiumAndTracksFastTokens(t *testing.T) {
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+
+	// 标准档基线:gpt 1M input → $1.25。
+	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, false)
+	std := s.GetTodayRecord().ByModel["gpt-5.5"]
+	if std.EstimatedCostUSD != 1.25 || std.FastTokens != 0 {
+		t.Fatalf("标准档 row = %+v, want cost=1.25 fastTokens=0", std)
+	}
+
+	// 再来一条快速档:成本 1.25*1.5=1.875,累加到 1.25+1.875=3.125;FastTokens=1_000_000(原始量)。
+	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, true)
+	row := s.GetTodayRecord().ByModel["gpt-5.5"]
+	if got := row.EstimatedCostUSD; got < 3.125-1e-9 || got > 3.125+1e-9 {
+		t.Fatalf("fast 后成本 = %v, want 3.125(标准1.25 + fast1.875)", got)
+	}
+	if row.FastTokens != 1_000_000 {
+		t.Fatalf("FastTokens = %d, want 1000000", row.FastTokens)
+	}
+	if row.Requests != 2 {
+		t.Fatalf("requests = %d, want 2", row.Requests)
 	}
 }
 

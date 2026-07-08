@@ -6,6 +6,7 @@ import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-bill
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provider";
 import { CodexModelCatalog } from "./codex-model-catalog";
+import { codexPlanSupportsFast } from "./codex-service-tier";
 
 /** Clamp a 0..100 remaining-percentage to a finite number in range. */
 function clampPercent(value: unknown): number {
@@ -83,17 +84,23 @@ export class CodexProvider implements Provider<CodexAccount> {
    */
   leaseResponseExtras(account: CodexAccount): Record<string, unknown> {
     const a = account as Record<string, unknown>;
+    const extras: Record<string, unknown> = {};
+    // 快速档「能力闸」:被租号 plan 支持快速就下发 true(是否真开由用户 app 端开关决定)。
+    // 见 codex-service-tier.ts。
+    if (codexPlanSupportsFast(String(a.planType || ""))) {
+      extras.codexFastAllowed = true;
+    }
     const hourly = typeof a.codexHourlyPercent === "number" ? a.codexHourlyPercent : null;
     const weekly = typeof a.codexWeeklyPercent === "number" ? a.codexWeeklyPercent : null;
-    if (hourly === null && weekly === null) return {};
-    return {
-      codexWindows: {
+    if (hourly !== null || weekly !== null) {
+      extras.codexWindows = {
         hourlyPercent: hourly,
         weeklyPercent: weekly,
         hourlyResetTime: a.codexHourlyResetTime ? String(a.codexHourlyResetTime) : "",
         weeklyResetTime: a.codexWeeklyResetTime ? String(a.codexWeeklyResetTime) : "",
-      },
-    };
+      };
+    }
+    return extras;
   }
 
   /** Blood bar = the account-level codex binding (min hourly/weekly) fraction.

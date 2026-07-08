@@ -23,20 +23,20 @@ describe("AccountQuotaSnapshotTracker", () => {
     expect(tracker.getQueueForTesting()).toHaveLength(1);
   });
 
-  it("on-change dedup: skips when percentages and resets are unchanged", () => {
+  it("on-change dedup: skips changes smaller than 0.1%", () => {
     const { tracker } = makeTracker();
     active = tracker;
     tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 80, weeklyPercent: 60 });
-    tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 80.4, weeklyPercent: 59.7 });
-    // <1% change on both → deduped
+    tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 80.04, weeklyPercent: 59.96 });
+    // <0.1% change on both → deduped
     expect(tracker.getQueueForTesting()).toHaveLength(1);
   });
 
-  it("enqueues again when a percentage moves >= 1%", () => {
+  it("enqueues again when a percentage moves at least 0.1%", () => {
     const { tracker } = makeTracker();
     active = tracker;
     tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 80, weeklyPercent: 60 });
-    tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 78, weeklyPercent: 60 });
+    tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 79.9, weeklyPercent: 60 });
     expect(tracker.getQueueForTesting()).toHaveLength(2);
   });
 

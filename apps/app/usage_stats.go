@@ -22,6 +22,9 @@ type ModelUsageRecord struct {
 	CacheWriteTokens int64   `json:"cacheWriteTokens"`
 	TotalTokens      int64   `json:"totalTokens"`
 	EstimatedCostUSD float64 `json:"estimatedCostUSD"`
+	// FastTokens:走「快速档」(codex service_tier=priority)请求的**原始** token(与 TotalTokens
+	// 同口径,含缓存),供看板「其中 fast」列直接对比占比。成本溢价 1.5x 在 EstimatedCostUSD 里。
+	FastTokens int64 `json:"fastTokens"`
 }
 
 // DailyRecord 单日用量记录
@@ -150,7 +153,7 @@ func estimateOfficialCostUSD(family string, input, output, cacheRead, cacheWrite
 		float64(cacheWrite)/1_000_000.0*cacheWriteP
 }
 
-func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, cost float64) {
+func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, cost float64, fastTokens int64) {
 	key := modelUsageKey(family, modelKey)
 	row, ok := byModel[key]
 	if !ok {
@@ -168,6 +171,7 @@ func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string
 	row.CacheWriteTokens += cacheWrite
 	row.TotalTokens += input + output + cacheRead + cacheWrite
 	row.EstimatedCostUSD += cost
+	row.FastTokens += fastTokens
 }
 
 func cloneModelUsageMap(in map[string]*ModelUsageRecord) map[string]*ModelUsageRecord {
@@ -279,11 +283,13 @@ func (s *UsageStatsStore) getHour() *HourlyRecord {
 
 // AddTokens preserves the legacy aggregate-only call path.
 func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, rawTotal int64) {
-	s.AddModelTokens(family, "", input, output, cacheRead, rawTotal)
+	s.AddModelTokens(family, "", input, output, cacheRead, rawTotal, false)
 }
 
 // AddModelTokens adds token usage and records the model-level API value estimate.
-func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output, cacheRead, rawTotal int64) {
+// fast=true(codex 快速档 service_tier=priority)时,成本按 codexFastCostMultiplier(1.5x)计,
+// 并把本次计费 token 记入「其中 fast」。
+func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output, cacheRead, rawTotal int64, fast bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -300,6 +306,11 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 		cacheWrite = 0
 	}
 	cost := estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite)
+	var fastTokens int64
+	if fast {
+		cost *= codexFastCostMultiplier              // 快速档 1.5x 溢价(对齐 OpenAI service_tiers priority)
+		fastTokens = input + output + cacheRead + cacheWrite // 原始量,与 TotalTokens 同口径
+	}
 
 	rec := s.getToday()
 	rec.InputTokens += input
@@ -311,7 +322,7 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 	if rec.ByModel == nil {
 		rec.ByModel = make(map[string]*ModelUsageRecord)
 	}
-	addModelUsage(rec.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost)
+	addModelUsage(rec.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost, fastTokens)
 
 	hr := s.getHour()
 	hr.InputTokens += input
@@ -321,7 +332,7 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 	if hr.ByModel == nil {
 		hr.ByModel = make(map[string]*ModelUsageRecord)
 	}
-	addModelUsage(hr.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost)
+	addModelUsage(hr.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost, fastTokens)
 	s.dirty = true
 }
 

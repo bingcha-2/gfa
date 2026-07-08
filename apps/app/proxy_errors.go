@@ -451,6 +451,10 @@ type ReportDetails struct {
 	BillableTotalTokens int64 // 折扣后的计费总量
 	ErrorText           string
 
+	// ServiceTier 是本次请求实际生效的 Codex 服务档:"priority"=快速(Fast),空=标准。
+	// 随用量上报回服务端,供 fair-share 按 fast 乘数扣份额(多快就多扣)。仅 codex 用。
+	ServiceTier string
+
 	// 反代检测命中原因(非真 Claude Code 客户端);空=未命中。随用量上报回服务端,
 	// 供后台按卡聚合定位「哪张卡被反代/换了客户端」。仅遥测,不影响计费/账号健康。
 	ClientFlag string

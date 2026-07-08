@@ -1,6 +1,6 @@
 import type { AccountSubscription, BoundAccountInfo, ProductQuotaWindow } from '@/types'
 import { productLabel } from '@/lib/usageBars'
-import { formatResetDuration } from '@/lib/quotaDisplay'
+import { formatPercent, formatResetDuration } from '@/lib/quotaDisplay'
 import { useT } from '@/i18n'
 import { NestedShareBar } from './NestedShareBar'
 import { ExclusiveBadge } from './ExclusiveBadge'
@@ -45,7 +45,7 @@ function AccountBar({ label, percent, reset }: { label: string; percent: number 
     )
   }
 
-  const pct = Math.round(percent)
+  const pct = Math.max(0, Math.min(100, percent))
   const color = healthColor(pct)
   return (
     <div className="py-1.5">
@@ -57,7 +57,7 @@ function AccountBar({ label, percent, reset }: { label: string; percent: number 
         <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
           <div className="h-full rounded-full transition-[width]" style={{ width: `${pct}%`, backgroundColor: color }} />
         </div>
-        <span className="text-[10px] font-mono-data shrink-0" style={{ color }}>{pct}%</span>
+        <span className="text-[10px] font-mono-data shrink-0" style={{ color }}>{formatPercent(pct / 100)}%</span>
       </div>
     </div>
   )
@@ -123,8 +123,8 @@ function SubscriptionCard({ sub, emailByProduct }: { sub: AccountSubscription; e
   const t = useT()
   const shortId = sub.id.slice(-4).toUpperCase()
   const remain = sub.remainFraction
-  const pct = remain == null ? null : Math.round(remain * 100)
-  const color = remain == null ? '' : healthColor(remain * 100)
+  const pct = remain == null ? null : Math.max(0, Math.min(100, remain * 100))
+  const color = pct == null ? '' : healthColor(pct)
   // 独享是卡级标志(逐 product 盖同一个值);任一产品标 exclusive 即整张订阅独享 → 逐卡出 badge。
   const exclusive = sub.products.some((p) => sub.productQuota?.[p]?.exclusive === true)
 
@@ -152,7 +152,7 @@ function SubscriptionCard({ sub, emailByProduct }: { sub: AccountSubscription; e
           <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
             <div className="h-full rounded-full transition-[width]" style={{ width: `${pct}%`, backgroundColor: color }} />
           </div>
-          <span className="text-[10px] font-mono-data shrink-0" style={{ color }}>{pct}%</span>
+          <span className="text-[10px] font-mono-data shrink-0" style={{ color }}>{formatPercent(pct / 100)}%</span>
         </div>
       )}
 

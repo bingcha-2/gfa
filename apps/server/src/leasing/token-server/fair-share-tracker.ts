@@ -34,6 +34,21 @@ const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 小时
 const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 const WEEKLY_SUFFIX = "::weekly";
 
+/**
+ * Codex 快速档(service_tier=priority)的成本乘数,对齐 OpenAI service_tiers priority 的
+ * 「1.5x speed, increased usage」。用于 fair-share 份额分账 + 卡 CU 计费:fast 请求按 ×1.5
+ * 计,让它更快消耗份额与客户额度(与客户端成本估算 codexFastCostMultiplier 一致)。
+ */
+export const CODEX_PRIORITY_FAIR_SHARE_MULTIPLIER = 1.5;
+
+/** 按生效服务档返回 fair-share 成本乘数:service_tier=priority → 乘数;其余(含空)→ 1。
+ *  provider 无关 —— 目前只有 codex 上报会带 serviceTier=priority。 */
+export function fairShareCostMultiplierForServiceTier(serviceTier?: string): number {
+  return String(serviceTier || "").trim().toLowerCase() === "priority"
+    ? CODEX_PRIORITY_FAIR_SHARE_MULTIPLIER
+    : 1;
+}
+
 /** 默认保底席位数 N(无 salesSeatCapacity 时回退)。 */
 const DEFAULT_SEAT_CAPACITY = 8;
 
@@ -172,20 +187,26 @@ export class FairShareTracker {
 
   // ── Public API ──────────────────────────────────────────────────────────
 
-  /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。 */
+  /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
+   *  costMultiplier:请求级成本乘数(默认 1)。Codex 快速档(service_tier=priority)按 >1 计,
+   *  反映其占用更稀缺的共享快速容量 —— 多快就多扣份额,防止同份额白拿双倍吞吐。 */
   static weightedCost(
     modelOrBucket: string,
     inputTokens: number,
     outputTokens: number,
     cachedInputTokens: number,
+    costMultiplier = 1,
   ): number {
     const w = quotaWeightFor(modelOrBucket);
     // input 为 gross(含 cached),取 netInput 去重,避免缓存被 input+cache 双算。
     const netInput = Math.max(0, inputTokens - cachedInputTokens);
-    return netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
+    const base = netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
+    const m = Number.isFinite(costMultiplier) && costMultiplier > 0 ? costMultiplier : 1;
+    return base * m;
   }
 
-  /** 记录一次完成请求的加权用量(累加进段内增量 u_i)。仅硬绑定主人(门控在 lease-service)。 */
+  /** 记录一次完成请求的加权用量(累加进段内增量 u_i)。仅硬绑定主人(门控在 lease-service)。
+   *  costMultiplier 透传给 weightedCost(快速档 >1)。 */
   recordUsage(
     accountId: number,
     cardId: string,
@@ -194,10 +215,11 @@ export class FairShareTracker {
     outputTokens: number,
     cachedInputTokens: number,
     modelKey?: string,
+    costMultiplier = 1,
   ): void {
     // 自动补全(tab_*/flash_lite)不消耗额度:不计入任何窗口。
     if (modelKey && claudeModelTier(modelKey) === "autocomplete") return;
-    const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens);
+    const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens, costMultiplier);
     if (cost <= 0) return;
     const now = this.nowFn();
     const keys = this.trackWeekly ? [bucket, weeklyBucketKey(bucket)] : [bucket];
@@ -315,6 +337,9 @@ export class FairShareTracker {
     for (const [key, tracker] of bucketTrackers) {
       if (isWeeklyBucketKey(key) !== weekly) continue;
       this.ensureWindow(accountId, tracker, now);
+      // 冷建/首段用量后但上游快照尚未回来时,lastFraction=1 只是占位基线。
+      // 展示层若把它下发成 100%,会把「未知」误画成满血,周窗口在冷启动/半途加入时尤其明显。
+      if (!tracker.primed) continue;
       const resetAt = tracker.windowStart + tracker.windowMs;
       // fraction = 我份额的剩余(血条);share = e_i 我份额占整号比例(双层血条外层几何)。
       out[baseBucketOf(key)] = {
@@ -436,8 +461,14 @@ export class FairShareTracker {
     if (Number.isFinite(resetAtMs) && resetAtMs > 0) {
       const newStart = resetAtMs - tracker.windowMs;
       if (newStart > tracker.windowStart + RESET_DRIFT_MS) {
-        this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0);
-        return;
+        // 周窗口的 resetAt 可能随滚动限额/上游估算小幅后移。若同一快照里 fraction
+        // 仍在下降,这不是“新窗口回血”,而是当前窗口继续消耗;不能清掉 perCard/T_i。
+        if (tracker.primed && fraction >= 0 && fraction < tracker.lastFraction) {
+          tracker.windowStart = newStart;
+        } else {
+          this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0);
+          return;
+        }
       }
       if (tracker.primed && newStart < tracker.windowStart - RESET_DRIFT_MS) {
         return;

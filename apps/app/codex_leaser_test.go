@@ -75,6 +75,27 @@ func TestCodexLeaseTokenParsesEgressInfo(t *testing.T) {
 	}
 }
 
+func TestApplyCodexReportResponseRefreshesWeeklyFairShare(t *testing.T) {
+	clearBoundFractionsForTest()
+	body, _ := json.Marshal(map[string]interface{}{
+		"ok": true,
+		"accountBuckets": map[string]interface{}{
+			"codex-gpt": map[string]interface{}{"fraction": 0.29, "resetAt": float64(30_000)},
+		},
+		"weeklyFairShareQuota": map[string]interface{}{
+			"codex-gpt": map[string]interface{}{"fraction": 0.37, "resetAt": float64(70_000)},
+		},
+	})
+	applyCodexReportResponse(body)
+
+	if got := snapshotMyWeeklyFractions()["codex-gpt"]; got != 0.37 {
+		t.Fatalf("weekly fair-share fraction = %v, want 0.37", got)
+	}
+	if got := snapshotAccountFractions()["codex-gpt"]; got != 0.29 {
+		t.Fatalf("account fraction = %v, want 0.29", got)
+	}
+}
+
 func TestCodexLeaseSyncsAccessKeyStatusToMainLeaser(t *testing.T) {
 	prev := globalLeaser
 	globalLeaser = &Leaser{}

@@ -271,10 +271,3 @@ func TestDefaultKitOptions(t *testing.T) {
 		t.Errorf("bad defaults: %+v", o)
 	}
 }
-
-func TestUSTimezonesNonEmpty(t *testing.T) {
-	tz := usTimezones()
-	if len(tz) == 0 || tz[0] != "America/New_York" {
-		t.Errorf("usTimezones bad: %v", tz)
-	}
-}

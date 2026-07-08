@@ -91,6 +91,7 @@ type CodexProxy struct {
 	// 避免 UI 中途换配置导致读到撕裂指针或前后不一致(go test -race 也会报)。
 	relayMu       sync.RWMutex
 	relay         *CodexRelayConfig // 非空且 BaseURL/APIKey 齐全时启用中转模式
+	fastMode      bool              // 用户「快速档」开关(codexFastMode);开+号支持时代理注入 service_tier=priority
 	leaseToken    func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error)
 	reportResult  func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
 	reportProblem func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
@@ -153,7 +154,15 @@ func (p *CodexProxy) ApplyConfig(cfg Config) {
 	next := relayConfigFromConfig(cfg)
 	p.relayMu.Lock()
 	p.relay = next
+	p.fastMode = cfg.CodexFastMode
 	p.relayMu.Unlock()
+}
+
+// currentFastMode 返回「快速档」开关快照(加读锁,供请求协程安全读取)。
+func (p *CodexProxy) currentFastMode() bool {
+	p.relayMu.RLock()
+	defer p.relayMu.RUnlock()
+	return p.fastMode
 }
 
 var globalCodexProxy = &CodexProxy{}
@@ -296,6 +305,17 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if lease.AccountId > 0 {
 		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), "")
 	}
+	// 快速档(Fast):用户点了 priority 且**被租号 plan 支持**才放行,否则剥回标准档(上游对不
+	// 支持的号会忽略/报错)。只看租约带回的真实号 plan,不依赖未部署的服务端授权字段。
+	// effServiceTier 取门控后的真实档位,供计量按 priority 加权。
+	fastWanted := p.currentFastMode()
+	incomingTier := codexRequestServiceTier(body)
+	body = applyCodexServiceTier(body, fastWanted, lease.PlanType)
+	audit.reqBody = body
+	effServiceTier := codexRequestServiceTier(body)
+	audit.serviceTier = effServiceTier
+	// 决策诊断:一眼看清"快速档开关 / Codex 原发档 / 被租号 plan / 最终发上游什么"。
+	Log("[codex-proxy][fast] 决策: 快速档=%v 客户端发档=%q 被租号plan=%q 最终发上游=%q", fastWanted, incomingTier, lease.PlanType, effServiceTier)
 
 	targetURL, err := p.targetURL(r)
 	if err != nil {
@@ -374,6 +394,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
 		audit.respBody = tee.captured()
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
+		details.ServiceTier = effServiceTier
 		details.Surface = surfaceTag
 		details.Headers = reportHeaders
 		details.UserId = reportUserID
@@ -410,6 +431,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
+	details.ServiceTier = effServiceTier
 	details.Surface = surfaceTag
 	details.Headers = reportHeaders
 	details.UserId = reportUserID
@@ -761,7 +783,7 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	if netInput < 0 {
 		netInput = 0
 	}
-	GetUsageStats().AddModelTokens("gpt", details.ModelKey, netInput, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+	GetUsageStats().AddModelTokens("gpt", details.ModelKey, netInput, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens, details.ServiceTier == codexFastServiceTier)
 	GetUsageStats().AddGeneration()
 }
 

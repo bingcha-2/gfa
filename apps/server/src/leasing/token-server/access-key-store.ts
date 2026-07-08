@@ -824,7 +824,7 @@ export class AccessKeyStore {
    * (legacy clients) cannot be deduped here; the caller handles their
    * once-per-success semantics via lease.successfulReportSeen.
    */
-  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = ''): boolean {
+  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = '', serviceTier = ''): boolean {
     if (!cardId) return false;
     const record = this.findById(cardId);
     if (!record) return false;
@@ -861,6 +861,8 @@ export class AccessKeyStore {
         at: now, status: Number(status || 0),
         inputTokens, outputTokens, cachedInputTokens,
         rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
+        // 快速档:让 eventWeightedCost 对本次计费 ×1.5(fast 更快消耗卡额度);空=标准档。
+        ...(serviceTier ? { serviceTier } : {}),
       });
 
       // Weekly window: dual-write the same event into the weekly array.
@@ -870,6 +872,7 @@ export class AccessKeyStore {
         at: now, status: Number(status || 0),
         inputTokens, outputTokens, cachedInputTokens,
         rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
+        ...(serviceTier ? { serviceTier } : {}),
       });
     }
 

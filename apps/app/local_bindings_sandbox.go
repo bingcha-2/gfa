@@ -53,9 +53,6 @@ func (a *App) SandboxVscodeEnable() (string, error) {
 // SandboxVscodeDisable 还原:清设置 + 删脚本。
 func (a *App) SandboxVscodeDisable() (string, error) { return claudeVscodeSandboxTarget{}.Restore() }
 
-// SandboxUSTimezones 供前端时区下拉。
-func (a *App) SandboxUSTimezones() []string { return usTimezones() }
-
 // SandboxModelCfg 自定义模型配置。Custom=false(默认)→ 走冰茶网关租号;
 // Custom=true → 沙箱里的 Claude Code 直连自定义 Anthropic 兼容端点(如火山方舟 kimi)。
 type SandboxModelCfg struct {
@@ -69,7 +66,8 @@ type SandboxModelCfg struct {
 // 返回建好的 box 名,前端据此进列表 / 拿「进入」命令。进入的交互 TUI 才需终端,建 box 冰茶后台干。
 // model.Custom=false 走冰茶网关(默认);=true 直连自定义模型端点。
 // openNetwork=true → 沙箱网络全放开(caps.network.allow=**);文件隔离不受影响(microVM 只见挂载目录)。
-func (a *App) SandboxCreate(mounts []SandboxMount, timezone string, model SandboxModelCfg, openNetwork bool) (string, error) {
+// 时区不再由用户手选:冰茶托管按粘性租约出口 IP 自动探,探不到兜底美东;自定义模型无租约,固定美东。
+func (a *App) SandboxCreate(mounts []SandboxMount, model SandboxModelCfg, openNetwork bool) (string, error) {
 	custom := model.Custom && strings.TrimSpace(model.BaseURL) != ""
 	// 自定义模型不依赖冰茶租号,故不强制登录冰茶账号;冰茶托管才校验。
 	if !custom {
@@ -90,10 +88,9 @@ func (a *App) SandboxCreate(mounts []SandboxMount, timezone string, model Sandbo
 	if openNetwork {
 		o.NetworkAllow = "**" // 该沙箱全放开网络(仅此沙箱,不动全局;文件仍只见挂载目录)
 	}
-	if timezone != "" {
-		o.Timezone = timezone
-	} else if !custom {
-		// 冰茶托管:未指定则按粘性租约出口 IP 探时区。自定义模型无租约,保持默认美东。
+	if !custom {
+		// 冰茶托管:按粘性租约出口 IP 探时区,对齐出口地理;探不到则保持默认美东。
+		// 自定义模型无租约,不探,固定默认美东。
 		if tz, err := probeExitTimezone(GetLeaser().CurrentEgressProxyURL()); err == nil {
 			o.Timezone = tz
 		}

@@ -27,6 +27,7 @@ interface TokenUsageEvent {
   rawTotalTokens: number;
   totalTokens: number;
   reverseProxy: boolean; // 本次请求命中反代检测(非真 Claude Code 客户端)
+  serviceTier: string; // Codex 服务档:"priority"=快速(Fast),空=标准
   timestamp: Date;
 }
 
@@ -61,6 +62,7 @@ export class TokenUsageTracker {
     rawTotalTokens?: number;
     totalTokens?: number;
     reverseProxy?: boolean;
+    serviceTier?: string;
   }): void {
     if (!event.accessKeyId) return;
     this.queue.push({
@@ -79,6 +81,7 @@ export class TokenUsageTracker {
       rawTotalTokens: Number(event.rawTotalTokens || 0),
       totalTokens: Number(event.totalTokens || 0),
       reverseProxy: Boolean(event.reverseProxy),
+      serviceTier: String(event.serviceTier || ""),
       timestamp: new Date(),
     });
   }
@@ -111,7 +114,7 @@ export class TokenUsageTracker {
       modelKey: string; bucket: string;
       requests: number; failedRequests: number; inputTokens: number; outputTokens: number;
       cachedInputTokens: number; cacheCreationTokens: number; rawTotalTokens: number; totalTokens: number;
-      reverseProxyHits: number;
+      reverseProxyHits: number; priorityTokens: number;
     }>();
     for (const e of batch) {
       const hourStart = TokenUsageTracker.hourStart(e.timestamp);
@@ -124,11 +127,12 @@ export class TokenUsageTracker {
       if (!g) {
         g = { hourStart, accessKeyId: e.accessKeyId, accountEmail, customerId, modelKey, bucket,
           requests: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 0, totalTokens: 0,
-          reverseProxyHits: 0 };
+          reverseProxyHits: 0, priorityTokens: 0 };
         groups.set(key, g);
       }
       g.requests += 1;
       if (e.reverseProxy) g.reverseProxyHits += 1;
+      if (e.serviceTier === "priority") g.priorityTokens += e.totalTokens;
       // failed = non-2xx (mirrors portal isSuccessStatus): 0/unknown counts as failed.
       if (!(e.status >= 200 && e.status < 300)) g.failedRequests += 1;
       g.inputTokens += e.inputTokens;
@@ -143,7 +147,7 @@ export class TokenUsageTracker {
       const sums = {
         requests: g.requests, failedRequests: g.failedRequests, inputTokens: g.inputTokens, outputTokens: g.outputTokens,
         cachedInputTokens: g.cachedInputTokens, cacheCreationTokens: g.cacheCreationTokens, rawTotalTokens: g.rawTotalTokens, totalTokens: g.totalTokens,
-        reverseProxyHits: g.reverseProxyHits,
+        reverseProxyHits: g.reverseProxyHits, priorityTokens: g.priorityTokens,
       };
       try {
         await this.prisma.cardUsageHourly.upsert({
@@ -167,6 +171,7 @@ export class TokenUsageTracker {
             rawTotalTokens: { increment: sums.rawTotalTokens },
             totalTokens: { increment: sums.totalTokens },
             reverseProxyHits: { increment: sums.reverseProxyHits },
+            priorityTokens: { increment: sums.priorityTokens },
           },
         });
       } catch (err) {
