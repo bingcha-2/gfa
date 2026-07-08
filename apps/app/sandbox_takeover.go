@@ -116,13 +116,11 @@ func InstallSbx() error {
 	return openTerminalRunning(cmd)
 }
 
-// installSbxWindowsMSI 提权运行一段 PowerShell:下载官方 MSI + msiexec 静默安装(不依赖 winget)。
-// 为什么落 .ps1 文件再跑,而非直接 exec msiexec 或 cmd/start 拼命令:
-//  ① MSI 装 Program Files 需管理员 → -Verb RunAs 弹一次 UAC 提权;
-//  ② 下载 URL + 变量 + 引号若经 `cmd /c start powershell -Command "…"` 传递,会被 start/cmd 二次解析
-//     拆坏 →「窗口一闪就没」正是这个引号地狱;把脚本落文件、-File 跑,彻底规避。
-// 装完 sbx 的 PATH 更新不会回灌到运行中的冰茶进程,故提示用户重启冰茶再识别(见前端文案)。
-func installSbxWindowsMSI() error {
+// sbxInstallPS1Bytes 生成沙箱安装脚本的字节流。开头必写 UTF-8 BOM(\ufeff→EF BB BF):
+// Windows PowerShell 5.1 读 -File 脚本时,无 BOM 就按系统 ANSI 代码页(中文机=GBK/936)解码,
+// 会把下面 Write-Host 里的中文乱码化,且错位的多字节还会吞掉收尾单引号 → 报「字符串缺少终止符: '」
+// 直接解析失败(点安装秒报错)。加 BOM 让它认出 UTF-8。抽成纯函数便于测试锁死 BOM。
+func sbxInstallPS1Bytes() []byte {
 	script := "$ErrorActionPreference='Stop'\r\n" +
 		"$m = \"$env:TEMP\\DockerSandboxes.msi\"\r\n" +
 		"Write-Host '[冰茶] 正在下载 sbx 安装包...'\r\n" +
@@ -130,8 +128,20 @@ func installSbxWindowsMSI() error {
 		"Write-Host '[冰茶] 正在安装 sbx...'\r\n" +
 		"Start-Process msiexec -ArgumentList '/i',$m,'/qb' -Wait\r\n" +
 		"Write-Host '[冰茶] sbx 安装完成。请重启冰茶客户端以识别 sbx,然后点「打开终端登录」。'\r\n"
+	return []byte("\ufeff" + script)
+}
+
+// installSbxWindowsMSI 提权运行一段 PowerShell:下载官方 MSI + msiexec 静默安装(不依赖 winget)。
+// 为什么落 .ps1 文件再跑,而非直接 exec msiexec 或 cmd/start 拼命令:
+//
+//	① MSI 装 Program Files 需管理员 → -Verb RunAs 弹一次 UAC 提权;
+//	② 下载 URL + 变量 + 引号若经 `cmd /c start powershell -Command "…"` 传递,会被 start/cmd 二次解析
+//	   拆坏 →「窗口一闪就没」正是这个引号地狱;把脚本落文件、-File 跑,彻底规避。
+//
+// 装完 sbx 的 PATH 更新不会回灌到运行中的冰茶进程,故提示用户重启冰茶再识别(见前端文案)。
+func installSbxWindowsMSI() error {
 	path := filepath.Join(os.TempDir(), "bcai-install-sbx.ps1")
-	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+	if err := os.WriteFile(path, sbxInstallPS1Bytes(), 0o644); err != nil {
 		return fmt.Errorf("写安装脚本失败: %w", err)
 	}
 	// 提权开 PowerShell 跑脚本(-NoExit 留窗口看结果);脚本内 msiexec 因父进程已提权,不再二次弹 UAC。

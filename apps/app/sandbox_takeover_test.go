@@ -52,6 +52,23 @@ func TestDetectSbxSuppressed(t *testing.T) {
 	}
 }
 
+func TestSbxInstallPS1HasUTF8BOM(t *testing.T) {
+	// 回归:Windows PowerShell 5.1 读 -File 脚本无 BOM 时按 GBK 解码,会把 Write-Host 里的中文
+	// 乱码化并吞掉收尾单引号 → 报「字符串缺少终止符」秒崩。脚本必须以 UTF-8 BOM(EF BB BF)开头。
+	b := sbxInstallPS1Bytes()
+	if len(b) < 3 || b[0] != 0xEF || b[1] != 0xBB || b[2] != 0xBF {
+		t.Fatalf("install ps1 must start with UTF-8 BOM, got % x", b[:min(3, len(b))])
+	}
+	// BOM 之后就是脚本正文,且含中文 Write-Host 文案(BOM 的作用对象)。
+	rest := string(b[3:])
+	if !strings.HasPrefix(rest, "$ErrorActionPreference") {
+		t.Errorf("body should follow BOM directly, got prefix %q", rest[:min(24, len(rest))])
+	}
+	if !strings.Contains(rest, "正在下载 sbx 安装包") {
+		t.Error("install ps1 missing expected Chinese Write-Host line")
+	}
+}
+
 func TestClaudeSandboxTargetRegistered(t *testing.T) {
 	tgt := findTakeoverTarget("claude_sandbox")
 	if tgt == nil {
