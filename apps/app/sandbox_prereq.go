@@ -57,6 +57,23 @@ func windowsSupportsSbx() (ok bool, osName string) {
 	return osSupportsSbx(caption, build), caption
 }
 
+// hypervisorBlockedError 若 Windows WHP 未就绪,返回可操作的中文错误(区分未启用 / 已启用待重启 /
+// 固件虚拟化未开);就绪或非 Windows(windowsPrereq 已短路返回 OK)→ nil。用于 SandboxCreate 在跑
+// sbx create 前硬闸:不然用户在 WHP 关着时点创建,只会吃 Docker 的裸 500「Hypervisor Platform is
+// not enabled」,毫无指引。这就是「检测/一键启用/警告横幅都有,却没接成硬闸」那个坑的后端兜底。
+func hypervisorBlockedError(p WinPrereq) error {
+	if p.HypervisorOK {
+		return nil
+	}
+	if p.HypervisorState == "pending" {
+		return fmt.Errorf("已启用 Windows Hypervisor Platform,但需重启电脑后才生效——请重启后再创建沙箱")
+	}
+	if !p.FirmwareVirtOK {
+		return fmt.Errorf("需启用 Windows Hypervisor Platform,且 CPU 虚拟化未在 BIOS/UEFI 开启(VT-x/AMD-V):先进 BIOS 打开虚拟化,再到接管中心点「一键启用」并重启")
+	}
+	return fmt.Errorf("需先启用 Windows Hypervisor Platform:到接管中心点「一键启用」,完成后重启电脑再创建沙箱")
+}
+
 // enableWindowsHypervisor 弹 UAC 提权启用 WHP(-NoRestart:不自动重启,由用户手动重启)。
 // 仅 Windows;抑制态短路。
 func enableWindowsHypervisor() error {

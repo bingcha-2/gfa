@@ -9,22 +9,35 @@ import (
 	"sync"
 )
 
-// ─── Claude Code 接管(注入 ~/.claude/settings.json 的 env 块)──────────────────
+// ─── Claude Code 接管(整份隔离 ~/.claude/settings.json)──────────────────────────
 //
 // Claude Code CLI 和 VSCode 的 Claude Code 扩展共用同一份配置 ~/.claude/settings.json,
-// 通过其中的 env 块向 claude 进程注入环境变量。把上游指向本地代理只需写两个变量:
+// 通过其中的 env 块向 claude 进程注入环境变量。
+//
+// 【整份隔离策略(P0)】接管时把用户整份 settings.json 备份走,只写入一份「最小 GFA 注入」:
 //
 //	{ "env": {
 //	    "ANTHROPIC_BASE_URL": "http://127.0.0.1:<proxyPort>",
-//	    "ANTHROPIC_AUTH_TOKEN": "<sentinel>"   // 真 token 由本地代理在转发时注入
+//	    "ANTHROPIC_AUTH_TOKEN": "<sentinel>",     // 真 token 由本地代理转发时替换
+//	    "ANTHROPIC_API_KEY": "",                  // 置空覆盖 shell/系统 export 的真实 key
+//	    "CLAUDE_CODE_USE_FOUNDRY": "",            // 置空覆盖 shell export 的 Foundry 开关
+//	    "ANTHROPIC_FOUNDRY_RESOURCE": "",
+//	    "ANTHROPIC_FOUNDRY_BASE_URL": ""
 //	} }
 //
-// 与 codex 的自定义 provider 不同,这里无需 CA、无需 MITM —— CLI 一次注入,下次启动
-// 即生效;VSCode 扩展 Reload Window 后重读 settings 即生效。
+// 接管期间用户其余配置(模型覆盖键、顶层 model、hooks、插件市场、statusLine、权限、第三方
+// 中转 BASE_URL 等)一律不生效 —— 从源头杜绝「别名/号池不认的模型 → 公开 API 404」「第三方
+// 中转/插件把租来的 token 带出去」等隐患。取消接管时整份还原用户原文件,不丢任何用户配置。
 //
-// 写入策略:读出整份 settings(map)→ 只动 env 里的这两个键(保留用户其余键/其余 env
-// 变量)→ json.MarshalIndent 原子写。首次注入前把这两个键的原值备份到
-// .bcai-claude-backup.json,Restore() 据此精确还原(原本没有就删除,原本有值就写回)。
+// 为什么置空(而非删除)API_KEY / Foundry:Claude Code 启动时 Object.assign(process.env,
+// settings.env)。若 shell 里 export 了 ANTHROPIC_API_KEY / CLAUDE_CODE_USE_FOUNDRY,删除
+// settings 里的同名键挡不住 shell;唯有写「空串」才能经 Object.assign 覆盖掉 shell 值。
+// 空串被 claude 视作未设置 → 强制走哨兵 AUTH_TOKEN→代理链路,不进 API-key / Foundry 模式。
+//
+// 【与桌面 MITM 接管共存】桌面端(claudeDesktopTarget)走 MITM,不注入 BASE_URL,但其 spawn
+// 的 Code 子进程仍读同一份 settings.json,故用 CleanClaudeModelConfig 单清模型配置。两条路径
+// 共用一份备份 + CLIActive/DesktopActive 双层标志协调:谁先动谁捕获「真原文件」,最后一个取消
+// 接管者才整份还原真原文件并删备份;中途取消的一方按对方是否仍在生效决定写回何种态。
 
 const (
 	claudeBaseURLKey   = "ANTHROPIC_BASE_URL"
@@ -36,9 +49,8 @@ const (
 )
 
 // claudeModelOverrideKeys 是 Claude Code 用来「把某个模型槽位定死成具体模型名」的 env 键。
-// 接管时必须把用户这些定义【删掉】:它们常被设成 -thinking 等别名(如
-// claude-opus-4-6-thinking),而我们转发到的公开 API api.anthropic.com 不认这类别名 → 404。
-// 删掉后 Claude Code 用自带的合法默认模型 id。取消接管时按备份原样写回(不丢用户配置)。
+// 整份隔离时它们随用户配置一并被隔离;桌面 MITM 的单清模型路径(stripModelFromSettings)
+// 也据此删除 —— 否则 -thinking 等别名 / 号池不认的 id 会经 MITM 原样打到公开 API → 404。
 var claudeModelOverrideKeys = []string{
 	"ANTHROPIC_MODEL",
 	"ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -47,26 +59,14 @@ var claudeModelOverrideKeys = []string{
 	"ANTHROPIC_SMALL_FAST_MODEL",
 }
 
-// claudeFoundryKeys 是 Claude Code 用来切到 Azure AI Foundry 上游的 env 键。
-// CLAUDE_CODE_USE_FOUNDRY 的优先级高于 ANTHROPIC_BASE_URL:一旦它为真,CLI 改用
-// ANTHROPIC_FOUNDRY_RESOURCE / ANTHROPIC_FOUNDRY_BASE_URL 拼出的 Foundry endpoint,
-// 直接绕过我们注入的本地代理 → 接管失效(流量根本不进代理端口,常表现为 405/认证错)。
-// 接管时把这三个【置空】而非删除:同 ANTHROPIC_API_KEY 的道理 —— Foundry 多由用户 shell
-// /系统环境变量 export,删 settings.json 挡不住 shell;置空才能经 Object.assign 覆盖掉
-// shell 里的 CLAUDE_CODE_USE_FOUNDRY=1(空串被 CLI 视作未开启)。取消接管按备份原样还原。
+// claudeFoundryKeys 是 Claude Code 切到 Azure AI Foundry 上游的 env 键。CLAUDE_CODE_USE_FOUNDRY
+// 优先级高于 ANTHROPIC_BASE_URL:为真则 CLI 改用 Foundry endpoint,绕过本地代理 → 接管失效。
+// 最小注入里把这三个写「空串」以覆盖 shell export;捕获真原文件时把我们写的空串剥掉,避免误当用户原值。
 var claudeFoundryKeys = []string{
 	"CLAUDE_CODE_USE_FOUNDRY",
 	"ANTHROPIC_FOUNDRY_RESOURCE",
 	"ANTHROPIC_FOUNDRY_BASE_URL",
 }
-
-// 为什么要中和 ANTHROPIC_API_KEY:Claude Code 启动时 Object.assign(process.env,
-// settings.env),只要进程里存在非空 ANTHROPIC_API_KEY(来自用户 shell 或 settings.json
-// 自带),claude 就进入「API Usage Billing」(API-key 模式),忽略我们注入的哨兵
-// ANTHROPIC_AUTH_TOKEN,把用户个人 key 直接发给本地代理 → 接管失效 + "Both
-// ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set" 告警。把它在 settings.env 里置「空字符串」
-// 而非删除:置空才能经 Object.assign 覆盖 shell 里 export 的同名变量(删除挡不住 shell)。
-// 空串被 claude 视作未设置 → 强制改走 AUTH_TOKEN→代理链路。还原时按备份写回/删除。
 
 var claudeInjectMu sync.Mutex
 
@@ -97,35 +97,18 @@ func claudeProxyBaseURL(proxyPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 }
 
-// claudeEnvBackup 记录注入前目标键的原始状态(供精确还原)。
-type claudeEnvBackup struct {
-	Injected bool `json:"injected"`
-	// BaseBackedUp=true 表示 BASE_URL/AUTH_TOKEN 原值已捕获(幂等保护)。老备份没有此字段
-	// 但 Injected=true,迁移时按已捕获处理 —— 避免把已注入的代理 URL 误当成用户原值。
-	BaseBackedUp  bool   `json:"baseBackedUp"`
-	HadBaseURL    bool   `json:"hadBaseUrl"`
-	PrevBaseURL   string `json:"prevBaseUrl"`
-	HadAuthToken  bool   `json:"hadAuthToken"`
-	PrevAuthToken string `json:"prevAuthToken"`
-	HadApiKey     bool   `json:"hadApiKey"`
-	PrevApiKey    string `json:"prevApiKey"`
-	// 接管时删除的模型覆盖键原值;ModelsBackedUp=true 表示已捕获过(避免重复注入覆盖)。
-	ModelsBackedUp bool                     `json:"modelsBackedUp"`
-	Models         []claudeModelBackupEntry `json:"models,omitempty"`
-	// 接管时删除的 settings 顶层 model 字段原值(与 ModelsBackedUp 一同捕获)。
-	// 用户用 /model 切换的模型持久化在此字段,光删 env 模型键挡不住它。
-	HadModel  bool   `json:"hadModel"`
-	PrevModel string `json:"prevModel"`
-	// 接管时置空的 Foundry env 键原值;FoundryBackedUp=true 表示已捕获过(幂等保护)。
-	FoundryBackedUp bool                     `json:"foundryBackedUp"`
-	Foundry         []claudeModelBackupEntry `json:"foundry,omitempty"`
-}
-
-// claudeModelBackupEntry 记录单个模型覆盖键注入前的状态。
-type claudeModelBackupEntry struct {
-	Key  string `json:"key"`
-	Had  bool   `json:"had"`
-	Prev string `json:"prev"`
+// claudeBackup 记录接管前的「真原文件」+ 两条接管路径的生效标志(供整份还原/共存协调)。
+type claudeBackup struct {
+	// OriginalCaptured=true 表示真原文件已捕获(幂等保护:谁先动谁捕获,其后不再覆盖)。
+	// 老格式备份(无此字段)反序列化后为 false,一律按「无可靠原文件」的 legacy 路径处理。
+	OriginalCaptured bool `json:"originalCaptured"`
+	// HadFile=接管前 settings.json 是否存在;Original=其原始文件内容(已剥掉我们自己的注入痕迹)。
+	HadFile  bool   `json:"hadFile"`
+	Original string `json:"original,omitempty"`
+	// CLIActive=Claude Code 完整接管(InjectClaudeSettings)是否生效;
+	// DesktopActive=桌面 MITM 单清模型(CleanClaudeModelConfig)是否生效。
+	CLIActive     bool `json:"cliActive"`
+	DesktopActive bool `json:"desktopActive"`
 }
 
 // loadClaudeSettings 读取 settings.json 为通用 map。返回 (settings, exists)。
@@ -141,12 +124,13 @@ func loadClaudeSettings() (map[string]interface{}, bool) {
 	return m, true
 }
 
-// envBlock 返回 settings 里的 env 子 map(没有则新建一个空 map 并不挂载)。
-func envBlock(settings map[string]interface{}) map[string]interface{} {
-	if env, ok := settings["env"].(map[string]interface{}); ok {
-		return env
+// readClaudeSettingsRaw 读取 settings.json 原始字节。返回 (raw, exists)。
+func readClaudeSettingsRaw() ([]byte, bool) {
+	data, err := os.ReadFile(claudeSettingsPath())
+	if err != nil {
+		return nil, false
 	}
-	return map[string]interface{}{}
+	return data, true
 }
 
 func writeClaudeSettings(settings map[string]interface{}) error {
@@ -161,69 +145,187 @@ func writeClaudeSettings(settings map[string]interface{}) error {
 	return writeFileAtomic(claudeSettingsPath(), data, 0o644)
 }
 
-// InjectClaudeSettings 把 ~/.claude/settings.json 的 env.ANTHROPIC_BASE_URL 指向本地代理,
-// 并写入哨兵 ANTHROPIC_AUTH_TOKEN。保留用户其余设置/其余 env 变量;最小改动 + 原子写。
+// minimalClaudeSettings 返回「最小 GFA 注入」settings:只含把上游指向本地代理 + 中和
+// API_KEY/Foundry 的 env,别无其它。用户原有的一切键都不在其中(已备份,取消接管时整份还原)。
+func minimalClaudeSettings(proxyPort int) map[string]interface{} {
+	env := map[string]interface{}{
+		claudeBaseURLKey:   claudeProxyBaseURL(proxyPort),
+		claudeAuthTokenKey: claudeSentinelAuthToken,
+		claudeApiKeyKey:    "",
+	}
+	for _, k := range claudeFoundryKeys {
+		env[k] = ""
+	}
+	return map[string]interface{}{"env": env}
+}
+
+// stripModelFromSettings 就地删掉模型配置:env 里的模型覆盖键 + 顶层 model 字段。保留其余。
+func stripModelFromSettings(m map[string]interface{}) {
+	if env, ok := m["env"].(map[string]interface{}); ok {
+		for _, k := range claudeModelOverrideKeys {
+			delete(env, k)
+		}
+		if len(env) == 0 {
+			delete(m, "env")
+		} else {
+			m["env"] = env
+		}
+	}
+	delete(m, "model")
+}
+
+// captureClaudeOriginal 幂等捕获「真原文件」。仅首个改动接管的一方会真正捕获;其后(含另一条
+// 接管路径、幂等重入)因 OriginalCaptured=true 直接跳过,绝不把已被我们改过的文件误当原值。
+// 捕获时剥掉我们自己的注入痕迹(loopback BASE_URL / 哨兵 AUTH_TOKEN / 我们置的空 API_KEY /
+// 空 Foundry),避免「升级-接管中途」把代理 URL 当用户原值还原回去。
+func captureClaudeOriginal(bk *claudeBackup) {
+	if bk.OriginalCaptured {
+		return
+	}
+	bk.OriginalCaptured = true
+	raw, existed := readClaudeSettingsRaw()
+	bk.HadFile = existed
+	if !existed {
+		bk.Original = ""
+		return
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(raw, &m) != nil {
+		bk.Original = string(raw) // 用户原本就是坏 JSON → 原样存,还原时原样写回,不擅改
+		return
+	}
+	if env, ok := m["env"].(map[string]interface{}); ok {
+		if v, _ := env[claudeBaseURLKey].(string); isGFAOwnedRelayValue(v, 0) {
+			delete(env, claudeBaseURLKey)
+		}
+		if v, _ := env[claudeAuthTokenKey].(string); v == claudeSentinelAuthToken {
+			delete(env, claudeAuthTokenKey)
+		}
+		deleteIfEmptyString(env, claudeApiKeyKey)
+		for _, k := range claudeFoundryKeys {
+			deleteIfEmptyString(env, k)
+		}
+		if len(env) == 0 {
+			delete(m, "env")
+		} else {
+			m["env"] = env
+		}
+	}
+	if b, e := json.MarshalIndent(m, "", "  "); e == nil {
+		bk.Original = string(b)
+	} else {
+		bk.Original = string(raw)
+	}
+}
+
+// deleteIfEmptyString 仅当 key 存在且值为空串时删除(我们注入的占位空串);真实值不动。
+func deleteIfEmptyString(env map[string]interface{}, key string) {
+	if v, ok := env[key].(string); ok && v == "" {
+		delete(env, key)
+	}
+}
+
+// restoreClaudeOriginalFile 把备份里的真原文件写回 settings.json。stripModel=true 时写回
+// 「真原文件减去模型配置」(供另一条接管路径仍生效时用,避免 Code 子进程读到别名 → 404)。
+// 原本没有 settings.json 则删除该文件。
+func restoreClaudeOriginalFile(bk *claudeBackup, stripModel bool) error {
+	if !bk.HadFile {
+		_ = os.Remove(claudeSettingsPath())
+		return nil
+	}
+	if !stripModel {
+		return writeFileAtomic(claudeSettingsPath(), []byte(bk.Original), 0o644)
+	}
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(bk.Original), &m) != nil {
+		return writeFileAtomic(claudeSettingsPath(), []byte(bk.Original), 0o644) // 坏 JSON 无法 strip,原样写回
+	}
+	stripModelFromSettings(m)
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(claudeSettingsPath(), data, 0o644)
+}
+
+// legacyRemoveClaudeInjection 兜底:无备份 / 老格式备份时,尽力从当前文件删掉我们注入的键
+// (不删文件、不动用户其余键)。用于升级前已接管、备份是老格式的场景。
+func legacyRemoveClaudeInjection() {
+	settings, had := loadClaudeSettings()
+	if !had {
+		return
+	}
+	if env, ok := settings["env"].(map[string]interface{}); ok {
+		delete(env, claudeBaseURLKey)
+		delete(env, claudeAuthTokenKey)
+		delete(env, claudeApiKeyKey)
+		for _, k := range claudeModelOverrideKeys {
+			delete(env, k)
+		}
+		for _, k := range claudeFoundryKeys {
+			delete(env, k)
+		}
+		if len(env) == 0 {
+			delete(settings, "env")
+		} else {
+			settings["env"] = env
+		}
+	}
+	delete(settings, "model")
+	_ = writeClaudeSettings(settings)
+}
+
+// InjectClaudeSettings 整份隔离 ~/.claude/settings.json:备份真原文件,只写最小 GFA 注入。
 func InjectClaudeSettings(proxyPort int) error {
 	claudeInjectMu.Lock()
 	defer claudeInjectMu.Unlock()
 
-	settings, _ := loadClaudeSettings()
-	env := envBlock(settings)
-
-	// 备份原值,供 Restore 精确还原。拆成两块各自幂等捕获(captureClaudeBaseBackup /
-	// captureClaudeModelBackup),这样桌面端「只清模型」和 Claude Code「完整注入」可共用同一份
-	// 备份而不互相把对方记下的用户原值覆盖掉。ANTHROPIC_API_KEY 是真实密钥,必须在被置空前
-	// 可靠捕获:只要当前存在真实 key(非空串)且尚未记过就补记,兼容老备份升级场景。
 	bk := readClaudeBackup()
 	if bk == nil {
-		bk = &claudeEnvBackup{}
+		bk = &claudeBackup{}
 	}
-	changed := false
-	if captureClaudeBaseBackup(bk, env) {
-		changed = true
-	}
-	if !bk.HadApiKey {
-		// 仅捕获真实 key(非空字符串);我们自己写入的占位空串不会被误记。
-		if v, ok := env[claudeApiKeyKey].(string); ok && v != "" {
-			bk.HadApiKey = true
-			bk.PrevApiKey = v
-			changed = true
-		}
-	}
-	if captureClaudeModelBackup(bk, settings, env) {
-		changed = true
-	}
-	if captureClaudeFoundryBackup(bk, env) {
-		changed = true
-	}
-	if changed {
-		writeClaudeBackup(bk)
-	}
+	captureClaudeOriginal(bk) // 首个改动者捕获真原文件(幂等)
+	bk.CLIActive = true
+	writeClaudeBackup(bk)
 
-	env[claudeBaseURLKey] = claudeProxyBaseURL(proxyPort)
-	env[claudeAuthTokenKey] = claudeSentinelAuthToken
-	// 中和 ANTHROPIC_API_KEY(置空覆盖 shell/settings 里的真实 key),强制走哨兵 AUTH_TOKEN→代理。
-	env[claudeApiKeyKey] = ""
-	// 删除用户的模型覆盖键 + 顶层 model 字段(原值已备份):避免 -thinking 等别名 / 号池不认的
-	// id 打到公开 API 被 404,让 Claude Code 用自带合法默认模型。取消接管时 RestoreClaudeSettings 写回。
-	for _, key := range claudeModelOverrideKeys {
-		delete(env, key)
-	}
-	delete(settings, "model")
-	// 置空 Foundry 键(覆盖 shell/settings 里的 CLAUDE_CODE_USE_FOUNDRY=1 等),防止
-	// Foundry 抢占 endpoint 绕过本地代理。原值已备份,取消接管时 RestoreClaudeSettings 写回。
-	for _, key := range claudeFoundryKeys {
-		env[key] = ""
-	}
-	settings["env"] = env
-
-	if err := writeClaudeSettings(settings); err != nil {
+	if err := writeClaudeSettings(minimalClaudeSettings(proxyPort)); err != nil {
 		return err
 	}
 	// 预置 onboarding,接管后不再弹首次引导(Welcome/Security notes/Press Enter)。
 	ensureClaudeOnboardingComplete()
-	Log("[claude-inject] 已注入 ~/.claude/settings.json: %s=%s (path: %s)",
+	Log("[claude-inject] 已整份隔离 ~/.claude/settings.json(仅保留 GFA 注入): %s=%s (path: %s)",
 		claudeBaseURLKey, claudeProxyBaseURL(proxyPort), claudeSettingsPath())
+	return nil
+}
+
+// RestoreClaudeSettings 取消 Claude Code 完整接管。若桌面 MITM 仍生效则还原「真原文件减模型」
+// 并保留备份;否则整份还原真原文件并删备份。
+func RestoreClaudeSettings() error {
+	claudeInjectMu.Lock()
+	defer claudeInjectMu.Unlock()
+
+	bk := readClaudeBackup()
+	if bk == nil || !bk.OriginalCaptured {
+		// 无备份 / 老格式:尽力移除我们注入的键,不删文件。
+		legacyRemoveClaudeInjection()
+		_ = os.Remove(claudeBackupPath())
+		return nil
+	}
+	bk.CLIActive = false
+	if bk.DesktopActive {
+		// 桌面 MITM 仍生效:还原真原文件但减模型(供其 Code 子进程用合法默认模型)。备份留着。
+		if err := restoreClaudeOriginalFile(bk, true); err != nil {
+			return err
+		}
+		writeClaudeBackup(bk)
+		Log("[claude-inject] CLI 取消接管,桌面 MITM 仍生效 → 还原原配置(减模型),保留备份")
+		return nil
+	}
+	if err := restoreClaudeOriginalFile(bk, false); err != nil {
+		return err
+	}
+	_ = os.Remove(claudeBackupPath())
+	Log("[claude-inject] 已整份还原 ~/.claude/settings.json")
 	return nil
 }
 
@@ -275,254 +377,73 @@ func loadClaudeGlobalConfig() (map[string]interface{}, bool) {
 	return m, true
 }
 
-// RestoreClaudeSettings 还原注入前的状态:原本没有这两个键就删掉,原本有值就写回。
-// env 块清空后整体删除。保留用户其余设置。最小改动 + 原子写。
-func RestoreClaudeSettings() error {
-	claudeInjectMu.Lock()
-	defer claudeInjectMu.Unlock()
-
-	settings, had := loadClaudeSettings()
-	if !had {
-		_ = os.Remove(claudeBackupPath())
-		return nil
-	}
-	env := envBlock(settings)
-
-	bk := readClaudeBackup()
-	restoreKey := func(key, prev string, hadKey bool) {
-		if hadKey {
-			env[key] = prev
-		} else {
-			delete(env, key)
-		}
-	}
-	if bk != nil {
-		restoreKey(claudeBaseURLKey, bk.PrevBaseURL, bk.HadBaseURL)
-		restoreKey(claudeAuthTokenKey, bk.PrevAuthToken, bk.HadAuthToken)
-		restoreKey(claudeApiKeyKey, bk.PrevApiKey, bk.HadApiKey)
-		// 把接管时删掉的模型覆盖键写回(原本没有的保持删除)。
-		for _, m := range bk.Models {
-			restoreKey(m.Key, m.Prev, m.Had)
-		}
-		// 顶层 model 字段:原本有值写回,原本没有保持删除。
-		if bk.HadModel {
-			settings["model"] = bk.PrevModel
-		} else {
-			delete(settings, "model")
-		}
-		// 把接管时置空的 Foundry 键还原(原本没有的保持删除)。
-		for _, f := range bk.Foundry {
-			restoreKey(f.Key, f.Prev, f.Had)
-		}
-	} else {
-		// 没有备份(异常情况):尽力移除我们写入的键 + 我们会删的模型键 / model 字段 / Foundry 键(无原值可还,只能删)。
-		delete(env, claudeBaseURLKey)
-		delete(env, claudeAuthTokenKey)
-		delete(env, claudeApiKeyKey)
-		for _, key := range claudeModelOverrideKeys {
-			delete(env, key)
-		}
-		delete(settings, "model")
-		for _, key := range claudeFoundryKeys {
-			delete(env, key)
-		}
-	}
-
-	if len(env) == 0 {
-		delete(settings, "env")
-	} else {
-		settings["env"] = env
-	}
-
-	if err := writeClaudeSettings(settings); err != nil {
-		return err
-	}
-	_ = os.Remove(claudeBackupPath())
-	Log("[claude-inject] 已还原 ~/.claude/settings.json")
-	return nil
-}
-
-func readClaudeBackup() *claudeEnvBackup {
+func readClaudeBackup() *claudeBackup {
 	data, err := os.ReadFile(claudeBackupPath())
 	if err != nil {
 		return nil
 	}
-	var bk claudeEnvBackup
+	var bk claudeBackup
 	if json.Unmarshal(data, &bk) != nil {
 		return nil
 	}
 	return &bk
 }
 
-func writeClaudeBackup(bk *claudeEnvBackup) {
+func writeClaudeBackup(bk *claudeBackup) {
 	if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
 		_ = os.MkdirAll(claudeConfigDir(), 0o755)
 		_ = writeFileAtomic(claudeBackupPath(), b, 0o644)
 	}
 }
 
-// captureClaudeBaseBackup 幂等捕获 BASE_URL/AUTH_TOKEN 注入前原值。返回 true 表示本次有捕获
-// (需落盘)。已捕获过(含老备份:Injected=true 但无 BaseBackedUp 字段)→ 标记后返回 false,
-// 绝不重复捕获 —— 否则会把上一轮已注入的代理 URL 误当成用户原值,还原时还错。
-func captureClaudeBaseBackup(bk *claudeEnvBackup, env map[string]interface{}) bool {
-	if bk.BaseBackedUp || bk.Injected {
-		bk.BaseBackedUp = true
-		return false
-	}
-	bk.BaseBackedUp = true
-	bk.Injected = true
-	if v, ok := env[claudeBaseURLKey].(string); ok {
-		bk.HadBaseURL = true
-		bk.PrevBaseURL = v
-	} else if _, ok := env[claudeBaseURLKey]; ok {
-		bk.HadBaseURL = true
-	}
-	if v, ok := env[claudeAuthTokenKey].(string); ok {
-		bk.HadAuthToken = true
-		bk.PrevAuthToken = v
-	} else if _, ok := env[claudeAuthTokenKey]; ok {
-		bk.HadAuthToken = true
-	}
-	return true
-}
-
-// captureClaudeModelBackup 幂等捕获模型覆盖 env 键 + 顶层 model 字段原值。返回 true 表示本次
-// 有捕获(需落盘)。已捕获过返回 false。兼容「老版本已接管、此刻才升级到会删模型的新版」:
-// 那时这些键 / model 字段还原封不动,正好能被捕获到。
-func captureClaudeModelBackup(bk *claudeEnvBackup, settings, env map[string]interface{}) bool {
-	if bk.ModelsBackedUp {
-		return false
-	}
-	bk.ModelsBackedUp = true
-	for _, key := range claudeModelOverrideKeys {
-		entry := claudeModelBackupEntry{Key: key}
-		if v, ok := env[key].(string); ok {
-			entry.Had = true
-			entry.Prev = v
-		} else if _, ok := env[key]; ok {
-			entry.Had = true // 非字符串(异常)也记为存在,还原时按原值写不回但至少不丢键语义
-		}
-		bk.Models = append(bk.Models, entry)
-	}
-	if v, ok := settings["model"].(string); ok {
-		bk.HadModel = true
-		bk.PrevModel = v
-	} else if _, ok := settings["model"]; ok {
-		bk.HadModel = true
-	}
-	return true
-}
-
-// captureClaudeFoundryBackup 幂等捕获 Foundry env 键注入前原值。返回 true 表示本次有捕获
-// (需落盘)。已捕获过返回 false —— 否则会把上一轮注入置的空串 "" 误当成用户原值,还原时还错。
-func captureClaudeFoundryBackup(bk *claudeEnvBackup, env map[string]interface{}) bool {
-	if bk.FoundryBackedUp {
-		return false
-	}
-	bk.FoundryBackedUp = true
-	for _, key := range claudeFoundryKeys {
-		entry := claudeModelBackupEntry{Key: key}
-		if v, ok := env[key].(string); ok {
-			entry.Had = true
-			entry.Prev = v
-		} else if _, ok := env[key]; ok {
-			entry.Had = true // 非字符串(异常)也记为存在,还原时按原值写不回但至少不丢键语义
-		}
-		bk.Foundry = append(bk.Foundry, entry)
-	}
-	return true
-}
-
-// CleanClaudeModelConfig 仅清掉用户自定义的模型配置 —— settings.json 顶层 model 字段 +
-// ANTHROPIC_* 模型覆盖 env 键,不注入 BASE_URL/AUTH_TOKEN。供桌面端 MITM 接管调用:桌面端
-// 硬覆盖 ANTHROPIC_BASE_URL,env 注入对它无效,但其 spawn 的 Code 子进程仍会读 settings.json
-// 的 model 字段 / 模型 env 键 —— 留着会把 -thinking 等别名或号池不认的 id 经 MITM 原样打到
-// 公开 api.anthropic.com → 404。清掉后 Code 回落到自带合法默认模型,纯 MITM 直转、无需改写。
-// 原值备份到 .bcai-claude-backup.json(与完整注入共用,各自幂等),Restore 据此还原。
+// CleanClaudeModelConfig 供桌面端 MITM 接管调用:桌面端硬覆盖 ANTHROPIC_BASE_URL,env 注入
+// 对它无效,但其 spawn 的 Code 子进程仍读 settings.json 的模型配置 —— 留着会把别名 / 号池不认
+// 的 id 经 MITM 原样打到公开 api.anthropic.com → 404。故单清模型配置,不注入 BASE_URL。
+// 若 Claude Code 完整接管已生效(当前已是 GFA 最小文件、本就无模型),则无需再动。
 func CleanClaudeModelConfig() error {
 	claudeInjectMu.Lock()
 	defer claudeInjectMu.Unlock()
 
-	settings, had := loadClaudeSettings()
-	if !had {
-		return nil // 没有 settings.json,无可清理
-	}
-	env := envBlock(settings)
-
 	bk := readClaudeBackup()
 	if bk == nil {
-		bk = &claudeEnvBackup{}
+		bk = &claudeBackup{}
 	}
-	if captureClaudeModelBackup(bk, settings, env) {
-		writeClaudeBackup(bk)
-	}
+	captureClaudeOriginal(bk)
+	bk.DesktopActive = true
+	writeClaudeBackup(bk)
 
-	for _, key := range claudeModelOverrideKeys {
-		delete(env, key)
+	if bk.CLIActive {
+		return nil // 完整接管已把文件隔离成最小态(无模型),无需再清
 	}
-	delete(settings, "model")
-	if len(env) == 0 {
-		delete(settings, "env")
-	} else {
-		settings["env"] = env
-	}
-	if err := writeClaudeSettings(settings); err != nil {
+	if err := restoreClaudeOriginalFile(bk, true); err != nil {
 		return err
 	}
 	Log("[claude-inject] 已清理用户自定义模型配置(顶层 model + 模型 env 键): %s", claudeSettingsPath())
 	return nil
 }
 
-// RestoreClaudeModelConfig 还原 CleanClaudeModelConfig 清掉的模型配置。若完整接管
-// (BaseBackedUp,即 Claude Code env 注入)仍在用,模型配置应保持清除状态 —— 直接跳过、
-// 不动备份,避免把别名重新放回去害 CLI 路径 404。否则按备份精确还原并删除备份。
+// RestoreClaudeModelConfig 取消桌面 MITM 接管。若 Claude Code 完整接管仍生效,文件应保持隔离
+// 态、模型保持清除 —— 只落标志、保留备份;否则整份还原真原文件并删备份。
 func RestoreClaudeModelConfig() error {
 	claudeInjectMu.Lock()
 	defer claudeInjectMu.Unlock()
 
 	bk := readClaudeBackup()
-	if bk != nil && bk.BaseBackedUp {
-		Log("[claude-inject] 完整接管仍生效,跳过模型配置还原(保持清除态)")
-		return nil
-	}
-
-	settings, had := loadClaudeSettings()
-	if !had {
+	if bk == nil || !bk.OriginalCaptured {
 		_ = os.Remove(claudeBackupPath())
 		return nil
 	}
-	env := envBlock(settings)
-
-	if bk != nil {
-		for _, m := range bk.Models {
-			if m.Had {
-				env[m.Key] = m.Prev
-			} else {
-				delete(env, m.Key)
-			}
-		}
-		if bk.HadModel {
-			settings["model"] = bk.PrevModel
-		} else {
-			delete(settings, "model")
-		}
-	} else {
-		// 无备份(异常):尽力删除我们清过的键(无原值可还,只能删)。
-		for _, key := range claudeModelOverrideKeys {
-			delete(env, key)
-		}
-		delete(settings, "model")
+	bk.DesktopActive = false
+	if bk.CLIActive {
+		writeClaudeBackup(bk)
+		Log("[claude-inject] 桌面取消接管,CLI 完整接管仍生效 → 保持隔离,跳过模型还原")
+		return nil
 	}
-	if len(env) == 0 {
-		delete(settings, "env")
-	} else {
-		settings["env"] = env
-	}
-	if err := writeClaudeSettings(settings); err != nil {
+	if err := restoreClaudeOriginalFile(bk, false); err != nil {
 		return err
 	}
 	_ = os.Remove(claudeBackupPath())
-	Log("[claude-inject] 已还原用户自定义模型配置")
+	Log("[claude-inject] 已整份还原用户配置(含模型)")
 	return nil
 }
 

@@ -75,6 +75,11 @@ func (a *App) SandboxCreate(mounts []SandboxMount, model SandboxModelCfg, openNe
 			return "", err
 		}
 	}
+	// Windows WHP 硬闸:没就绪就别跑 sbx create(否则只吃 Docker 裸 500)。前端也禁了创建按钮,
+	// 这是边界兜底 + 前端状态过期时的可操作错误。非 Windows/抑制态 windowsPrereq 返回 OK,无害放行。
+	if err := hypervisorBlockedError(windowsPrereq()); err != nil {
+		return "", err
+	}
 	port := effectiveProxyPort()
 	o := defaultKitOptions(port)
 	if custom {

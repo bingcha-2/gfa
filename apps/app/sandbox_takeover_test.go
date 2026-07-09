@@ -7,6 +7,31 @@ import (
 	"testing"
 )
 
+func TestIsBenignCreateConflict(t *testing.T) {
+	benign := []string{
+		`ERROR: request failed: 409 Conflict: runtime "gfa-claude-solidworks-c2418b" has a create in progress`,
+		`Error: sandbox already exists`,
+		`something 409 Conflict happened`,
+		`RUNTIME HAS A CREATE IN PROGRESS`, // 大小写不敏感
+	}
+	for _, s := range benign {
+		if !isBenignCreateConflict(s) {
+			t.Errorf("应判为无害冲突,却判为致命: %q", s)
+		}
+	}
+	fatal := []string{
+		"",
+		"exit status 1: permission denied",
+		"no space left on device",
+		"kit validation failed",
+	}
+	for _, s := range fatal {
+		if isBenignCreateConflict(s) {
+			t.Errorf("应判为致命错误,却判为无害: %q", s)
+		}
+	}
+}
+
 func TestGenerateKitWritesFiles(t *testing.T) {
 	dir := t.TempDir()
 	o := defaultKitOptions(48800)

@@ -354,7 +354,8 @@ func (claudeCodeTarget) Inject(proxyPort int) (string, error) {
 	}
 	// Claude Code CLI 无常驻进程:注入后下次 `claude` 启动即生效,无需杀进程。
 	// VSCode 的 Claude Code 扩展需 Reload Window 才会重读 settings.json。
-	return "Claude Code: ✓ 已接管(CLI 下次启动生效;VSCode 扩展请 Reload Window)", nil
+	// 强调重启:接管前已在跑的会话还带着旧 env(可能指向第三方模型),其请求会被模型闸拒。
+	return "Claude Code: ✓ 已接管 —— 请【重启 CLI / Reload VSCode 窗口】使配置生效;接管前已开的旧会话请求会被拒绝(需重启)", nil
 }
 
 func (claudeCodeTarget) Restore() (string, error) {

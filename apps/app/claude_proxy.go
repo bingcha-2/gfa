@@ -312,6 +312,22 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}
 	audit.model = modelKey
 
+	// 模型闸:接管期间只放行 Anthropic Claude 模型。非 claude / 国产·第三方 / 中转别名后缀
+	// 一律【在 lease 之前】就地拒绝 —— 不取号、不发上游(否则公开 API 回 404,徒耗取号 + 污染
+	// 号池指纹 + 触发按模型冷却)。命中最常见的成因是「接管后没重启 CLI」(进程里还留着旧
+	// ANTHROPIC_MODEL)或 shell export 了第三方模型,故错误信息明确提示重启。
+	if blocked, why := isBlockedClaudeModel(modelKey); blocked {
+		atomic.AddInt64(&p.totalErrors, 1)
+		audit.status = http.StatusBadRequest
+		audit.note = "拒绝非法模型(" + why + "):" + modelKey
+		p.sendJSONError(w, http.StatusBadRequest, fmt.Sprintf(
+			"模型 %q 已被冰茶接管拦截(%s):本网关只放行 Anthropic Claude 模型。"+
+				"若你刚开启接管,请【重启 CLI/IDE】让它读取清理后的配置;"+
+				"并确认没有在 shell 里 export ANTHROPIC_MODEL 指定第三方模型。",
+			modelKey, why))
+		return
+	}
+
 	// 反代检测(flag 模式):真 Claude Code 每次都带固定 system 前缀;缺失 = 这张卡很可能
 	// 被反代/换了别的客户端再分发 —— 正是把共享订阅号用成「转卖 API」、招致上游 403 的主因。
 	// 【客户端静默】:命中只随上报回服务端 + 内存计数,本地日志【绝不打印】(审计日志对客户
@@ -323,7 +339,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}
 	// 过滤后的请求头(去凭证头、跳超大值),随上报落 per-request 热表。
 	reportHeaders := filterReportHeaders(r.Header)
-	reportUserID := extractMetadataUserID(body) // metadata.user_id → 服务端数真实用户
+	reportUserID := extractMetadataUserID(body)                                    // metadata.user_id → 服务端数真实用户
 	reportSessionID := strings.TrimSpace(r.Header.Get("X-Claude-Code-Session-Id")) // 每会话 id → 数 session/分
 
 	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦

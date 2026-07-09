@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // ─── 沙箱模式接管 · 触机器 + target 层 ─────────────────────────────────────────
@@ -292,9 +293,53 @@ func listManagedNames() []string {
 	return names
 }
 
+// isBenignCreateConflict 判 `sbx create` 的失败输出是否为「同名 runtime 冲突」——已有一个 create
+// 在途(409 "has a create in progress")或已建好("already exists")。sbx create 不幂等:box 名由挂载
+// 路径确定性派生(sandboxName),同一目录永远撞同一名。冲突有两种成因,处理截然不同:
+//   ①真并发:另一路(极少见,按钮已单飞)正在建 → 短轮询即可等到就绪;
+//   ②残留锁:上次 create 拉镜像(首次 ~10min)途中 app 被关/杀,daemon 的 "creating" 锁没释放,
+//     没有任何活进程会去完成它 → 死等无用,必须强删残体(sbx rm --force)再重建。
+// 用户实测正是 ②(docker 层全 "Already exists" 证明镜像已被上一次尝试拉过 = 非首建)。
+func isBenignCreateConflict(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "has a create in progress") ||
+		strings.Contains(s, "already exists") ||
+		strings.Contains(s, "409 conflict")
+}
+
+// waitSandboxReadyFor 在 maxSecs 秒内轮询 sbx ls 等 box 出现。给「真有活 sibling 在建」留窗口,
+// 但绝不死等 10min —— 残留锁场景没人会完成建造,久等只是白挂。
+func waitSandboxReadyFor(name string, maxSecs int) bool {
+	for i := 0; i < maxSecs; i++ {
+		if sandboxExists(name) {
+			return true
+		}
+		time.Sleep(time.Second)
+	}
+	return sandboxExists(name)
+}
+
+// sandboxExists 查托管沙箱名单里是否已有此 box(真查 sbx ls --json)。
+func sandboxExists(name string) bool {
+	for _, i := range listManagedSandboxes() {
+		if i.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // createSandbox 后台建 box(sbx create,不进入)。box 建完是 stopped,进入靠 enterCommandString 的
 // sbx run --name。首次会拉 kit 镜像(慢),故此调用可能阻塞;交互式进入才需 TTY,建 box 不需要。
 // 抑制态短路;sbx 找不到则报错。
+//
+// 幂等 + 冲突自愈:box 已在 → 直接成功;create 撞同名 runtime 冲突(见 isBenignCreateConflict)→
+// 先短轮询(~30s)等潜在的活 sibling 建完;仍不就绪则判为残留锁(上次建到一半被杀),强删残体
+// (stopSandbox 走 gfa- 前缀安全线的 sbx rm --force)再重建一次。这才是接管路径该有的行为——
+// 与扩展 wrapper 的「多活进程抢建-轮询」不同:接管按钮单飞,没有活 sibling 会替我完成建造。
+//
+// 注:此自愈依赖一个待真机确认的前提——`sbx rm --force` 能清掉「create in progress」状态的残留 runtime。
+// 若 sbx 对 in-progress runtime 拒绝 rm,则残留锁需换 `sbx runtime rm` 之类的专用清理,届时按真机报错微调。
 func createSandbox(name, kitDir string, mounts []SandboxMount) error {
 	if appActionsSuppressed() {
 		return nil
@@ -303,9 +348,26 @@ func createSandbox(name, kitDir string, mounts []SandboxMount) error {
 	if sbx == "" {
 		return fmt.Errorf("未找到 sbx,请先安装 Docker sbx")
 	}
+	if sandboxExists(name) { // 已建好(或另一路已抢建完),幂等成功
+		return nil
+	}
 	out, err := hideCmd(sbx, createCommandArgs(name, kitDir, mounts)...).CombinedOutput()
-	if err != nil {
+	if err == nil {
+		return nil
+	}
+	if !isBenignCreateConflict(string(out)) {
 		return fmt.Errorf("sbx create 失败: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// 冲突:先给真并发一个短窗口自然就绪。
+	if waitSandboxReadyFor(name, 30) {
+		return nil
+	}
+	// 仍不就绪 → 残留锁。强删残体后重建一次(stopSandbox 只动 gfa- 托管前缀)。
+	Log("[sandbox] create 撞残留锁 %s,强删残体后重建", name)
+	_ = stopSandbox(name)
+	out2, err2 := hideCmd(sbx, createCommandArgs(name, kitDir, mounts)...).CombinedOutput()
+	if err2 != nil {
+		return fmt.Errorf("清残留锁后重建仍失败: %v: %s", err2, strings.TrimSpace(string(out2)))
 	}
 	return nil
 }

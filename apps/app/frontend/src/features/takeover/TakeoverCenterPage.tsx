@@ -803,7 +803,7 @@ function SandboxCard() {
 
             {/* 操作:创建 = 冰茶后台直接建 box(不再复制一把梭命令);移除 = 停全部+撤配置 */}
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="default" disabled={busy !== '' || mounts.length === 0} onClick={create} className="min-w-[104px]">
+              <Button size="sm" variant="default" disabled={busy !== '' || mounts.length === 0 || hvBlocked} onClick={create} className="min-w-[104px]">
                 {busy === 'create' ? '创建中…' : '创建沙箱'}
               </Button>
               {managed.length > 0 && (

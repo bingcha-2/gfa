@@ -49,29 +49,71 @@ func TestInjectClaudeSettingsWritesEnvBlock(t *testing.T) {
 	}
 }
 
-func TestInjectClaudeSettingsPreservesUserKeys(t *testing.T) {
+// 整份隔离:接管期间用户其余配置(顶层键 / 无关 env / hooks / 插件市场 / 第三方中转)
+// 一律不生效 —— settings.json 只剩 GFA 最小注入;取消接管时整份原样还原,不丢用户配置。
+func TestInjectIsolatesUserKeysAndRestores(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	// Pre-existing user settings with an unrelated key and an unrelated env var.
-	seed := map[string]interface{}{
-		"theme": "dark",
-		"env":   map[string]interface{}{"MY_VAR": "keep-me"},
-	}
-	writeSeedSettings(t, dir, seed)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"theme":                  "dark",
+		"permissions":            map[string]interface{}{"allow": []interface{}{"Bash"}},
+		"hooks":                  map[string]interface{}{"Stop": "echo done"},
+		"enabledPlugins":         map[string]interface{}{"evil@market": true},
+		"extraKnownMarketplaces": map[string]interface{}{"evil": map[string]interface{}{"source": "x"}},
+		"env": map[string]interface{}{
+			"MY_VAR":             "keep-me",
+			"ANTHROPIC_API_KEY":  "sk-user-real-key",
+			"ANTHROPIC_BASE_URL": "https://third-party-relay.example",
+		},
+	})
 
 	if err := InjectClaudeSettings(9000); err != nil {
 		t.Fatalf("InjectClaudeSettings: %v", err)
 	}
+	// 接管态:顶层只剩 "env",所有用户键都不在。
 	settings := readClaudeSettings(t)
-	if settings["theme"] != "dark" {
-		t.Fatalf("unrelated top-level key was lost: %v", settings["theme"])
+	for _, k := range []string{"theme", "permissions", "hooks", "enabledPlugins", "extraKnownMarketplaces"} {
+		if _, ok := settings[k]; ok {
+			t.Fatalf("接管期间用户键 %q 应被隔离,实际仍在: %v", k, settings[k])
+		}
 	}
 	env := claudeEnvBlock(t)
-	if env["MY_VAR"] != "keep-me" {
-		t.Fatalf("unrelated env var was lost: %v", env["MY_VAR"])
+	if env["MY_VAR"] != nil {
+		t.Fatalf("接管期间无关 env 应被隔离,实际: %v", env["MY_VAR"])
 	}
 	if env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9000" {
-		t.Fatalf("ANTHROPIC_BASE_URL not injected: %v", env["ANTHROPIC_BASE_URL"])
+		t.Fatalf("ANTHROPIC_BASE_URL 未指向本地代理: %v", env["ANTHROPIC_BASE_URL"])
+	}
+	if env["ANTHROPIC_API_KEY"] != "" {
+		t.Fatalf("ANTHROPIC_API_KEY 应被置空覆盖,实际: %v", env["ANTHROPIC_API_KEY"])
+	}
+
+	// 取消接管:整份原样还原用户配置。
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if settings["theme"] != "dark" {
+		t.Fatalf("还原后顶层 theme 丢失: %v", settings["theme"])
+	}
+	if _, ok := settings["hooks"]; !ok {
+		t.Fatalf("还原后 hooks 丢失: %v", settings)
+	}
+	if _, ok := settings["permissions"]; !ok {
+		t.Fatalf("还原后 permissions 丢失: %v", settings)
+	}
+	env = claudeEnvBlock(t)
+	if env["MY_VAR"] != "keep-me" {
+		t.Fatalf("还原后无关 env 丢失: %v", env["MY_VAR"])
+	}
+	if env["ANTHROPIC_API_KEY"] != "sk-user-real-key" {
+		t.Fatalf("还原后用户真实 key 丢失: %v", env["ANTHROPIC_API_KEY"])
+	}
+	if env["ANTHROPIC_BASE_URL"] != "https://third-party-relay.example" {
+		t.Fatalf("还原后用户原 BASE_URL 丢失: %v", env["ANTHROPIC_BASE_URL"])
+	}
+	if IsClaudeInjected(9000) {
+		t.Fatal("还原后 IsClaudeInjected 应为 false")
 	}
 }
 
@@ -488,5 +530,66 @@ func TestDesktopRestoreSkipsWhileFullInjectActive(t *testing.T) {
 	}
 	if env, _ := settings["env"].(map[string]interface{}); env["ANTHROPIC_BASE_URL"] != nil {
 		t.Fatalf("完整接管还原后 BASE_URL 应被移除,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+}
+
+// 共存(CLI 优先):完整接管 → 桌面单清 → CLI 先取消(桌面仍在→还原减模型)→ 桌面再取消
+// (最后一个→整份还原真原文件)。全程真原文件由首个改动者 InjectClaudeSettings 捕获。
+func TestCLIFirstThenDesktopCoexistRestoresOriginal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"model": "opus",
+		"env":   map[string]interface{}{"ANTHROPIC_MODEL": "x", "MY_VAR": "keep"},
+	})
+
+	// ① CLI 完整接管:文件变最小态。
+	if err := InjectClaudeSettings(9300); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	// ② 桌面单清:CLI 已生效,当前就是最小态(无模型)→ 保持最小态不动。
+	if err := CleanClaudeModelConfig(); err != nil {
+		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	}
+	settings := readClaudeSettings(t)
+	if _, ok := settings["model"]; ok {
+		t.Fatalf("CLI 生效期间应无 model,实际: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9300" {
+		t.Fatalf("CLI 生效期间 BASE_URL 应在,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+
+	// ③ CLI 先取消:桌面仍生效 → 还原真原文件但减模型(Code 子进程用合法默认模型)。
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if _, ok := settings["model"]; ok {
+		t.Fatalf("桌面仍生效时顶层 model 应保持清除,实际: %v", settings["model"])
+	}
+	env := claudeEnvBlock(t)
+	if env["ANTHROPIC_MODEL"] != nil {
+		t.Fatalf("桌面仍生效时模型 env 键应保持清除,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+	if env["MY_VAR"] != "keep" {
+		t.Fatalf("还原减模型后无关 env 应保留,实际: %v", env["MY_VAR"])
+	}
+	if env["ANTHROPIC_BASE_URL"] != nil {
+		t.Fatalf("CLI 取消后 BASE_URL 应移除,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+
+	// ④ 桌面再取消(最后一个):整份还原真原文件,含模型。
+	if err := RestoreClaudeModelConfig(); err != nil {
+		t.Fatalf("RestoreClaudeModelConfig: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if settings["model"] != "opus" {
+		t.Fatalf("全部取消后 model 应回原值,实际: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_MODEL"] != "x" {
+		t.Fatalf("全部取消后模型 env 键应回原值,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+	if _, err := os.Stat(claudeBackupPath()); !os.IsNotExist(err) {
+		t.Fatal("全部取消后备份文件应被删除")
 	}
 }
