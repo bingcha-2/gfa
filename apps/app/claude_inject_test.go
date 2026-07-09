@@ -117,36 +117,6 @@ func TestInjectIsolatesUserKeysAndRestores(t *testing.T) {
 	}
 }
 
-// 接管期间关闭 Claude Code 遥测:注入的 env 必带 telemetry-off 键=「1」;取消接管随整份还原移除。
-func TestInjectDisablesTelemetryAndRestores(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	writeSeedSettings(t, dir, map[string]interface{}{"env": map[string]interface{}{"MY_VAR": "keep"}})
-
-	if err := InjectClaudeSettings(9000); err != nil {
-		t.Fatalf("InjectClaudeSettings: %v", err)
-	}
-	env := claudeEnvBlock(t)
-	for _, k := range claudeTelemetryOffKeys {
-		if env[k] != "1" {
-			t.Fatalf("接管期间遥测开关 %q 应置 \"1\",实际: %v", k, env[k])
-		}
-	}
-
-	if err := RestoreClaudeSettings(); err != nil {
-		t.Fatalf("RestoreClaudeSettings: %v", err)
-	}
-	env = claudeEnvBlock(t)
-	for _, k := range claudeTelemetryOffKeys {
-		if _, ok := env[k]; ok {
-			t.Fatalf("还原后遥测开关 %q 应移除(原本没有),实际仍在: %v", k, env[k])
-		}
-	}
-	if env["MY_VAR"] != "keep" {
-		t.Fatalf("还原后无关 env 丢失: %v", env["MY_VAR"])
-	}
-}
-
 func TestRestoreClaudeSettingsRemovesInjectedKeysWhenAbsentBefore(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

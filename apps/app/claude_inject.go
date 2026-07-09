@@ -68,17 +68,6 @@ var claudeFoundryKeys = []string{
 	"ANTHROPIC_FOUNDRY_BASE_URL",
 }
 
-// claudeTelemetryOffKeys:接管期间关闭 Claude Code 的遥测 / phone-home(对齐沙箱 SBX_NO_TELEMETRY
-// 关 sbx 遥测的做法,这里关的是 Claude Code 自己的遥测)。全部置 "1" 写进 env,经 Object.assign
-// 覆盖 shell 里可能开启的同名开关;取消接管时随整份还原一并移除。
-//   - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:总开关,一并关掉遥测 + 错误上报 + 自动更新 + /bug;
-//   - DISABLE_TELEMETRY / DISABLE_ERROR_REPORTING:显式再各关一道(总开关语义若变动时的兜底)。
-var claudeTelemetryOffKeys = []string{
-	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-	"DISABLE_TELEMETRY",
-	"DISABLE_ERROR_REPORTING",
-}
-
 var claudeInjectMu sync.Mutex
 
 // claudeConfigDir 返回 Claude Code 配置目录(CLAUDE_CONFIG_DIR 可覆盖,默认 ~/.claude)。
@@ -166,9 +155,6 @@ func minimalClaudeSettings(proxyPort int) map[string]interface{} {
 	}
 	for _, k := range claudeFoundryKeys {
 		env[k] = ""
-	}
-	for _, k := range claudeTelemetryOffKeys {
-		env[k] = "1"
 	}
 	return map[string]interface{}{"env": env}
 }
