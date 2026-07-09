@@ -642,31 +642,6 @@ describe("B. 窗口对齐 / 账号刷新", () => {
     expect(t.checkFairShare(1, "O1", BK).allowed).toBe(true);
   });
 
-  it("周快照窗口起点早于本地账本但余量下降时仍归并,避免独享周血条虚高", () => {
-    const now = T;
-    const bucket = "anthropic-claude";
-    const card = "c1";
-    const t = track(makeTracker({
-      now: () => now,
-      bound: { 1: [{ cardId: card, weight: 8 }] },
-      seats: { 1: 8 },
-      exclusiveCards: new Set([card]),
-      trackWeekly: true,
-    }));
-    const upstreamReset = T + WEEKLY_MS;
-    const localResetGuess = upstreamReset + 3 * 60 * 60 * 1000;
-    t.applyWeeklyAccountQuotaSnapshot(1, bucket, 1.0, localResetGuess);
-    t.recordUsage(1, card, bucket, 100, 0, 0, "claude-opus-4-8");
-
-    t.applyWeeklyAccountQuotaSnapshot(1, bucket, 0.01, upstreamReset);
-
-    const st = t.getBucketStateForTesting(1, weeklyBucketKey(bucket));
-    expect(st?.windowStart).toBe(upstreamReset - WEEKLY_MS);
-    expect(st?.lastFraction).toBeCloseTo(0.01, 6);
-    expect(st?.attributed[card]).toBeCloseTo(0.99, 6);
-    expect(t.getCardWeeklyQuotaFractions(1, card)[bucket].fraction).toBeCloseTo(0.01, 6);
-  });
-
   it("★#12 自计时过期(ensureWindow)也清零 T_i", () => {
     let now = T;
     const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));

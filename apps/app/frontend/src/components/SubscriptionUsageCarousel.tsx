@@ -72,12 +72,12 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
     myFraction: number | null | undefined,
     resetIso: string | null | undefined,
   ) => {
-    if (quota?.myShare != null) {
+    if (myFraction != null && quota?.myShare != null) {
       return (
         <div className="py-1.5">
           <NestedShareBar
             label={label}
-            myFraction={myFraction ?? -1}
+            myFraction={myFraction}
             accountFraction={accountPercent != null ? accountPercent / 100 : -1}
             // myShare 已是名义份额(weight/容量,遮超卖),直接当「我那一席」几何;capacity=1。
             shareSeats={quota.myShare}

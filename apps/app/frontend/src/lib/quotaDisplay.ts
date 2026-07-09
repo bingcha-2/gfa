@@ -1,5 +1,3 @@
-import type { AccountSubscription, ProductQuotaWindow } from '@/types'
-
 type BucketValue = {
   used: number
   limit: number
@@ -31,57 +29,6 @@ type SplitAccountQuota = {
   weeklyFraction: number
   hourlyResetMs?: number
   weeklyResetMs?: number
-}
-
-function resetIsoFromMs(resetMs: number | undefined, now: number): string | null {
-  if (!Number.isFinite(resetMs) || !resetMs || resetMs <= 0) return null
-  return new Date(now + resetMs).toISOString()
-}
-
-function percentFromFraction(fraction: number, fallback: number | null | undefined): number | null {
-  if (!Number.isFinite(fraction) || fraction < 0) return fallback ?? null
-  return fraction * 100
-}
-
-function mergeProductQuotaWindow(existing: ProductQuotaWindow | undefined, runtime: SplitAccountQuota, now: number): ProductQuotaWindow {
-  return {
-    ...(existing ?? { hourlyPercent: null, weeklyPercent: null, hourlyResetAt: null, weeklyResetAt: null }),
-    hourlyPercent: percentFromFraction(runtime.hourlyFraction, existing?.hourlyPercent),
-    weeklyPercent: percentFromFraction(runtime.weeklyFraction, existing?.weeklyPercent),
-    hourlyResetAt: runtime.hourlyFraction >= 0 ? resetIsoFromMs(runtime.hourlyResetMs, now) : (existing?.hourlyResetAt ?? null),
-    weeklyResetAt: runtime.weeklyFraction >= 0 ? resetIsoFromMs(runtime.weeklyResetMs, now) : (existing?.weeklyResetAt ?? null),
-  }
-}
-
-export function mergeRuntimeQuotaIntoSubscriptions(
-  subscriptions: AccountSubscription[],
-  input: {
-    codexQuota?: SplitAccountQuota | null
-    claudeQuota?: SplitAccountQuota | null
-    now?: number
-  },
-): AccountSubscription[] {
-  const now = input.now ?? Date.now()
-  return subscriptions.map((sub) => {
-    let productQuota = sub.productQuota
-    for (const product of sub.products) {
-      const normalized = product === 'claude' ? 'anthropic' : product
-      const runtime = normalized === 'codex'
-        ? input.codexQuota
-        : normalized === 'anthropic'
-          ? input.claudeQuota
-          : null
-      if (!runtime) continue
-      productQuota = {
-        ...(productQuota ?? {}),
-        [product]: mergeProductQuotaWindow(productQuota?.[product], runtime, now),
-      }
-      if (product !== normalized && normalized === 'anthropic') {
-        productQuota.anthropic = productQuota[product]
-      }
-    }
-    return productQuota === sub.productQuota ? sub : { ...sub, productQuota }
-  })
 }
 
 export type QuotaDisplayBar = {
