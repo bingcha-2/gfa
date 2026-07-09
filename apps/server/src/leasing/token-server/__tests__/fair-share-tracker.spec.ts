@@ -667,6 +667,27 @@ describe("B. 窗口对齐 / 账号刷新", () => {
     expect(t.getCardWeeklyQuotaFractions(1, card)[bucket].fraction).toBeCloseTo(0.01, 6);
   });
 
+  it("窗口起点向前校正时不把历史下降砸给拼车卡,避免账号健康但我的份额归零", () => {
+    const now = T;
+    const t = track(makeTracker({
+      now: () => now,
+      bound: { 1: [{ cardId: "c1", weight: 1 }] },
+      seats: { 1: 8 },
+    }));
+    const upstreamReset = T + WINDOW_MS;
+    const localResetGuess = upstreamReset + 3 * 60 * 60 * 1000;
+    t.applyAccountQuotaSnapshot(1, BK, 1.0, localResetGuess);
+    use(t, 1, "c1", 100);
+
+    t.applyAccountQuotaSnapshot(1, BK, 0.82, upstreamReset);
+
+    const st = t.getBucketStateForTesting(1, BK);
+    expect(st?.windowStart).toBe(upstreamReset - WINDOW_MS);
+    expect(st?.lastFraction).toBeCloseTo(0.82, 6);
+    expect(st?.attributed.c1 ?? 0).toBeCloseTo(0, 6);
+    expect(t.getCardQuotaFractions(1, "c1")[BK].fraction).toBeCloseTo(1, 6);
+  });
+
   it("★#12 自计时过期(ensureWindow)也清零 T_i", () => {
     let now = T;
     const t = track(makeTracker({ now: () => now, bound: { 1: [{ cardId: "O1", weight: 1 }] }, seats: { 1: 1 } }));
