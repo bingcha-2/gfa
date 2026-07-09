@@ -478,23 +478,6 @@ export class FairShareTracker {
           return;
         }
         tracker.windowStart = newStart;
-        if (fraction >= 0 && fraction < tracker.lastFraction) {
-          const locked = this.ensureLocked(accountId, tracker);
-          const only = locked.participants.size === 1 ? [...locked.participants][0] : "";
-          const canAttributeWholeDrop =
-            !!only &&
-            this.opts.isExclusive?.(only) &&
-            clamp01(Math.max(0, this.opts.getCardWeight(only)) / locked.D) >= 1;
-          if (!canAttributeWholeDrop) {
-            // 本地 windowStart 偏晚时,账号下降里包含「本地账本窗口开始前」的历史消耗。
-            // 对拼车/超卖无法无歧义归给某张卡,否则 82% 账号余量也可能把 1/8 卡砸到 0。
-            // 只采纳上游低水位并对齐窗口;后续同窗口的新下降再按真实段内 u_i 归因。
-            tracker.lastFraction = clamp01(fraction);
-            tracker.pendingRise = null;
-            this.dirty = true;
-            return;
-          }
-        }
       }
     }
     // 3) fraction 未知(-1)→ 不归并,继续累积 u_i(等有效 fraction 回来一次性归并)。
