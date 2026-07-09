@@ -108,6 +108,56 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.queryByText(/账号总剩余/)).not.toBeInTheDocument()
   })
 
+  it('renders exclusive weekly quota from myWeeklyFraction rather than account percent', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            productQuota: {
+              anthropic: {
+                hourlyPercent: 100,
+                weeklyPercent: 36,
+                hourlyResetAt: null,
+                weeklyResetAt: null,
+                myHourlyFraction: 1,
+                myWeeklyFraction: 0.01,
+                myShare: 0.5,
+                exclusive: true,
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('剩余 1%')).toBeInTheDocument()
+  })
+
+  it('does not fall back to account percent when personal quota is missing for a share card', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            remainFraction: null,
+            productQuota: {
+              anthropic: {
+                hourlyPercent: 63,
+                weeklyPercent: 36,
+                hourlyResetAt: null,
+                weeklyResetAt: null,
+                myShare: 0.5,
+                exclusive: true,
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getAllByText('剩余 未知').length).toBe(2)
+    expect(screen.queryByText('36%')).not.toBeInTheDocument()
+  })
+
   it('shows the 尊贵·独享 badge only on exclusive subscription cards (mixed multi-sub)', () => {
     const subscriptions: AccountSubscription[] = [
       sub({

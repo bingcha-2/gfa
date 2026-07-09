@@ -471,7 +471,13 @@ export class FairShareTracker {
         }
       }
       if (tracker.primed && newStart < tracker.windowStart - RESET_DRIFT_MS) {
-        return;
+        // resetAt 反推出的起点早于本地账本时,先区分「真旧窗口」和「同一上游窗口的
+        // 本地冷启动/估算偏晚」。只要该快照的 resetAt 仍晚于当前 windowStart,它仍覆盖
+        // 当前窗口,不能直接丢弃;否则账号 1% 等有效下降会无法归并到 T_i。
+        if (newStart + tracker.windowMs <= tracker.windowStart + RESET_DRIFT_MS) {
+          return;
+        }
+        tracker.windowStart = newStart;
       }
     }
     // 3) fraction 未知(-1)→ 不归并,继续累积 u_i(等有效 fraction 回来一次性归并)。

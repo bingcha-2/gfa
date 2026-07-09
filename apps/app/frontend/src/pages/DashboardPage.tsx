@@ -9,7 +9,7 @@ import { ExclusiveBadge } from '@/components/ExclusiveBadge'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts } from '@/lib/usageBars'
-import { buildQuotaSections, shouldUseExclusiveDisplay, type QuotaDisplayBar } from '@/lib/quotaDisplay'
+import { buildQuotaSections, mergeRuntimeQuotaIntoSubscriptions, shouldUseExclusiveDisplay, type QuotaDisplayBar } from '@/lib/quotaDisplay'
 import { buildModelUsageRows, buildUsageOverview, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -157,6 +157,9 @@ export function DashboardPage() {
   // 多订阅时逐订阅走 carousel,每张卡自带「尊贵 · 独享」badge(跟 quota.exclusive,混档如实标注);
   // 顶部账户级 badge 仅在无订阅回退(单卡视图)时展示,避免用单卡口径误标整个账户。
   const hasSubscriptions = !!(account?.subscriptions && account.subscriptions.length > 0)
+  const usageSubscriptions = hasSubscriptions
+    ? mergeRuntimeQuotaIntoSubscriptions(account!.subscriptions, { codexQuota, claudeQuota })
+    : []
   // 独享卡:整号 100% 归你。展示「尊贵 · 独享」标识。优先用后端权威 cardExclusive;
   // 缺省(旧服务端)回退到 weight>=capacity 启发式。
   const exclusiveCard = !hasSubscriptions && shouldUseExclusiveDisplay({ cardWeight: cardShareSeats, cardShareCapacity, exclusive: cardExclusive, accountProblem })
@@ -298,7 +301,7 @@ export function DashboardPage() {
             </div>
           )}
           {hasSubscriptions ? (
-            <SubscriptionUsageCarousel subscriptions={account!.subscriptions} boundAccounts={boundAccounts} />
+            <SubscriptionUsageCarousel subscriptions={usageSubscriptions} boundAccounts={boundAccounts} />
           ) : (() => {
             const PROVIDERS = [
               { id: 'antigravity', name: 'Antigravity' },
