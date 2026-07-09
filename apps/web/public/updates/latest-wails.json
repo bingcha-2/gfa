@@ -7,7 +7,7 @@
   "installerSha256": "F02633A89239EF9A2E53B68BE9F7F764F4BBBCF45F609EB88FAB307EEEEF214B",
   "installerSize": 20964656,
   "changelog": "回退模型用量显示逻辑",
-  "minVersion": "13.1.6",
+  "minVersion": "13.1.4",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.1.6/BingchaAI-13.1.6-arm64.dmg",
