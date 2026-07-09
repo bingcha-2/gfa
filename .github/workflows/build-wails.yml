@@ -11,6 +11,10 @@ on:
         description: '更新日志 (用字面 \n 分行,客户端按行渲染为列表)'
         required: false
         default: '-解决了用户提出的问题。\n-解决了提出问题的用户。\n-更新了最新的版本号'
+      min_version:
+        description: '最低支持版本；留空则等于 version（强制升级到本版本）'
+        required: false
+        default: ''
       api_base:
         description: '机器 API 基础域（留空则用默认 https://api.bcai.lol）'
         required: false
@@ -420,6 +424,7 @@ jobs:
       - name: Generate and commit update manifest
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          MIN_VERSION="${{ github.event.inputs.min_version || github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
           TAG="wails-v${VERSION}"
           DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
@@ -427,7 +432,7 @@ jobs:
 
           mkdir -p "$UPDATES"
 
-          export VERSION CHANGELOG DL UPDATES
+          export VERSION MIN_VERSION CHANGELOG DL UPDATES
           export WIN_HASH="${{ steps.meta.outputs.win_hash }}"
           export WIN_SIZE="${{ steps.meta.outputs.win_size }}"
           export WIN_INSTALLER_HASH="${{ steps.meta.outputs.win_installer_hash }}"
@@ -459,7 +464,7 @@ jobs:
             installerSha256: env.WIN_INSTALLER_HASH,
             installerSize: size("WIN_INSTALLER_SIZE"),
             changelog: env.CHANGELOG || "",
-            minVersion: env.VERSION,
+            minVersion: env.MIN_VERSION,
             macOS: {
               arm64: {
                 url: `${env.DL}/${env.APP_NAME}-${env.VERSION}-arm64.dmg`,
@@ -499,4 +504,3 @@ jobs:
           Binaries no longer committed to git." || echo "No changes to commit"
           git pull --rebase origin ${{ github.ref_name }}
           git push origin HEAD:${{ github.ref_name }}
-
