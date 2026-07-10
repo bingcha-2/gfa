@@ -338,7 +338,6 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
-          MIN_VERSION="${{ github.event.inputs.min_version }}"
           TAG="wails-v${VERSION}"
           DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
 
@@ -426,6 +425,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
+          MIN_VERSION="${{ github.event.inputs.min_version }}"
           TAG="wails-v${VERSION}"
           DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
           UPDATES="${{ env.UPDATES_DIR }}"

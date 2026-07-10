@@ -7,7 +7,7 @@
   "installerSha256": "CB435DA642BF804F007FC8D6406C00A02C3D3626F80A67029D99F697A3A4D8F4",
   "installerSize": 20975743,
   "changelog": "优化 Codex 接管兼容性与稳定性，改善 macOS 应用选择体验",
-  "minVersion": "13.2.1",
+  "minVersion": "13.2.0",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.2.1/BingchaAI-13.2.1-arm64.dmg",
