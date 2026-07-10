@@ -248,6 +248,13 @@ export const zhCN = {
     clear: '清空',
     copy: '复制',
     empty: '暂无日志',
+    subtitle: '本地代理、接管、租约和额度事件',
+    pause: '暂停跟随',
+    resume: '继续跟随',
+    following: '实时跟随',
+    paused: '已暂停滚动',
+    visible: '{count} 条可见',
+    localOnly: '日志仅保存在本机',
   },
 
   faq: {

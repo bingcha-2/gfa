@@ -9,15 +9,24 @@ const levelColors: Record<string, string> = {
   info: 'text-[var(--text-secondary)]',
 }
 
+// 终端视图:短标签 + 语义色,跟随主题令牌(浅/深两套都 AA 安全)。
+const terminalLevels: Record<ParsedLog['level'], { label: string; color: string }> = {
+  error: { label: 'ERROR', color: 'text-[var(--danger)]' },
+  warn: { label: 'WARN', color: 'text-[var(--warning-deep)]' },
+  success: { label: 'OK', color: 'text-[var(--success-strong)]' },
+  system: { label: 'SYS', color: 'text-[var(--primary-strong)]' },
+  info: { label: 'INFO', color: 'text-[var(--text-muted)]' },
+}
+
 export function LogLine({ log, terminal = false }: { log: ParsedLog; terminal?: boolean }) {
   if (terminal) {
-    const level = log.level === 'error' ? 'ERROR' : log.level === 'warn' ? 'WARN' : log.level === 'success' ? 'OK' : 'INFO'
+    const { label, color } = terminalLevels[log.level] ?? terminalLevels.info
     return (
-      <div className="grid grid-cols-[70px_92px_44px_1fr] px-3 text-[9px] leading-6 hover:bg-white/[.035]">
-        <span className="text-slate-600">{log.time || '--:--:--'}</span>
-        <span className="truncate text-slate-500">{log.tag || '[log]'}</span>
-        <span className={log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-amber-400' : 'text-emerald-400'}>{level}</span>
-        <span className="break-all text-slate-300">{log.message || log.raw}</span>
+      <div className="grid grid-cols-[74px_120px_50px_1fr] gap-2 px-3 text-[12px] leading-[1.7] hover:bg-[var(--bg-hover)]">
+        <span className="text-[var(--text-muted)]">{log.time || '--:--:--'}</span>
+        <span className="truncate text-[var(--text-muted)]">{log.tag || '[log]'}</span>
+        <span className={cn('font-semibold', color)}>{label}</span>
+        <span className="break-all text-[var(--text-primary)]">{log.message || log.raw}</span>
       </div>
     )
   }

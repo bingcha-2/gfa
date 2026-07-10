@@ -229,6 +229,13 @@ export const zhTW: DeepPartialDict = {
     clear: '清空',
     copy: '複製',
     empty: '暫無日誌',
+    subtitle: '本地代理、接管、租約和額度事件',
+    pause: '暫停跟隨',
+    resume: '繼續跟隨',
+    following: '即時跟隨',
+    paused: '已暫停滾動',
+    visible: '{count} 條可見',
+    localOnly: '日誌僅保存在本機',
   },
 
   faq: {

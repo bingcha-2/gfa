@@ -246,6 +246,13 @@ export const en: DeepPartialDict = {
     clear: 'Clear',
     copy: 'Copy',
     empty: 'No logs yet',
+    subtitle: 'Local proxy, takeover, lease, and quota events',
+    pause: 'Pause',
+    resume: 'Resume',
+    following: 'Following',
+    paused: 'Paused',
+    visible: '{count} shown',
+    localOnly: 'Logs are stored on this device only',
   },
 
   faq: {
