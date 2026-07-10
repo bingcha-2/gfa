@@ -190,36 +190,55 @@ func applyHostBrowserPreferences(snap *hostProtectionSnapshot) error {
 	return writeHostPreferenceDocument(snap.BrowserPreferencesPath, root, perm)
 }
 
-func restoreHostBrowserPreferences(snap *hostProtectionSnapshot) error {
+// browserRestoreOutcome 概述还原 Claude 浏览器策略时实际做了什么,供还原日志逐项汇报,
+// 补齐旧版「已完整还原」只报时区、不报浏览器策略/文件去向的盲区。
+type browserRestoreOutcome struct {
+	Skipped     bool // 未接管过浏览器策略(无该文件),无需还原
+	WebRTC      bool // 已还原 WebRTC ip_handling_policy
+	Geolocation bool // 已还原地理位置 content-setting
+	FileRemoved bool // 接管前本就无此文件 → 删除整份 Preferences
+}
+
+func restoreHostBrowserPreferences(snap *hostProtectionSnapshot) (browserRestoreOutcome, error) {
 	if !snap.BrowserPreferencesChanged || snap.BrowserPreferencesPath == "" {
-		return nil
+		return browserRestoreOutcome{Skipped: true}, nil
 	}
 	root, exists, perm, err := readHostPreferenceDocument(snap.BrowserPreferencesPath)
 	if err != nil {
-		return err
+		return browserRestoreOutcome{}, err
 	}
 	if !exists && !snap.BrowserPreferencesHadFile {
-		return nil
+		return browserRestoreOutcome{Skipped: true}, nil
 	}
 	if snap.BrowserPreferencesPerm != 0 {
 		perm = os.FileMode(snap.BrowserPreferencesPerm)
 	}
+	out := browserRestoreOutcome{}
 	if snap.BlockWebRTC {
 		if err := restoreHostPreference(root, hostWebRTCPreferencePath, snap.WebRTCPreference); err != nil {
-			return err
+			return browserRestoreOutcome{}, err
 		}
+		out.WebRTC = true
 	}
 	if snap.BlockGeolocation {
 		if err := restoreHostPreference(root, hostGeolocationPreferencePath, snap.GeolocationPreference); err != nil {
-			return err
+			return browserRestoreOutcome{}, err
 		}
+		out.Geolocation = true
 	}
 	if len(root) == 0 && !snap.BrowserPreferencesHadFile {
 		err := os.Remove(snap.BrowserPreferencesPath)
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return out, nil
 		}
-		return err
+		if err != nil {
+			return browserRestoreOutcome{}, err
+		}
+		out.FileRemoved = true
+		return out, nil
 	}
-	return writeHostPreferenceDocument(snap.BrowserPreferencesPath, root, perm)
+	if err := writeHostPreferenceDocument(snap.BrowserPreferencesPath, root, perm); err != nil {
+		return browserRestoreOutcome{}, err
+	}
+	return out, nil
 }

@@ -29,42 +29,46 @@ type HostProtectionStatus struct {
 	Platform              string   `json:"platform"`
 	RequiresAuthorization bool     `json:"requiresAuthorization"`
 	OriginalTimezone      string   `json:"originalTimezone"`
+	CurrentSystemTimezone string   `json:"currentSystemTimezone,omitempty"`
 	ExitTimezone          string   `json:"exitTimezone"`
 	AppliedTimezone       string   `json:"appliedTimezone"`
 	TimezoneStrategy      string   `json:"timezoneStrategy"`
+	TimezoneMatch         string   `json:"timezoneMatch,omitempty"` // aligned | collapsed | drift | na
 	BlockWebRTC           bool     `json:"blockWebRTC"`
 	BlockGeolocation      bool     `json:"blockGeolocation"`
 	DNSCleared            bool     `json:"dnsCleared"`
+	ProtectedBrowsers     string   `json:"protectedBrowsers,omitempty"` // 机器级真实浏览器防护覆盖,如 "chrome×2 edge×1"
 	Targets               []string `json:"targets"`
 	LastError             string   `json:"lastError,omitempty"`
 }
 
 type hostProtectionSnapshot struct {
-	Version                   int                  `json:"version"`
-	State                     string               `json:"state"` // applying | active | restoring
-	OwnerPID                  int                  `json:"ownerPid"`
-	CreatedAt                 string               `json:"createdAt"`
-	OriginalSystemTimezone    string               `json:"originalSystemTimezone"`
-	OriginalDisplayTimezone   string               `json:"originalDisplayTimezone"`
-	ExitTimezone              string               `json:"exitTimezone"`
-	AppliedSystemTimezone     string               `json:"appliedSystemTimezone"`
-	AppliedTimezone           string               `json:"appliedTimezone"`
-	TimezoneStrategy          string               `json:"timezoneStrategy"`
-	TimezoneChanged           bool                 `json:"timezoneChanged"`
-	BlockWebRTC               bool                 `json:"blockWebRTC"`
-	BlockGeolocation          bool                 `json:"blockGeolocation"`
-	DNSCleared                bool                 `json:"dnsCleared"`
-	Targets                   []string             `json:"targets"`
-	LastError                 string               `json:"lastError,omitempty"`
-	BrowserPreferencesPath    string               `json:"browserPreferencesPath,omitempty"`
-	BrowserPreferencesHadFile bool                 `json:"browserPreferencesHadFile"`
-	BrowserPreferencesPerm    uint32               `json:"browserPreferencesPerm,omitempty"`
-	BrowserPreferencesChanged bool                 `json:"browserPreferencesChanged"`
-	WebRTCPreference          hostPreferenceBackup `json:"webRTCPreference"`
-	GeolocationPreference     hostPreferenceBackup `json:"geolocationPreference"`
+	Version                   int                    `json:"version"`
+	State                     string                 `json:"state"` // applying | active | restoring
+	OwnerPID                  int                    `json:"ownerPid"`
+	CreatedAt                 string                 `json:"createdAt"`
+	OriginalSystemTimezone    string                 `json:"originalSystemTimezone"`
+	OriginalDisplayTimezone   string                 `json:"originalDisplayTimezone"`
+	ExitTimezone              string                 `json:"exitTimezone"`
+	AppliedSystemTimezone     string                 `json:"appliedSystemTimezone"`
+	AppliedTimezone           string                 `json:"appliedTimezone"`
+	TimezoneStrategy          string                 `json:"timezoneStrategy"`
+	TimezoneChanged           bool                   `json:"timezoneChanged"`
+	BlockWebRTC               bool                   `json:"blockWebRTC"`
+	BlockGeolocation          bool                   `json:"blockGeolocation"`
+	DNSCleared                bool                   `json:"dnsCleared"`
+	Targets                   []string               `json:"targets"`
+	LastError                 string                 `json:"lastError,omitempty"`
+	BrowserPreferencesPath    string                 `json:"browserPreferencesPath,omitempty"`
+	BrowserPreferencesHadFile bool                   `json:"browserPreferencesHadFile"`
+	BrowserPreferencesPerm    uint32                 `json:"browserPreferencesPerm,omitempty"`
+	BrowserPreferencesChanged bool                   `json:"browserPreferencesChanged"`
+	WebRTCPreference          hostPreferenceBackup   `json:"webRTCPreference"`
+	GeolocationPreference     hostPreferenceBackup   `json:"geolocationPreference"`
+	BrowserProfiles           []browserProfileBackup `json:"browserProfiles,omitempty"` // 机器级真实浏览器防封的逐 profile 备份
 }
 
-const hostProtectionSnapshotVersion = 1
+const hostProtectionSnapshotVersion = 2 // v2: 新增 BrowserProfiles(机器级真实浏览器防封)
 
 var hostProtectionMu sync.Mutex
 
@@ -173,24 +177,16 @@ func containsHostTarget(targets []string, wanted string) bool {
 	return false
 }
 
-// probeHostProtectionTimezone 走 Anthropic 当前静态出口探测 IANA 时区。正式应用时若包含
-// Desktop，优先复用白号会话的精确出口；否则使用 Anthropic API 账号出口。
-func probeHostProtectionTimezone(targets []string, prepareDesktopLease bool) (string, error) {
+// probeHostProtectionTimezone 走 Anthropic API 账号的当前静态出口探测 IANA 时区。
+func probeHostProtectionTimezone() (string, error) {
 	if appActionsSuppressed() {
 		return "Asia/Singapore", nil
 	}
-	proxyURL := ""
-	if prepareDesktopLease && containsHostTarget(targets, "claude_desktop") {
-		GetMitmManager().LeaseWhiteSession()
-		proxyURL = GetClaudeSessionLeaser().CurrentProxyURL()
+	eg, err := egressInfoForTakeover("anthropic", LoadConfig())
+	if err != nil {
+		return "", fmt.Errorf("获取 Anthropic 出口失败: %w", err)
 	}
-	if strings.TrimSpace(proxyURL) == "" {
-		eg, err := egressInfoForTakeover("anthropic", LoadConfig())
-		if err != nil {
-			return "", fmt.Errorf("获取 Anthropic 出口失败: %w", err)
-		}
-		proxyURL = eg.ProxyURL
-	}
+	proxyURL := eg.ProxyURL
 	if strings.TrimSpace(proxyURL) == "" {
 		return "", errors.New("Anthropic 出口未提供代理，无法安全解析时区")
 	}
@@ -204,8 +200,97 @@ func probeHostProtectionTimezone(targets []string, prepareDesktopLease bool) (st
 	return tz, nil
 }
 
+// timezoneMatchState 比较「实读的系统时区」与「接管目标时区」的一致性,给接管态一个可核实的结论:
+//
+//	aligned   完全一致;
+//	collapsed 因 Windows 时区档塌缩,系统只能精确到 Windows 档、与目标落在同一档(系统档粗、进程 TZ 档细,非异常);
+//	drift     真实漂移(未生效 / 静默失败 / 被外部改动);
+//	na        不适用(未改时区或读数缺失)。
+func timezoneMatchState(applied, current string) string {
+	applied = strings.TrimSpace(applied)
+	current = strings.TrimSpace(current)
+	if applied == "" || current == "" {
+		return "na"
+	}
+	if current == applied {
+		return "aligned"
+	}
+	if idA, okA := ianaToWindowsTimezoneID(applied); okA {
+		if idC, okC := ianaToWindowsTimezoneID(current); okC && idA == idC {
+			return "collapsed"
+		}
+	}
+	return "drift"
+}
+
+// restoreTimezoneState 描述还原时对系统时区做了什么:接管时若没改时区(unchanged 策略),还原也不动。
+func restoreTimezoneState(snap *hostProtectionSnapshot) string {
+	if !snap.TimezoneChanged {
+		return fmt.Sprintf("%s(未改)", snap.OriginalDisplayTimezone)
+	}
+	return snap.OriginalDisplayTimezone
+}
+
+// applyBrowserState 描述接管时浏览器策略的实际落地(而非仅配置意图):
+// 关=未要求;已写入=写进了 Claude Desktop 的 Preferences;不适用=要求开启但无 Desktop 可写。
+func applyBrowserState(intended, applied bool) string {
+	switch {
+	case !intended:
+		return "关"
+	case applied:
+		return "已写入"
+	default:
+		return "不适用"
+	}
+}
+
+// overallProtectionState 汇总一项防护(WebRTC/地理位置)在所有面上的实际落地:
+// 关=未要求;已写入=至少写进了一个真实浏览器 profile 或 Claude Desktop;无可写目标=要求但机器上没有可写的面。
+func overallProtectionState(intended bool, browsersApplied int, desktopApplied bool) string {
+	switch {
+	case !intended:
+		return "关"
+	case browsersApplied > 0 || desktopApplied:
+		return "已写入"
+	default:
+		return "无可写目标"
+	}
+}
+
+// appliedSystemNote 仅当系统实设值与目标 IANA 不同时(Windows 档塌缩)追加注记,否则空串。
+func appliedSystemNote(intended, appliedSystem string) string {
+	appliedSystem = strings.TrimSpace(appliedSystem)
+	if appliedSystem == "" || appliedSystem == strings.TrimSpace(intended) {
+		return ""
+	}
+	return fmt.Sprintf("(系统档=%s)", appliedSystem)
+}
+
+// browserRestoreSummary 把浏览器策略还原结果拼成日志片段,逐项标明 WebRTC / 地理位置 / 文件去向。
+func browserRestoreSummary(out browserRestoreOutcome, snap *hostProtectionSnapshot) string {
+	if out.Skipped {
+		return "browser-prefs=未接管"
+	}
+	item := func(intended, done bool) string {
+		switch {
+		case !intended:
+			return "未改"
+		case done:
+			return "已还原"
+		default:
+			return "跳过"
+		}
+	}
+	fileState := "已回写"
+	if out.FileRemoved {
+		fileState = "已删空文件"
+	}
+	return fmt.Sprintf("webrtc=%s geolocation=%s prefs-file=%s",
+		item(snap.BlockWebRTC, out.WebRTC), item(snap.BlockGeolocation, out.Geolocation), fileState)
+}
+
 func hostStatusFromSnapshot(snap *hostProtectionSnapshot, mode string) HostProtectionStatus {
-	return HostProtectionStatus{
+	status := HostProtectionStatus{
 		Mode:                  mode,
 		Platform:              hostProtectionPlatform(),
 		RequiresAuthorization: hostProtectionRequiresAuthorization(snap.TimezoneChanged),
@@ -219,6 +304,18 @@ func hostStatusFromSnapshot(snap *hostProtectionSnapshot, mode string) HostProte
 		Targets:               append([]string(nil), snap.Targets...),
 		LastError:             snap.LastError,
 	}
+	if len(snap.BrowserProfiles) > 0 {
+		status.ProtectedBrowsers = browserProfilesSummary(snap.BrowserProfiles)
+	}
+	// 实读一次「系统现在到底是几」,让接管态能核实 A 层(系统时区)真生效,并暴露 Windows 档塌缩 / 漂移。
+	// 只读操作,失败不阻塞状态返回。
+	if _, current, err := hostProtectionReadTimezone(); err == nil {
+		status.CurrentSystemTimezone = current
+		if snap.TimezoneChanged && snap.TimezoneStrategy != "unchanged" {
+			status.TimezoneMatch = timezoneMatchState(snap.AppliedTimezone, current)
+		}
+	}
+	return status
 }
 
 func getHostProtectionStatusLocked() (HostProtectionStatus, error) {
@@ -242,6 +339,7 @@ func getHostProtectionStatusLocked() (HostProtectionStatus, error) {
 		Platform:              hostProtectionPlatform(),
 		RequiresAuthorization: runtime.GOOS == "darwin",
 		OriginalTimezone:      display,
+		CurrentSystemTimezone: display,
 		TimezoneStrategy:      "follow",
 		BlockWebRTC:           true,
 		BlockGeolocation:      true,
@@ -276,7 +374,7 @@ func (a *App) ProbeHostProtectionStatus(targets []string) (HostProtectionStatus,
 	if err != nil {
 		return HostProtectionStatus{}, fmt.Errorf("读取本机时区失败: %w", err)
 	}
-	exitTZ, err := probeHostProtectionTimezone(normalized, false)
+	exitTZ, err := probeHostProtectionTimezone()
 	if err != nil {
 		return HostProtectionStatus{}, err
 	}
@@ -285,6 +383,7 @@ func (a *App) ProbeHostProtectionStatus(targets []string) (HostProtectionStatus,
 		Platform:              hostProtectionPlatform(),
 		RequiresAuthorization: runtime.GOOS == "darwin",
 		OriginalTimezone:      original,
+		CurrentSystemTimezone: original,
 		ExitTimezone:          exitTZ,
 		TimezoneStrategy:      "follow",
 		BlockWebRTC:           true,
@@ -319,13 +418,13 @@ func (a *App) ApplyHostProtection(input HostProtectionConfig) (HostProtectionSta
 
 	exitTZ := ""
 	if cfg.TimezoneStrategy == "follow" {
-		exitTZ, err = probeHostProtectionTimezone(cfg.Targets, true)
+		exitTZ, err = probeHostProtectionTimezone()
 		if err != nil {
 			return HostProtectionStatus{}, err
 		}
 	} else {
 		// 固定/不改不应因地理探测失败而中断；成功时仍记录，供界面做一致性提示。
-		exitTZ, _ = probeHostProtectionTimezone(cfg.Targets, cfg.TimezoneStrategy == "fixed")
+		exitTZ, _ = probeHostProtectionTimezone()
 	}
 	appliedTZ := originalDisplay
 	if cfg.TimezoneStrategy == "follow" {
@@ -353,6 +452,10 @@ func (a *App) ApplyHostProtection(input HostProtectionConfig) (HostProtectionSta
 	if err := captureHostBrowserPreferences(snap); err != nil {
 		return HostProtectionStatus{}, fmt.Errorf("备份 Claude 浏览器防护设置失败: %w", err)
 	}
+	// 机器级真实浏览器防封:与接管目标解耦,发现并备份本机所有 Chromium 系 profile。
+	if err := captureHostChromiumProfiles(snap); err != nil {
+		return HostProtectionStatus{}, fmt.Errorf("备份真实浏览器防护设置失败: %w", err)
+	}
 	if err := writeHostProtectionSnapshot(snap); err != nil {
 		return HostProtectionStatus{}, fmt.Errorf("保存宿主防护备份失败: %w", err)
 	}
@@ -362,6 +465,10 @@ func (a *App) ApplyHostProtection(input HostProtectionConfig) (HostProtectionSta
 		hostProtectionStopDesktopForPreferences()
 		applyErr = applyHostBrowserPreferences(snap)
 	}
+	browsersApplied := 0
+	if applyErr == nil {
+		browsersApplied = applyHostChromiumProfiles(snap)
+	}
 	result := hostProtectionApplyResult{}
 	if applyErr == nil {
 		result, applyErr = hostProtectionApply(appliedTZ, timezoneChanged, true)
@@ -369,7 +476,8 @@ func (a *App) ApplyHostProtection(input HostProtectionConfig) (HostProtectionSta
 	if applyErr != nil {
 		snap.LastError = applyErr.Error()
 		_ = writeHostProtectionSnapshot(snap)
-		browserRestoreErr := restoreHostBrowserPreferences(snap)
+		restoreHostChromiumProfiles(snap)
+		_, browserRestoreErr := restoreHostBrowserPreferences(snap)
 		if restoreErr := hostProtectionRestore(originalSystem, timezoneChanged); restoreErr == nil && browserRestoreErr == nil {
 			_ = removeHostProtectionSnapshot()
 		} else {
@@ -386,8 +494,16 @@ func (a *App) ApplyHostProtection(input HostProtectionConfig) (HostProtectionSta
 		_ = hostProtectionRestore(originalSystem, timezoneChanged)
 		return hostStatusFromSnapshot(snap, "residue"), fmt.Errorf("确认宿主防护状态失败: %w", err)
 	}
-	Log("[host-protection] 已生效: timezone=%s strategy=%s webrtc=%v geolocation=%v dns=%v targets=%v",
-		appliedTZ, cfg.TimezoneStrategy, cfg.BlockWebRTC, cfg.BlockGeolocation, snap.DNSCleared, cfg.Targets)
+	// 逐项报「实际落地」而非「配置意图」:webrtc/geolocation 取决于是否真写了防护面(机器级真实浏览器
+	// 或 Claude Desktop 的 Preferences);browsers 列出机器级真实浏览器覆盖;timezone 附带系统实设值,
+	// Windows 上会暴露 IANA→Windows 档的塌缩。
+	desktopApplied := snap.BrowserPreferencesChanged
+	Log("[host-protection] 已生效: timezone=%s%s strategy=%s webrtc=%s geolocation=%s browsers=[%s] desktop=%s dns=%v targets=%v",
+		appliedTZ, appliedSystemNote(appliedTZ, snap.AppliedSystemTimezone), cfg.TimezoneStrategy,
+		overallProtectionState(cfg.BlockWebRTC, browsersApplied, desktopApplied),
+		overallProtectionState(cfg.BlockGeolocation, browsersApplied, desktopApplied),
+		browserProfilesSummary(snap.BrowserProfiles), applyBrowserState(cfg.BlockWebRTC || cfg.BlockGeolocation, desktopApplied),
+		snap.DNSCleared, cfg.Targets)
 	return hostStatusFromSnapshot(snap, "active"), nil
 }
 
@@ -398,7 +514,8 @@ func restoreHostProtectionLocked(snap *hostProtectionSnapshot) (HostProtectionSt
 	if snap.BrowserPreferencesChanged {
 		hostProtectionStopDesktopForPreferences()
 	}
-	browserErr := restoreHostBrowserPreferences(snap)
+	browsersRestored := restoreHostChromiumProfiles(snap)
+	browserOutcome, browserErr := restoreHostBrowserPreferences(snap)
 	systemErr := hostProtectionRestore(snap.OriginalSystemTimezone, snap.TimezoneChanged)
 	if browserErr != nil || systemErr != nil {
 		snap.LastError = fmt.Sprintf("浏览器设置还原=%v；系统时区还原=%v", browserErr, systemErr)
@@ -409,7 +526,11 @@ func restoreHostProtectionLocked(snap *hostProtectionSnapshot) (HostProtectionSt
 		snap.LastError = err.Error()
 		return hostStatusFromSnapshot(snap, "residue"), fmt.Errorf("清理宿主防护备份失败: %w", err)
 	}
-	Log("[host-protection] 已完整还原: timezone=%s", snap.OriginalDisplayTimezone)
+	// 逐项汇报清理结果,和接管时的「已生效: ... webrtc=... browsers=... dns=...」对称,
+	// 让日志能核实真实浏览器/Claude Desktop/备份到底清干净没,而不是只报时区。
+	Log("[host-protection] 已完整还原: timezone=%s browsers=[%s](还原 %d/%d) %s 备份=已删除",
+		restoreTimezoneState(snap), browserProfilesSummary(snap.BrowserProfiles),
+		browsersRestored, len(snap.BrowserProfiles), browserRestoreSummary(browserOutcome, snap))
 	status := hostStatusFromSnapshot(snap, "restored")
 	status.AppliedTimezone = snap.OriginalDisplayTimezone
 	status.BlockWebRTC = false
@@ -464,11 +585,13 @@ func (a *App) ReleaseHostProtectionTarget(rawTarget string) (HostProtectionStatu
 	}
 	if target == "claude_desktop" && snap.BrowserPreferencesChanged {
 		hostProtectionStopDesktopForPreferences()
-		if err := restoreHostBrowserPreferences(snap); err != nil {
+		outcome, err := restoreHostBrowserPreferences(snap)
+		if err != nil {
 			snap.LastError = err.Error()
 			_ = writeHostProtectionSnapshot(snap)
 			return hostStatusFromSnapshot(snap, "residue"), err
 		}
+		Log("[host-protection] 已还原 Claude 浏览器策略(desktop 停止): %s", browserRestoreSummary(outcome, snap))
 		snap.BrowserPreferencesChanged = false
 		snap.BrowserPreferencesPath = ""
 	}

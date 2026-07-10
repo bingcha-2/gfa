@@ -22,6 +22,11 @@ func hostProtectionStopDesktopForPreferences() {
 	}
 }
 
+// killProcessByName 结束指定进程(浏览器防封改 prefs 前先关浏览器)。调用方已过 appActionsSuppressed。
+func killProcessByName(name string) {
+	_ = hideCmd("taskkill", "/F", "/IM", name).Run()
+}
+
 func hostProtectionReadTimezone() (string, string, error) {
 	out, err := hideCmd("tzutil", "/g").CombinedOutput()
 	if err != nil {

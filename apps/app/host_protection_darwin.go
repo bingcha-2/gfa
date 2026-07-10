@@ -23,6 +23,12 @@ func hostProtectionStopDesktopForPreferences() {
 	}
 }
 
+// killProcessByName 结束指定进程(浏览器防封改 prefs 前先关浏览器)。调用方已过 appActionsSuppressed。
+// pkill -x 精确匹配进程名,避免误伤含子串的其它进程。
+func killProcessByName(name string) {
+	_ = exec.Command("/usr/bin/pkill", "-x", name).Run()
+}
+
 func hostProtectionReadTimezone() (string, string, error) {
 	if out, err := exec.Command("/usr/bin/readlink", "/etc/localtime").Output(); err == nil {
 		path := strings.TrimSpace(string(out))

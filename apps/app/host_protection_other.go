@@ -1,9 +1,10 @@
-//go:build !darwin && !windows
+//go:build !darwin && !windows && !linux
 
 package main
 
 import (
 	"errors"
+	"os/exec"
 	"time"
 )
 
@@ -17,6 +18,11 @@ func hostProtectionPlatform() string { return "unsupported" }
 func hostProtectionRequiresAuthorization(bool) bool { return false }
 
 func hostProtectionStopDesktopForPreferences() {}
+
+// killProcessByName 结束指定进程(浏览器防封改 prefs 前先关浏览器)。调用方已过 appActionsSuppressed。
+func killProcessByName(name string) {
+	_ = exec.Command("pkill", "-x", name).Run()
+}
 
 func hostProtectionReadTimezone() (string, string, error) {
 	tz := time.Now().Location().String()
