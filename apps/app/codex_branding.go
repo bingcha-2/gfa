@@ -86,5 +86,11 @@ func codexBrandFromAppPath(p string) string {
 	if i < 0 {
 		return ""
 	}
-	return filepath.Base(p[:i]) // .../<Brand> → <Brand>
+	base := filepath.Base(p[:i]) // .../<Brand> → <Brand>
+	for _, candidate := range codexBrandNames() {
+		if strings.EqualFold(base, candidate) {
+			return candidate
+		}
+	}
+	return base
 }

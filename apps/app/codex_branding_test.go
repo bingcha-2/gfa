@@ -14,6 +14,7 @@ func TestCodexBrandFromAppPath(t *testing.T) {
 	}{
 		{"/Applications/Codex.app/Contents/Resources/codex", "Codex"},
 		{"/Applications/ChatGPT.app/Contents/Resources/codex", "ChatGPT"},
+		{"/Applications/ChatGpt.app/Contents/Resources/codex", "ChatGPT"},
 		{"/Applications/ChatGPT.app", "ChatGPT"},
 		{filepath.Join("/Users", "u", "Applications", "Codex.app", "Contents", "MacOS", "Codex"), "Codex"},
 		{"/opt/Codex/codex", ""}, // 非 .app(linux)
