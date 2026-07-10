@@ -1026,7 +1026,7 @@ describe("周窗口 + 自动补全", () => {
     expect(st?.perCard).toEqual({});
   });
 
-  it("周快照的 resetAt 已结束在本地窗口起点之前时仍拒绝", () => {
+  it("周快照的 resetAt 已过期时即使晚于本地窗口起点也拒绝", () => {
     const now = Date.UTC(2026, 6, 10, 12, 16, 0);
     const localStart = Date.UTC(2026, 6, 10, 2, 22, 20);
     const t = track(makeTracker({
@@ -1038,7 +1038,9 @@ describe("周窗口 + 自动补全", () => {
 
     t.applyWeeklyAccountQuotaSnapshot(29, BK, 1, localStart + WEEKLY_MS);
     use(t, 29, "A313", 100);
-    t.applyWeeklyAccountQuotaSnapshot(29, BK, 0.2, localStart - 1);
+    // 乱序快照的 resetAt 已经过去,但仍晚于本地 windowStart。
+    // 旧 guard(resetAt <= windowStart + drift)会错误接纳并造成一次血条抖动。
+    t.applyWeeklyAccountQuotaSnapshot(29, BK, 0.2, now - 60_000);
 
     const st = t.getBucketStateForTesting(29, weeklyBucketKey(BK));
     expect(st?.windowStart).toBe(localStart);
