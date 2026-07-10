@@ -44,8 +44,13 @@ func (a *App) LocalSaveCodexQuickConfig(modelContextWindow, autoCompactTokenLimi
 }
 
 // LocalDetectCodexAppPath 自动探测本机 Codex 启动路径(为空表示未检测到)。
+//
+// 走完整探测 detectCodexAppPath(GUI 优先,探不到再回落纯 CLI:含新版
+// %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe 版本化布局与 PATH 兜底)。
+// 早先只调 detectCodexGUIPath 会漏掉纯 CLI 安装 —— 桌面端未装时,设置里的「检测」
+// 按钮对 bin\<hash>\codex.exe 这类路径永远返回空,尽管接管中心用完整探测本就能识别。
 func (a *App) LocalDetectCodexAppPath() string {
-	return detectCodexGUIPath()
+	return detectCodexAppPath()
 }
 
 // LocalBrowseForPath 弹原生文件选择框,返回所选路径(取消则空串)。
