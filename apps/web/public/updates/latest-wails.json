@@ -7,7 +7,7 @@
   "installerSha256": "76161F401D91F96C0068A68C816DB687599117EBBAB3E78F119FC4B952F389F3",
   "installerSize": 20979734,
   "changelog": "优化 Codex 安装路径自动检测，修复部分环境无法识别路径的问题",
-  "minVersion": "13.3.1",
+  "minVersion": "13.3.0",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.1/BingchaAI-13.3.1-arm64.dmg",
