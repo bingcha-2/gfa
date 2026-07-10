@@ -35,6 +35,7 @@ function formatReset(ms: number): string {
  *   ② 我的总剩余(myTotalRemain = min(名义份额 X/Y × myFraction, 账号)):健康色上层。
  * 用【没超卖的名义份额 X/Y】放大显示「我那一席」,遮掉真实被切薄的 w/D;再按账号封顶,
  * 故上层恒 ≤ 底层(我的总剩余 ≤ 账号),永不穿帮。健康色由「我那份剩比例」myFraction 决定。
+ * 独享仍只画一层,但同样受账号余量封顶;账号层本身不外显。
  */
 export function NestedShareBar({ label, myFraction, accountFraction, shareSeats, shareCapacity, exclusive, resetMs, displayKey }: NestedShareBarProps) {
   const displayStateRef = useRef<Record<string, number>>({})

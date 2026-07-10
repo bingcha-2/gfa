@@ -471,7 +471,12 @@ export class FairShareTracker {
         }
       }
       if (tracker.primed && newStart < tracker.windowStart - RESET_DRIFT_MS) {
-        return;
+        // 只拒绝「整个上游窗口已经结束在本地账本起点之前」的真旧快照。
+        // 若 resetAt 仍晚于本地 windowStart,说明两者覆盖同一当前窗口、只是本地冷启动
+        // 把起点锚晚了(线上 Codex 周窗口曾偏晚约 49 分钟)。此时回调到上游真起点并
+        // 继续下方正常归并,让已积累的 perCard 用量参与 Δ账号 分账,不能永远卡 T=0。
+        if (resetAtMs <= tracker.windowStart + RESET_DRIFT_MS) return;
+        tracker.windowStart = newStart;
       }
     }
     // 3) fraction 未知(-1)→ 不归并,继续累积 u_i(等有效 fraction 回来一次性归并)。

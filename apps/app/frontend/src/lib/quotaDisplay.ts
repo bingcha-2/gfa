@@ -157,6 +157,7 @@ export type NestedBarDisplay = {
  * - myFraction 已含服务端等比例缩放,用了/账号低都会让它降 → 血条等比例降。
  * - 封顶保证「我的总剩余 ≤ 账号」永不穿帮(名义 X/Y 比真实大,独占账号剩余时会顶破,故封顶)。
  * - 账号本身真实显示,不缩放(它是真池子;放大会 >100%)。
+ * - 独享保持单层,但也取 min(myFraction,账号),避免超卖母号见底时仍显满血。
  */
 export function nestedBarDisplay(input: {
   myFraction: number
@@ -167,13 +168,19 @@ export function nestedBarDisplay(input: {
 }): NestedBarDisplay {
   const exclusive = input.exclusive === true
   const myKnown = input.myFraction >= 0
+  const acctKnown = input.accountFraction >= 0
 
-  // 独享单层:直接 = myFraction,不按名义份额缩放、不被 accountFraction 封顶、不暴露账号层。
+  // 独享单层:保留「尊贵·独享」单条展示,但不能超过母号真实余量。
+  // accountRemain 仍设未知以隐藏第二层;条宽与健康色都用同一个封顶值,避免低余额仍显绿色。
   if (exclusive) {
+    const own = myKnown ? clamp01(input.myFraction) : -1
+    const capped = myKnown && acctKnown
+      ? Math.min(own, clamp01(input.accountFraction))
+      : own
     return {
-      myTotalRemain: myKnown ? clamp01(input.myFraction) : -1,
+      myTotalRemain: capped,
       accountRemain: -1,
-      seatFill: input.myFraction,
+      seatFill: capped,
       nominalShare: 1,
       exclusive: true,
     }
@@ -183,7 +190,6 @@ export function nestedBarDisplay(input: {
   const nominalShare = input.shareCapacity > 0
     ? clamp01(input.shareSeats / input.shareCapacity)
     : 1
-  const acctKnown = input.accountFraction >= 0
   const raw = myKnown ? clamp01(nominalShare * input.myFraction) : -1
   const myTotalRemain = myKnown && acctKnown ? Math.min(raw, input.accountFraction) : raw
   return {

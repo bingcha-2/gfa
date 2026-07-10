@@ -999,6 +999,54 @@ describe("周窗口 + 自动补全", () => {
     expect(st?.attributed.c1).toBeCloseTo(0.1, 6);
   });
 
+  it("周窗口本地起点偏晚但上游窗口仍覆盖当前时,回调起点并归因累计用量", () => {
+    const now = Date.UTC(2026, 6, 10, 12, 16, 0);
+    const localStart = Date.UTC(2026, 6, 10, 2, 22, 20);
+    const upstreamStart = Date.UTC(2026, 6, 10, 1, 33, 47);
+    const t = track(makeTracker({
+      now: () => now,
+      bound: { 29: [{ cardId: "A313", weight: 8 }, { cardId: "other", weight: 2 }] },
+      seats: { 29: 8 },
+      trackWeekly: true,
+    }));
+
+    // 先被错误的 resetAt 锚到 02:22:20Z,lastFraction=1。
+    t.applyWeeklyAccountQuotaSnapshot(29, BK, 1, localStart + WEEKLY_MS);
+    use(t, 29, "A313", 80);
+    use(t, 29, "other", 20);
+
+    // 最新真实窗口从 01:33:47Z 开始,虽早于本地起点,但 resetAt 仍在未来并覆盖当前时刻。
+    t.applyWeeklyAccountQuotaSnapshot(29, BK, 0.62, upstreamStart + WEEKLY_MS);
+
+    const st = t.getBucketStateForTesting(29, weeklyBucketKey(BK));
+    expect(st?.windowStart).toBe(upstreamStart);
+    expect(st?.lastFraction).toBeCloseTo(0.62, 6);
+    expect(st?.attributed.A313).toBeCloseTo(0.304, 6);
+    expect(st?.attributed.other).toBeCloseTo(0.076, 6);
+    expect(st?.perCard).toEqual({});
+  });
+
+  it("周快照的 resetAt 已结束在本地窗口起点之前时仍拒绝", () => {
+    const now = Date.UTC(2026, 6, 10, 12, 16, 0);
+    const localStart = Date.UTC(2026, 6, 10, 2, 22, 20);
+    const t = track(makeTracker({
+      now: () => now,
+      bound: { 29: [{ cardId: "A313", weight: 8 }] },
+      seats: { 29: 8 },
+      trackWeekly: true,
+    }));
+
+    t.applyWeeklyAccountQuotaSnapshot(29, BK, 1, localStart + WEEKLY_MS);
+    use(t, 29, "A313", 100);
+    t.applyWeeklyAccountQuotaSnapshot(29, BK, 0.2, localStart - 1);
+
+    const st = t.getBucketStateForTesting(29, weeklyBucketKey(BK));
+    expect(st?.windowStart).toBe(localStart);
+    expect(st?.lastFraction).toBe(1);
+    expect(st?.attributed.A313).toBeUndefined();
+    expect(st?.perCard.A313).toBeGreaterThan(0);
+  });
+
   it("★#63 周超 5h 不超 → 被周拦", () => {
     const t = track(makeTracker({ now: () => T, bound: { 1: [{ cardId: "c1", weight: 1 }] }, seats: { 1: 1 }, trackWeekly: true }));
     t.applyAccountQuotaSnapshot(1, "anthropic-claude", 1.0);
