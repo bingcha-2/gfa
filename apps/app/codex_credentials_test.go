@@ -241,6 +241,41 @@ func TestCodexHasExistingLogin(t *testing.T) {
 	}
 }
 
+// 过期的真登录残留必须判「未登录」：否则接管时因"已登录"跳过伪凭证注入，GUI 启动拿这份废
+// token 去真 auth.openai.com 刷新→失败→退回登录页(接管后"莫名要登录"主因之一)。
+func TestCodexHasExistingLogin_ExpiredAccessToken(t *testing.T) {
+	dir := isolateCodexHome(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// exp 已过 → 未登录。
+	writeCodexAuthAccessToken(t, fakeCodexJWT(map[string]interface{}{"exp": time.Now().Add(-time.Hour).Unix()}))
+	if codexHasExistingLogin() {
+		t.Fatalf("access_token 已过期,应判未登录")
+	}
+	// exp 在未来 → 已登录。
+	writeCodexAuthAccessToken(t, fakeCodexJWT(map[string]interface{}{"exp": time.Now().Add(48 * time.Hour).Unix()}))
+	if !codexHasExistingLogin() {
+		t.Fatalf("access_token 未过期,应判已登录")
+	}
+	// 不透明(非 JWT)token 解不出 exp → 保守判已登录,不动用户真凭证,交给 codex 自身刷新。
+	writeCodexAuthAccessToken(t, "opaque-non-jwt-token")
+	if !codexHasExistingLogin() {
+		t.Fatalf("opaque token 解不出 exp 时应保守判已登录")
+	}
+}
+
+func writeCodexAuthAccessToken(t *testing.T, accessToken string) {
+	t.Helper()
+	data, _ := json.MarshalIndent(map[string]interface{}{
+		"auth_mode": "chatgpt",
+		"tokens":    map[string]interface{}{"access_token": accessToken},
+	}, "", "  ")
+	if err := os.WriteFile(codexAuthPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // 防回归：备份文件名固定在 CODEX_HOME 目录下，且不与 model_provider 备份(.bcai-codex-backup.json)同名。
 func TestFakeCodexAuth_BackupPathDistinct(t *testing.T) {
 	dir := isolateCodexHome(t)

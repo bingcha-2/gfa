@@ -45,6 +45,17 @@ func codexHomeDir() string {
 }
 
 func codexConfigPath() string { return filepath.Join(codexHomeDir(), "config.toml") }
+
+// codexConfiguredModel 读 ~/.codex/config.toml 顶层 model —— 用户在 GUI/CLI 选定的模型。
+// 客户端漏发 model 时据此回落(而非硬编码 gpt-5-codex),保证归属/计费记到真实选择。无则空。
+func codexConfiguredModel() string {
+	m, _, err := loadCodexConfig()
+	if err != nil {
+		return ""
+	}
+	s, _ := m["model"].(string)
+	return strings.TrimSpace(s)
+}
 func codexBackupPath() string { return filepath.Join(codexHomeDir(), ".bcai-codex-backup.json") }
 
 // codexProxyBaseURL 返回写入 provider base_url 的本地代理端点(/v1, OpenAI 兼容)。

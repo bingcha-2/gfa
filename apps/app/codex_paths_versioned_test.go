@@ -127,15 +127,23 @@ func TestCodexWindowsCLICandidatesIncludesPackageManagerShims(t *testing.T) {
 	localAppData := filepath.Join("C:", "Users", "u", "AppData", "Local")
 	appData := filepath.Join("C:", "Users", "u", "AppData", "Roaming")
 	userProfile := filepath.Join("C:", "Users", "u")
+	programData := filepath.Join("C:", "ProgramData")
 
-	got := codexWindowsCLICandidates(localAppData, appData, userProfile)
+	got := codexWindowsCLICandidates(localAppData, appData, userProfile, programData)
 	want := []string{
 		filepath.Join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
 		filepath.Join(localAppData, "OpenAI", "Codex", "bin", "codex.exe"),
+		// winget:官方安装器把 shim 放到 %LOCALAPPDATA%\Microsoft\WinGet\Links(常年不进已运行进程的 PATH)。
+		filepath.Join(localAppData, "Microsoft", "WinGet", "Links", "codex.exe"),
 		filepath.Join(appData, "npm", "codex.cmd"),
 		filepath.Join(appData, "pnpm", "codex.cmd"),
 		filepath.Join(userProfile, ".bun", "bin", "codex.exe"),
 		filepath.Join(userProfile, ".bun", "bin", "codex.cmd"),
+		// scoop:%USERPROFILE%\scoop\shims\codex.{exe,cmd}。
+		filepath.Join(userProfile, "scoop", "shims", "codex.exe"),
+		filepath.Join(userProfile, "scoop", "shims", "codex.cmd"),
+		// choco:%ProgramData%\chocolatey\bin\codex.exe。
+		filepath.Join(programData, "chocolatey", "bin", "codex.exe"),
 	}
 	for _, w := range want {
 		found := false

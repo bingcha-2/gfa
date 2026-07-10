@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -118,7 +119,39 @@ func codexHasExistingLogin() bool {
 	if json.Unmarshal(data, &a) != nil {
 		return false
 	}
-	return a.Tokens.AccessToken != ""
+	if a.Tokens.AccessToken == "" {
+		return false
+	}
+	// 已过期的 access_token 视为「未登录」：否则接管时会因为"已登录"跳过伪凭证注入，GUI 启动
+	// 读到这份废 token → 拿(往往同样失效的)refresh_token 去真 auth.openai.com 刷新 → 刷新失败
+	// 就退回登录页(接管后"莫名要重新登录"的主因之一)。exp 解不出(opaque token / 非 JWT)时保守
+	// 判已登录，不动用户真凭证 —— 交给 codex 自己的刷新流程。
+	if exp, ok := codexJWTExp(a.Tokens.AccessToken); ok && exp <= time.Now().Unix() {
+		return false
+	}
+	return true
+}
+
+// codexJWTExp 解出 JWT 的 exp(秒)。只取中段 payload base64url 解 JSON、不验签，与 codex 的
+// decode_jwt_payload 同口径。非三段式 / 解不出 / 无 exp 时返回 ok=false。
+func codexJWTExp(token string) (int64, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		if payload, err = base64.RawStdEncoding.DecodeString(parts[1]); err != nil {
+			return 0, false
+		}
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp == 0 {
+		return 0, false
+	}
+	return int64(claims.Exp), true
 }
 
 func readCodexCredsBackup() *codexCredsBackup {

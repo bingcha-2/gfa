@@ -64,7 +64,7 @@ func TestCopyStreamingCodexResponseExtractsUsage(t *testing.T) {
 	}, "\n")
 
 	rec := httptest.NewRecorder()
-	in, out, cached, tot, err := copyStreamingCodexResponse(rec, strings.NewReader(sse))
+	_, in, out, cached, tot, err := copyStreamingCodexResponse(rec, strings.NewReader(sse))
 	if err != nil {
 		t.Fatalf("copy error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestCopyStreamingCodexResponseUsageSplitAcrossChunks(t *testing.T) {
 	// usage 事件被网络分包切断时也要能拼回来(行缓冲)。
 	full := "data: {\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":1,\"total_tokens\":10}}}\n"
 	rec := httptest.NewRecorder()
-	in, out, cached, tot, err := copyStreamingCodexResponse(rec, &chunkedReader{data: []byte(full), chunk: 7})
+	_, in, out, cached, tot, err := copyStreamingCodexResponse(rec, &chunkedReader{data: []byte(full), chunk: 7})
 	if err != nil {
 		t.Fatalf("copy error: %v", err)
 	}

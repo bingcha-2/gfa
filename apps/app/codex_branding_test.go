@@ -45,9 +45,14 @@ func TestCodexProcessPatternsUseBrand(t *testing.T) {
 	}
 }
 
-// codexBrandNames 至少覆盖旧名 Codex 与新名 ChatGPT。
+// codexBrandNames 至少覆盖旧名 Codex 与新名 ChatGPT,且**新名 ChatGPT 优先**:
+// OpenAI 已把桌面端并入 ChatGPT 品牌,存量机器新装的都是 ChatGPT,先探它命中率更高
+// (品牌顺序决定所有探测循环:GUI 候选、bundle 内 CLI、进程品牌反推)。
 func TestCodexBrandNamesCoverRename(t *testing.T) {
 	names := codexBrandNames()
+	if len(names) == 0 || names[0] != "ChatGPT" {
+		t.Errorf("codexBrandNames() 应以 ChatGPT 优先, got %v", names)
+	}
 	has := map[string]bool{}
 	for _, n := range names {
 		has[n] = true

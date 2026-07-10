@@ -287,7 +287,11 @@ func (codexTarget) IsInjected(proxyPort int) bool { return IsCodexInjected(proxy
 
 func (codexTarget) Inject(proxyPort int) (string, error) {
 	if detectCodexAppPath() == "" {
-		return "Codex: 未检测到应用", nil
+		// 自动探测全落空(常见于 winget/scoop/choco 装完没重启 App→PATH 陈旧,或桌面端装在非标准
+		// 目录)。给出可操作指引:命令行 `where codex` 查真实路径,再到 Codex 设置里手动选择——
+		// 手选路径会同时喂给 CLI 与 GUI 两条判定(见 detectCodexAppPath / codexWindowsGUIOverride)。
+		Log("[codex] 未识别到 Codex 安装(CLI+GUI 探测均失败);建议用户手动选择 codex 可执行文件")
+		return "Codex: 未检测到安装。若已安装,请在 Codex 设置里手动选择 codex 可执行文件(命令行 `where codex` / `which codex` 可查真实路径)", nil
 	}
 	if err := InjectCodexSettings(proxyPort); err != nil {
 		return "", err

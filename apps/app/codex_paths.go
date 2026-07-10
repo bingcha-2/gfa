@@ -10,13 +10,33 @@ import (
 	"time"
 )
 
-// detectCodexAppPath 检测任一 Codex 安装路径(CLI 或 GUI)。
+// detectCodexAppPath 检测任一 Codex 安装路径(GUI 桌面 App 或 CLI)。
 // 一个接管按钮管理全部 Codex:CLI 与 App 共享 ~/.codex/config.toml,写一次配置即可同时覆盖。
+//
+// 优先级:①用户手填的纯 CLI 路径(escape hatch,绝不被自动探测盖过)→ ②ChatGPT 桌面 App
+// (OpenAI 已把 Codex 桌面端并入 ChatGPT 品牌,优先识别 App)→ ③纯 CLI 安装兜底。
 func detectCodexAppPath() string {
-	if p := detectCodexCLIPath(); p != "" {
+	if p := codexConfiguredCLIOverride(); p != "" {
 		return p
 	}
-	return detectCodexGUIPath()
+	if p := detectCodexGUIPath(); p != "" {
+		return p
+	}
+	return detectCodexCLIPath()
+}
+
+// codexConfiguredCLIOverride 返回用户手填的「非 .app 的存在文件」路径(纯 CLI override)。
+// GUI 优先探测后,这类手填 CLI 路径若不前置就会被自动探到的桌面 App 盖过 —— 故在总入口最前面兜住。
+// .app / GUI .exe 的 override 交给 detectCodexGUIPath 自己校验(含 validatedCodexGUIBundle),不在此处理。
+func codexConfiguredCLIOverride() string {
+	cfg := LoadConfig()
+	if cfg.CodexAppPath == "" || strings.HasSuffix(cfg.CodexAppPath, ".app") {
+		return ""
+	}
+	if info, err := os.Stat(cfg.CodexAppPath); err == nil && !info.IsDir() {
+		return cfg.CodexAppPath
+	}
+	return ""
 }
 
 func detectCodexCLIPath() string {
@@ -49,7 +69,8 @@ func detectCodexCLIPath() string {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		appData := os.Getenv("APPDATA")
 		userProfile := os.Getenv("USERPROFILE")
-		for _, p := range codexWindowsCLICandidates(localAppData, appData, userProfile) {
+		programData := os.Getenv("ProgramData")
+		for _, p := range codexWindowsCLICandidates(localAppData, appData, userProfile, programData) {
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
 				return p
 			}
@@ -94,12 +115,15 @@ func detectCodexGUIPath() string {
 	cfg := LoadConfig()
 	if cfg.CodexAppPath != "" {
 		if runtime.GOOS == "darwin" && strings.HasSuffix(cfg.CodexAppPath, ".app") {
-			if _, err := os.Stat(cfg.CodexAppPath); err == nil {
-				return cfg.CodexAppPath
+			// 只认真实内含 Codex CLI 的 bundle,并归一大小写:override 可能是陈旧路径、
+			// 大小写错误(APFS 不敏感)或指向无关的独立 ChatGPT 聊天 app。
+			if b := validatedCodexGUIBundle(cfg.CodexAppPath); b != "" {
+				return b
 			}
-		} else if runtime.GOOS == "windows" && isCodexGUIExeName(filepath.Base(cfg.CodexAppPath)) {
-			if info, err := os.Stat(cfg.CodexAppPath); err == nil && !info.IsDir() {
-				return cfg.CodexAppPath
+		} else if runtime.GOOS == "windows" {
+			// 手动指定的桌面端 exe:改名 / 非标准名也认(只排除 CLI codex.exe),避免用户手选后仍被拒。
+			if p := codexWindowsGUIOverride(cfg.CodexAppPath); p != "" {
+				return p
 			}
 		}
 	}
@@ -120,13 +144,14 @@ func detectCodexGUIPath() string {
 	switch runtime.GOOS {
 	case "darwin":
 		// 权威锚点缺失时的兜底:桌面端可能已改名(Codex.app → ChatGPT.app),按候选品牌逐个探测。
+		// 每个候选都必须真实内含 Codex CLI 才采信 —— 否则改名后同名的独立 ChatGPT 聊天 app
+		// 会被误判成 Codex 桌面端(见文件头不变式)。
 		for _, name := range codexBrandNames() {
-			if p := spotlightFindApp(name + ".app"); p != "" {
-				return p
+			if b := validatedCodexGUIBundle(spotlightFindApp(name + ".app")); b != "" {
+				return b
 			}
-			app := filepath.Join("/Applications", name+".app")
-			if _, err := os.Stat(app); err == nil {
-				return app
+			if b := validatedCodexGUIBundle(filepath.Join("/Applications", name+".app")); b != "" {
+				return b
 			}
 		}
 	case "windows":
@@ -181,6 +206,43 @@ func detectCodexCLIInAppBundle(appPath string) string {
 	return ""
 }
 
+// canonicalCaseApp 把 .app 路径的最后一段修正为磁盘上的真实大小写。
+// macOS 默认 APFS 大小写不敏感,陈旧 config / 用户手填里可能把 ChatGPT.app 存成 ChatGpt.app,
+// os.Stat 照样通过,脏大小写会一路带到 UI 展示、日志与品牌反推。用 ReadDir + EqualFold 归一,
+// 在大小写敏感与不敏感文件系统上都确定。读不到父目录 / 无匹配项时原样返回。
+func canonicalCaseApp(p string) string {
+	dir := filepath.Dir(p)
+	base := filepath.Base(p)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return p
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), base) {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return p
+}
+
+// validatedCodexGUIBundle 收口 Codex 桌面端的判定不变式:只有"真实内含 Codex CLI"
+// (Contents/Resources/codex)的 .app 才算,并返回磁盘真实大小写。config override 与品牌
+// 兜底都经它过滤,避免把两类东西误认成 Codex 桌面端:
+//   - 与 Codex 无关的独立 ChatGPT 聊天 app(改名后同为 ChatGPT.app,但无 Resources/codex)
+//   - 已挪走 / 大小写错误的陈旧路径
+//
+// 先归一大小写再验内容:大小写敏感文件系统上,mis-cased 输入直接 stat 会落空。
+func validatedCodexGUIBundle(app string) string {
+	if app == "" || !strings.HasSuffix(app, ".app") {
+		return ""
+	}
+	app = canonicalCaseApp(app)
+	if detectCodexCLIInAppBundle(app) == "" {
+		return ""
+	}
+	return app
+}
+
 // codexWindowsGUIExeCandidates 返回 Windows 上 Codex 桌面 GUI 的候选可执行文件路径。
 // 纯函数(入参为目录根,不碰磁盘/注册表),便于单测。空根目录会被跳过。
 // 刻意不含 CLI 的 %LOCALAPPDATA%\OpenAI\Codex\bin\... —— 那是命令行二进制,
@@ -189,8 +251,14 @@ func codexWindowsGUIExeCandidates(localAppData, programFiles string) []string {
 	candidates := []string{}
 	// 桌面端可能已改名(Codex.exe → ChatGPT.exe),每个候选品牌都列。
 	if localAppData != "" {
+		// electron-builder NSIS 布局:%LOCALAPPDATA%\Programs\<brand>\<brand>.exe。
 		for _, name := range codexBrandNames() {
 			candidates = append(candidates, filepath.Join(localAppData, "Programs", name, name+".exe"))
+		}
+		// Squirrel 布局(Slack/VSCode/Discord 同款):无 Programs 这层,顶层即
+		// %LOCALAPPDATA%\<brand>\<brand>.exe(该 exe 是常驻的启动 stub,始终存在)。
+		for _, name := range codexBrandNames() {
+			candidates = append(candidates, filepath.Join(localAppData, name, name+".exe"))
 		}
 	}
 	if programFiles != "" {
@@ -201,6 +269,23 @@ func codexWindowsGUIExeCandidates(localAppData, programFiles string) []string {
 	return candidates
 }
 
+// codexWindowsGUIOverride 判定用户手动指定的路径能否作为 Windows 桌面端 GUI override。
+// 放宽策略:任意**存在的 .exe 文件**都接受(改名 / 非标准名的桌面端也放行),只排除 CLI 二进制
+// codex.exe —— 那归 CLI 判定,当成 GUI 会触发无谓的 kill/relaunch。修的是"用户手选了改名后的
+// 桌面端 exe,却因名字不是 Codex.exe/ChatGPT.exe 被硬校验拒掉"。纯 stat 逻辑,便于单测。
+func codexWindowsGUIOverride(path string) string {
+	if !strings.EqualFold(filepath.Ext(path), ".exe") {
+		return ""
+	}
+	if strings.EqualFold(filepath.Base(path), "codex.exe") {
+		return ""
+	}
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return path
+	}
+	return ""
+}
+
 func codexExecutableName() string {
 	if runtime.GOOS == "windows" {
 		return "codex.exe"
@@ -209,14 +294,17 @@ func codexExecutableName() string {
 }
 
 // codexWindowsCLICandidates 返回 Windows 纯 CLI 安装的常见落点。
-// npm/pnpm/bun 的全局 shim 通常在用户目录下,从桌面 App 启动时 PATH 未必包含这些目录,
-// 所以不能只依赖 exec.LookPath("codex")。
-func codexWindowsCLICandidates(localAppData, appData, userProfile string) []string {
+// npm/pnpm/bun/winget/scoop/choco 的全局 shim 通常在用户目录或包管理器固定目录下,从桌面 App
+// 启动时进程 PATH 未必包含它们(尤其"刚装完没重启 App"→PATH 陈旧),所以不能只依赖
+// exec.LookPath("codex")——这里把这些固定落点逐个 stat,绕开陈旧 PATH。
+func codexWindowsCLICandidates(localAppData, appData, userProfile, programData string) []string {
 	candidates := []string{}
 	if localAppData != "" {
 		candidates = append(candidates,
 			filepath.Join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
 			filepath.Join(localAppData, "OpenAI", "Codex", "bin", "codex.exe"),
+			// winget 官方安装器的 shim 目录,常年不进已运行进程的 PATH。
+			filepath.Join(localAppData, "Microsoft", "WinGet", "Links", "codex.exe"),
 		)
 	}
 	if appData != "" {
@@ -229,7 +317,14 @@ func codexWindowsCLICandidates(localAppData, appData, userProfile string) []stri
 		candidates = append(candidates,
 			filepath.Join(userProfile, ".bun", "bin", "codex.exe"),
 			filepath.Join(userProfile, ".bun", "bin", "codex.cmd"),
+			// scoop 的 shims 目录。
+			filepath.Join(userProfile, "scoop", "shims", "codex.exe"),
+			filepath.Join(userProfile, "scoop", "shims", "codex.cmd"),
 		)
+	}
+	if programData != "" {
+		// chocolatey 的 shim 目录(机器级安装)。
+		candidates = append(candidates, filepath.Join(programData, "chocolatey", "bin", "codex.exe"))
 	}
 	return candidates
 }

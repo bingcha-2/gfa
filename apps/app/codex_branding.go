@@ -18,9 +18,10 @@ import (
 // 不受改名影响、无需列举的锚点:CLI 可执行名(始终 codex/codex.exe)、配置目录
 // (~/.codex)、chrome-native-hosts.json —— 它们是路径/内容锚点,与 app 品牌名无关。
 
-// codexBrandNames 返回桌面端 bundle/exe 的候选品牌名(路径探测用,先旧后新)。
-// 以后再改名只在这里加一项。
-func codexBrandNames() []string { return []string{"Codex", "ChatGPT"} }
+// codexBrandNames 返回桌面端 bundle/exe 的候选品牌名(路径探测用)。
+// **新名 ChatGPT 优先**:OpenAI 已把 Codex 桌面端并入 ChatGPT 品牌,存量机器新装的都是
+// ChatGPT,先探它命中率更高;旧名 Codex 仅作过渡期兜底。以后再改名只在这里加一项(放最前)。
+func codexBrandNames() []string { return []string{"ChatGPT", "Codex"} }
 
 var (
 	codexBrandOnce sync.Once
@@ -65,16 +66,6 @@ func resolveCodexDesktopBrand() string {
 		}
 	}
 	return ""
-}
-
-// isCodexGUIExeName 判断 Windows 可执行文件名是否是 Codex 桌面端 GUI(兼容改名 ChatGPT.exe)。
-func isCodexGUIExeName(base string) bool {
-	for _, name := range codexBrandNames() {
-		if strings.EqualFold(base, name+".exe") {
-			return true
-		}
-	}
-	return false
 }
 
 // codexBrandFromAppPath 从形如 .../<Brand>.app/... 的路径提取 <Brand>。非 .app 路径返回空。

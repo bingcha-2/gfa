@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -129,8 +131,8 @@ func TestCodexModelsPassthrough(t *testing.T) {
 		if got := r.Header.Get("Accept"); got != "application/json" {
 			t.Fatalf("Accept = %q, want application/json", got)
 		}
-		if got := r.Header.Get("Accept-Encoding"); got != "identity" {
-			t.Fatalf("Accept-Encoding = %q, want identity", got)
+		if got := r.Header.Get("Accept-Encoding"); got != "gzip" {
+			t.Fatalf("Accept-Encoding = %q, want gzip", got)
 		}
 		if got := r.Header.Get("Cookie"); got != "" {
 			t.Fatalf("downstream Cookie leaked upstream: %q", got)
@@ -168,6 +170,44 @@ func TestCodexModelsPassthrough(t *testing.T) {
 	}
 	if got := rec.Header().Get("ETag"); got != `W/"models-56"` {
 		t.Fatalf("ETag = %q", got)
+	}
+}
+
+// 上游回 gzip body(Content-Encoding: gzip)时,代理必须解压后把明文回给下游 app。
+// 这是端到端验证:真实传输层把 gzip 字节原样送达,readCodexModelsBody 负责还原。
+// (请求 gzip 正是修 "官方目录获取失败:context deadline exceeded" 的关键 —— 277KB 明文压到 ~40KB。)
+func TestCodexModelsGzipUpstream(t *testing.T) {
+	const plain = `{"models":[{"slug":"gpt-5.6-sol"}]}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Accept-Encoding"); got != "gzip" {
+			t.Fatalf("Accept-Encoding = %q, want gzip", got)
+		}
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		_, _ = zw.Write([]byte(plain))
+		_ = zw.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("ETag", `"models-gz"`)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-gz")}, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != plain {
+		t.Fatalf("下游收到的应是解压后明文, got %s", got)
 	}
 }
 
@@ -360,6 +400,209 @@ func TestCodexModelsSharedFetchSurvivesLeaderCancellation(t *testing.T) {
 	}
 }
 
+// 上游把 SSE 用 gzip 压了(真 codex_cli_rs 默认发 Accept-Encoding: gzip,被透传上去,
+// chatgpt.com 就回压缩流)。代理必须解压后才能解析出 usage —— 否则在压缩字节上扫,tokens=0、
+// 计费全丢。这里端到端验证:gzip 流式响应也能报出正确 usage,且下游收到的是明文(无 gzip 头)。
+func TestCodexProxyDecodesGzippedStreamUsage(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	// 一个最小的 responses SSE:completed 事件把 usage 放在 response 下。
+	sse := "event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}` +
+		"\n\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		_, _ = zw.Write([]byte(sse))
+		_ = zw.Close()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "codex-access-token", AccountId: 7, LeaseId: "lease-7"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	// 下游必须收到解压后的明文(能读到 SSE 文本),且不再带 gzip 编码头。
+	if !strings.Contains(rec.Body.String(), "response.completed") {
+		t.Fatalf("下游未收到明文 SSE: %q", rec.Body.String())
+	}
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+		t.Fatalf("解压后不应再有 Content-Encoding, got %q", enc)
+	}
+	select {
+	case d := <-reported:
+		if d.StatusCode != 200 || d.BillableTotalTokens != 120 {
+			t.Fatalf("gzip SSE usage 解析错: %+v", d)
+		}
+	default:
+		t.Fatal("expected usage report from gzip SSE")
+	}
+}
+
+// 实测坑:chatgpt.com 对 codex responses 有时回 **SSE 流但不带 event-stream Content-Type**,
+// 且请求体不一定带 stream:true(model 为空的请求两个信号全无)。旧判据(响应声明 SSE 或请求要流式)
+// 会漏判 → 把整段 SSE 当单个 JSON 整体解析 → usage 全丢(实测 25045 token 记成 0)。
+// 修法:生成端点 2xx 一律走流式读。本测试用"非 event-stream CT + SSE 体 + 请求无 stream"复现。
+func TestCodexProxyParsesUsageWhenNoStreamSignals(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	// 多事件 SSE,usage 在 response.completed 事件的 .response.usage 下(对齐真实响应)。
+	sse := "event: response.output_text.delta\n" +
+		`data: {"type":"response.output_text.delta","delta":"hi"}` + "\n\n" +
+		"event: response.completed\n" +
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":25036,"input_tokens_details":{"cached_tokens":23296},"output_tokens":9,"total_tokens":25045}}}` + "\n\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 刻意设成非 event-stream 的 CT(复现"响应头判不出流式")。
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, sse)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "codex-access-token", AccountId: 13, LeaseId: "lease-13"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	// 请求体无 stream:true(复现"请求信号也判不出流式")。
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	select {
+	case d := <-reported:
+		if d.InputTokens != 25036 || d.OutputTokens != 9 || d.CachedInputTokens != 23296 {
+			t.Fatalf("SSE usage 未解析: in=%d out=%d cached=%d (want 25036/9/23296)",
+				d.InputTokens, d.OutputTokens, d.CachedInputTokens)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
+// 客户端漏发 model 时(实测切到部分新模型 codex app 会不带 model),不能硬编码 gpt-5-codex
+// (归属/计费记错模型),要回落到 config.toml 里用户选定的模型,并写进上游请求体 + 上报。
+func TestCodexProxyEmptyModelFallsBackToConfiguredModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("model = \"gpt-5.6-sol\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reported := make(chan ReportDetails, 1)
+	var gotUpstreamModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]interface{}
+		_ = json.Unmarshal(body, &m)
+		gotUpstreamModel, _ = m["model"].(string)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\n"+
+			`data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}`+"\n\n")
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "codex-access-token", AccountId: 13, LeaseId: "lease-13"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	// 请求体**不带 model**。
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if gotUpstreamModel != "gpt-5.6-sol" {
+		t.Fatalf("上游收到的 model = %q, want 注入的 gpt-5.6-sol", gotUpstreamModel)
+	}
+	select {
+	case d := <-reported:
+		if d.ModelKey != "gpt-5.6-sol" {
+			t.Fatalf("上报 ModelKey = %q, want gpt-5.6-sol(真实选定,而非硬编码 codex)", d.ModelKey)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
+// 计费归属以**上游响应实际使用的模型**为准:请求说 gpt-5.6-sol,但上游 response.model 是
+// gpt-5-codex(实际执行/降级)→ 上报应记 gpt-5-codex,而不是请求里的猜测。
+func TestCodexProxyReportsActualModelFromResponse(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\n"+
+			`data: {"type":"response.completed","response":{"model":"gpt-5-codex","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}`+"\n\n")
+	}))
+	defer upstream.Close()
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "t", AccountId: 13, LeaseId: "lease-13"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hi"}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req, "codex-card", "device-a", "")
+	select {
+	case d := <-reported:
+		if d.ModelKey != "gpt-5-codex" {
+			t.Fatalf("归属应以响应实际模型 gpt-5-codex 为准, got %q", d.ModelKey)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
+// config.toml 也没有 model 时,才回落到 gpt-5-codex 默认(保底不空)。
+func TestCodexProxyEmptyModelDefaultsWhenNoConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home) // 无 config.toml
+	reported := make(chan ReportDetails, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\n"+
+			`data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}`+"\n\n")
+	}))
+	defer upstream.Close()
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "t", AccountId: 13, LeaseId: "lease-13"}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) { reported <- d },
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hi"}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req, "codex-card", "device-a", "")
+	select {
+	case d := <-reported:
+		if d.ModelKey != "gpt-5-codex" {
+			t.Fatalf("无 config 时应回落 gpt-5-codex, got %q", d.ModelKey)
+		}
+	default:
+		t.Fatal("expected usage report")
+	}
+}
+
 func TestCodexProxyResponsesForwardsWithLeasedToken(t *testing.T) {
 	reported := make(chan ReportDetails, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +660,61 @@ func TestCodexProxyResponsesForwardsWithLeasedToken(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected usage report")
+	}
+}
+
+// card 为空(未配置/未选号)绝不能给 codex 客户端回 401:401 触发 codex 的 refresh-on-401,
+// 它拿伪 refresh_token 去真 auth.openai.com 刷新→必失败→退回登录页。改回 503(临时不可用,
+// 客户端可稍后重试、不重新登录)。
+func TestCodexProxyMissingCardDoesNotReturn401(t *testing.T) {
+	proxy := &CodexProxy{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "", "device-a", "")
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("card 为空回了 401,会触发 codex 重新登录")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// 上游 401(号池 token 失效/被吊销)不能原样透传:同样触发 refresh-on-401→掉登录。
+// 客户端应收到 remap 后的 502(普通网关错误,可重试、不重新登录);问题上报仍保留真实 401。
+func TestCodexProxyUpstreamUnauthorizedRemappedTo502(t *testing.T) {
+	reported := make(chan ReportDetails, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: "pool-token", AccountId: 7, LeaseId: "lease-7"}, nil
+		},
+		reportProblem: func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {
+			reported <- details
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "")
+
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("上游 401 被原样透传,会触发 codex 重新登录")
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	select {
+	case d := <-reported:
+		if d.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("问题上报应保留真实上游 401, got %d", d.StatusCode)
+		}
+	default:
+		t.Fatal("expected problem report")
 	}
 }
 

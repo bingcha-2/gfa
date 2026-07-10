@@ -64,7 +64,7 @@ func TestRepro_CodexAndClaude_DoNotTruncate(t *testing.T) {
 
 	t.Run("codex 忠实拷贝", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		if _, _, _, _, err := copyStreamingCodexResponse(rec, strings.NewReader(sse)); err != nil {
+		if _, _, _, _, _, err := copyStreamingCodexResponse(rec, strings.NewReader(sse)); err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
 		if rec.Body.String() != sse {

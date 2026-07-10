@@ -268,7 +268,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 	if card == "" {
-		p.sendJSONError(w, http.StatusUnauthorized, "Codex account card is not configured")
+		// 绝不能回 401:codex 客户端收到 401 会触发 refresh-on-401,拿本地伪 refresh_token 去真
+		// auth.openai.com 刷新 → 必失败 → 退回登录页(接管后"莫名要登录"的主因)。用 503 让它当作
+		// 临时服务不可用(不重新登录、可稍后重试)。
+		p.sendJSONError(w, http.StatusServiceUnavailable, "Codex account card is not configured")
 		return
 	}
 
@@ -293,8 +296,17 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	audit.reqBody = body
 	modelKey := extractCodexModelKey(body)
 	if modelKey == "" {
-		modelKey = "gpt-5-codex"
+		// 客户端漏发 model(实测切到部分新模型时 codex app 会不带 model 字段)。硬编码 gpt-5-codex
+		// 会把归属/计费记到错模型。回落到 config.toml 里用户选定的模型,并写进请求体 —— 让上游按
+		// 真实选择路由 + 上报一致。config 也没有(极少)才用 gpt-5-codex 兜底,保证不空。
+		if cfgModel := codexConfiguredModel(); cfgModel != "" {
+			modelKey = cfgModel
+			body = rewriteCodexModel(body, cfgModel)
+		} else {
+			modelKey = "gpt-5-codex"
+		}
 	}
+	audit.reqBody = body
 	audit.model = modelKey
 
 	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
@@ -402,21 +414,36 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	_ = accountIDForLog
 	audit.status = resp.StatusCode
 
-	// 何时按流式转发回 codex:上游对 responses 流式 200 有时**不带 Content-Type**
-	// (实测 chatgpt.com 的 codex 后端回空 CT)。只靠响应头判流式会漏判 → 把整段 SSE
-	// 当成单个 JSON 整体读,既丢了边转边发的流式体验,又因整段不是合法 JSON 解析不出
-	// usage(tokens=0)。codex 的 responses 请求恒为流式,故改判据为:上游 2xx 且
-	// (响应声明了 SSE 或请求要流式)。copyStreamingCodexResponse 对单行裸 JSON 也能解
-	// usage,真·非流式 2xx 走到这里也不会误伤;非 2xx 仍落到下面的整体读分支(带错误体日志)。
-	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
-		(isCodexStreamingResponse(resp) || requestWantsStream(body))
+	// 何时按流式读取(解析 usage + 边转边发):这个 handler 只处理生成端点(/v1/responses[/compact]),
+	// codex 的 responses 响应**恒为 SSE 流**。但上游有时不带 Content-Type、请求体也未必带 stream:true
+	// (实测 model 为空的请求两个信号全无 → 空 CT + 无 stream),只靠这两个启发式会漏判,把整段 SSE
+	// 当单个 JSON 整体 Unmarshal → 解析不出 usage(tokens=0、计费全丢,实测 25045 token 被记 0)。
+	// 故直接以状态码为准:2xx 一律走流式读。copyStreamingCodexResponse 对单行裸 JSON 也能解 usage,
+	// 真·非流式 2xx 走到这里也不会误伤;非 2xx 仍落到下面的整体读分支(带错误体日志)。
+	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300
 	if streamBack {
+		// 上游可能按客户端透传上去的 Accept-Encoding 回**压缩的 SSE**(真 codex_cli_rs/reqwest
+		// 默认带 gzip;copyCodexHeaders 未剥离 Accept-Encoding)。不解压就边转边发,我们扫描的是
+		// 压缩字节,永远解析不到 usage → tokens=0、计费全丢(正是"请求数有、token 全 0"的根因)。
+		// 就地解压成明文再转发:本地客户端(reqwest)一律能收明文,我们也才能解析 usage。
+		streamBody := decodeCodexResponseStream(resp)
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
-		tr := &ttftReader{r: resp.Body, start: reqStart}
-		input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
-		audit.respBody = tee.captured()
+		tr := &ttftReader{r: streamBody, start: reqStart}
+		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
+		// 计费归属以**上游响应实际使用的模型**为准(权威),覆盖请求/config 的猜测:
+		// 客户端漏发 model 时尤其重要 —— 否则会记到默认/猜的模型上,金额与用量都算错。
+		if actualModel != "" {
+			modelKey = actualModel
+			audit.model = actualModel
+		}
+		// 计费护栏:2xx 生成却一个 token 都没解析到 = 用量丢失(历史上因流式漏判 / 未解压 / 字段
+		// 路径变更多次踩到,静默丢计费)。留一条告警,回归时立刻可见。开 codexDebugUsage
+		// 可进一步打出未匹配的原始 usage 行定位。
+		if copyErr == nil && input == 0 && output == 0 {
+			Log("[codex-proxy] ⚠ 2xx 生成但 usage 解析为 0(model=%s),可能计费丢失", modelKey)
+		}
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
 		details.ServiceTier = effServiceTier
 		details.Surface = surfaceTag
@@ -441,6 +468,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 
+	// 走到这里的只剩非 2xx(2xx 一律走上面的流式分支)。仍按 Content-Encoding 解压,便于错误体日志可读。
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -448,10 +476,18 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read Codex upstream response")
 		return
 	}
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		if decoded, ok := decodeUpstreamBytes(enc, respBody); ok {
+			respBody = decoded
+			resp.Header.Del("Content-Encoding")
+		}
+	}
 	audit.respBody = respBody
 
 	p.writeResponseHeaders(w, resp)
-	w.WriteHeader(resp.StatusCode)
+	// 上游 401 不能原样回给 codex 客户端:会触发 refresh-on-401 → 伪 refresh_token 刷新失败 →
+	// 退回登录页。remap 成 502(普通网关错误,客户端可重试、不重新登录);问题上报仍用真实状态码。
+	w.WriteHeader(clientFacingCodexStatus(resp.StatusCode))
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
@@ -549,7 +585,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
-		if _, _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
+		if _, _, _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
 			audit.note = "流中断:" + copyErr.Error()
 		}
 		audit.respBody = tee.captured()
@@ -768,7 +804,11 @@ func (p *CodexProxy) targetURL(r *http.Request) (string, error) {
 
 const (
 	codexModelsMaxBytes = 4 << 20
-	codexModelsTimeout  = 4 * time.Second
+	// 官方 models 目录经账号 egress 代理拉取:请求走 gzip(见 fetchCodexModels)把 ~277KB
+	// 明文压到 ~40KB,读取不再顶满死线。10s 覆盖 egress connect + TLS 握手 + round-trip 余量;
+	// 因 gzip 后成功已是常态,这个上限极少触发回退,不会明显阻塞 Codex app 取目录。
+	// (旧值 4s 只够直连,经代理读整包明文必超时 → "官方目录获取失败" 刷屏。)
+	codexModelsTimeout = 10 * time.Second
 )
 
 type codexModelsResult struct {
@@ -874,7 +914,9 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 	}
 	applyCodexOfficialHeaders(req.Header, r.Header)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "identity")
+	// 请求 gzip:目录明文 ~277KB,经 egress 代理读整包在 4s 内常超时。压到 ~40KB 后读取秒回。
+	// 自定义 uTLS 传输不做 Go 的自动透明解压,故 readCodexModelsBody 按 Content-Encoding 手动还原。
+	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, nil, req, createCodexStreamingHttpClient)
 	if err != nil {
@@ -884,17 +926,39 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return codexModelsResult{err: fmt.Errorf("official models status %d", resp.StatusCode)}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, codexModelsMaxBytes+1))
+	body, err := readCodexModelsBody(resp)
 	if err != nil {
-		return codexModelsResult{err: fmt.Errorf("read official models: %w", err)}
-	}
-	if len(body) > codexModelsMaxBytes {
-		return codexModelsResult{err: fmt.Errorf("official models response exceeds %d bytes", codexModelsMaxBytes)}
-	}
-	if err := validateCodexModelsPayload(body); err != nil {
-		return codexModelsResult{err: fmt.Errorf("invalid official models response: %w", err)}
+		return codexModelsResult{err: err}
 	}
 	return codexModelsResult{body: body, etag: resp.Header.Get("ETag")}
+}
+
+// readCodexModelsBody 读取官方 models 响应体:限长 → 按 Content-Encoding 解压 → 校验 payload。
+// 抽出以便对 gzip 解压路径单测(fetchCodexModels 其余部分依赖真实网络/租号,不易测)。
+// 4MB 上限同时作用于压缩字节与解压结果,防超大/膨胀响应。
+func readCodexModelsBody(resp *http.Response) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, codexModelsMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read official models: %w", err)
+	}
+	if len(raw) > codexModelsMaxBytes {
+		return nil, fmt.Errorf("official models response exceeds %d bytes", codexModelsMaxBytes)
+	}
+	body := raw
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		decoded, ok := decodeUpstreamBytes(enc, raw)
+		if !ok {
+			return nil, fmt.Errorf("decode official models (%s)", enc)
+		}
+		if len(decoded) > codexModelsMaxBytes {
+			return nil, fmt.Errorf("official models decoded exceeds %d bytes", codexModelsMaxBytes)
+		}
+		body = decoded
+	}
+	if err := validateCodexModelsPayload(body); err != nil {
+		return nil, fmt.Errorf("invalid official models response: %w", err)
+	}
+	return body, nil
 }
 
 func validateCodexModelsPayload(body []byte) error {
@@ -971,6 +1035,17 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	GetUsageStats().AddGeneration()
 }
 
+// clientFacingCodexStatus 把要写回 codex 客户端的上游状态码做安全 remap:上游 401(号池 token
+// 失效/被吊销)原样透传会触发 codex 的 refresh-on-401 —— 它拿本地伪 refresh_token 去真
+// auth.openai.com 刷新 → 必失败 → 退回登录页。统一改写成 502,让客户端当作普通网关错误(可重试、
+// 不重新登录);问题上报另用真实状态码,故服务端换号/标记坏号逻辑不受影响。其余状态码原样返回。
+func clientFacingCodexStatus(upstream int) int {
+	if upstream == http.StatusUnauthorized {
+		return http.StatusBadGateway
+	}
+	return upstream
+}
+
 func (p *CodexProxy) reportProblemSafe(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {
 	reportFunc := p.reportProblem
 	if reportFunc == nil {
@@ -1029,6 +1104,22 @@ func normalizeCodexRequestBody(path string, body []byte) []byte {
 	return rewritten
 }
 
+// decodeCodexResponseStream 按 Content-Encoding 把上游响应体解成明文流,供边转边发 + usage 解析。
+// 解压成功则删掉 Content-Encoding 头(下游收到的是明文,不能再声明原编码)。未压缩 / 未知编码
+// 原样返回。底层 resp.Body 仍由调用方 defer 关闭(解压器只包一层,不额外持有资源)。
+func decodeCodexResponseStream(resp *http.Response) io.Reader {
+	enc := resp.Header.Get("Content-Encoding")
+	if enc == "" {
+		return resp.Body
+	}
+	dr, err := decompressReader(enc, resp.Body)
+	if err != nil {
+		return resp.Body // 解不了就原样透传(退化:usage 可能仍解析不到,但不影响转发)
+	}
+	resp.Header.Del("Content-Encoding")
+	return dr
+}
+
 func isCodexStreamingResponse(resp *http.Response) bool {
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	return strings.Contains(contentType, "text/event-stream")
@@ -1037,12 +1128,30 @@ func isCodexStreamingResponse(resp *http.Response) bool {
 // copyStreamingCodexResponse 边转发 SSE 边解析最终的 usage(input/output/total)。
 // codex 流式响应的用量在 response.completed/response.done 事件的 response.usage 里,
 // 之前只逐字节转发、不解析,导致流式用量上报为 0(完全不计费)。
-func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, int64, int64, int64, error) {
+func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (model string, input, output, cached, total int64, err error) {
 	flusher, _ := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
 	var pending []byte
-	var input, output, cached, total int64
 
+	// 边扫边抽:usage(计费数)+ model(上游实际使用的模型,归属权威源)。都在同一趟里取,
+	// 不额外缓冲整包(auditTee 刻意不缓存 body)。model 取第一条带到的即可(各 response.* 事件都带)。
+	handle := func(line []byte) {
+		if i, o, c, t, ok := codexUsageFromSSELine(line); ok {
+			input, output, cached, total = i, o, c, t
+		} else if codexDebugUsage && bytes.Contains(line, []byte("usage")) {
+			// 调试:解析不到但含 usage 的行,打出真实格式以便对齐字段路径。
+			dbg := line
+			if len(dbg) > 600 {
+				dbg = dbg[:600]
+			}
+			Log("[codex-proxy][usage-dbg] 含usage但未解析: %s", string(bytes.TrimSpace(dbg)))
+		}
+		if model == "" {
+			if m := codexModelFromSSELine(line); m != "" {
+				model = m
+			}
+		}
+	}
 	scan := func(chunk []byte, flushTail bool) {
 		pending = append(pending, chunk...)
 		for {
@@ -1050,47 +1159,45 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, i
 			if idx < 0 {
 				break
 			}
-			line := pending[:idx]
-			if i, o, c, t, ok := codexUsageFromSSELine(line); ok {
-				input, output, cached, total = i, o, c, t
-			} else if codexDebugUsage && bytes.Contains(line, []byte("usage")) {
-				// 调试:解析不到但含 usage 的行,打出真实格式以便对齐字段路径。
-				dbg := line
-				if len(dbg) > 600 {
-					dbg = dbg[:600]
-				}
-				Log("[codex-proxy][usage-dbg] 含usage但未解析: %s", string(bytes.TrimSpace(dbg)))
-			}
+			handle(pending[:idx])
 			pending = pending[idx+1:]
 		}
 		if flushTail && len(pending) > 0 {
-			if i, o, c, t, ok := codexUsageFromSSELine(pending); ok {
-				input, output, cached, total = i, o, c, t
-			}
+			handle(pending)
 			pending = nil
 		}
 	}
 
 	for {
-		n, err := body.Read(buffer)
+		n, readErr := body.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
 			if _, writeErr := w.Write(chunk); writeErr != nil {
-				return input, output, cached, total, writeErr
+				return model, input, output, cached, total, writeErr
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
 			scan(chunk, false)
 		}
-		if err == io.EOF {
+		if readErr == io.EOF {
 			scan(nil, true)
-			return input, output, cached, total, nil
+			return model, input, output, cached, total, nil
 		}
-		if err != nil {
-			return input, output, cached, total, err
+		if readErr != nil {
+			return model, input, output, cached, total, readErr
 		}
 	}
+}
+
+// codexModelFromSSELine 从一行 SSE(`data: {...}`)中取上游实际使用的模型。
+func codexModelFromSSELine(line []byte) string {
+	trimmed := bytes.TrimSpace(line)
+	trimmed = bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return ""
+	}
+	return codexModelFromJSON(trimmed)
 }
 
 // codexUsageFromSSELine 从一行 SSE(`data: {...}`)中解析 usage。
@@ -1185,6 +1292,25 @@ func codexUsageFromJSON(data []byte) (input, output, cached, total int64, ok boo
 		return 0, 0, 0, 0, false
 	}
 	return input, output, cached, total, true
+}
+
+// codexModelFromJSON 从事件 JSON 里取**上游实际使用**的模型:顶层 .model 或 .response.model
+// (responses API 的事件把 model 放在 response 下)。这是计费归属的权威来源 —— 比请求里
+// (可能缺失)的 model 或 config.toml 的猜测都准。
+func codexModelFromJSON(data []byte) string {
+	var payload struct {
+		Model    string `json:"model"`
+		Response struct {
+			Model string `json:"model"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(payload.Response.Model) != "" {
+		return payload.Response.Model
+	}
+	return payload.Model
 }
 
 func jsonNumberAsInt64(value interface{}) int64 {
