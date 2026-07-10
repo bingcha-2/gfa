@@ -241,6 +241,14 @@ func (p *LocalHTTPProxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// OpenAI 图像接口(/v1/images/*):不走中转、不改写,租号池 token 注入后直连
+	// api.openai.com(账号绑定出口)。放在 antigravity 兜底前拦下,否则会被瞎发到
+	// Google Gemini → 404(该路径在 generativelanguage 上不存在)。
+	if isOpenAIImageRequest(path) {
+		GetCodexProxy().ServeImages(w, r, card, deviceId, upstream)
+		return
+	}
+
 	// 路由逻辑：所有请求都注入我们的 token（与 timo 行为一致）
 	// auth/loadCodeAssist/onboardUser 等也需要有效 token
 	isGen := isGenerationRequest(path)
