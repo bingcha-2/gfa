@@ -25,7 +25,7 @@ var AppVersion = "13.3.1"
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用），构建时通过 ldflags 注入 buildApexBase
 	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", buildApexBase+"/updates/latest-wails.json")
-	UpdateCheckFreq = 30 * time.Minute
+	UpdateCheckFreq = 2 * time.Minute
 )
 
 const (

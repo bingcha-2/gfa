@@ -18,6 +18,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["-C", "GFA/apps/app/frontend", "dev", "--mode", "mock", "--port", "5299", "--strictPort"],
       "port": 5299
+    },
+    {
+      "name": "app-frontend-mock",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["-C", "apps/app/frontend", "dev", "--mode", "mock", "--port", "5299", "--strictPort"],
+      "port": 5299
     }
   ]
 }
