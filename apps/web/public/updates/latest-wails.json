@@ -1,30 +1,30 @@
 {
-  "version": "13.3.2",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.2/BingchaAI-13.3.2.exe",
-  "sha256": "102D0F26A6937925097D07D6AB045FF7E44464B340E8B0DADE1FFAA0E4E617AB",
-  "size": 54210048,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.2/BingchaAI-13.3.2-setup.exe",
-  "installerSha256": "6328DC1A001800498D38C6249FF4FCD9D5D4233CB7F76FF5894B61E748F5D878",
-  "installerSize": 20970050,
-  "changelog": "-claude.ai 网页改回用你自己的账号登录\\n-修复接管反复重启、诊断日志刷屏\\n-提升稳定性",
-  "minVersion": "13.3.0",
+  "version": "13.4.0",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.4.0/BingchaAI-13.4.0.exe",
+  "sha256": "B39F17038CA8BA330EEA94F5588E518656EE6A7035E73B50DA6E5CC1100EAFBC",
+  "size": 54330368,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.4.0/BingchaAI-13.4.0-setup.exe",
+  "installerSha256": "AE7AE55CD6FC57F77432EFAFFFEB4DE7F454FCBAED595BA7EAF3AF93CA69AF96",
+  "installerSize": 21006655,
+  "changelog": "-日志页面跟随主题，字体更清晰\\n-接管/还原防护状态更透明，时区核实与清理结果逐项可查\\n-新增真实浏览器(Chrome/Edge/Brave)WebRTC、定位防护\\n-Linux 端支持时区跟随",
+  "minVersion": "13.3.2",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.2/BingchaAI-13.3.2-arm64.dmg",
-      "sha256": "2BE33D0774E9925548F7068E0EF71674CA61F7A7818554F0EC62A1DB1D01ECFF",
-      "size": 19807489
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.4.0/BingchaAI-13.4.0-arm64.dmg",
+      "sha256": "4058F789BB9CA71E05E5526C0E086FB5D47741B81716D2DD7A690FDB5C15227F",
+      "size": 19869057
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.2/BingchaAI-13.3.2-amd64.dmg",
-      "sha256": "17C644CB4AB68977939A9D3D02D363558C4521FAAFB8233D022F6C48E95E223B",
-      "size": 22792049
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.4.0/BingchaAI-13.4.0-amd64.dmg",
+      "sha256": "70C0176595CC5A7B63A2E36A1154F289ECCD1054885A05241B018F6D509831BE",
+      "size": 22850632
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.3.2/BingchaAI-13.3.2-linux-amd64.tar.gz",
-      "sha256": "40E69CC5AB743972691B72B7FCA7D46E8964C9F57D9A74CC9635EA4C2B9C1240",
-      "size": 18381685
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.4.0/BingchaAI-13.4.0-linux-amd64.tar.gz",
+      "sha256": "E540433F8778B20C354E1516975C7BBFAB2F0AB81FB3532045F3875C7B6ECAFB",
+      "size": 18422737
     }
   }
 }
