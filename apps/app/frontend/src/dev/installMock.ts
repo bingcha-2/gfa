@@ -136,9 +136,9 @@ const config = {
 
 let hostProtectionStatus = {
   mode: 'configure', platform: 'macos', requiresAuthorization: true,
-  originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: '',
-  timezoneStrategy: 'follow', blockWebRTC: true, blockGeolocation: true, dnsCleared: false,
-  targets: ['claude', 'claude_desktop'], lastError: '',
+  originalTimezone: 'Asia/Shanghai', currentSystemTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: '',
+  timezoneStrategy: 'follow', timezoneMatch: '', blockWebRTC: true, blockGeolocation: true, dnsCleared: false,
+  protectedBrowsers: '', targets: ['claude', 'claude_desktop'], lastError: '',
 }
 
 let mockIDEProducts = [
@@ -180,11 +180,17 @@ const appMethods: Record<string, (...args: unknown[]) => Promise<unknown>> = {
   ProbeHostProtectionStatus: async (targets) => ({ ...hostProtectionStatus, mode: 'configure', blockWebRTC: true, blockGeolocation: true, targets }),
   ApplyHostProtection: async (value) => {
     const cfg = value as typeof hostProtectionStatus & { fixedTimezone?: string }
+    const applied = cfg.timezoneStrategy === 'fixed' ? cfg.fixedTimezone || 'Asia/Singapore' : cfg.timezoneStrategy === 'unchanged' ? hostProtectionStatus.originalTimezone : hostProtectionStatus.exitTimezone
+    // 造数据:模拟系统实读结果 —— 改了就对齐到目标(aligned),不改则仍是原时区。
+    const current = cfg.timezoneStrategy === 'unchanged' ? hostProtectionStatus.originalTimezone : applied
     hostProtectionStatus = {
       ...hostProtectionStatus,
       ...cfg,
       mode: 'active',
-      appliedTimezone: cfg.timezoneStrategy === 'fixed' ? cfg.fixedTimezone || 'Asia/Singapore' : cfg.timezoneStrategy === 'unchanged' ? hostProtectionStatus.originalTimezone : hostProtectionStatus.exitTimezone,
+      appliedTimezone: applied,
+      currentSystemTimezone: current,
+      timezoneMatch: cfg.timezoneStrategy === 'unchanged' ? '' : 'aligned',
+      protectedBrowsers: 'chrome×2 edge×1',
       dnsCleared: cfg.timezoneStrategy !== 'unchanged',
     }
     return hostProtectionStatus

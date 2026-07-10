@@ -6,7 +6,7 @@ import { CompetingRelayDialog } from '@/components/CompetingRelayDialog'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
-import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
@@ -1001,7 +1001,14 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
         {/* ── Anthropic · 非沙箱接管 + 宿主主防线 ── */}
         <HostProtectionPanel
           mode={hostMode}
-          platform={hostStatus?.platform === 'windows' || (!hostStatus && isWindowsPlatform()) ? 'windows' : 'macos'}
+          platform={
+            hostStatus?.platform === 'windows' ? 'windows'
+              : hostStatus?.platform === 'linux' ? 'linux'
+                : hostStatus?.platform === 'macos' ? 'macos'
+                  : isWindowsPlatform() ? 'windows'
+                    : isLinuxPlatform() ? 'linux'
+                      : 'macos'
+          }
           exitTimezone={hostStatus?.exitTimezone || ''}
           originalTimezone={hostStatus?.originalTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
           availableTargets={visibleHostTargets}

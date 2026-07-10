@@ -1,15 +1,15 @@
 export namespace account {
-
+	
 	export class QuotaBucket {
 	    key: string;
 	    label: string;
 	    percent: number;
 	    resetAt: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new QuotaBucket(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
@@ -22,7 +22,7 @@ export namespace account {
 }
 
 export namespace accountgroups {
-
+	
 	export class Group {
 	    id: string;
 	    name: string;
@@ -715,11 +715,11 @@ export namespace main {
 	    blockWebRTC: boolean;
 	    blockGeolocation: boolean;
 	    targets: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HostProtectionConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.timezoneStrategy = source["timezoneStrategy"];
@@ -734,31 +734,37 @@ export namespace main {
 	    platform: string;
 	    requiresAuthorization: boolean;
 	    originalTimezone: string;
+	    currentSystemTimezone?: string;
 	    exitTimezone: string;
 	    appliedTimezone: string;
 	    timezoneStrategy: string;
+	    timezoneMatch?: string;
 	    blockWebRTC: boolean;
 	    blockGeolocation: boolean;
 	    dnsCleared: boolean;
+	    protectedBrowsers?: string;
 	    targets: string[];
 	    lastError?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HostProtectionStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
 	        this.platform = source["platform"];
 	        this.requiresAuthorization = source["requiresAuthorization"];
 	        this.originalTimezone = source["originalTimezone"];
+	        this.currentSystemTimezone = source["currentSystemTimezone"];
 	        this.exitTimezone = source["exitTimezone"];
 	        this.appliedTimezone = source["appliedTimezone"];
 	        this.timezoneStrategy = source["timezoneStrategy"];
+	        this.timezoneMatch = source["timezoneMatch"];
 	        this.blockWebRTC = source["blockWebRTC"];
 	        this.blockGeolocation = source["blockGeolocation"];
 	        this.dnsCleared = source["dnsCleared"];
+	        this.protectedBrowsers = source["protectedBrowsers"];
 	        this.targets = source["targets"];
 	        this.lastError = source["lastError"];
 	    }
@@ -1569,3 +1575,4 @@ export namespace wakeup {
 	}
 
 }
+

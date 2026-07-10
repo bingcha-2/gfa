@@ -38,3 +38,19 @@ export function isWindowsPlatform(): boolean {
   const legacyPlatform = (navigator as { platform?: string }).platform
   return isWindowsFromPlatform(uaPlatform, legacyPlatform)
 }
+
+// 纯判定逻辑:是否 Linux。/linux/i 覆盖 "Linux"(UA-CH)与 legacy navigator.platform("Linux x86_64" 等)。
+export function isLinuxFromPlatform(
+  uaPlatform: string | undefined,
+  legacyPlatform: string | undefined,
+): boolean {
+  return /linux/i.test(uaPlatform || legacyPlatform || '')
+}
+
+// 读取当前运行环境的平台并判定是否 Linux。
+export function isLinuxPlatform(): boolean {
+  const uaPlatform = (navigator as Navigator & { userAgentData?: { platform?: string } })
+    .userAgentData?.platform
+  const legacyPlatform = (navigator as { platform?: string }).platform
+  return isLinuxFromPlatform(uaPlatform, legacyPlatform)
+}

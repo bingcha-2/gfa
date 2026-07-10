@@ -29,7 +29,7 @@ export interface HostProtectionConfig {
 
 export interface HostProtectionPanelProps {
   mode: HostProtectionMode
-  platform: 'windows' | 'macos'
+  platform: 'windows' | 'macos' | 'linux'
   exitTimezone?: string
   originalTimezone?: string
   availableTargets?: string[]
@@ -37,6 +37,9 @@ export interface HostProtectionPanelProps {
   runtimeStatus?: {
     timezoneStrategy?: TimezoneStrategy
     appliedTimezone?: string
+    currentSystemTimezone?: string
+    timezoneMatch?: string // aligned | collapsed | drift | na
+    protectedBrowsers?: string // 机器级真实浏览器防护覆盖,如 "chrome×2 edge×1"
     blockWebRTC?: boolean
     blockGeolocation?: boolean
     dnsCleared?: boolean
@@ -177,6 +180,12 @@ export function HostProtectionPanel({
       ? fixedTimezone
       : originalTimezone)
   const fixedMismatch = timezoneStrategy === 'fixed' && fixedTimezone !== exitTimezone
+  const currentSystemTimezone = runtimeStatus?.currentSystemTimezone || ''
+  const timezoneMatch = runtimeStatus?.timezoneMatch || ''
+  const protectedBrowsers = runtimeStatus?.protectedBrowsers || ''
+  // macOS 与 Linux 改系统时区都要一次管理员授权(mac osascript / linux pkexec);Windows 静默。
+  const needsAuthorization = platform !== 'windows'
+  const authOsLabel = platform === 'linux' ? 'Linux' : 'macOS'
 
   const targetLabel = useMemo(() => {
     if (targets.length === 2) return 'Claude Code + Desktop'
@@ -193,7 +202,7 @@ export function HostProtectionPanel({
       setDialog('waiver')
       return
     }
-    if (platform === 'macos' && timezoneStrategy !== 'unchanged') {
+    if (needsAuthorization && timezoneStrategy !== 'unchanged') {
       setDialog('authorization')
       return
     }
@@ -353,7 +362,7 @@ export function HostProtectionPanel({
             <div className="mt-4 flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
                 <CircleDot size={12} className="text-[var(--success)]" />
-                {platform === 'macos' ? 'macOS 将在确认后说明管理员授权用途' : 'Windows 全程静默，不弹管理员授权'}
+                {needsAuthorization ? `${authOsLabel} 将在确认后说明管理员授权用途` : 'Windows 全程静默，不弹管理员授权'}
               </div>
               <Button disabled={targets.length === 0 || busy || (requireExitTimezone && !exitTimezone && timezoneStrategy === 'follow')} onClick={submit}><ShieldCheck size={14} />{busy ? '处理中…' : '确认并接管'}</Button>
             </div>
@@ -380,17 +389,55 @@ export function HostProtectionPanel({
             )}
 
             <div className="overflow-hidden rounded-[10px] border border-[var(--border-light)]">
-              {[
-                ['时区', `已设为 ${selectedTimezone}`, '可还原'],
-              ].map(([label, value, tag], index) => (
-                <div key={label} className={cn('flex items-center gap-3 px-3.5 py-2.5', index > 0 && 'border-t border-[var(--border-light)]')}>
-                  <Check size={13} className="text-[var(--success-strong)]" />
-                  <span className="w-[88px] text-[11px] font-medium text-[var(--text-secondary)]">{label}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono-data text-[10px] text-[var(--text-primary)]">{value}</span>
-                  <span className="text-[9px] text-[var(--text-muted)]">{tag}</span>
+              <div className="flex items-center gap-3 px-3.5 py-2.5">
+                <Check size={13} className="text-[var(--success-strong)]" />
+                <span className="w-[88px] text-[11px] font-medium text-[var(--text-secondary)]">接管目标</span>
+                <span className="min-w-0 flex-1 truncate font-mono-data text-[10px] text-[var(--text-primary)]">{selectedTimezone}</span>
+                <span className="text-[9px] text-[var(--text-muted)]">可还原</span>
+              </div>
+              {currentSystemTimezone && (
+                <div className="flex items-center gap-3 border-t border-[var(--border-light)] px-3.5 py-2.5">
+                  {timezoneMatch === 'aligned'
+                    ? <Check size={13} className="text-[var(--success-strong)]" />
+                    : timezoneMatch === 'drift'
+                      ? <AlertTriangle size={13} className="text-[var(--danger)]" />
+                      : timezoneMatch === 'collapsed'
+                        ? <AlertTriangle size={13} className="text-[var(--warning-deep)]" />
+                        : <Clock3 size={13} className="text-[var(--text-muted)]" />}
+                  <span className="w-[88px] text-[11px] font-medium text-[var(--text-secondary)]">系统当前</span>
+                  <span className="min-w-0 flex-1 truncate font-mono-data text-[10px] text-[var(--text-primary)]">{currentSystemTimezone}</span>
+                  <span className={cn('text-[9px]',
+                    timezoneMatch === 'aligned' ? 'text-[var(--success-strong)]'
+                      : timezoneMatch === 'drift' ? 'text-[var(--danger)]'
+                        : timezoneMatch === 'collapsed' ? 'text-[var(--warning-deep)]'
+                          : 'text-[var(--text-muted)]')}>
+                    {timezoneMatch === 'aligned' ? '已核实一致'
+                      : timezoneMatch === 'drift' ? '不一致'
+                        : timezoneMatch === 'collapsed' ? '系统档 · Windows'
+                          : '实读'}
+                  </span>
                 </div>
-              ))}
+              )}
+              {protectedBrowsers && (
+                <div className="flex items-center gap-3 border-t border-[var(--border-light)] px-3.5 py-2.5">
+                  <ShieldCheck size={13} className="text-[var(--success-strong)]" />
+                  <span className="w-[88px] text-[11px] font-medium text-[var(--text-secondary)]">真实浏览器</span>
+                  <span className="min-w-0 flex-1 truncate font-mono-data text-[10px] text-[var(--text-primary)]">{protectedBrowsers}</span>
+                  <span className="text-[9px] text-[var(--success-strong)]">已防护</span>
+                </div>
+              )}
             </div>
+
+            {timezoneMatch === 'collapsed' && (
+              <div className="mt-2.5 flex items-start gap-2 rounded-[8px] bg-[var(--warning)]/10 px-2.5 py-2 text-[9px] leading-relaxed text-[var(--warning-deep)]">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />Windows 系统时区只能精确到时区档,已与接管目标 <span className="font-mono-data">{selectedTimezone}</span> 归并为同一档;被接管进程仍通过 TZ 环境变量保持城市级精度,不影响对齐。
+              </div>
+            )}
+            {timezoneMatch === 'drift' && (
+              <div className="mt-2.5 flex items-start gap-2 rounded-[8px] bg-[var(--danger)]/10 px-2.5 py-2 text-[9px] leading-relaxed text-[var(--danger)]">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />系统当前时区 <span className="font-mono-data">{currentSystemTimezone}</span> 与接管目标 <span className="font-mono-data">{selectedTimezone}</span> 不一致,时区对齐可能未生效或被外部改动。建议取消接管后重新接管。
+              </div>
+            )}
 
             <div className="mt-4 flex items-center justify-between gap-4">
               <p className="text-[10px] text-[var(--text-muted)]">取消接管会先停止客户端，再恢复备份的宿主设置。</p>
@@ -454,11 +501,11 @@ export function HostProtectionPanel({
           icon={LockKeyhole}
           footer={<><Button variant="secondary" onClick={() => setDialog(null)}>取消</Button><Button onClick={confirmAuthorization}>继续并唤起系统密码框</Button></>}
         >
-          <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">macOS 需要授权冰茶修改系统时区。其他宿主防护会随接管自动执行，不需要额外操作。</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{authOsLabel} 需要授权冰茶修改系统时区。其他宿主防护会随接管自动执行，不需要额外操作。</p>
           <div className="mt-4 overflow-hidden rounded-[10px] border border-[var(--border-light)]">
             <div className="flex items-center gap-3 px-3 py-2.5"><Globe2 size={14} className="text-[var(--primary-strong)]" /><span className="flex-1 text-[10px] text-[var(--text-secondary)]">系统时区</span><span className="font-mono-data text-[10px] text-[var(--text-primary)]">{originalTimezone} → {selectedTimezone}</span></div>
           </div>
-          <p className="mt-3 text-[9px] leading-relaxed text-[var(--text-muted)]">原始时区已记录。取消接管时会自动还原；若系统授权已过期，macOS 可能再次要求确认。</p>
+          <p className="mt-3 text-[9px] leading-relaxed text-[var(--text-muted)]">原始时区已记录。取消接管时会自动还原；若系统授权已过期，{authOsLabel} 可能再次要求确认。</p>
         </DialogFrame>
       )}
     </>

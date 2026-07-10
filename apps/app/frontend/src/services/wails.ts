@@ -307,15 +307,18 @@ export interface HostProtectionConfig {
 
 export interface HostProtectionStatus {
   mode: 'configure' | 'active' | 'residue' | 'restored'
-  platform: 'windows' | 'macos' | 'unsupported'
+  platform: 'windows' | 'macos' | 'linux' | 'unsupported'
   requiresAuthorization: boolean
   originalTimezone: string
+  currentSystemTimezone?: string
   exitTimezone: string
   appliedTimezone: string
   timezoneStrategy: 'follow' | 'fixed' | 'unchanged'
+  timezoneMatch?: 'aligned' | 'collapsed' | 'drift' | 'na'
   blockWebRTC: boolean
   blockGeolocation: boolean
   dnsCleared: boolean
+  protectedBrowsers?: string
   targets: string[]
   lastError?: string
 }
