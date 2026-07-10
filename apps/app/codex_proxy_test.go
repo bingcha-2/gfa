@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -103,6 +104,12 @@ func TestCodexModelsPassthrough(t *testing.T) {
 		if got := r.Header.Get("Accept-Encoding"); got != "identity" {
 			t.Fatalf("Accept-Encoding = %q, want identity", got)
 		}
+		if got := r.Header.Get("Cookie"); got != "" {
+			t.Fatalf("downstream Cookie leaked upstream: %q", got)
+		}
+		if got := r.Header.Get("Proxy-Authorization"); got != "" {
+			t.Fatalf("downstream Proxy-Authorization leaked upstream: %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `W/"models-56"`)
 		_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"}]}`)
@@ -120,6 +127,8 @@ func TestCodexModelsPassthrough(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil)
 	req.Header.Set("Authorization", "Bearer local-fake-token")
+	req.Header.Set("Cookie", "session=local-only")
+	req.Header.Set("Proxy-Authorization", "Basic local-only")
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
 
@@ -255,6 +264,71 @@ func TestCodexModelsCoalescesConcurrentRequestsWithoutCachingResult(t *testing.T
 	}
 	if got := upstreamCalls.Load(); got != 2 {
 		t.Fatalf("sequential upstream calls = %d, want 2 (completed result must not be cached)", got)
+	}
+}
+
+func TestCodexModelsSharedFetchSurvivesLeaderCancellation(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		select {
+		case <-release:
+			_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
+		case <-r.Context().Done():
+			return
+		}
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-cancel")}, nil
+		},
+	}
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil).WithContext(leaderCtx)
+		proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader did not reach upstream")
+	}
+
+	type response struct {
+		code int
+		body string
+	}
+	waiterDone := make(chan response, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil), "codex-card", "device-a", "direct")
+		waiterDone <- response{code: rec.Code, body: strings.TrimSpace(rec.Body.String())}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancelLeader()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	select {
+	case got := <-waiterDone:
+		if got.code != http.StatusOK || got.body != `{"models":[{"slug":"gpt-5.6-sol"}]}` {
+			t.Fatalf("waiter response after leader cancellation = status %d body %s", got.code, got.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter did not finish")
+	}
+	select {
+	case <-leaderDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader did not finish")
 	}
 }
 

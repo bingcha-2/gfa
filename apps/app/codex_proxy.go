@@ -832,13 +832,21 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 		return codexModelsResult{err: fmt.Errorf("build models URL: %w", err)}
 	}
 	target.RawQuery = r.URL.RawQuery
-	ctx, cancel := context.WithTimeout(r.Context(), codexModelsTimeout)
+	// 请求可能被多个下游调用者共享;不能让首个调用者断开时取消所有等待者。
+	// 独立的 4s 上限仍保证后台请求不会失控悬挂。
+	ctx, cancel := context.WithTimeout(context.Background(), codexModelsTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return codexModelsResult{err: fmt.Errorf("build models request: %w", err)}
 	}
-	copyCodexHeaders(req.Header, r.Header)
+	// 模型目录只转发官方识别客户端所需的身份头,不把 Cookie、代理凭据等
+	// 下游本机凭据带到 chatgpt.com。
+	for _, key := range []string{"User-Agent", "Originator"} {
+		if value := r.Header.Get(key); value != "" {
+			req.Header.Set(key, value)
+		}
+	}
 	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
 	if accountID := extractChatGPTAccountId(lease.AccessToken); accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", accountID)

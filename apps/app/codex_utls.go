@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -41,58 +42,65 @@ func isCodexUtlsProtectedHost(host string) bool {
 type codexUtlsRoundTripper struct {
 	mu          sync.Mutex
 	connections map[string]*http2.ClientConn
-	pending     map[string]*sync.Cond
+	pending     map[string]chan struct{}
 	dialer      proxy.Dialer
 }
 
 func newCodexUtlsRoundTripper(proxyURL string) *codexUtlsRoundTripper {
 	return &codexUtlsRoundTripper{
 		connections: make(map[string]*http2.ClientConn),
-		pending:     make(map[string]*sync.Cond),
+		pending:     make(map[string]chan struct{}),
 		dialer:      buildCodexProxyDialer(proxyURL),
 	}
 }
 
-func (t *codexUtlsRoundTripper) getOrCreateConnection(host, addr string) (*http2.ClientConn, error) {
-	t.mu.Lock()
-	if h2Conn, ok := t.connections[host]; ok && h2Conn.CanTakeNewRequest() {
-		t.mu.Unlock()
-		return h2Conn, nil
-	}
-	if cond, ok := t.pending[host]; ok {
-		cond.Wait()
+func (t *codexUtlsRoundTripper) getOrCreateConnection(ctx context.Context, host, addr string) (*http2.ClientConn, error) {
+	for {
+		t.mu.Lock()
 		if h2Conn, ok := t.connections[host]; ok && h2Conn.CanTakeNewRequest() {
 			t.mu.Unlock()
 			return h2Conn, nil
 		}
-	}
-	cond := sync.NewCond(&t.mu)
-	t.pending[host] = cond
-	t.mu.Unlock()
+		if pending := t.pending[host]; pending != nil {
+			t.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		pending := make(chan struct{})
+		t.pending[host] = pending
+		t.mu.Unlock()
 
-	h2Conn, err := t.createConnection(host, addr)
+		h2Conn, err := t.createConnection(ctx, host, addr)
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.pending, host)
-	cond.Broadcast()
-	if err != nil {
-		return nil, err
+		t.mu.Lock()
+		delete(t.pending, host)
+		if err == nil {
+			t.connections[host] = h2Conn
+		}
+		close(pending)
+		t.mu.Unlock()
+		return h2Conn, err
 	}
-	t.connections[host] = h2Conn
-	return h2Conn, nil
 }
 
-func (t *codexUtlsRoundTripper) createConnection(host, addr string) (*http2.ClientConn, error) {
-	conn, err := t.dialer.Dial("tcp", addr)
+func (t *codexUtlsRoundTripper) createConnection(ctx context.Context, host, addr string) (*http2.ClientConn, error) {
+	conn, err := dialCodexContext(ctx, t.dialer, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
 	tlsConn := tls.UClient(conn, &tls.Config{ServerName: host}, tls.HelloChrome_Auto)
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		conn.Close()
 		return nil, err
 	}
+	_ = conn.SetDeadline(time.Time{})
 	tr := &http2.Transport{}
 	h2Conn, err := tr.NewClientConn(tlsConn)
 	if err != nil {
@@ -100,6 +108,33 @@ func (t *codexUtlsRoundTripper) createConnection(host, addr string) (*http2.Clie
 		return nil, err
 	}
 	return h2Conn, nil
+}
+
+type codexDialResult struct {
+	conn net.Conn
+	err  error
+}
+
+func dialCodexContext(ctx context.Context, dialer proxy.Dialer, network, addr string) (net.Conn, error) {
+	if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+		return contextDialer.DialContext(ctx, network, addr)
+	}
+	result := make(chan codexDialResult, 1)
+	go func() {
+		conn, err := dialer.Dial(network, addr)
+		result <- codexDialResult{conn: conn, err: err}
+	}()
+	select {
+	case got := <-result:
+		return got.conn, got.err
+	case <-ctx.Done():
+		go func() {
+			if got := <-result; got.conn != nil {
+				_ = got.conn.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 func (t *codexUtlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -110,7 +145,7 @@ func (t *codexUtlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 	addr := net.JoinHostPort(hostname, port)
 
-	h2Conn, err := t.getOrCreateConnection(hostname, addr)
+	h2Conn, err := t.getOrCreateConnection(req.Context(), hostname, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -219,9 +254,16 @@ type codexHTTPConnectDialer struct {
 }
 
 func (d *codexHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
-	conn, err := d.forward.Dial(network, d.proxyURL.Host)
+	return d.DialContext(context.Background(), network, addr)
+}
+
+func (d *codexHTTPConnectDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := d.forward.DialContext(ctx, network, d.proxyURL.Host)
 	if err != nil {
 		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
 	}
 	req := &http.Request{
 		Method: http.MethodConnect,
@@ -251,5 +293,6 @@ func (d *codexHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("codex utls: proxy CONNECT to %s failed: %s", addr, resp.Status)
 	}
+	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }

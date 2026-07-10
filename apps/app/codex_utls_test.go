@@ -2,14 +2,28 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/proxy"
 )
+
+type blockingCodexDialer struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (d *blockingCodexDialer) Dial(_, _ string) (net.Conn, error) {
+	close(d.started)
+	<-d.release
+	return nil, errors.New("released blocked dial")
+}
 
 func TestIsCodexUtlsProtectedHost(t *testing.T) {
 	for _, h := range []string{"chatgpt.com", "ChatGPT.com", "www.chatgpt.com"} {
@@ -67,8 +81,8 @@ func TestCodexFallbackRoundTripperRouting(t *testing.T) {
 	}{
 		{"https://chatgpt.com/backend-api/codex/responses", true},
 		{"https://www.chatgpt.com/x", true},
-		{"https://example.com/responses", false},  // 非受保护 → fallback
-		{"http://chatgpt.com/responses", false},   // 非 https → fallback
+		{"https://example.com/responses", false}, // 非受保护 → fallback
+		{"http://chatgpt.com/responses", false},  // 非 https → fallback
 	}
 	for _, c := range cases {
 		utlsRT := &recordingRT{}
@@ -86,6 +100,39 @@ func TestCodexFallbackRoundTripperRouting(t *testing.T) {
 			t.Errorf("%s: fallback wrongly called", c.url)
 		}
 	}
+}
+
+func TestCodexUtlsRoundTripperHonorsCanceledDialContext(t *testing.T) {
+	dialer := &blockingCodexDialer{started: make(chan struct{}), release: make(chan struct{})}
+	rt := newCodexUtlsRoundTripper("")
+	rt.dialer = dialer
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://chatgpt.com/backend-api/codex/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := rt.RoundTrip(req)
+		done <- err
+	}()
+	select {
+	case <-dialer.started:
+	case <-time.After(time.Second):
+		t.Fatal("dial did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("RoundTrip error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(150 * time.Millisecond):
+		close(dialer.release)
+		<-done
+		t.Fatal("RoundTrip ignored request context during dial")
+	}
+	close(dialer.release)
 }
 
 // TestCodexHTTPConnectDialer 用一个假的 HTTP 代理验证 CONNECT 隧道建立。
