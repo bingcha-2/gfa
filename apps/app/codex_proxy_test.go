@@ -5,8 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestIsCodexAPIRequest(t *testing.T) {
@@ -75,6 +79,182 @@ func TestIsCodexGenerationRequest(t *testing.T) {
 		if isCodexGenerationRequest(path) {
 			t.Fatalf("isCodexGenerationRequest(%q) = true, want false(应透传用户 token)", path)
 		}
+	}
+}
+
+func TestCodexModelsPassthrough(t *testing.T) {
+	const accountID = "acct-models-56"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/backend-api/codex/models" {
+			t.Fatalf("upstream request = %s %s, want GET /backend-api/codex/models", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("client_version"); got != "0.144.0" {
+			t.Fatalf("client_version = %q, want 0.144.0", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+forgeFakeCodexJWT(accountID) {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("ChatGPT-Account-Id"); got != accountID {
+			t.Fatalf("ChatGPT-Account-Id = %q, want %q", got, accountID)
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept = %q, want application/json", got)
+		}
+		if got := r.Header.Get("Accept-Encoding"); got != "identity" {
+			t.Fatalf("Accept-Encoding = %q, want identity", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `W/"models-56"`)
+		_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"}]}`)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			if card != "codex-card" || deviceId != "device-a" || force {
+				t.Fatalf("lease args card=%q deviceId=%q force=%v", card, deviceId, force)
+			}
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT(accountID)}, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil)
+	req.Header.Set("Authorization", "Bearer local-fake-token")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"}]}` {
+		t.Fatalf("body = %s", got)
+	}
+	if got := rec.Header().Get("ETag"); got != `W/"models-56"` {
+		t.Fatalf("ETag = %q", got)
+	}
+}
+
+func TestCodexModelsFallsBackToDiskCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	cache := `{"client_version":"0.144.0","etag":"disk-etag","models":[{"slug":"gpt-5.6-terra"}]}`
+	if err := os.WriteFile(filepath.Join(home, "models_cache.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-disk")}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil), "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != cache {
+		t.Fatalf("body = %s, want disk cache", got)
+	}
+	if got := rec.Header().Get("ETag"); got != "disk-etag" {
+		t.Fatalf("ETag = %q, want disk-etag", got)
+	}
+}
+
+func TestCodexModelsFallsBackToEmptyCatalog(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-empty")}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models", nil), "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"models":[]}` {
+		t.Fatalf("body = %s, want empty Codex catalog", got)
+	}
+}
+
+func TestCodexModelsCoalescesConcurrentRequestsWithoutCachingResult(t *testing.T) {
+	var leaseCalls atomic.Int32
+	var upstreamCalls atomic.Int32
+	firstUpstreamEntered := make(chan struct{})
+	releaseUpstream := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if upstreamCalls.Add(1) == 1 {
+			close(firstUpstreamEntered)
+		}
+		<-releaseUpstream
+		_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			leaseCalls.Add(1)
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-shared")}, nil
+		},
+	}
+	type response struct {
+		code int
+		body string
+	}
+	doRequest := func(done chan<- response) {
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil), "codex-card", "device-a", "direct")
+		done <- response{code: rec.Code, body: strings.TrimSpace(rec.Body.String())}
+	}
+
+	done := make(chan response, 2)
+	go doRequest(done)
+	select {
+	case <-firstUpstreamEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first models request did not reach upstream")
+	}
+	go doRequest(done)
+	time.Sleep(100 * time.Millisecond)
+	close(releaseUpstream)
+	for range 2 {
+		select {
+		case got := <-done:
+			if got.code != http.StatusOK || got.body != `{"models":[{"slug":"gpt-5.6-sol"}]}` {
+				t.Fatalf("response = status %d body %s", got.code, got.body)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent models request did not finish")
+		}
+	}
+	if got := leaseCalls.Load(); got != 1 {
+		t.Fatalf("concurrent lease calls = %d, want 1", got)
+	}
+	if got := upstreamCalls.Load(); got != 1 {
+		t.Fatalf("concurrent upstream calls = %d, want 1", got)
+	}
+
+	third := httptest.NewRecorder()
+	proxy.ServeHTTP(third, httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil), "codex-card", "device-a", "direct")
+	if got := leaseCalls.Load(); got != 2 {
+		t.Fatalf("sequential lease calls = %d, want 2 (completed result must not be cached)", got)
+	}
+	if got := upstreamCalls.Load(); got != 2 {
+		t.Fatalf("sequential upstream calls = %d, want 2 (completed result must not be cached)", got)
 	}
 }
 

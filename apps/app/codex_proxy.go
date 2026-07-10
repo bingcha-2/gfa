@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,12 +92,14 @@ type CodexProxy struct {
 	// relay 由 ApplyConfig(UI 协程)热更新、ServeHTTP(请求协程)读取,必须用
 	// relayMu 保护。每条请求开头用 currentRelay() 取一次快照,后续全程用快照,
 	// 避免 UI 中途换配置导致读到撕裂指针或前后不一致(go test -race 也会报)。
-	relayMu       sync.RWMutex
-	relay         *CodexRelayConfig // 非空且 BaseURL/APIKey 齐全时启用中转模式
-	fastMode      bool              // 用户「快速档」开关(codexFastMode);开+号支持时代理注入 service_tier=priority
-	leaseToken    func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error)
-	reportResult  func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
-	reportProblem func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
+	relayMu        sync.RWMutex
+	relay          *CodexRelayConfig // 非空且 BaseURL/APIKey 齐全时启用中转模式
+	fastMode       bool              // 用户「快速档」开关(codexFastMode);开+号支持时代理注入 service_tier=priority
+	modelsMu       sync.Mutex
+	modelsInFlight map[string]*codexModelsCall // 只合并正在进行的同 key 请求;完成即删除,不缓存目录
+	leaseToken     func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error)
+	reportResult   func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
+	reportProblem  func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
 }
 
 // currentRelay 返回当前中转配置的快照(可能为 nil)。加读锁,供请求协程安全读取。
@@ -214,7 +219,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	reqID := atomic.AddInt64(&p.totalRequests, 1)
 
 	if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
-		p.sendModels(w)
+		p.serveModels(w, r, card, deviceId, upstreamProxy)
 		return
 	}
 
@@ -742,16 +747,168 @@ func (p *CodexProxy) targetURL(r *http.Request) (string, error) {
 	return target.String(), nil
 }
 
-func (p *CodexProxy) sendModels(w http.ResponseWriter) {
+const (
+	codexModelsMaxBytes = 4 << 20
+	codexModelsTimeout  = 4 * time.Second
+)
+
+type codexModelsResult struct {
+	body []byte
+	etag string
+	err  error
+}
+
+type codexModelsCall struct {
+	done   chan struct{}
+	result codexModelsResult
+}
+
+func (p *CodexProxy) serveModels(w http.ResponseWriter, r *http.Request, card, deviceID, upstreamProxy string) {
+	result := p.fetchCodexModelsCoalesced(r, card, deviceID, upstreamProxy)
+	if result.err == nil {
+		writeCodexModelsResponse(w, result.body, result.etag)
+		return
+	}
+	Log("[codex-models] 官方目录获取失败,使用本机缓存: %v", result.err)
+	if body, etag, err := readCodexModelsCache(); err == nil {
+		writeCodexModelsResponse(w, body, etag)
+		return
+	}
+	writeCodexModelsResponse(w, []byte(`{"models":[]}`), "")
+}
+
+func (p *CodexProxy) fetchCodexModelsCoalesced(r *http.Request, card, deviceID, upstreamProxy string) codexModelsResult {
+	key := card + "\x00" + r.URL.RawQuery
+	p.modelsMu.Lock()
+	if p.modelsInFlight == nil {
+		p.modelsInFlight = make(map[string]*codexModelsCall)
+	}
+	if call := p.modelsInFlight[key]; call != nil {
+		p.modelsMu.Unlock()
+		select {
+		case <-call.done:
+			return cloneCodexModelsResult(call.result)
+		case <-r.Context().Done():
+			return codexModelsResult{err: r.Context().Err()}
+		}
+	}
+	call := &codexModelsCall{done: make(chan struct{})}
+	p.modelsInFlight[key] = call
+	p.modelsMu.Unlock()
+
+	result := p.fetchCodexModels(r, card, deviceID, upstreamProxy)
+	p.modelsMu.Lock()
+	call.result = cloneCodexModelsResult(result)
+	delete(p.modelsInFlight, key)
+	close(call.done)
+	p.modelsMu.Unlock()
+	return result
+}
+
+func cloneCodexModelsResult(result codexModelsResult) codexModelsResult {
+	result.body = bytes.Clone(result.body)
+	return result
+}
+
+func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamProxy string) codexModelsResult {
+	if strings.TrimSpace(card) == "" {
+		return codexModelsResult{err: fmt.Errorf("Codex account card is not configured")}
+	}
+	leaseFunc := p.leaseToken
+	if leaseFunc == nil {
+		leaseFunc = GetCodexLeaser().LeaseToken
+	}
+	lease, err := leaseFunc(card, deviceID, false, nil, upstreamProxy)
+	if err != nil {
+		return codexModelsResult{err: fmt.Errorf("lease Codex token: %w", err)}
+	}
+
+	base := p.upstreamBase
+	if base == "" {
+		base = DefaultCodexEndpoint
+	}
+	target, err := url.Parse(strings.TrimRight(base, "/") + "/backend-api/codex/models")
+	if err != nil {
+		return codexModelsResult{err: fmt.Errorf("build models URL: %w", err)}
+	}
+	target.RawQuery = r.URL.RawQuery
+	ctx, cancel := context.WithTimeout(r.Context(), codexModelsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return codexModelsResult{err: fmt.Errorf("build models request: %w", err)}
+	}
+	copyCodexHeaders(req.Header, r.Header)
+	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+	if accountID := extractChatGPTAccountId(lease.AccessToken); accountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", accountID)
+	} else {
+		req.Header.Del("ChatGPT-Account-Id")
+	}
+	applyCodexOfficialHeaders(req.Header, r.Header)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
+
+	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, nil, req, createCodexStreamingHttpClient)
+	if err != nil {
+		return codexModelsResult{err: fmt.Errorf("request official models: %w", err)}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return codexModelsResult{err: fmt.Errorf("official models status %d", resp.StatusCode)}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, codexModelsMaxBytes+1))
+	if err != nil {
+		return codexModelsResult{err: fmt.Errorf("read official models: %w", err)}
+	}
+	if len(body) > codexModelsMaxBytes {
+		return codexModelsResult{err: fmt.Errorf("official models response exceeds %d bytes", codexModelsMaxBytes)}
+	}
+	if err := validateCodexModelsPayload(body); err != nil {
+		return codexModelsResult{err: fmt.Errorf("invalid official models response: %w", err)}
+	}
+	return codexModelsResult{body: body, etag: resp.Header.Get("ETag")}
+}
+
+func validateCodexModelsPayload(body []byte) error {
+	var envelope struct {
+		Models json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return err
+	}
+	if len(envelope.Models) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Models), []byte("null")) {
+		return fmt.Errorf("missing models array")
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(envelope.Models, &models); err != nil {
+		return fmt.Errorf("models is not an array: %w", err)
+	}
+	return nil
+}
+
+func readCodexModelsCache() ([]byte, string, error) {
+	body, err := os.ReadFile(filepath.Join(codexHomeDir(), "models_cache.json"))
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateCodexModelsPayload(body); err != nil {
+		return nil, "", err
+	}
+	var metadata struct {
+		ETag string `json:"etag"`
+	}
+	_ = json.Unmarshal(body, &metadata)
+	return body, metadata.ETag, nil
+}
+
+func writeCodexModelsResponse(w http.ResponseWriter, body []byte, etag string) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"object": "list",
-		"data": []map[string]interface{}{
-			{"id": "gpt-5-codex", "object": "model", "owned_by": "openai"},
-			{"id": "gpt-5", "object": "model", "owned_by": "openai"},
-			{"id": "codex-mini-latest", "object": "model", "owned_by": "openai"},
-		},
-	})
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (p *CodexProxy) sendJSONError(w http.ResponseWriter, status int, message string) {
