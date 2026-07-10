@@ -31,11 +31,8 @@ func mitmIsClaudeAiHost(host string) bool {
 
 // mitmClaudeAiHandler 经 utls 把 claude.ai 请求转发到真实 claude.ai(绕 Cloudflare),
 // 读响应、打印、并把订阅字段改写成已订阅。
-//
-// sessionKeyFn:借号注入。返回非空时,把请求 Cookie 里的 sessionKey 顶替成租到的白号 ——
-// 让所有 claude.ai 流量都以白号身份发出(借号)。返回 "" 则不改 Cookie(透传用户自己的登录态,
-// 保持原有行为)。其余 cookie(CF clearance 等)一律保留,只换 sessionKey。
-func mitmClaudeAiHandler(transport http.RoundTripper, sessionKeyFn func() string) http.Handler {
+// claude.ai 反代:透传用户自己的登录态,不改身份;只在 ModifyResponse 做订阅等级/Max 改写。
+func mitmClaudeAiHandler(transport http.RoundTripper) http.Handler {
 	target, _ := url.Parse(claudeAiBase)
 	if transport == nil {
 		transport = newClaudeUpstreamTransport("") // utls 指纹绕 Cloudflare
@@ -46,15 +43,7 @@ func mitmClaudeAiHandler(transport http.RoundTripper, sessionKeyFn func() string
 			req.URL.Host = target.Host
 			req.Host = target.Host
 			req.Header.Del("Accept-Encoding") // 要明文才好改写
-			if sessionKeyFn != nil {
-				if sk := sessionKeyFn(); sk != "" {
-					mitmInjectSessionKeyCookie(req, sk)
-				} else if strings.HasPrefix(req.URL.Path, "/api/") {
-					// 诊断[假设B]:借号期 current 为空 → 透传桌面端(未登录)态。若"第二次未登录"时
-					// 大量出现此行,说明是注入没赶上(race/租约失败),而非 sk 失效。
-					Log("[mitm-diag] claude.ai API %s 未注入白号(current 空,透传桌面端登录态)", req.URL.Path)
-				}
-			}
+			// claude.ai 透传用户自己的 Cookie/登录态,不改身份;MITM 只在 ModifyResponse 做订阅等级/Max 改写。
 		},
 		Transport:      transport,
 		ModifyResponse: mitmModifyClaudeAiResponse,
@@ -84,79 +73,6 @@ func mitmIsCloudflareChallenge(resp *http.Response) bool {
 		}
 	}
 	return false
-}
-
-// mitmStripSessionKeySetCookie 只从 Set-Cookie 里剔掉 claude.ai 的 sessionKey(借号身份不落
-// 用户浏览器,保护用户自己的号),其余 cookie(尤其 CF 的 cf_clearance/__cf_bm/cf_chl_*)全保留。
-func mitmStripSessionKeySetCookie(h http.Header) {
-	vals := h.Values("Set-Cookie")
-	if len(vals) == 0 {
-		return
-	}
-	var kept []string
-	for _, v := range vals {
-		name := v
-		if i := strings.IndexByte(v, '='); i >= 0 {
-			name = v[:i]
-		}
-		if strings.EqualFold(strings.TrimSpace(name), "sessionKey") {
-			// claude.ai 主动下发新 sessionKey = 会话轮换。先捕获新 sk 回填 leaser(本地顶替 + 上报号池,
-			// 防旧 sk 被作废后"第二次未登录"、号被烧),再 strip 掉 —— 新 sk 绝不落进 Chromium profile。
-			if nsk := parseSetCookieValue(v); nsk != "" {
-				GetClaudeSessionLeaser().OnRotatedSessionKey(nsk)
-			}
-			continue // 丢掉白号 sessionKey 的 Set-Cookie
-		}
-		kept = append(kept, v)
-	}
-	h.Del("Set-Cookie")
-	for _, v := range kept {
-		h.Add("Set-Cookie", v)
-	}
-}
-
-// mitmInjectSessionKeyCookie 重建请求 Cookie 头:【只留 Cloudflare 的 cookie】+ 注入白号 sessionKey。
-// 用户自己账号的 claude.ai cookie(sessionKey/org/device/活动会话等)一律丢掉 —— 否则白号的
-// sessionKey 与用户自己账号的其它 cookie 混在一起,claude.ai 判会话不一致、直接 account_session_invalid。
-// (实测:只发 sessionKey 一个 cookie → 200;带上别的账号 cookie → 失效。)
-// CF 的 __cf_bm/cf_clearance 等与账号无关、是过 CF 必需的,保留。
-func mitmInjectSessionKeyCookie(req *http.Request, sk string) {
-	existing := req.Header.Get("Cookie")
-	var kept []string
-	for _, part := range strings.Split(existing, ";") {
-		p := strings.TrimSpace(part)
-		if p == "" {
-			continue
-		}
-		name := p
-		if i := strings.IndexByte(p, '='); i >= 0 {
-			name = p[:i]
-		}
-		if isCloudflareCookie(name) {
-			kept = append(kept, p) // 只保留 CF cookie
-		}
-	}
-	kept = append(kept, "sessionKey="+sk)
-	req.Header.Set("Cookie", strings.Join(kept, "; "))
-}
-
-// parseSetCookieValue 从一条 Set-Cookie(name=value; attr...)里取出 value 部分(去掉属性段)。
-func parseSetCookieValue(setCookie string) string {
-	i := strings.IndexByte(setCookie, '=')
-	if i < 0 {
-		return ""
-	}
-	v := setCookie[i+1:]
-	if j := strings.IndexByte(v, ';'); j >= 0 {
-		v = v[:j]
-	}
-	return strings.TrimSpace(v)
-}
-
-// isCloudflareCookie 判断 cookie 名是否属于 Cloudflare(过 CF/bot 管理用,与 claude.ai 账号身份无关)。
-func isCloudflareCookie(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(n, "__cf") || strings.HasPrefix(n, "cf_") || strings.HasPrefix(n, "__cflb")
 }
 
 // patchUserAccessFeatures 把 current_user_access 里 code/cowork 相关 feature 的 status 放成 available。
@@ -307,23 +223,8 @@ func mitmModifyClaudeAiResponse(resp *http.Response) error {
 	// ★ Cloudflare 挑战/拦截响应:整段【原样透传】,绝不注入脚本、删 CSP 或删 Cookie。
 	//   CF 的 JS 挑战要靠它自己的脚本 + CSP + cf_clearance/__cf_bm/cf_chl_* cookie 才能在
 	//   Chromium 里解开;一旦我们改写,真 Chromium 也会永远卡在「Just a moment」进不去。
-	//   (借号走数据中心代理 IP 时 claude.ai 常发 CF 挑战 —— 让浏览器自己解。)
 	if mitmIsCloudflareChallenge(resp) {
 		return nil
-	}
-
-	// ★ 借号期:只删 claude.ai 的 sessionKey Set-Cookie —— 防白号 sessionKey 被 Chromium 存进
-	//   用户 profile、覆盖用户自己的(否则取消接管回不去)。CF 的 cf_clearance/__cf_bm 等必须保留,
-	//   否则 Chromium 解完挑战存不下、反复被挑战。借号身份本身活在 in-flight 注入的请求头里。
-	//   未借号时不动 Set-Cookie,用户自己的会话照常刷新。
-	if GetClaudeSessionLeaser().CurrentSessionKey() != "" {
-		mitmStripSessionKeySetCookie(resp.Header)
-		// 诊断[假设A/C 区分]:借号期 claude.ai 返回非 2xx → 上游认为 sk 失效(轮换/过期)。
-		// 若此行频繁伴随"第二次未登录",根因在 sk 本身(走 A);若上游全是 2xx 但 UI 仍显示未登录,
-		// 则是前端读不到 document.cookie 里的 sk(走 C)。
-		if resp.StatusCode >= 400 && !mitmIsCloudflareChallenge(resp) {
-			Log("[mitm-diag] 借号请求 %s → HTTP %d(上游可能判 sk 失效)", path, resp.StatusCode)
-		}
 	}
 
 	// ★ 顶层 HTML 文档(仅 2xx 正常页):注入「隐藏 chat」守卫脚本(chat/code UI 都来自 claude.ai 网页)。

@@ -160,8 +160,8 @@ func newClaudeUpstreamTransport(proxyURL string) *http.Transport {
 }
 
 // newClaudeUpstreamTransportFn 同 newClaudeUpstreamTransport,但出口代理【每次拨号时】由
-// proxyFn 实时求值。供 claude.ai 借号场景:同一 transport 跟随当前租到的白号静态出口动态切换,
-// 无需在租约变化时重建 handler。proxyFn 为 nil 或返回 "" → 直连。
+// proxyFn 实时求值(claude.ai 反代跟随用户当前网络出口动态切换,无需重建 handler)。
+// proxyFn 为 nil 或返回 "" → 直连。
 func newClaudeUpstreamTransportFn(proxyFn func() string) *http.Transport {
 	return &http.Transport{
 		Proxy: nil, // 代理在 DialTLSContext 内处理,不走 Transport.Proxy。
