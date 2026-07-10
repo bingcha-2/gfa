@@ -142,3 +142,55 @@ func TestAlignSQLiteMissingDB(t *testing.T) {
 		t.Fatalf("缺库应静默返回: rows=%d skipped=%v err=%v", rows, skipped, err)
 	}
 }
+
+func TestMigrateCodexHistoryProviderOnlyChangesLegacySource(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "07", "10")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, provider := range map[string]string{
+		"legacy": "bingchaai",
+		"custom": "myprovider",
+		"openai": "openai",
+	} {
+		path := filepath.Join(dir, "rollout-"+name+".jsonl")
+		body := `{"type":"session_meta","payload":{"id":"` + name + `","model_provider":"` + provider + `"}}` + "\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('legacy','bingchaai'),('custom','myprovider'),('openai','openai')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	summary, err := MigrateCodexHistoryProvider(home, "bingchaai", "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ChangedRolloutFile != 1 || summary.UpdatedSQLiteRows != 1 {
+		t.Fatalf("summary = %+v, want one rollout and one row", summary)
+	}
+	customRollout, _ := os.ReadFile(filepath.Join(dir, "rollout-custom.jsonl"))
+	if !strings.Contains(string(customRollout), `"model_provider":"myprovider"`) {
+		t.Fatalf("自定义 provider rollout 被误改:\n%s", customRollout)
+	}
+	db, _ = sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	defer db.Close()
+	var customProvider string
+	if err := db.QueryRow(`SELECT model_provider FROM threads WHERE id='custom'`).Scan(&customProvider); err != nil {
+		t.Fatal(err)
+	}
+	if customProvider != "myprovider" {
+		t.Fatalf("自定义 provider SQLite 被误改为 %q", customProvider)
+	}
+}

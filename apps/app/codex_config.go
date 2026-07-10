@@ -13,8 +13,8 @@ import (
 // 但会重排所有键、统一改写引号风格、丢失注释与空行布局,对用户那份手工维护
 // 的 460 行配置非常不友好(diff 噪音巨大、易被怀疑"被改坏")。
 //
-// 这里改成行级最小编辑:只动我们关心的 `model_provider` 顶层键和
-// `[model_providers.<id>]` 这一张表,其余字节原样保留。配合 temp+rename 原子写,
+// 这里改成行级最小编辑:只动我们关心的 `model_provider` / `openai_base_url`
+// 顶层键和旧 `[model_providers.<id>]` 表,其余字节原样保留。配合 temp+rename 原子写,
 // 杜绝半截写入。
 //
 // 解析(读当前值)仍走 go-toml(见 codex_inject.go 的 loadCodexConfig),这里只

@@ -197,9 +197,9 @@ func (localPlatform) CodexRestartApp() error {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		killProcessesByPattern(codexGUIProcessPattern, "-TERM") // 锚定主进程,避免误杀
+		killProcessesByPattern(codexGUIMainPattern(), "-TERM") // 锚定主进程,避免误杀;品牌随改名
 	case "windows":
-		_ = hideCmd("taskkill", "/IM", "Codex.exe", "/T").Run()
+		_ = hideCmd("taskkill", "/IM", codexWindowsImageName(), "/T").Run()
 	}
 	_, err := localPlatform{}.LaunchApp(appPath, "", nil)
 	return err

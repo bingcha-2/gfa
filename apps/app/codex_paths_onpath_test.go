@@ -41,9 +41,13 @@ func TestCodexWindowsGUIExeCandidates(t *testing.T) {
 	pf := filepath.Join("C:", "Program Files")
 
 	got := codexWindowsGUIExeCandidates(lad, pf)
-	want := []string{
-		filepath.Join(lad, "Programs", "Codex", "Codex.exe"),
-		filepath.Join(pf, "Codex", "Codex.exe"),
+	// 改名兼容:每个根目录下都列出全部候选品牌(Codex + ChatGPT + …)。
+	want := []string{}
+	for _, name := range codexBrandNames() {
+		want = append(want, filepath.Join(lad, "Programs", name, name+".exe"))
+	}
+	for _, name := range codexBrandNames() {
+		want = append(want, filepath.Join(pf, name, name+".exe"))
 	}
 	if len(got) != len(want) {
 		t.Fatalf("候选数量 = %d, want %d (%v)", len(got), len(want), got)
@@ -69,8 +73,17 @@ func TestCodexWindowsGUIExeCandidatesEmptyRoots(t *testing.T) {
 		t.Fatalf("空根目录应返回空候选, got %v", got)
 	}
 	got := codexWindowsGUIExeCandidates("X", "")
-	if len(got) != 1 || got[0] != filepath.Join("X", "Programs", "Codex", "Codex.exe") {
-		t.Fatalf("只有 LOCALAPPDATA 时应只返回一个候选, got %v", got)
+	want := []string{}
+	for _, name := range codexBrandNames() {
+		want = append(want, filepath.Join("X", "Programs", name, name+".exe"))
+	}
+	if len(got) != len(want) {
+		t.Fatalf("只有 LOCALAPPDATA 时应返回 %d 个候选, got %v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("候选[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

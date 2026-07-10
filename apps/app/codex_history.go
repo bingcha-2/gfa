@@ -35,6 +35,31 @@ type HistoryVisibilitySummary struct {
 	SkippedSQLite      bool   `json:"skippedSqlite"`
 }
 
+func MigrateCodexHistoryProvider(home, sourceProvider, targetProvider string) (HistoryVisibilitySummary, error) {
+	source := strings.TrimSpace(sourceProvider)
+	target := strings.TrimSpace(targetProvider)
+	if target == "" {
+		target = codexDefaultProvider
+	}
+	summary := HistoryVisibilitySummary{TargetProvider: target}
+	if source == "" || source == target {
+		return summary, nil
+	}
+
+	changed, err := rewriteRolloutProviders(home, source, target)
+	summary.ChangedRolloutFile = changed
+	if err != nil {
+		Log("[codex] rollout provider 迁移部分失败: %v", err)
+	}
+	rows, skipped, sqlErr := migrateSQLiteProvider(home, source, target)
+	summary.UpdatedSQLiteRows = rows
+	summary.SkippedSQLite = skipped
+	if sqlErr != nil {
+		Log("[codex] state_5.sqlite provider 迁移失败: %v", sqlErr)
+	}
+	return summary, nil
+}
+
 // AlignCodexHistoryVisibility 把指定 codex home 下的历史会话 provider 元数据对齐到
 // targetProvider。尽力而为:单个文件/数据库失败不会中断整体。
 func AlignCodexHistoryVisibility(home, targetProvider string) (HistoryVisibilitySummary, error) {
@@ -62,6 +87,10 @@ func AlignCodexHistoryVisibility(home, targetProvider string) (HistoryVisibility
 
 // alignRolloutProviders 遍历 rollout-*.jsonl,改写首行 session_meta 的 model_provider。
 func alignRolloutProviders(home, target string) (int, error) {
+	return rewriteRolloutProviders(home, "", target)
+}
+
+func rewriteRolloutProviders(home, source, target string) (int, error) {
 	changed := 0
 	var firstErr error
 	for _, dirName := range codexSessionDirs {
@@ -81,7 +110,7 @@ func alignRolloutProviders(home, target string) (int, error) {
 			if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, ".jsonl") {
 				return nil
 			}
-			ok, err := retagRolloutFile(path, target)
+			ok, err := retagRolloutFileFrom(path, source, target)
 			if err != nil {
 				if firstErr == nil {
 					firstErr = err
@@ -100,6 +129,10 @@ func alignRolloutProviders(home, target string) (int, error) {
 // retagRolloutFile 读取首行,若 session_meta.payload.model_provider != target 则改写,
 // 保留其余内容与文件 mtime(避免扰动 Codex 的排序)。返回是否发生改写。
 func retagRolloutFile(path, target string) (bool, error) {
+	return retagRolloutFileFrom(path, "", target)
+}
+
+func retagRolloutFileFrom(path, source, target string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
@@ -123,7 +156,8 @@ func retagRolloutFile(path, target string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	if cur, _ := payload["model_provider"].(string); cur == target {
+	cur, _ := payload["model_provider"].(string)
+	if cur == target || (source != "" && cur != source) {
 		return false, nil
 	}
 	payload["model_provider"] = target
@@ -203,6 +237,39 @@ func alignSQLiteProviders(home, target string) (int, bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), false, nil
+}
+
+func migrateSQLiteProvider(home, source, target string) (int, bool, error) {
+	dbPath := filepath.Join(home, codexStateDBFile)
+	if _, err := os.Stat(dbPath); err != nil {
+		return 0, false, nil
+	}
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(3000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, true, fmt.Errorf("打开 state_5.sqlite 失败: %w", err)
+	}
+	defer db.Close()
+	cols, err := threadsColumns(db)
+	if err != nil {
+		if isMissingThreadsTable(err) {
+			return 0, false, nil
+		}
+		return 0, true, err
+	}
+	if !cols["model_provider"] {
+		return 0, false, nil
+	}
+	res, err := db.Exec(
+		"UPDATE threads SET model_provider = ? WHERE COALESCE(model_provider, '') = ?",
+		target,
+		source,
+	)
+	if err != nil {
+		return 0, true, fmt.Errorf("迁移 threads provider 失败: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	return int(rows), false, nil
 }
 
 // threadsColumns 返回 threads 表的列集合。

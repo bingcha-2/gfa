@@ -36,11 +36,14 @@ func detectCodexCLIPath() string {
 
 	switch runtime.GOOS {
 	case "darwin":
-		if p := detectCodexCLIInAppBundle(spotlightFindApp("Codex.app")); p != "" {
-			return p
-		}
-		if p := detectCodexCLIInAppBundle("/Applications/Codex.app"); p != "" {
-			return p
+		// 桌面端可能已改名(Codex.app → ChatGPT.app),按候选品牌逐个探测 bundle 内 CLI。
+		for _, name := range codexBrandNames() {
+			if p := detectCodexCLIInAppBundle(spotlightFindApp(name + ".app")); p != "" {
+				return p
+			}
+			if p := detectCodexCLIInAppBundle(filepath.Join("/Applications", name+".app")); p != "" {
+				return p
+			}
 		}
 	case "windows":
 		localAppData := os.Getenv("LOCALAPPDATA")
@@ -57,16 +60,17 @@ func detectCodexCLIPath() string {
 			return p
 		}
 	case "linux":
-		if p := desktopFindApp("Codex"); p != "" {
-			return p
-		}
-		for _, p := range []string{
-			"/opt/Codex/codex",
-			"/usr/share/codex/codex",
-		} {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		for _, name := range codexBrandNames() {
+			if p := desktopFindApp(name); p != "" {
 				return p
 			}
+			opt := filepath.Join("/opt", name, "codex")
+			if info, err := os.Stat(opt); err == nil && !info.IsDir() {
+				return opt
+			}
+		}
+		if info, err := os.Stat("/usr/share/codex/codex"); err == nil && !info.IsDir() {
+			return "/usr/share/codex/codex"
 		}
 	}
 
@@ -93,32 +97,55 @@ func detectCodexGUIPath() string {
 			if _, err := os.Stat(cfg.CodexAppPath); err == nil {
 				return cfg.CodexAppPath
 			}
-		} else if runtime.GOOS == "windows" && strings.EqualFold(filepath.Base(cfg.CodexAppPath), "Codex.exe") {
+		} else if runtime.GOOS == "windows" && isCodexGUIExeName(filepath.Base(cfg.CodexAppPath)) {
 			if info, err := os.Stat(cfg.CodexAppPath); err == nil && !info.IsDir() {
 				return cfg.CodexAppPath
 			}
 		}
 	}
 
+	// 权威锚点(不认名字):chrome-native-hosts.json 的 codexCliPath 指向真正的 Codex
+	// 可执行文件,GUI 安装时它落在 .../<真名>.app/Contents/Resources/codex 内。据此直接反推
+	// 出 bundle —— 改名叫 Codex 还是 ChatGPT 都自动识别,无需靠品牌名先后猜测。
+	if runtime.GOOS == "darwin" {
+		if cli := detectCodexFromNativeHosts(); cli != "" {
+			if bundle := codexAppBundlePath(cli); strings.HasSuffix(bundle, ".app") {
+				if _, err := os.Stat(bundle); err == nil {
+					return bundle
+				}
+			}
+		}
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
-		if p := spotlightFindApp("Codex.app"); p != "" {
-			return p
-		}
-		if _, err := os.Stat("/Applications/Codex.app"); err == nil {
-			return "/Applications/Codex.app"
+		// 权威锚点缺失时的兜底:桌面端可能已改名(Codex.app → ChatGPT.app),按候选品牌逐个探测。
+		for _, name := range codexBrandNames() {
+			if p := spotlightFindApp(name + ".app"); p != "" {
+				return p
+			}
+			app := filepath.Join("/Applications", name+".app")
+			if _, err := os.Stat(app); err == nil {
+				return app
+			}
 		}
 	case "windows":
-		if loc := registryFindInstallPath("Codex"); loc != "" {
-			if info, err := os.Stat(loc); err == nil {
-				if info.IsDir() {
-					exe := filepath.Join(loc, "Codex.exe")
-					if exeInfo, exeErr := os.Stat(exe); exeErr == nil && !exeInfo.IsDir() {
-						return exe
-					}
-				} else {
-					return loc
+		for _, name := range codexBrandNames() {
+			loc := registryFindInstallPath(name)
+			if loc == "" {
+				continue
+			}
+			info, err := os.Stat(loc)
+			if err != nil {
+				continue
+			}
+			if info.IsDir() {
+				exe := filepath.Join(loc, name+".exe")
+				if exeInfo, exeErr := os.Stat(exe); exeErr == nil && !exeInfo.IsDir() {
+					return exe
 				}
+			} else {
+				return loc
 			}
 		}
 		for _, p := range codexWindowsGUIExeCandidates(os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")) {
@@ -127,13 +154,17 @@ func detectCodexGUIPath() string {
 			}
 		}
 	case "linux":
-		if p := desktopFindApp("Codex"); p != "" {
-			return p
-		}
-		for _, p := range []string{"/opt/Codex/codex", "/usr/share/codex/codex"} {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		for _, name := range codexBrandNames() {
+			if p := desktopFindApp(name); p != "" {
 				return p
 			}
+			opt := filepath.Join("/opt", name, "codex")
+			if info, err := os.Stat(opt); err == nil && !info.IsDir() {
+				return opt
+			}
+		}
+		if info, err := os.Stat("/usr/share/codex/codex"); err == nil && !info.IsDir() {
+			return "/usr/share/codex/codex"
 		}
 	}
 	return ""
@@ -156,11 +187,16 @@ func detectCodexCLIInAppBundle(appPath string) string {
 // 不能当作"GUI 已安装"的依据,否则纯 CLI 会被误判成 GUI 而触发无意义的 kill/relaunch。
 func codexWindowsGUIExeCandidates(localAppData, programFiles string) []string {
 	candidates := []string{}
+	// 桌面端可能已改名(Codex.exe → ChatGPT.exe),每个候选品牌都列。
 	if localAppData != "" {
-		candidates = append(candidates, filepath.Join(localAppData, "Programs", "Codex", "Codex.exe"))
+		for _, name := range codexBrandNames() {
+			candidates = append(candidates, filepath.Join(localAppData, "Programs", name, name+".exe"))
+		}
 	}
 	if programFiles != "" {
-		candidates = append(candidates, filepath.Join(programFiles, "Codex", "Codex.exe"))
+		for _, name := range codexBrandNames() {
+			candidates = append(candidates, filepath.Join(programFiles, name, name+".exe"))
+		}
 	}
 	return candidates
 }

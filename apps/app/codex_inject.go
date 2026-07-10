@@ -13,35 +13,27 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-// ─── Codex 接管(注入 ~/.codex/config.toml,自定义 provider 模式)─────────────
+// ─── Codex 接管(注入 ~/.codex/config.toml,内置 openai provider 模式)────────
 //
-// 对照 cockpit 的 codex_local_access:把 Codex 切到一个自定义 model_provider,指向
-// 本地代理的 /v1(OpenAI 兼容)端点。
+// 保留 Codex 内置 openai provider,只把 openai_base_url 指向本地代理的 /v1
+// (OpenAI 兼容)端点。内置 provider 保留 ChatGPT auth 语义,模型管理器会继续刷新
+// /models;自定义 requires_openai_auth=false provider 则不会刷新远程目录。
 //
-// 为什么不改 chatgpt_base_url:新版 Codex 桌面版在 ChatGPT 原生模式下,对话走
-// WebSocket(wss),HTTP 代理拦不到生成请求(实测改 chatgpt_base_url 后,插件等杂活
-// 来了,但 /responses 一条没有)。切到自定义 provider 并写 supports_websockets=false
-// 后,Codex 改走 HTTP POST /v1/responses,代理才拦得到。
+// 内置 provider 会先尝试 WebSocket;代理对本机 /v1/responses Upgrade 返回 426,
+// Codex 官方 fallback 会立即切到 HTTP POST,再进入现有租号转发链路。
 //
-// 写入策略:行级最小编辑(见 codex_config.go),只动 model_provider 顶层键 +
-// [model_providers.bingchaai] 这一张表,保留用户其余配置/注释/键序原样;temp+rename
-// 原子写。代价:模型列表来自代理 /v1/models、显示 BingchaAI(provider 模式固有),
-// 历史按 provider 分桶的问题由 codex_history.go 的可见性修复兜底。
+// 写入策略:行级最小编辑(见 codex_config.go),只动 model_provider/openai_base_url
+// 顶层键并清理旧版 [model_providers.bingchaai],保留用户其余配置/注释/键序原样。
 
 // 接管写入的 config.toml 形态:
 //
-//	model_provider = "bingchaai"
-//	[model_providers.bingchaai]
-//	name = "BingchaAI"
-//	base_url = "http://127.0.0.1:<port>/v1"
-//	wire_api = "responses"
-//	requires_openai_auth = false      # 用号池租号注入上游 token,Codex 无需自带鉴权
-//	supports_websockets = false       # 强制走 HTTP,不走 wss(否则代理拦不到)
+//	model_provider = "openai"
+//	openai_base_url = "http://127.0.0.1:<port>/v1"
 const (
 	codexDefaultProvider = "openai"
 	codexProviderID      = "bingchaai"
-	codexProviderName    = "BingchaAI"
 	codexModelProvider   = "model_provider"
+	codexOpenAIBaseURL   = "openai_base_url"
 )
 
 func codexHomeDir() string {
@@ -64,6 +56,7 @@ type codexBackup struct {
 	Injected          bool        `json:"injected"`
 	HadConfig         bool        `json:"hadConfig"`
 	PrevModelProvider interface{} `json:"prevModelProvider"`
+	PrevOpenAIBaseURL interface{} `json:"prevOpenAIBaseURL"`
 }
 
 // loadCodexConfig 读取 config.toml 为通用 map(仅用于读当前状态)。
@@ -103,42 +96,84 @@ func prevProviderFromBackup() string {
 	return ""
 }
 
-// InjectCodexSettings 把 Codex 切到自定义 provider 指向本地代理 /v1(最小改动 + 原子写)。
-// 写 model_provider + [model_providers.bingchaai],含 supports_websockets=false 强制走 HTTP。
+func prevOpenAIBaseURLFromBackup() string {
+	data, err := os.ReadFile(codexBackupPath())
+	if err != nil {
+		return ""
+	}
+	var backup codexBackup
+	if json.Unmarshal(data, &backup) != nil {
+		return ""
+	}
+	prev, _ := backup.PrevOpenAIBaseURL.(string)
+	return prev
+}
+
+func ensureCodexBackup(hadConfig bool) error {
+	config, _, err := loadCodexConfig()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(codexBackupPath())
+	if os.IsNotExist(err) {
+		backup := codexBackup{
+			Injected:          true,
+			HadConfig:         hadConfig,
+			PrevModelProvider: config[codexModelProvider],
+			PrevOpenAIBaseURL: config[codexOpenAIBaseURL],
+		}
+		encoded, marshalErr := json.MarshalIndent(backup, "", "  ")
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := os.MkdirAll(codexHomeDir(), 0o755); err != nil {
+			return err
+		}
+		return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+	}
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
+	}
+	if _, exists := fields["prevOpenAIBaseURL"]; exists {
+		return nil
+	}
+	var backup codexBackup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
+	}
+	backup.PrevOpenAIBaseURL = config[codexOpenAIBaseURL]
+	encoded, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+}
+
+// InjectCodexSettings 保留内置 openai provider,把它的 base URL 指向本地代理 /v1。
 func InjectCodexSettings(proxyPort int) error {
 	content, had, err := readCodexConfigRaw()
 	if err != nil {
 		return err
 	}
 
-	// 首次注入时备份原 model_provider(供还原),避免覆盖用户原有自定义供应商。
-	if _, statErr := os.Stat(codexBackupPath()); os.IsNotExist(statErr) {
-		var prev interface{}
-		if m, _, e := loadCodexConfig(); e == nil {
-			prev = m[codexModelProvider]
-		}
-		bk := codexBackup{Injected: true, HadConfig: had, PrevModelProvider: prev}
-		if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
-			_ = os.MkdirAll(codexHomeDir(), 0o755)
-			_ = writeFileAtomic(codexBackupPath(), b, 0o644)
-		}
+	// 首次注入备份两个顶层键;旧版备份缺 openai_base_url 时在覆盖前就地补录。
+	if err := ensureCodexBackup(had); err != nil {
+		return err
 	}
 
-	// 清掉旧版接管残留的本地 chatgpt_base_url(新版用自定义 provider,不再用它);
-	// 否则它和新 provider 并存,Codex 仍会把杂活请求发到本地代理。
+	// 清掉两代旧接管残留,避免旧路由与内置 openai provider 并存。
 	content = stripLegacyLocalCodexBaseURL(content)
-	content = setTopLevelString(content, codexModelProvider, codexProviderID)
-	content = upsertProviderTable(content, codexProviderID, [][2]string{
-		{"name", tomlQuote(codexProviderName)},
-		{"base_url", tomlQuote(codexProxyBaseURL(proxyPort))},
-		{"wire_api", tomlQuote("responses")},
-		{"requires_openai_auth", "false"},
-		{"supports_websockets", "false"},
-	})
+	content = removeProviderTable(content, codexProviderID)
+	content = setTopLevelString(content, codexModelProvider, codexDefaultProvider)
+	content = setTopLevelString(content, codexOpenAIBaseURL, codexProxyBaseURL(proxyPort))
 	return writeFileAtomic(codexConfigPath(), []byte(content), 0o644)
 }
 
-// RestoreCodexSettings 移除我们的 provider 条目并复位 model_provider(最小改动 + 原子写)。
+// RestoreCodexSettings 移除本机 base URL 并复位原 model_provider/openai_base_url。
 func RestoreCodexSettings() error {
 	content, had, err := readCodexConfigRaw()
 	if err != nil {
@@ -151,13 +186,18 @@ func RestoreCodexSettings() error {
 
 	content = removeProviderTable(content, codexProviderID)
 	content = stripLegacyLocalCodexBaseURL(content)
-	prev := prevProviderFromBackup()
-	if prev != "" && prev != codexProviderID {
+	prevProvider := prevProviderFromBackup()
+	if prevProvider != "" && prevProvider != codexProviderID {
 		// 用户原本有自定义 provider:恢复它。
-		content = setTopLevelString(content, codexModelProvider, prev)
+		content = setTopLevelString(content, codexModelProvider, prevProvider)
 	} else {
 		// 原本无 model_provider(用官方默认):删掉我们写入的键即可回到默认。
 		content = removeTopLevelKey(content, codexModelProvider)
+	}
+	if prevBaseURL := prevOpenAIBaseURLFromBackup(); prevBaseURL != "" {
+		content = setTopLevelString(content, codexOpenAIBaseURL, prevBaseURL)
+	} else {
+		content = removeTopLevelKey(content, codexOpenAIBaseURL)
 	}
 	if err := writeFileAtomic(codexConfigPath(), []byte(content), 0o644); err != nil {
 		return err
@@ -167,7 +207,7 @@ func RestoreCodexSettings() error {
 }
 
 // CleanupLegacyCodexTakeover 启动时清理旧版接管残留的本地 chatgpt_base_url。
-// 新版用自定义 provider 接管,旧 chatgpt_base_url=127.0.0.1 是孤儿,留着会让 Codex
+// 新版用 openai_base_url 接管,旧 chatgpt_base_url=127.0.0.1 是孤儿,留着会让 Codex
 // 把插件/遥测等杂活继续发到本地代理(被静默吞掉)。仅在确有残留时才写盘。
 func CleanupLegacyCodexTakeover() error {
 	content, had, err := readCodexConfigRaw()
@@ -197,53 +237,66 @@ func readCodexBackupPrev() interface{} {
 	return bk.PrevModelProvider
 }
 
-// IsCodexInjected 判断 config.toml 当前是否已切到我们的自定义 provider。
-func IsCodexInjected() bool {
+// IsCodexInjected 判断 config.toml 当前是否已把内置 openai provider 指向本机代理。
+func IsCodexInjected(proxyPort int) bool {
 	m, had, err := loadCodexConfig()
 	if err != nil || !had {
 		return false
 	}
-	if mp, _ := m[codexModelProvider].(string); mp != codexProviderID {
+	if mp, _ := m[codexModelProvider].(string); mp != codexDefaultProvider {
 		return false
 	}
-	providers, _ := m["model_providers"].(map[string]interface{})
-	if providers == nil {
-		return false
-	}
-	_, ok := providers[codexProviderID]
-	return ok
+	baseURL, _ := m[codexOpenAIBaseURL].(string)
+	return baseURL == codexProxyBaseURL(proxyPort)
 }
 
-// codexProcessPattern 是用于 pgrep/pkill 匹配 Codex 整个 app 进程树的模式
-// (主进程 + 渲染/GPU 辅助 + Resources/codex app-server 等子进程)。
-// 注意:"Codex.app/Contents" 不会误匹配 "Codex Computer Use.app/Contents"
-// (后者无 "Codex.app" 子串),所以不会误杀 computer-use 辅助服务。
-const codexProcessPattern = "Codex.app/Contents"
+func currentCodexModelProvider() string {
+	m, had, err := loadCodexConfig()
+	if err == nil && had {
+		if provider, _ := m[codexModelProvider].(string); strings.TrimSpace(provider) != "" {
+			return provider
+		}
+	}
+	return codexDefaultProvider
+}
 
-// codexGUIProcessPattern 只匹配 GUI 主进程(Codex.app/Contents/MacOS/Codex),
+// codexProcessTreePattern 是用于 pgrep/kill 匹配 Codex 整个 app 进程树的模式
+// (主进程 + 渲染/GPU 辅助 + Resources/codex app-server 等子进程)。品牌名从实际安装
+// 反推(codexDesktopBrand),兼容改名后的 ChatGPT.app;反推不到回落 "Codex"。
+// 注意:"<Brand>.app/Contents" 不会误匹配 "Codex Computer Use.app/Contents"
+// (后者无 "Codex.app" 子串),所以不会误杀 computer-use 辅助服务。
+func codexProcessTreePattern() string { return codexDesktopBrand() + ".app/Contents" }
+
+// codexGUIMainPattern 只匹配 GUI 主进程(<Brand>.app/Contents/MacOS/<Brand>),
 // 用于判断"GUI 是否真的起来了"。它刻意排除:
 //   - Resources/codex(headless CLI / app-server 子进程)—— 接管失败时可能残留,
 //     旧逻辑会把它误判成"Codex 在运行",掩盖 GUI 没拉起的事实;
-//   - Frameworks/.../Helpers/Codex (Renderer|GPU).app —— 这些路径前缀不是 "Codex.app"。
-const codexGUIProcessPattern = "Codex.app/Contents/MacOS/Codex"
+//   - Frameworks/.../Helpers/Codex (Renderer|GPU).app —— 这些路径前缀不是 "<Brand>.app"。
+func codexGUIMainPattern() string {
+	b := codexDesktopBrand()
+	return b + ".app/Contents/MacOS/" + b
+}
+
+// codexWindowsImageName 返回 Windows GUI 进程映像名(tasklist/taskkill 用),随品牌改名。
+func codexWindowsImageName() string { return codexDesktopBrand() + ".exe" }
 
 // IsCodexRunning 检测 Codex GUI 主程序是否在运行(不含 bundle 内的 CLI 子进程)。
 func IsCodexRunning() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("pgrep", "-f", codexGUIProcessPattern).Output()
+		out, err := exec.Command("pgrep", "-f", codexGUIMainPattern()).Output()
 		if err != nil {
 			return false
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "linux":
-		out, err := exec.Command("pgrep", "-f", codexProcessPattern).Output()
+		out, err := exec.Command("pgrep", "-f", codexProcessTreePattern()).Output()
 		if err != nil {
 			return false
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Codex.exe", "/NH").Output()
+		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+codexWindowsImageName(), "/NH").Output()
 		if err != nil {
 			return false
 		}
@@ -259,13 +312,13 @@ func IsCodexRunning() bool {
 func isCodexProcessTreeRunning() bool {
 	switch runtime.GOOS {
 	case "darwin", "linux":
-		out, err := exec.Command("pgrep", "-f", codexProcessPattern).Output()
+		out, err := exec.Command("pgrep", "-f", codexProcessTreePattern()).Output()
 		if err != nil {
 			return false
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Codex.exe", "/NH").Output()
+		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+codexWindowsImageName(), "/NH").Output()
 		if err != nil {
 			return false
 		}
@@ -291,16 +344,16 @@ func QuitCodexApp() {
 		if !isCodexProcessTreeRunning() {
 			return
 		}
-		killProcessesByPattern(codexProcessPattern, "-TERM")
+		killProcessesByPattern(codexProcessTreePattern(), "-TERM")
 		if !waitForProcessExit(isCodexProcessTreeRunning, 5*time.Second) {
-			killProcessesByPattern(codexProcessPattern, "-9")
+			killProcessesByPattern(codexProcessTreePattern(), "-9")
 			waitForProcessExit(isCodexProcessTreeRunning, 2*time.Second)
 		}
 		if isCodexProcessTreeRunning() {
 			Log("[codex] 警告:Codex 仍在运行,可能影响配置重载")
 		}
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", "Codex.exe", "/T", "/F").Run()
+		_ = exec.Command("taskkill", "/IM", codexWindowsImageName(), "/T", "/F").Run()
 		waitForProcessExit(isCodexProcessTreeRunning, 3*time.Second)
 	}
 }
@@ -356,7 +409,7 @@ func codexAppBundlePath(p string) string {
 	return p
 }
 
-// RestartCodexAfterTakeover 退出 → 把历史会话 provider 对齐到 targetProvider → 启动。
+// RestartCodexAfterTakeover 退出 → 迁移旧 bingchaai 历史到 targetProvider → 启动。
 // 串行后台执行,保证修复 SQLite 时 Codex 已退出(数据库未被占用)。
 //
 // provider 模式下 Codex 按 model_provider 给历史分桶展示:接管后当前 provider 是
@@ -369,7 +422,7 @@ func RestartCodexAfterTakeover(targetProvider string) {
 		}
 	}()
 	QuitCodexApp()
-	if _, err := AlignCodexHistoryVisibility(codexHomeDir(), targetProvider); err != nil {
+	if _, err := MigrateCodexHistoryProvider(codexHomeDir(), codexProviderID, targetProvider); err != nil {
 		Log("[codex] 对齐历史可见性失败(不致命): %v", err)
 	}
 	LaunchCodexApp()

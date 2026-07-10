@@ -97,8 +97,8 @@ func TestUpsertAndRemoveProviderTable(t *testing.T) {
 	}
 }
 
-// 完整接管→还原:原本无 model_provider 的场景(对应用户真实配置)。
-// provider 模式:写 model_provider + [model_providers.bingchaai],含 supports_websockets=false。
+// 完整接管→还原:原本无 model_provider/openai_base_url 的场景(对应用户真实配置)。
+// 接管保留内置 openai provider,只覆盖 openai_base_url。
 func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -110,29 +110,29 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	if err := InjectCodexSettings(8080); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
-	if !IsCodexInjected() {
+	if !IsCodexInjected(8080) {
 		t.Fatalf("注入后 IsCodexInjected=false")
 	}
 	injected, _ := os.ReadFile(cfgPath)
 	for _, must := range []string{
-		`model_provider = "bingchaai"`,
-		`[model_providers.bingchaai]`,
-		`base_url = "http://127.0.0.1:8080/v1"`,
-		`supports_websockets = false`, // 关键:强制走 HTTP 不走 wss
-		`requires_openai_auth = false`,
+		`model_provider = "openai"`,
+		`openai_base_url = "http://127.0.0.1:8080/v1"`,
 	} {
 		if !strings.Contains(string(injected), must) {
 			t.Fatalf("注入后缺少 %q:\n%s", must, injected)
 		}
+	}
+	if strings.Contains(string(injected), "model_providers.bingchaai") || strings.Contains(string(injected), `model_provider = "bingchaai"`) {
+		t.Fatalf("注入后不应创建自定义 provider:\n%s", injected)
 	}
 
 	if err := RestoreCodexSettings(); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	restored, _ := os.ReadFile(cfgPath)
-	// 原本没有 provider,还原后应彻底移除。
-	if strings.Contains(string(restored), "model_provider") || strings.Contains(string(restored), "bingchaai") {
-		t.Fatalf("还原后仍残留 provider:\n%s", restored)
+	// 原本没有 provider/base URL,还原后应彻底移除。
+	if strings.Contains(string(restored), "model_provider") || strings.Contains(string(restored), "openai_base_url") || strings.Contains(string(restored), "bingchaai") {
+		t.Fatalf("还原后仍残留接管配置:\n%s", restored)
 	}
 	// 关键:用户的 projects / desktop / 注释 全部保留。
 	for _, must := range []string{"# top comment", "[desktop]", "[projects.'/Users/x/proj']", "model = 'gpt-5.5'"} {
@@ -142,12 +142,16 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	}
 }
 
-// 完整接管→还原:有原自定义 model_provider 的场景,应被恢复。
+// 完整接管→还原:有原自定义 model_provider/openai_base_url 的场景,两者都应恢复。
 func TestInjectRestoreRoundTripWithPriorProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	cfgPath := filepath.Join(home, "config.toml")
-	prior := "model_provider = 'myprovider'\n" + sampleConfig
+	prior := "model_provider = 'myprovider'\nopenai_base_url = 'https://openai.example/v1'\n" + sampleConfig + `
+[model_providers.bingchaai]
+name = "legacy"
+base_url = "http://127.0.0.1:60670/v1"
+`
 	if err := os.WriteFile(cfgPath, []byte(prior), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +160,12 @@ func TestInjectRestoreRoundTripWithPriorProvider(t *testing.T) {
 		t.Fatalf("inject: %v", err)
 	}
 	injected, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(injected), `model_provider = "bingchaai"`) {
-		t.Fatalf("注入后未切到 bingchaai:\n%s", injected)
+	if !strings.Contains(string(injected), `model_provider = "openai"`) ||
+		!strings.Contains(string(injected), `openai_base_url = "http://127.0.0.1:8080/v1"`) {
+		t.Fatalf("注入后未切到内置 openai provider:\n%s", injected)
+	}
+	if strings.Contains(string(injected), "model_providers.bingchaai") {
+		t.Fatalf("注入后未清理旧自定义 provider:\n%s", injected)
 	}
 
 	if err := RestoreCodexSettings(); err != nil {
@@ -167,8 +175,57 @@ func TestInjectRestoreRoundTripWithPriorProvider(t *testing.T) {
 	if !strings.Contains(string(restored), `model_provider = "myprovider"`) {
 		t.Fatalf("还原后未恢复原 provider:\n%s", restored)
 	}
+	if !strings.Contains(string(restored), `openai_base_url = "https://openai.example/v1"`) {
+		t.Fatalf("还原后未恢复原 openai_base_url:\n%s", restored)
+	}
 	if strings.Contains(string(restored), "bingchaai") {
 		t.Fatalf("还原后仍残留 bingchaai:\n%s", restored)
+	}
+}
+
+func TestInjectBackfillsOpenAIBaseURLIntoLegacyBackup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	cfgPath := filepath.Join(home, "config.toml")
+	prior := "model_provider = 'bingchaai'\nopenai_base_url = 'https://openai.example/v1'\n" + sampleConfig + `
+[model_providers.bingchaai]
+name = "legacy"
+base_url = "http://127.0.0.1:60670/v1"
+`
+	if err := os.WriteFile(cfgPath, []byte(prior), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyBackup := `{"injected":true,"hadConfig":true,"prevModelProvider":"myprovider"}`
+	if err := os.WriteFile(codexBackupPath(), []byte(legacyBackup), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if err := RestoreCodexSettings(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	restored, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(restored), `openai_base_url = "https://openai.example/v1"`) {
+		t.Fatalf("旧备份升级后丢失原 openai_base_url:\n%s", restored)
+	}
+}
+
+func TestIsCodexInjectedRequiresCurrentProxyPort(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(sampleConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatal(err)
+	}
+	if !IsCodexInjected(8080) {
+		t.Fatal("当前代理端口应识别为已接管")
+	}
+	if IsCodexInjected(9999) {
+		t.Fatal("旧代理端口不应识别为已接管")
 	}
 }
 

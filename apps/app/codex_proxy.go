@@ -210,7 +210,13 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if len(surface) > 0 {
 		surfaceTag = surface[0]
 	}
-	// WebSocket 升级:新版 Codex 桌面版的对话走 ws,交给 ws 中间人(换号池 token + 双向桥接)。
+	// 内置 openai provider 会先探测本机 /v1/responses WebSocket。明确返回 426,
+	// 触发 Codex 官方的会话级 HTTP fallback,随后 POST 进入现有租号代理。
+	if r.URL.Path == "/v1/responses" && isCodexWebSocketUpgrade(r) {
+		w.WriteHeader(http.StatusUpgradeRequired)
+		return
+	}
+	// 其他入口的 WebSocket 升级继续交给 ws 中间人(换号池 token + 双向桥接)。
 	if isCodexWebSocketUpgrade(r) {
 		p.serveCodexWebSocket(w, r, card, deviceId, upstreamProxy)
 		return

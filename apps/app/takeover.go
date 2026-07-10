@@ -278,12 +278,12 @@ func (antigravityHubTarget) Restore() (string, error) {
 
 type codexTarget struct{}
 
-func (codexTarget) Key() string           { return "codex" }
-func (codexTarget) ProductID() string     { return "codex" }
-func (codexTarget) Name() string          { return "Codex" }
-func (codexTarget) InjectionType() string { return "config" }
-func (codexTarget) DetectPath() string    { return detectCodexAppPath() }
-func (codexTarget) IsInjected(_ int) bool { return IsCodexInjected() }
+func (codexTarget) Key() string                   { return "codex" }
+func (codexTarget) ProductID() string             { return "codex" }
+func (codexTarget) Name() string                  { return "Codex" }
+func (codexTarget) InjectionType() string         { return "config" }
+func (codexTarget) DetectPath() string            { return detectCodexAppPath() }
+func (codexTarget) IsInjected(proxyPort int) bool { return IsCodexInjected(proxyPort) }
 
 func (codexTarget) Inject(proxyPort int) (string, error) {
 	if detectCodexAppPath() == "" {
@@ -312,9 +312,9 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	if !codexGUIInstalled() {
 		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI 桌面版:切到自定义 provider(bingchaai)→ 退出 Codex → 把历史 retag 到 bingchaai
-	// (当前 provider 视图下可见)→ 重启,让常驻进程重读 config。
-	go RestartCodexAfterTakeover(codexProviderID)
+	// GUI 桌面版:保留内置 openai provider,退出后顺手把旧版 bingchaai 历史迁回
+	// openai,再重启让常驻进程重读 openai_base_url。
+	go RestartCodexAfterTakeover(codexDefaultProvider)
 	return "Codex: ✓ 已接管,正在重启 Codex...", nil
 }
 
@@ -322,6 +322,7 @@ func (codexTarget) Restore() (string, error) {
 	if err := RestoreCodexSettings(); err != nil {
 		return "", err
 	}
+	restoredProvider := currentCodexModelProvider()
 	// 还原伪登录态:有备份(我们注入过)则精确写回原 auth.json 或删除;无备份(已登录用户接管时
 	// 没注入)则 no-op,真账号原样不动。
 	if err := RestoreFakeCodexAuth(); err != nil {
@@ -331,8 +332,8 @@ func (codexTarget) Restore() (string, error) {
 	if !codexGUIInstalled() {
 		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI:还原后回到官方 openai provider → 把历史 retag 回 openai → 重启。
-	go RestartCodexAfterTakeover(codexDefaultProvider)
+	// GUI:还原后迁回官方 openai 历史分桶并重启。
+	go RestartCodexAfterTakeover(restoredProvider)
 	return "Codex: ✓ 已恢复,正在重启 Codex...", nil
 }
 

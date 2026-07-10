@@ -83,6 +83,34 @@ func TestIsCodexGenerationRequest(t *testing.T) {
 	}
 }
 
+func TestCodexBuiltInProviderWebSocketFallsBackToHTTP(t *testing.T) {
+	proxy := &CodexProxy{
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			t.Fatal("WebSocket fallback must not lease a token")
+			return nil, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	rec := httptest.NewRecorder()
+
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusUpgradeRequired {
+		t.Fatalf("status = %d, want 426", rec.Code)
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
+	postRec := httptest.NewRecorder()
+	proxy.ServeHTTP(postRec, post, "", "device-a", "direct")
+	if postRec.Code == http.StatusUpgradeRequired {
+		t.Fatal("普通 POST /v1/responses 不应进入 WebSocket fallback")
+	}
+}
+
 func TestCodexModelsPassthrough(t *testing.T) {
 	const accountID = "acct-models-56"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
