@@ -74,6 +74,7 @@ export function SettingsPage() {
   }
   const locale = useLocaleStore((s) => s.locale)
   const setLocale = useLocaleStore((s) => s.setLocale)
+  const [section, setSection] = useState<'general' | 'paths' | 'account' | 'about'>('general')
 
   const [idePath, setIdePath] = useState('')
   const [hubPath, setHubPath] = useState('')
@@ -90,7 +91,8 @@ export function SettingsPage() {
 
   const loadSettings = async () => {
     if (!config) return
-    const paths = await api.getDetectedPaths()
+    // Wails 启动早期或检测异常时可能短暂返回 null；设置页仍应可打开并手动填写路径。
+    const paths = (await api.getDetectedPaths()) ?? {}
     setIdePath(config.idePath || paths.idePath || '')
     setHubPath(config.hubPath || paths.hubPath || '')
     setCodexAppPath(config.codexAppPath || paths.codexAppPath || '')
@@ -143,9 +145,25 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="max-w-[620px] pt-1">
+    <div className="mx-auto w-full max-w-[900px] pt-3">
+      <div className="mb-4"><h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">{t('nav.settings')}</h2><p className="mt-1 text-[11px] text-[var(--text-secondary)]">客户端偏好、检测路径和账户操作</p></div>
+      <div className="grid grid-cols-[176px_1fr] gap-5">
+        <nav className="space-y-1">
+          {([
+            ['general', t('settings.languageTitle'), Languages],
+            ['paths', t('settings.pathsTitle'), FolderOpen],
+            ['account', t('account.title'), User],
+            ['about', t('settings.aboutTitle'), Info],
+          ] as const).map(([id, label, Icon]) => (
+            <button key={id} type="button" onClick={() => setSection(id)} className={cn('flex h-9 w-full items-center gap-2.5 rounded-[9px] px-3 text-[10px] font-semibold transition-colors', section === id ? 'bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]')}>
+              <Icon size={14} />{label}<span className="ml-auto text-[var(--text-muted)]">›</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="min-w-0">
       {/* Language */}
-      <Card className="mb-4">
+      {section === 'general' && <><Card className="mb-4">
         <CardHeader>
           <CardTitle><Languages size={15} /> {t('settings.languageTitle')}</CardTitle>
           <p className="text-[11px] text-[var(--text-muted)]">{t('settings.languageSubtitle')}</p>
@@ -169,9 +187,10 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+      <PromoSection /></>}
 
       {/* Install Paths */}
-      <Card className="mb-4">
+      {section === 'paths' && <Card className="mb-4">
         <CardHeader>
           <CardTitle><FolderOpen size={15} /> {t('settings.pathsTitle')}</CardTitle>
           <p className="text-[11px] text-[var(--text-muted)]">{t('settings.pathsSubtitle')}</p>
@@ -228,15 +247,10 @@ export function SettingsPage() {
 
           <Button variant="secondary" onClick={handleSavePaths} className="w-full">{t('settings.savePaths')}</Button>
         </CardContent>
-      </Card>
-
-      {/* Promo cards */}
-      <div className="mb-4">
-        <PromoSection />
-      </div>
+      </Card>}
 
       {/* Account */}
-      {account && (
+      {section === 'account' && account && (
         <Card className="mb-4">
           <CardHeader>
             <CardTitle><User size={15} /> {t('account.title')}</CardTitle>
@@ -299,7 +313,7 @@ export function SettingsPage() {
       )}
 
       {/* About */}
-      <Card>
+      {section === 'about' && <Card>
         <CardHeader>
           <CardTitle><Info size={15} /> {t('settings.aboutTitle')}</CardTitle>
         </CardHeader>
@@ -327,7 +341,10 @@ export function SettingsPage() {
             </div>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
+
+        </div>
+      </div>
 
       <Modal {...modalProps} />
     </div>

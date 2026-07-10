@@ -37,6 +37,14 @@ func (a *App) startup(ctx context.Context) {
 	Log("=== 冰茶AI Desktop Startup ===")
 	initGuard()
 
+	// 只检测、不自动改动：上次若崩溃/强杀留下宿主防护快照，前端接管中心会主动提示恢复。
+	if status, err := a.GetHostProtectionStatus(); err != nil {
+		Log("[host-protection] 启动残留检测失败: %v", err)
+	} else if status.Mode == "residue" {
+		Log("[host-protection] 检测到上次未还原设置: timezone=%s original=%s error=%s",
+			status.AppliedTimezone, status.OriginalTimezone, status.LastError)
+	}
+
 	// Load or initialize config
 	cfg := LoadConfig()
 	updatedCfg, changed, source := applyPreferredDeviceID(cfg, cfg.UserToken == "")

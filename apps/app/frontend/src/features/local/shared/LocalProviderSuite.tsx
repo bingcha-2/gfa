@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { PlugZap, Lock, ArrowRight } from 'lucide-react'
+import { Lock, ArrowRight } from 'lucide-react'
 import { type ProviderLocalApi } from '@/services/localApi'
 import type { PageId } from '@/types'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import { LocalSessionsTab } from './LocalSessionsTab'
 import { LocalGatewayTab } from './LocalGatewayTab'
 import { LocalModelProvidersTab } from './LocalModelProvidersTab'
 import { LocalSettingsTab } from './LocalSettingsTab'
+import { ProviderLogo } from '@/components/ProviderLogo'
 
 /**
  * 通用「本地自有号」suite —— 纯账号管理壳:
@@ -69,15 +70,14 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
   const localActive = source === 'local'
 
   return (
-    <div className="max-w-[960px] flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-4 pt-3">
       {/* 头部:产品 + 本地自有号徽记 + 只读接管态 + 去接管中心 */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-[10px] bg-[var(--bg-card)] border border-[var(--border-light)] flex items-center justify-center text-[var(--text-primary)]">
-            <PlugZap size={18} />
-          </div>
+          <ProviderLogo provider={title.toLowerCase()} size={19} />
           <div>
-            <div className="text-[17px] font-bold tracking-tight text-[var(--text-primary)]">{title}</div>
+            <div className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]"><span>{title}</span><span> 本地账号</span></div>
+            <div className="mt-1 text-[11px] text-[var(--text-secondary)]">账号注入、额度、会话与 API 服务集中管理</div>
             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[var(--text-secondary)]">
               <span className="px-2 py-0.5 rounded-full bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold">本地自有号</span>
               <span className="inline-flex items-center gap-1.5">
@@ -103,7 +103,7 @@ export function LocalProviderSuite({ title, api, onNavigate, hasGateway = false,
             key={id}
             onClick={() => setTab(id)}
             className={cn(
-              'py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors',
+              'py-2.5 text-[10px] font-semibold border-b-2 -mb-px transition-colors',
               tab === id ? 'text-[var(--text-primary)] border-[var(--primary)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text-secondary)]',
             )}
           >

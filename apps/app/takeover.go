@@ -399,14 +399,16 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 
 	// 借号:拉一个白号(sessionKey + 静态出口)注入 claude.ai。与下面的 CA 安装/重启并行,
 	// 通常在 Chromium 重启发起 claude.ai 请求前就绪;失败不阻塞接管(退回透传用户登录态)。
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				Log("[takeover] 白号租约 goroutine panic: %v", r)
-			}
+	if GetClaudeSessionLeaser().CurrentProxyURL() == "" {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Log("[takeover] 白号租约 goroutine panic: %v", r)
+				}
+			}()
+			m.LeaseWhiteSession()
 		}()
-		m.LeaseWhiteSession()
-	}()
+	}
 	// 清掉用户自定义模型配置(settings.json 顶层 model 字段 + 模型 env 键),让桌面端 spawn 的
 	// Code 子进程重启后回落到自带合法默认模型 id —— 否则 -thinking 等别名 / 号池不认的 id 会经
 	// MITM 原样打到公开 api.anthropic.com → 404。原值已备份,Restore 时还原。失败不阻塞接管。

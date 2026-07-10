@@ -43,6 +43,7 @@ const (
 	claudeBaseURLKey   = "ANTHROPIC_BASE_URL"
 	claudeAuthTokenKey = "ANTHROPIC_AUTH_TOKEN"
 	claudeApiKeyKey    = "ANTHROPIC_API_KEY"
+	claudeTimezoneKey  = "TZ"
 	// 哨兵 token:Claude Code 要求 ANTHROPIC_AUTH_TOKEN 非空才会走 ANTHROPIC_BASE_URL;
 	// 真正打上游用的 OAuth token 由本地代理在转发时替换,这里只占位。
 	claudeSentinelAuthToken = "bcai-claude-proxy"
@@ -156,6 +157,9 @@ func minimalClaudeSettings(proxyPort int) map[string]interface{} {
 	for _, k := range claudeFoundryKeys {
 		env[k] = ""
 	}
+	if tz := hostProtectionProcessTimezone(); tz != "" {
+		env[claudeTimezoneKey] = tz
+	}
 	return map[string]interface{}{"env": env}
 }
 
@@ -204,6 +208,9 @@ func captureClaudeOriginal(bk *claudeBackup) {
 		deleteIfEmptyString(env, claudeApiKeyKey)
 		for _, k := range claudeFoundryKeys {
 			deleteIfEmptyString(env, k)
+		}
+		if tz, _ := env[claudeTimezoneKey].(string); tz != "" && tz == hostProtectionProcessTimezone() {
+			delete(env, claudeTimezoneKey)
 		}
 		if len(env) == 0 {
 			delete(m, "env")
@@ -265,6 +272,7 @@ func legacyRemoveClaudeInjection() {
 		for _, k := range claudeFoundryKeys {
 			delete(env, k)
 		}
+		delete(env, claudeTimezoneKey)
 		if len(env) == 0 {
 			delete(settings, "env")
 		} else {

@@ -19,11 +19,14 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
   const t = useT()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  const pageTitles: Record<string, string> = {
-    home: t('nav.home'),
+  const pageTitles: Record<PageId, string> = {
+    takeover: t('nav.takeover'),
+    remote: t('nav.home'),
     faq: t('nav.faq'),
     logs: t('nav.logs'),
     settings: t('nav.settings'),
+    local_codex: 'Codex 本地账号',
+    local_antigravity: 'Antigravity 本地账号',
   }
 
   return (
@@ -67,7 +70,7 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
         </div>
 
         {/* Scrollable content */}
-        <main className="flex-1 overflow-y-auto px-6 pb-5">
+        <main className="flex-1 overflow-y-auto px-6 pb-8 pt-2">
           {children}
         </main>
       </div>

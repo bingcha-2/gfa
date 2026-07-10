@@ -10,6 +10,29 @@ const { apiMocks } = vi.hoisted(() => ({
     openURL: vi.fn(),
     getCodexFastMode: vi.fn().mockResolvedValue(false),
     setCodexFastMode: vi.fn().mockResolvedValue(undefined),
+    getHostProtectionStatus: vi.fn().mockResolvedValue({
+      mode: 'configure', platform: 'windows', requiresAuthorization: false,
+      originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: '',
+      timezoneStrategy: 'follow', blockWebRTC: true, blockGeolocation: true, dnsCleared: false,
+      targets: ['claude', 'claude_desktop'], lastError: '',
+    }),
+    probeHostProtectionStatus: vi.fn().mockImplementation(async (targets: string[]) => ({
+      mode: 'configure', platform: 'windows', requiresAuthorization: false,
+      originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: '',
+      timezoneStrategy: 'follow', blockWebRTC: true, blockGeolocation: true, dnsCleared: false,
+      targets, lastError: '',
+    })),
+    applyHostProtection: vi.fn().mockImplementation(async (cfg: Record<string, unknown>) => ({
+      ...cfg, mode: 'active', platform: 'windows', requiresAuthorization: false,
+      originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: 'Asia/Singapore', dnsCleared: true, lastError: '',
+    })),
+    restoreHostProtection: vi.fn().mockResolvedValue({
+      mode: 'restored', platform: 'windows', requiresAuthorization: false,
+      originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: 'Asia/Shanghai',
+      timezoneStrategy: 'follow', blockWebRTC: false, blockGeolocation: false, dnsCleared: true,
+      targets: ['claude', 'claude_desktop'], lastError: '',
+    }),
+    releaseHostProtectionTarget: vi.fn(),
     // 默认无第三方中转冲突,不弹 relay 窗;需要测门控的用例用 mockResolvedValueOnce 覆盖。
     detectCompetingClaudeConfig: vi.fn().mockResolvedValue([]),
     sanitizeCompetingClaudeConfig: vi.fn().mockResolvedValue({ cleaned: [], skipped: [], backupTo: '' }),
@@ -22,6 +45,11 @@ vi.mock('@/services/wails', () => ({
   openURL: apiMocks.openURL,
   getCodexFastMode: apiMocks.getCodexFastMode,
   setCodexFastMode: apiMocks.setCodexFastMode,
+  getHostProtectionStatus: apiMocks.getHostProtectionStatus,
+  probeHostProtectionStatus: apiMocks.probeHostProtectionStatus,
+  applyHostProtection: apiMocks.applyHostProtection,
+  restoreHostProtection: apiMocks.restoreHostProtection,
+  releaseHostProtectionTarget: apiMocks.releaseHostProtectionTarget,
   detectCompetingClaudeConfig: apiMocks.detectCompetingClaudeConfig,
   sanitizeCompetingClaudeConfig: apiMocks.sanitizeCompetingClaudeConfig,
 }))
@@ -90,6 +118,7 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
       { id: 'antigravity_ide', name: 'Antigravity IDE', detected: true, injected: false },
       { id: 'antigravity_hub', name: 'Antigravity Hub', detected: true, injected: false },
     ]
+    store.state.config = { userToken: 'tok-xyz' }
   })
 
   it('渲染 Claude / Codex / Antigravity 三张产品卡', () => {
@@ -106,6 +135,24 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     render(<TakeoverCenterPage />)
     const claude = screen.getByRole('region', { name: 'Anthropic' })
     expect(within(claude).queryByRole('button', { name: '本地自有号' })).toBeNull()
+  })
+
+  it('未登录时不自动探出口，仍保留点击接管后的登录引导', async () => {
+    setPlatform('Win32')
+    store.state.config = { userToken: '' }
+    apiMocks.getHostProtectionStatus.mockResolvedValueOnce({
+      mode: 'configure', platform: 'windows', requiresAuthorization: false,
+      originalTimezone: 'Asia/Shanghai', exitTimezone: '', appliedTimezone: '',
+      timezoneStrategy: 'follow', blockWebRTC: true, blockGeolocation: true, dnsCleared: false,
+      targets: [], lastError: '',
+    })
+    render(<TakeoverCenterPage />)
+    await waitFor(() => expect(apiMocks.getHostProtectionStatus).toHaveBeenCalled())
+    const takeover = screen.getByRole('button', { name: /确认并接管/ })
+    expect(takeover).not.toBeDisabled()
+    fireEvent.click(takeover)
+    expect(await screen.findByText('需要登录账号')).toBeInTheDocument()
+    expect(apiMocks.probeHostProtectionStatus).not.toHaveBeenCalled()
   })
 
   // ── 回归守门:Claude Desktop 跨平台显示(从 TokenSourceControl 迁移) ──
@@ -129,18 +176,20 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
       { id: 'antigravity_ide', name: 'Antigravity IDE', detected: true, injected: false },
     ]
     render(<TakeoverCenterPage />)
-    const status = screen.getByText('未安装 / 未检测到')
-    const row = status.parentElement!.parentElement!
-    expect(within(row).getByRole('button', { name: '接管' })).toBeDisabled()
+    const desktop = screen.getByRole('button', { name: /Claude Desktop \(Code\/Cowork\)/ })
+    expect(desktop).toBeDisabled()
+    expect(within(desktop).getByText('未安装 / 未检测到')).toBeInTheDocument()
   })
 
   it('Store 版 Claude Desktop 确认后打开官方独立版下载地址', async () => {
     setPlatform('Win32')
     apiMocks.injectSelected.mockResolvedValue('STORE_CLAUDE:检测到 Microsoft Store 版 Claude Desktop')
     render(<TakeoverCenterPage />)
-    const desktopRow = screen.getByText('Claude Desktop (Code/Cowork)').closest('.flex.items-center.justify-between')
-    if (!(desktopRow instanceof HTMLElement)) throw new Error('desktop row not found')
-    fireEvent.click(within(desktopRow).getByRole('button', { name: '接管' }))
+    const takeover = screen.getByRole('button', { name: /确认并接管/ })
+    await waitFor(() => expect(takeover).not.toBeDisabled())
+    // 只接管 Desktop，避免先走 Claude Code 分支。
+    fireEvent.click(screen.getByRole('button', { name: /Claude Code \(CLI \+ VSCode\)/ }))
+    fireEvent.click(takeover)
     // 桌面端二次确认 → 确认接管 → STORE_CLAUDE 引导 → 下载独立版
     fireEvent.click(await screen.findByRole('button', { name: '确认' }))
     fireEvent.click(await screen.findByRole('button', { name: '下载独立版' }))
@@ -255,9 +304,10 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     ])
     apiMocks.injectSelected.mockResolvedValueOnce('接管失败') // 快速返回,避免 8s 状态轮询
     render(<TakeoverCenterPage />)
-    const row = screen.getByText('Claude Code (CLI + VSCode)').closest('.flex.items-center.justify-between')
-    if (!(row instanceof HTMLElement)) throw new Error('claude code row not found')
-    fireEvent.click(within(row).getByRole('button', { name: '接管' }))
+    const takeover = screen.getByRole('button', { name: /确认并接管/ })
+    await waitFor(() => expect(takeover).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: /Claude Desktop \(Code\/Cowork\)/ }))
+    fireEvent.click(takeover)
 
     // 检出冲突 → 弹「封号免责」窗;未勾选时「清理」禁用。
     const dialog = await screen.findByRole('dialog')
@@ -279,9 +329,10 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
       { id: 'cc1', kind: 'cc-switch', detail: 'x' },
     ])
     render(<TakeoverCenterPage />)
-    const row = screen.getByText('Claude Code (CLI + VSCode)').closest('.flex.items-center.justify-between')
-    if (!(row instanceof HTMLElement)) throw new Error('claude code row not found')
-    fireEvent.click(within(row).getByRole('button', { name: '接管' }))
+    const takeover = screen.getByRole('button', { name: /确认并接管/ })
+    await waitFor(() => expect(takeover).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: /Claude Desktop \(Code\/Cowork\)/ }))
+    fireEvent.click(takeover)
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: '仍要接管' }))
     // 「仍要接管」= skip:不清理,但继续接管。

@@ -1,15 +1,15 @@
 export namespace account {
-	
+
 	export class QuotaBucket {
 	    key: string;
 	    label: string;
 	    percent: number;
 	    resetAt: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new QuotaBucket(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
@@ -22,7 +22,7 @@ export namespace account {
 }
 
 export namespace accountgroups {
-	
+
 	export class Group {
 	    id: string;
 	    name: string;
@@ -707,6 +707,60 @@ export namespace main {
 	        this.changedRolloutFiles = source["changedRolloutFiles"];
 	        this.updatedSqliteRows = source["updatedSqliteRows"];
 	        this.skippedSqlite = source["skippedSqlite"];
+	    }
+	}
+	export class HostProtectionConfig {
+	    timezoneStrategy: string;
+	    fixedTimezone: string;
+	    blockWebRTC: boolean;
+	    blockGeolocation: boolean;
+	    targets: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new HostProtectionConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timezoneStrategy = source["timezoneStrategy"];
+	        this.fixedTimezone = source["fixedTimezone"];
+	        this.blockWebRTC = source["blockWebRTC"];
+	        this.blockGeolocation = source["blockGeolocation"];
+	        this.targets = source["targets"];
+	    }
+	}
+	export class HostProtectionStatus {
+	    mode: string;
+	    platform: string;
+	    requiresAuthorization: boolean;
+	    originalTimezone: string;
+	    exitTimezone: string;
+	    appliedTimezone: string;
+	    timezoneStrategy: string;
+	    blockWebRTC: boolean;
+	    blockGeolocation: boolean;
+	    dnsCleared: boolean;
+	    targets: string[];
+	    lastError?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new HostProtectionStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.platform = source["platform"];
+	        this.requiresAuthorization = source["requiresAuthorization"];
+	        this.originalTimezone = source["originalTimezone"];
+	        this.exitTimezone = source["exitTimezone"];
+	        this.appliedTimezone = source["appliedTimezone"];
+	        this.timezoneStrategy = source["timezoneStrategy"];
+	        this.blockWebRTC = source["blockWebRTC"];
+	        this.blockGeolocation = source["blockGeolocation"];
+	        this.dnsCleared = source["dnsCleared"];
+	        this.targets = source["targets"];
+	        this.lastError = source["lastError"];
 	    }
 	}
 	export class IDEProduct {
@@ -1515,4 +1569,3 @@ export namespace wakeup {
 	}
 
 }
-

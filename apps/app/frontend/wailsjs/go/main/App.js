@@ -6,6 +6,10 @@ export function ActivateCode(arg1) {
   return window['go']['main']['App']['ActivateCode'](arg1);
 }
 
+export function ApplyHostProtection(arg1) {
+  return window['go']['main']['App']['ApplyHostProtection'](arg1);
+}
+
 export function BrowseForPath(arg1) {
   return window['go']['main']['App']['BrowseForPath'](arg1);
 }
@@ -60,6 +64,10 @@ export function GetDetectedPaths() {
 
 export function GetFaqData() {
   return window['go']['main']['App']['GetFaqData']();
+}
+
+export function GetHostProtectionStatus() {
+  return window['go']['main']['App']['GetHostProtectionStatus']();
 }
 
 export function GetIDEStatus() {
@@ -610,8 +618,16 @@ export function OpenSystemPermissionSettings() {
   return window['go']['main']['App']['OpenSystemPermissionSettings']();
 }
 
+export function ProbeHostProtectionStatus(arg1) {
+  return window['go']['main']['App']['ProbeHostProtectionStatus'](arg1);
+}
+
 export function RefreshQuota() {
   return window['go']['main']['App']['RefreshQuota']();
+}
+
+export function ReleaseHostProtectionTarget(arg1) {
+  return window['go']['main']['App']['ReleaseHostProtectionTarget'](arg1);
 }
 
 export function RestartProxy() {
@@ -620,6 +636,10 @@ export function RestartProxy() {
 
 export function RestartToUpdate() {
   return window['go']['main']['App']['RestartToUpdate']();
+}
+
+export function RestoreHostProtection() {
+  return window['go']['main']['App']['RestoreHostProtection']();
 }
 
 export function RestoreSelected(arg1) {

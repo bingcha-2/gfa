@@ -171,14 +171,22 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy boo
 	for _, kv := range mitmProxyEnvPairs(proxyAddr, caCertPath) {
 		args = append(args, "--env", kv)
 	}
+	if tz := hostProtectionProcessTimezone(); tz != "" {
+		args = append(args, "--env", "TZ="+tz)
+	}
 	// --args 之后的都传给 App(Chromium 读取);务必排在所有 --env 之后。
 	// 仅当根 CA 确被信任(chromiumProxy)才给 Chromium 加 --proxy-server;否则 claude.ai(UI 主站)
 	// 被 MITM 却信不过叶证书会整页报错白屏 —— 此时只走 env(Node 推理),Chromium 直连。
+	chromiumArgs := hostProtectionChromiumArgs()
 	if chromiumProxy {
-		args = append(args, "--args",
-			"--proxy-server="+proxyAddr,
+		chromiumArgs = append([]string{
+			"--proxy-server=" + proxyAddr,
 			"--proxy-bypass-list=127.0.0.1,localhost",
-		)
+		}, chromiumArgs...)
+	}
+	if len(chromiumArgs) > 0 {
+		args = append(args, "--args")
+		args = append(args, chromiumArgs...)
 	}
 	return exec.Command("open", args...).Run()
 }

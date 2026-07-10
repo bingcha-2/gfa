@@ -10,9 +10,10 @@ import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode } from '@/services/wails'
+import { HostProtectionPanel, type HostProtectionConfig, type HostProtectionMode } from './HostProtectionPanel'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode, getHostProtectionStatus, probeHostProtectionStatus, applyHostProtection, restoreHostProtection, releaseHostProtectionTarget, type HostProtectionStatus } from '@/services/wails'
 import type { PageId } from '@/types'
-import { ArrowRight, Users, Plus, X, Copy, Check, ShieldAlert } from 'lucide-react'
+import { ArrowRight, Boxes, ChevronDown, Users, Plus, X, Copy, Check, ShieldAlert } from 'lucide-react'
 
 /**
  * 接管中心 —— 统一控制面。每个产品一张卡:决定该产品走「远程托管」还是「本地自有号」接管,
@@ -833,6 +834,11 @@ function SandboxCard() {
 export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) => void } = {}) {
   const t = useT()
   const tk = useRemoteTakeover()
+  const [sandboxOpen, setSandboxOpen] = useState(false)
+  const [hostMode, setHostMode] = useState<HostProtectionMode>('configure')
+  const [hostStatus, setHostStatus] = useState<HostProtectionStatus | null>(null)
+  const [hostBusy, setHostBusy] = useState(false)
+  const [hostError, setHostError] = useState('')
   const ideProducts = useAppStore((s) => s.ideProducts)
   const proxyRunning = useAppStore((s) => s.proxyRunning)
   const proxyPort = useAppStore((s) => s.proxyPort)
@@ -846,13 +852,126 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
   const claudeDesktopApp = find('claude_desktop')
   const agApps = ideProducts.filter((p) => p.id.startsWith('antigravity'))
 
-  // Claude(Anthropic)远程行:Claude Code + Claude Desktop。
-  const claudeToggle = async (target: string, injected: boolean, label: string, desktop = false) => {
-    if (!injected && !(await tk.ensureCard(label))) return
-    if (desktop && !injected && !(await tk.confirmDesktopTakeover())) return
-    // 接管前检测并处理第三方中转配置(cc-switch 等),避免母号被判定异常。
-    if (!injected && !(await tk.preflightSanitize(target))) return
-    await tk.runTakeover(target, !injected)
+  const visibleHostTargets = [
+    'claude',
+    ...(showClaudeDesktop ? ['claude_desktop'] : []),
+  ]
+  const disabledHostTargets = visibleHostTargets.filter((target) => target === 'claude' ? !claudeApp?.detected : !claudeDesktopApp?.detected)
+  const detectedHostTargets = visibleHostTargets.filter((target) => !disabledHostTargets.includes(target))
+  const detectedHostTargetsKey = detectedHostTargets.join('|')
+
+  const probeHostProtection = useCallback(async () => {
+    if (!tk.hasCard || detectedHostTargets.length === 0) return
+    setHostError('')
+    try {
+      const status = await probeHostProtectionStatus(detectedHostTargets)
+      setHostStatus(status)
+      setHostMode(status.mode === 'active' || status.mode === 'residue' ? status.mode : 'configure')
+    } catch (error) {
+      setHostError(String(error))
+    }
+  // 检测目标用稳定 key 表达，避免数组引用变化导致重复探出口。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedHostTargetsKey, tk.hasCard])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const status = await getHostProtectionStatus()
+        if (cancelled) return
+        setHostStatus(status)
+        if (status.mode === 'active' || status.mode === 'residue') {
+          setHostMode(status.mode)
+          return
+        }
+        setHostMode('configure')
+        if (tk.hasCard && detectedHostTargets.length > 0) await probeHostProtection()
+      } catch (error) {
+        if (!cancelled) setHostError(String(error))
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedHostTargetsKey, tk.hasCard])
+
+  const startProtectedTakeover = async (config: HostProtectionConfig) => {
+    if (!(await tk.ensureCard('Claude'))) return
+    if (config.targets.includes('claude_desktop') && !(await tk.confirmDesktopTakeover())) return
+    // 两个 Claude 目标共用同一份环境冲突，清理/免责只询问一次。
+    if (!(await tk.preflightSanitize('claude'))) return
+
+    setHostBusy(true)
+    setHostError('')
+    const injected: string[] = []
+    let protectionApplied = false
+    try {
+      const applied = await applyHostProtection(config)
+      protectionApplied = true
+      setHostStatus(applied)
+      for (const target of config.targets) {
+        const ok = await tk.runTakeover(target, true)
+        if (!ok) throw new Error(`${target === 'claude_desktop' ? 'Claude Desktop' : 'Claude Code'} 接管未完成`)
+        injected.push(target)
+      }
+      const status = await getHostProtectionStatus()
+      setHostStatus(status)
+      setHostMode('active')
+    } catch (error) {
+      // 接管任一环节失败就撤掉已注入目标，并按快照还原宿主，避免半生效状态。
+      if (protectionApplied) {
+        try { await restoreHostProtection() } catch { /* 保留后端 residue 供下次恢复 */ }
+      }
+      for (const target of injected.reverse()) await tk.runTakeover(target, false)
+      setHostError(String(error))
+      try {
+        const status = await getHostProtectionStatus()
+        setHostStatus(status)
+        setHostMode(status.mode === 'residue' ? 'residue' : 'configure')
+      } catch { setHostMode('residue') }
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
+  const restoreProtectedTakeover = async () => {
+    setHostBusy(true)
+    setHostError('')
+    setHostMode('restoring')
+    try {
+      const targets = hostStatus?.targets?.length ? hostStatus.targets : detectedHostTargets
+      const restored = await restoreHostProtection()
+      // 先还原 profile/系统，再以无防护参数重启客户端，避免客户端启动后覆盖刚还原的 Preferences。
+      for (const target of [...targets].reverse()) await tk.runTakeover(target, false)
+      setHostStatus(restored)
+      setHostMode('restored')
+    } catch (error) {
+      setHostError(String(error))
+      try {
+        const status = await getHostProtectionStatus()
+        setHostStatus(status)
+      } catch { /* 保留现有状态 */ }
+      setHostMode('residue')
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
+  const stopProtectedTarget = async (target: string) => {
+    setHostBusy(true)
+    setHostError('')
+    try {
+      // Desktop 单独停止时后端会先还原其 Chromium Preferences 并杀掉旧进程；随后再原样拉起。
+      const status = await releaseHostProtectionTarget(target)
+      const stopped = await tk.runTakeover(target, false)
+      if (!stopped) throw new Error('该项宿主防护已撤销，但客户端停止未完成，请重试')
+      setHostStatus(status)
+      setHostMode(status.mode === 'restored' ? 'restored' : 'active')
+    } catch (error) {
+      setHostError(String(error))
+    } finally {
+      setHostBusy(false)
+    }
   }
 
   const codexRows: RemoteRowSpec[] = [{
@@ -870,7 +989,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
   }))
 
   return (
-    <div className="max-w-[760px] flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 pt-3">
       <div>
         <div className="text-[18px] font-bold tracking-tight text-[var(--text-primary)]">接管中心</div>
         <div className="text-[12px] text-[var(--text-secondary)] mt-1">
@@ -879,27 +998,24 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
       </div>
 
       <div className="flex flex-col gap-3">
-        {/* ── Anthropic · Claude(仅远程) ── */}
-        <ProductCard name="Anthropic" provider="anthropic" note={t('takeover.claudeNote')}>
-          <RemoteRow
-            spec={{ target: 'claude', name: 'Claude Code (CLI + VSCode)', injected: !!claudeApp?.injected, detected: !!claudeApp?.detected, undetectedText: t('takeover.noClaudeDir') }}
-            busy={tk.busy}
-            onToggle={() => claudeToggle('claude', !!claudeApp?.injected, 'Claude Code')}
-          />
-          {showClaudeDesktop && (
-            <RemoteRow
-              spec={{ target: 'claude_desktop', name: 'Claude Desktop (Code/Cowork)', injected: !!claudeDesktopApp?.injected, detected: !!claudeDesktopApp?.detected, undetectedText: t('takeover.notInstalledOrDetected') }}
-              busy={tk.busy}
-              onToggle={() => claudeToggle('claude_desktop', !!claudeDesktopApp?.injected, 'Claude Desktop', true)}
-            />
-          )}
-        </ProductCard>
-
-        {/* ── Claude Code · 沙箱模式(sbx) ── */}
-        <SandboxCard />
-
-        {/* ── Claude Code · VSCode 沙箱模式(第 7 目标) ── */}
-        <VscodeSandboxCard />
+        {/* ── Anthropic · 非沙箱接管 + 宿主主防线 ── */}
+        <HostProtectionPanel
+          mode={hostMode}
+          platform={hostStatus?.platform === 'windows' || (!hostStatus && isWindowsPlatform()) ? 'windows' : 'macos'}
+          exitTimezone={hostStatus?.exitTimezone || ''}
+          originalTimezone={hostStatus?.originalTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
+          availableTargets={visibleHostTargets}
+          disabledTargets={disabledHostTargets}
+          runtimeStatus={hostStatus ?? undefined}
+          busy={hostBusy || tk.busy !== null}
+          error={hostError}
+          requireExitTimezone={tk.hasCard}
+          onTakeover={(config) => void startProtectedTakeover(config)}
+          onRestore={() => void restoreProtectedTakeover()}
+          onRecover={() => void restoreProtectedTakeover()}
+          onContinue={() => { setHostMode('configure'); void probeHostProtection() }}
+          onStopTarget={(target) => void stopProtectedTarget(target)}
+        />
 
         {/* ── Codex(远程 / 本地) ── */}
         <LocalCapableCard
@@ -925,6 +1041,16 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           tk={tk}
           onManageAccounts={() => onNavigate?.('local_antigravity')}
         />
+
+        {/* 沙箱是高级隔离能力,降级到全部非沙箱接管之后,默认折叠但不删任何入口。 */}
+        <section className="overflow-hidden rounded-[13px] border border-[var(--border-light)] bg-[var(--bg-card)]">
+          <button type="button" onClick={() => setSandboxOpen((value) => !value)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--bg-hover)]">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[var(--bg-tertiary)] text-[var(--text-secondary)]"><Boxes size={15} /></span>
+            <span className="min-w-0 flex-1"><span className="flex items-center gap-2"><span className="text-[12px] font-semibold text-[var(--text-primary)]">隔离沙箱</span><span className="rounded-full bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[8px] font-semibold text-[var(--text-muted)]">高级</span></span><span className="mt-0.5 block text-[9px] text-[var(--text-muted)]">文件与网络隔离仍完整保留；非沙箱接管是默认主流程</span></span>
+            <ChevronDown size={15} className={cn('text-[var(--text-muted)] transition-transform', sandboxOpen && 'rotate-180')} />
+          </button>
+          {sandboxOpen && <div className="flex flex-col gap-3 border-t border-[var(--border-light)] bg-[var(--bg-tertiary)]/35 p-3"><SandboxCard /><VscodeSandboxCard /></div>}
+        </section>
       </div>
 
       {/* 本地代理状态(整宽页脚) */}
@@ -941,7 +1067,7 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
 
       <Modal {...tk.modalProps} />
       <CompetingRelayDialog {...tk.relayDialogProps} />
-      <LoadingOverlay show={tk.busy !== null} label={tk.busyLabel} />
+      <LoadingOverlay show={tk.busy !== null || hostBusy} label={tk.busyLabel || (hostMode === 'restoring' ? '正在还原宿主环境…' : '正在配置宿主防护…')} />
     </div>
   )
 }

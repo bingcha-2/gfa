@@ -212,6 +212,9 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy boo
 	argv := claudeMitmRelaunchArgv(bin, proxyAddr, chromiumProxy)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = mitmProxyEnv(os.Environ(), proxyAddr, caCertPath)
+	if tz := hostProtectionProcessTimezone(); tz != "" {
+		cmd.Env = mitmUpsertEnv(cmd.Env, "TZ", tz)
+	}
 	return cmd.Start()
 }
 

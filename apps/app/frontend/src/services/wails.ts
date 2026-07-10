@@ -30,6 +30,11 @@ import {
   GetAppVersion,
   GetAnnouncement,
   GetFaqData,
+  GetHostProtectionStatus as _GetHostProtectionStatus,
+  ProbeHostProtectionStatus as _ProbeHostProtectionStatus,
+  ApplyHostProtection as _ApplyHostProtection,
+  RestoreHostProtection as _RestoreHostProtection,
+  ReleaseHostProtectionTarget as _ReleaseHostProtectionTarget,
   GetCodexRelayConfig as _GetCodexRelayConfig,
   SaveCodexRelayConfig as _SaveCodexRelayConfig,
   GetCodexFastMode as _GetCodexFastMode,
@@ -290,6 +295,49 @@ export async function injectSelected(targets: string[]): Promise<string> {
 
 export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
+}
+
+export interface HostProtectionConfig {
+  timezoneStrategy: 'follow' | 'fixed' | 'unchanged'
+  fixedTimezone: string
+  blockWebRTC: boolean
+  blockGeolocation: boolean
+  targets: string[]
+}
+
+export interface HostProtectionStatus {
+  mode: 'configure' | 'active' | 'residue' | 'restored'
+  platform: 'windows' | 'macos' | 'unsupported'
+  requiresAuthorization: boolean
+  originalTimezone: string
+  exitTimezone: string
+  appliedTimezone: string
+  timezoneStrategy: 'follow' | 'fixed' | 'unchanged'
+  blockWebRTC: boolean
+  blockGeolocation: boolean
+  dnsCleared: boolean
+  targets: string[]
+  lastError?: string
+}
+
+export async function getHostProtectionStatus(): Promise<HostProtectionStatus> {
+  return _GetHostProtectionStatus() as Promise<HostProtectionStatus>
+}
+
+export async function probeHostProtectionStatus(targets: string[]): Promise<HostProtectionStatus> {
+  return _ProbeHostProtectionStatus(targets) as Promise<HostProtectionStatus>
+}
+
+export async function applyHostProtection(config: HostProtectionConfig): Promise<HostProtectionStatus> {
+  return _ApplyHostProtection(config as unknown as main.HostProtectionConfig) as Promise<HostProtectionStatus>
+}
+
+export async function restoreHostProtection(): Promise<HostProtectionStatus> {
+  return _RestoreHostProtection() as Promise<HostProtectionStatus>
+}
+
+export async function releaseHostProtectionTarget(target: string): Promise<HostProtectionStatus> {
+  return _ReleaseHostProtectionTarget(target) as Promise<HostProtectionStatus>
 }
 
 export type ClaudeConfigConflict = main.ClaudeConfigConflict

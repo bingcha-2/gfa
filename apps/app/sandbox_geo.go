@@ -19,7 +19,7 @@ const sandboxDefaultTimezone = "America/New_York"
 
 // iana 时区名形如 Area/Location。用正则校验而非 time.LoadLocation:后者依赖系统 zoneinfo,
 // Windows 无 /usr/share/zoneinfo 会把合法时区误判为非法。
-var ianaTZPattern = regexp.MustCompile(`^[A-Za-z]+/[A-Za-z0-9_+-]+$`)
+var ianaTZPattern = regexp.MustCompile(`^[A-Za-z]+(?:/[A-Za-z0-9_+-]+)+$`)
 
 // normalizeTimezone 校验 IANA 时区名;空/非法 → 默认美东。
 func normalizeTimezone(tz string) string {

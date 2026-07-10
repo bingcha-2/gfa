@@ -86,6 +86,7 @@ func statIsFile(p string) bool {
 //   - 既不能按 exe 路径直接 CreateProcess 拉起(Windows 返回 Access is denied),
 //   - 包激活(shell:AppsFolder)又不会把接管所需的 env(NODE_EXTRA_CA_CERTS/代理) + argv
 //     (--proxy-server)带进容器进程。
+//
 // 故接管入口据此提前拒绝并引导用户改装独立安装器版,而非硬 exec 撞墙、刷一屏 Access is denied。
 // 纯字符串判定(不 stat),跨平台可单测;两种分隔符都归一成 '/'(不靠 filepath.ToSlash ——
 // 它只转当前 OS 的分隔符,在 mac 上单测不会转 Windows 的反斜杠)再小写匹配。
@@ -114,5 +115,6 @@ func claudeMitmRelaunchArgv(exe, proxyAddr string, chromiumProxy bool) []string 
 			"--proxy-bypass-list=127.0.0.1,localhost",
 		)
 	}
+	argv = append(argv, hostProtectionChromiumArgs()...)
 	return argv
 }

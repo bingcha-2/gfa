@@ -34,10 +34,10 @@ function formatRatio(value: number): string {
 /** 顶部「今日概览」里的一格统计。数字大、标签小,克制单色,只有关键项点琥珀。 */
 function Stat({ label, value, caption, tone }: { label: string; value: string; caption?: string; tone?: 'primary' | 'danger' }) {
   return (
-    <div className="px-4 py-3">
+    <div>
       <div
         className={cn(
-          'text-[20px] font-bold font-mono-data tracking-tight tabular-nums',
+          'font-mono-data text-[14px] font-semibold tracking-tight tabular-nums',
           tone === 'primary' ? 'text-[var(--primary)]'
             : tone === 'danger' ? 'text-[var(--danger)]'
             : 'text-[var(--text-primary)]',
@@ -45,8 +45,8 @@ function Stat({ label, value, caption, tone }: { label: string; value: string; c
       >
         {value}
       </div>
-      <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{label}</div>
-      {caption && <div className="text-[10px] text-[var(--text-muted)] mt-0.5 leading-snug">{caption}</div>}
+      <div className="mt-1 text-[9px] text-[var(--text-muted)]">{label}</div>
+      {caption && <div className="mt-0.5 text-[9px] leading-snug text-[var(--text-muted)]">{caption}</div>}
     </div>
   )
 }
@@ -209,153 +209,98 @@ export function DashboardPage() {
   const modelUsageRows = buildModelUsageRows(todayByModel, overview.apiValueUSD)
 
   return (
-    <div className="max-w-[960px] flex flex-col gap-4">
-      {/* ── 状态 ── */}
+    <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-4 pt-3">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">用量看板</h2>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">订阅余量、本机调用和官方 API 价值放在同一视图</p>
+        </div>
+        <Button size="sm" variant="secondary" disabled={refreshingQuota} onClick={handleRefreshQuota}>
+          <RefreshCw size={13} className={cn(refreshingQuota && 'animate-spin')} />{t('account.refresh')}
+        </Button>
+      </div>
+
       <StatusPill />
       <NotificationBanner />
 
-      {/* 会话/订阅已失效(SESSION_INVALID / SUBSCRIPTION_EXPIRED 等):
-          引导重新登录(登出 → 自动回登录页)或前往网页端处理订阅与账单 */}
       {cardUnusable && (
         <div className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
           <div className="text-sm font-medium text-[var(--danger)]">{t('dashboard.cardUnusableTitle')}</div>
-          <div className="text-[12px] text-[var(--text-secondary)] mt-1">{t('dashboard.cardUnusableBody')}</div>
-          <div className="text-[12px] text-[var(--text-muted)] mt-1.5">{t('dashboard.cardUnusableHelp')}</div>
-          <div className="flex flex-wrap items-center gap-2 mt-2.5">
-            <Button size="sm" onClick={() => api.openURL(api.PORTAL_URLS.billing)}>
-              {t('dashboard.cardUnusableBilling')}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => api.openURL(api.PORTAL_URLS.tickets)}>
-              {t('dashboard.cardUnusableContact')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => useAppStore.getState().logout()}>
-              {t('dashboard.cardUnusableRelogin')}
-            </Button>
+          <div className="mt-1 text-[12px] text-[var(--text-secondary)]">{t('dashboard.cardUnusableBody')}</div>
+          <div className="mt-1.5 text-[12px] text-[var(--text-muted)]">{t('dashboard.cardUnusableHelp')}</div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => api.openURL(api.PORTAL_URLS.billing)}>{t('dashboard.cardUnusableBilling')}</Button>
+            <Button size="sm" variant="secondary" onClick={() => api.openURL(api.PORTAL_URLS.tickets)}>{t('dashboard.cardUnusableContact')}</Button>
+            <Button size="sm" variant="ghost" onClick={() => useAppStore.getState().logout()}>{t('dashboard.cardUnusableRelogin')}</Button>
           </div>
         </div>
       )}
 
-      {/* ── 今日概览:总Token / API价值 / 成功·错误 / 累计价值 ── */}
-      <Card className="overflow-hidden p-0">
-        <div className="grid grid-cols-2 divide-x divide-y divide-[var(--border-light)] md:grid-cols-4 md:divide-y-0">
-          <Stat
-            label="今日总 Token"
-            value={formatTokens(overview.totalTokens)}
-            caption={`缓存读 ${formatTokens(todayCachedTokens)} / 写 ${formatTokens(todayCacheWriteTokens)}`}
-            tone="primary"
-          />
-          <Stat label="官方 API 价估算" value={formatUSD(overview.apiValueUSD)} caption="按模型真实价格折算" />
-          <Stat
-            label="成功调用 / 错误"
-            value={`${overview.successfulCalls.toLocaleString()} / ${overview.errors.toLocaleString()}`}
-            caption={`错误率 ${formatRatio(overview.errorRate)}`}
-            tone={overview.errors > 0 ? 'danger' : undefined}
-          />
-          <Stat label="累计 API 价值" value={formatUSD(overview.cumulativeApiValueUSD)} caption="按官方 API 价累计约" />
+      <section className="overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--bg-card)]">
+        <div className="grid grid-cols-[1.35fr_.85fr]">
+          <div className="border-r border-[var(--border-light)] px-5 py-5">
+            <p className="text-[10px] font-medium text-[var(--text-muted)]">今日总 Token</p>
+            <div className="mt-1 font-mono-data text-[30px] font-bold tracking-[-0.04em] text-[var(--text-primary)]">{formatTokens(overview.totalTokens)}</div>
+            <div className="mt-4 grid grid-cols-3 gap-5 border-t border-[var(--border-light)] pt-4">
+              <Stat label="成功调用" value={overview.successfulCalls.toLocaleString()} />
+              <Stat label="错误 / 错误率" value={`${overview.errors.toLocaleString()} · ${formatRatio(overview.errorRate)}`} tone={overview.errors > 0 ? 'danger' : undefined} />
+              <Stat label="缓存读 / 写" value={`${formatTokens(todayCachedTokens)} / ${formatTokens(todayCacheWriteTokens)}`} />
+            </div>
+          </div>
+          <div className="grid grid-rows-2 divide-y divide-[var(--border-light)]">
+            <div className="px-5 py-4">
+              <p className="text-[10px] text-[var(--text-muted)]">今日官方 API 价值</p>
+              <p className="mt-1 font-mono-data text-[22px] font-bold text-[var(--primary-strong)]">{formatUSD(overview.apiValueUSD)}</p>
+              <p className="mt-1 text-[9px] text-[var(--text-muted)]">按模型真实输入、输出、缓存读写价格折算</p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[10px] text-[var(--text-muted)]">累计 API 价值 · 已节省</p>
+              <p className="mt-1 font-mono-data text-[22px] font-bold text-[var(--text-primary)]">{formatUSD(overview.cumulativeApiValueUSD)}</p>
+              <p className="mt-1 text-[9px] text-[var(--text-muted)]">从首次使用起，按官方 API 定价累计</p>
+            </div>
+          </div>
         </div>
-      </Card>
+      </section>
 
-      {/* ── 今日模型明细 ── */}
-      <Card className="overflow-hidden">
-        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
-          <CardTitle><BarChart3 size={15} /> 今日模型明细</CardTitle>
-          <div className="text-[11px] text-[var(--text-muted)]">本机实时 · 官方 API 价估算(含缓存)</div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <ModelUsageTable rows={modelUsageRows} />
-        </CardContent>
-      </Card>
-
-      {/* ── 入口:两个广告,常驻显眼 ── */}
-      <PromoCard />
-
-      {/* ── 用量趋势 ── */}
-      <UsageTrendChart />
-
-      {/* ── 模型用量:每个服务商一栏(带品牌标识),顶部对齐 —— Antigravity / Codex / Anthropic。
-          颜色随健康度变(充足绿/一般黄/紧张橙/已用尽红);只有部分服务商有数据时自动减少栏数。 ── */}
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
-          <CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle>
+          <div>
+            <CardTitle><BarChart3 size={15} />{t('dashboard.usageTitle')}</CardTitle>
+            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">逐订阅、逐产品展示 5h 与周窗口；拼车额度保留双层关系</p>
+          </div>
           {exclusiveCard && <ExclusiveBadge />}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto h-7 gap-1.5 px-2 text-[12px] text-[var(--text-muted)]"
-            disabled={refreshingQuota}
-            onClick={handleRefreshQuota}
-            title={t('account.refresh')}
-          >
-            <RefreshCw size={13} className={cn(refreshingQuota && 'animate-spin')} />
-            {t('account.refresh')}
-          </Button>
         </CardHeader>
         <CardContent>
-          {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
-          {accountProblem && (
-            <div className="mb-3 rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-              {t('dashboard.accountProblem', { error: leaserError })}
-            </div>
-          )}
+          {accountProblem && <div className="mb-3 rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">{t('dashboard.accountProblem', { error: leaserError })}</div>}
           {hasSubscriptions ? (
             <SubscriptionUsageCarousel subscriptions={account!.subscriptions} boundAccounts={boundAccounts} />
           ) : (() => {
-            const PROVIDERS = [
+            const providers = [
               { id: 'antigravity', name: 'Antigravity' },
               { id: 'codex', name: 'Codex' },
               { id: 'anthropic', name: 'Anthropic' },
             ]
-            const columns = PROVIDERS
-              .map((p) => ({ ...p, sections: quotaSections.filter((section) => section.bucket.startsWith(p.id)) }))
-              .filter((p) => p.sections.length > 0)
-
-            if (columns.length === 0) {
-              return <div className="text-[12px] text-[var(--text-muted)] py-1">{t('dashboard.noUsageData')}</div>
-            }
+            const columns = providers.map((provider) => ({ ...provider, sections: quotaSections.filter((section) => section.bucket.startsWith(provider.id)) })).filter((provider) => provider.sections.length > 0)
+            if (columns.length === 0) return <div className="py-1 text-[12px] text-[var(--text-muted)]">{t('dashboard.noUsageData')}</div>
             return (
-              <div className="grid gap-3 items-start" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-                {columns.map((p) => (
-                  <div key={p.id} className="rounded-[12px] border border-[var(--border-light)] p-3.5">
-                    <div className="flex items-center gap-2 mb-2.5">
-                      <ProviderLogo provider={p.id} />
-                      <span className="text-[13px] font-semibold text-[var(--text-primary)]">{p.name}</span>
-                    </div>
+              <div className="grid items-start gap-3" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+                {columns.map((provider) => (
+                  <div key={provider.id} className="rounded-[12px] border border-[var(--border-light)] p-3.5">
+                    <div className="mb-2.5 flex items-center gap-2"><ProviderLogo provider={provider.id} /><span className="text-[13px] font-semibold text-[var(--text-primary)]">{provider.name}</span></div>
                     <div className="flex flex-col gap-3">
-                      {p.sections.map((section) => (
+                      {provider.sections.map((section) => (
                         <div key={section.bucket} className="flex flex-col gap-2.5">
                           <div className="text-[12px] font-semibold text-[var(--text-primary)]">{section.title}</div>
                           {section.mine.length > 0 ? (
-                            // 双层血条:整号容量打底,叠「账号总剩余 + 我的总剩余」,按 5h/周 各一条。
                             <div className="flex flex-col divide-y divide-[var(--border-light)]">
                               {section.mine.map((myBar) => {
-                                const acctBar = section.serviceAccount.find((b) => b.window === myBar.window)
+                                const accountBar = section.serviceAccount.find((bar) => bar.window === myBar.window)
                                 const resetIdentity = typeof myBar.resetAt === 'number' && myBar.resetAt > Date.now() ? myBar.resetAt : undefined
-                                return (
-                                  <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5">
-                                    <NestedShareBar
-                                      label={myBar.label}
-                                      myFraction={myBar.fraction}
-                                      accountFraction={acctBar?.fraction ?? -1}
-                                      shareSeats={cardShareSeats}
-                                      shareCapacity={cardShareCapacity}
-                                      exclusive={cardExclusive}
-                                      resetMs={myBar.resetMs}
-                                      displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined}
-                                    />
-                                  </div>
-                                )
+                                return <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5"><NestedShareBar label={myBar.label} myFraction={myBar.fraction} accountFraction={accountBar?.fraction ?? -1} shareSeats={cardShareSeats} shareCapacity={cardShareCapacity} exclusive={cardExclusive} resetMs={myBar.resetMs} displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined} /></div>
                               })}
                             </div>
                           ) : (
-                            // 号池卡(无 fair-share 份额):只显示整号余量。
-                            <div className="flex flex-col gap-1.5">
-                              <div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div>
-                              <div className="flex flex-col divide-y divide-[var(--border-light)]">
-                                {section.serviceAccount.map((bar) => (
-                                  <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>
-                                ))}
-                              </div>
-                            </div>
+                            <div className="flex flex-col gap-1.5"><div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div><div className="flex flex-col divide-y divide-[var(--border-light)]">{section.serviceAccount.map((bar) => <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>)}</div></div>
                           )}
                         </div>
                       ))}
@@ -368,17 +313,22 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* ── Footer: device info ── */}
-      <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
-        <span>{t('dashboard.footActive')}: {accountId ? `#${accountId}` : t('common.none')}</span>
-        <span className="text-[var(--border)]">·</span>
+      <UsageTrendChart />
+
+      <Card className="overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
+          <div><CardTitle><BarChart3 size={15} />今日模型明细</CardTitle><p className="mt-0.5 text-[10px] text-[var(--text-muted)]">输入、输出、缓存、Fast 与价值字段完整保留</p></div>
+          <div className="text-[10px] text-[var(--text-muted)]">本机实时 · 官方 API 价估算（含缓存）</div>
+        </CardHeader>
+        <CardContent className="p-0"><ModelUsageTable rows={modelUsageRows} /></CardContent>
+      </Card>
+
+      <PromoCard />
+
+      <div className="flex items-center gap-2 px-1 pb-2 font-mono-data text-[9px] text-[var(--text-muted)]">
+        <span>{t('dashboard.footActive')}: {accountId ? `#${accountId}` : t('common.none')}</span><span>·</span>
         <span>{t('dashboard.footToken')}: {autoLeaseRunning ? (hasToken ? t('dashboard.footTokenOk') : t('dashboard.footTokenFetching')) : t('dashboard.footTokenIdle')}</span>
-        {leaserError && (
-          <>
-            <span className="text-[var(--border)]">·</span>
-            <span className="text-[var(--danger)] truncate max-w-[280px]">{leaserError}</span>
-          </>
-        )}
+        {leaserError && <><span>·</span><span className="max-w-[280px] truncate text-[var(--danger)]">{leaserError}</span></>}
       </div>
     </div>
   )

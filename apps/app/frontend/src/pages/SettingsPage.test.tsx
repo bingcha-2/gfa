@@ -74,6 +74,7 @@ describe('SettingsPage install paths', () => {
     render(<SettingsPage />)
 
     await waitFor(() => expect(apiMocks.getDetectedPaths).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /settings\.pathsTitle/ }))
     const codexInput = screen.getAllByRole('textbox')[2]
     expect(codexInput).not.toHaveAttribute('readonly')
 

@@ -1,4 +1,16 @@
-import { Cloud, SlidersHorizontal, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen, PlugZap, Rocket } from 'lucide-react'
+import {
+  BookOpen,
+  Cloud,
+  Download,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PlugZap,
+  Rocket,
+  ScrollText,
+  Settings,
+  SlidersHorizontal,
+  type LucideIcon,
+} from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
@@ -8,8 +20,8 @@ import type { PageId } from '@/types'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
 import { AccountDock } from '@/components/AccountDock'
 
-const SIDEBAR_EXPANDED = 200
-const SIDEBAR_COLLAPSED = 88
+const SIDEBAR_EXPANDED = 194
+const SIDEBAR_COLLAPSED = 68
 
 interface SidebarProps {
   currentPage: PageId
@@ -18,190 +30,131 @@ interface SidebarProps {
   onToggleCollapse: () => void
 }
 
+function NavItem({
+  icon: Icon,
+  label,
+  active,
+  collapsed,
+  onClick,
+}: {
+  icon: LucideIcon
+  label: string
+  active: boolean
+  collapsed: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={collapsed ? label : undefined}
+      className={cn(
+        'flex h-[40px] items-center rounded-[10px] text-[12px] font-medium transition-colors',
+        collapsed ? 'w-[42px] justify-center' : 'w-full gap-2.5 px-3 text-left',
+        active
+          ? 'bg-[var(--primary-light)] font-semibold text-[var(--primary-strong)]'
+          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+      )}
+    >
+      <Icon size={17} strokeWidth={active ? 2.2 : 1.7} className="shrink-0" />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </button>
+  )
+}
+
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse }: SidebarProps) {
   const t = useT()
-  const appVersion = useAppStore((s) => s.appVersion)
-  const updateStatus = useAppStore((s) => s.updateStatus)
+  const appVersion = useAppStore((state) => state.appVersion)
+  const updateStatus = useAppStore((state) => state.updateStatus)
   const width = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED
-  const inset = topInset()
+  const hasUpdate = updateStatus?.status === 'available'
 
-  const hasUpdate = updateStatus && updateStatus.status === 'available'
-
-  // 主导航:接管中心(统一控制面)+ 远程(用量看板)。日志/使用指南收进底部 dock。
-  const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
+  const primaryItems: { id: PageId; label: string; icon: LucideIcon }[] = [
     { id: 'takeover', label: t('nav.takeover'), icon: SlidersHorizontal },
     { id: 'remote', label: t('nav.home'), icon: Cloud },
   ]
-  // 底部 dock 次级入口:使用指南 + 日志(设置/反馈在 AccountDock 菜单)。
-  const dockItems: { id: PageId; label: string; icon: React.ElementType }[] = [
+  const localItems: { id: PageId; label: string; icon: LucideIcon }[] = [
+    { id: 'local_codex', label: 'Codex', icon: PlugZap },
+    { id: 'local_antigravity', label: 'Antigravity', icon: Rocket },
+  ]
+  const utilityItems: { id: PageId; label: string; icon: LucideIcon }[] = [
     { id: 'faq', label: t('nav.faq'), icon: BookOpen },
     { id: 'logs', label: t('nav.logs'), icon: ScrollText },
+    { id: 'settings', label: t('nav.settings'), icon: Settings },
   ]
 
   return (
-    <>
-      <nav
-        className="relative flex flex-col h-full bg-[var(--sidebar-bg)] border-r border-[var(--border-light)]"
-        style={{
-          width: `${width}px`,
-          transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        {/* ① 顶部安全区:mac 给红绿灯让位(簇底 ~28px),其余平台仅留空气;整条可拖拽 */}
-        <div
-          className="shrink-0"
-          style={{ height: `${inset}px`, '--wails-draggable': 'drag' } as React.CSSProperties}
-        />
+    <nav
+      className="relative flex h-full shrink-0 flex-col border-r border-[var(--border-light)] bg-[var(--sidebar-bg)]"
+      style={{ width, transition: 'width 0.24s cubic-bezier(0.16, 1, 0.3, 1)' }}
+    >
+      <div className="shrink-0" style={{ height: topInset(), '--wails-draggable': 'drag' } as React.CSSProperties} />
 
-        {/* ② Brand row:固定 48px,与内容区 header 等高 → 两栏分隔线连成一条贯通线 */}
-        <div
-          className={cn(
-            'shrink-0 mx-3 flex items-center border-b border-[var(--border-light)]',
-            collapsed ? 'justify-center' : 'gap-2.5'
-          )}
-          style={{ height: `${BAR_H}px`, '--wails-draggable': 'drag' } as React.CSSProperties}
-        >
-          <div
-            className="flex items-center gap-2.5"
+      <div
+        className={cn('mx-3 flex shrink-0 items-center border-b border-[var(--border-light)]', collapsed ? 'justify-center' : 'gap-2.5 px-1')}
+        style={{ height: BAR_H, '--wails-draggable': 'drag' } as React.CSSProperties}
+      >
+        <img src={bcaiIcon} alt="冰茶AI" className="h-8 w-8 shrink-0 rounded-[10px] shadow-sm" />
+        {!collapsed && <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-[var(--text-primary)]">冰茶AI</span>}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title={t('nav.collapseSidebar')}
+            className="grid h-7 w-7 place-items-center rounded-[7px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
             style={{ '--wails-draggable': 'no-drag' } as React.CSSProperties}
           >
-            <img src={bcaiIcon} alt="冰茶AI" className="w-8 h-8 rounded-[10px] shadow-sm" />
-            {!collapsed && (
-              <span className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight select-none">冰茶AI</span>
-            )}
-          </div>
-        </div>
+            <PanelLeftClose size={14} />
+          </button>
+        )}
+      </div>
 
-        {/* ③ Main nav(分隔线下 8px 起步) */}
-        <div className={cn('flex-1 flex flex-col gap-[3px] pt-2', collapsed ? 'px-3 items-center' : 'px-3')}>
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const isActive = currentPage === item.id
-            return (
-              <button
-                key={item.id}
-                onClick={() => onPageChange(item.id)}
-                title={collapsed ? item.label : undefined}
-                className={cn(
-                  'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
-                  collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
-                  isActive
-                    ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-                )}
-              >
-                <Icon size={20} strokeWidth={isActive ? 2.2 : 1.7} className="flex-shrink-0" />
-                {!collapsed && item.label}
-              </button>
-            )
-          })}
+      {collapsed && (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title={t('nav.expandSidebar')}
+          className="mx-auto mt-2 grid h-8 w-[42px] place-items-center rounded-[8px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        >
+          <PanelLeftOpen size={14} />
+        </button>
+      )}
 
-          {/* 本地自有号分组 */}
-          {!collapsed && (
-            <div className="px-3 pt-3 pb-1 text-[10px] font-bold tracking-wider text-[var(--text-muted)] select-none">本地自有号</div>
-          )}
+      <div className={cn('flex flex-1 flex-col gap-0.5 pt-2', collapsed ? 'items-center px-2' : 'px-3')}>
+        {primaryItems.map((item) => (
+          <NavItem key={item.id} {...item} collapsed={collapsed} active={currentPage === item.id} onClick={() => onPageChange(item.id)} />
+        ))}
+
+        {!collapsed && <div className="px-3 pb-1 pt-3 text-[9px] font-semibold text-[var(--text-muted)]">本地自有号</div>}
+        {localItems.map((item) => (
+          <NavItem key={item.id} {...item} collapsed={collapsed} active={currentPage === item.id} onClick={() => onPageChange(item.id)} />
+        ))}
+      </div>
+
+      <div className={cn('mx-3 border-t border-[var(--border-light)] py-2.5', collapsed && 'flex flex-col items-center')}>
+        {utilityItems.map((item) => (
+          <NavItem key={item.id} {...item} collapsed={collapsed} active={currentPage === item.id} onClick={() => onPageChange(item.id)} />
+        ))}
+
+        {hasUpdate && (
           <button
-            onClick={() => onPageChange('local_codex')}
-            title={collapsed ? 'Codex' : undefined}
+            type="button"
+            onClick={() => api.downloadUpdate()}
+            title={t('nav.updateTo', { version: updateStatus!.version })}
             className={cn(
-              'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
-              collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
-              currentPage === 'local_codex'
-                ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              'mt-1 flex h-9 items-center rounded-[9px] bg-[var(--primary-light)] text-[10px] font-semibold text-[var(--primary-strong)]',
+              collapsed ? 'w-[42px] justify-center' : 'w-full gap-2 px-3',
             )}
           >
-            <PlugZap size={20} strokeWidth={currentPage === 'local_codex' ? 2.2 : 1.7} className="flex-shrink-0" />
-            {!collapsed && 'Codex'}
+            <Download size={14} />{!collapsed && t('nav.updateAvailable', { version: updateStatus!.version })}
           </button>
-          <button
-            onClick={() => onPageChange('local_antigravity')}
-            title={collapsed ? 'Antigravity' : undefined}
-            className={cn(
-              'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
-              collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
-              currentPage === 'local_antigravity'
-                ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-            )}
-          >
-            <Rocket size={20} strokeWidth={currentPage === 'local_antigravity' ? 2.2 : 1.7} className="flex-shrink-0" />
-            {!collapsed && 'Antigravity'}
-          </button>
+        )}
+
+        <div className="mt-2 w-full border-t border-[var(--border-light)] pt-2">
+          <AccountDock collapsed={collapsed} onNavigate={onPageChange} />
         </div>
-
-        {/* ④ Bottom: Settings + Version + Update */}
-        <div className={cn('pb-3', collapsed ? 'px-3' : 'px-3')}>
-          <div className="border-t border-[var(--border-light)] mb-2" />
-
-          <div className={cn('flex flex-col gap-[3px]', collapsed && 'items-center')}>
-            {/* 次级入口:使用指南 + 日志(设置/反馈在 AccountDock 菜单)。从主导航收纳至此,更清爽。 */}
-            {dockItems.map((item) => {
-              const Icon = item.icon
-              const isActive = currentPage === item.id
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onPageChange(item.id)}
-                  title={collapsed ? item.label : undefined}
-                  className={cn(
-                    'flex items-center rounded-[10px] text-[12px] font-medium transition-all duration-200 text-left',
-                    collapsed ? 'justify-center w-[48px] h-[40px]' : 'gap-3 px-3 h-[36px] w-full',
-                    isActive
-                      ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]',
-                  )}
-                >
-                  <Icon size={17} strokeWidth={isActive ? 2.2 : 1.7} className="flex-shrink-0" />
-                  {!collapsed && item.label}
-                </button>
-              )
-            })}
-
-            {/* Update button */}
-            {hasUpdate && (
-              <button
-                onClick={() => api.downloadUpdate()}
-                title={t('nav.updateTo', { version: updateStatus!.version })}
-                className={cn(
-                  'flex items-center rounded-[10px] text-[12px] font-semibold transition-all duration-200',
-                  collapsed
-                    ? 'justify-center w-[48px] h-[48px] bg-[var(--primary-light)] text-[var(--primary-strong)]'
-                    : 'gap-2.5 px-3 h-[36px] w-full bg-[var(--primary-light)] text-[var(--primary-strong)] hover:brightness-95'
-                )}
-              >
-                <Download size={15} className="flex-shrink-0" />
-                {!collapsed && t('nav.updateAvailable', { version: updateStatus!.version })}
-              </button>
-            )}
-          </div>
-
-          {/* Account dock — 会员头像 + 点开会员通行证面板 */}
-          <div className="border-t border-[var(--border-light)] mt-2 pt-2">
-            <AccountDock collapsed={collapsed} onNavigate={onPageChange} />
-          </div>
-
-          {/* Version */}
-          {!collapsed && (
-            <div className="px-3 pt-2 text-[10px] text-[var(--text-muted)] font-mono select-none">v{appVersion}</div>
-          )}
-        </div>
-      </nav>
-
-      {/* ⑤ Collapse handle */}
-      <button
-        onClick={onToggleCollapse}
-        className="fixed z-50 flex items-center justify-center border border-[var(--border-light)] border-l-0 rounded-r-[10px] bg-[var(--bg-card)] backdrop-blur-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer w-[18px] h-[30px] shadow-[4px_0_12px_rgba(15,23,42,0.08)]"
-        style={{
-          top: `${inset + BAR_H + 8}px`,
-          left: `${width}px`,
-          transition: 'left 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-          '--wails-draggable': 'no-drag',
-        } as React.CSSProperties}
-        title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
-      >
-        {collapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
-      </button>
-    </>
+        {!collapsed && <div className="px-2 pt-2 font-mono-data text-[8px] text-[var(--text-muted)]">v{appVersion}</div>}
+      </div>
+    </nav>
   )
 }

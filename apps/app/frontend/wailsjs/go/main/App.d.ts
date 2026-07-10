@@ -18,6 +18,8 @@ import {modelprovider} from '../models';
 
 export function ActivateCode(arg1:string):Promise<Record<string, any>>;
 
+export function ApplyHostProtection(arg1:main.HostProtectionConfig):Promise<main.HostProtectionStatus>;
+
 export function BrowseForPath(arg1:string):Promise<string>;
 
 export function CheckForUpdate():Promise<Record<string, any>>;
@@ -45,6 +47,8 @@ export function GetConfig():Promise<main.Config>;
 export function GetDetectedPaths():Promise<main.DetectedPaths>;
 
 export function GetFaqData():Promise<Record<string, any>>;
+
+export function GetHostProtectionStatus():Promise<main.HostProtectionStatus>;
 
 export function GetIDEStatus():Promise<main.IDEStatus>;
 
@@ -320,11 +324,17 @@ export function OpenCACertForTrust():Promise<void>;
 
 export function OpenSystemPermissionSettings():Promise<void>;
 
+export function ProbeHostProtectionStatus(arg1:Array<string>):Promise<main.HostProtectionStatus>;
+
 export function RefreshQuota():Promise<void>;
+
+export function ReleaseHostProtectionTarget(arg1:string):Promise<main.HostProtectionStatus>;
 
 export function RestartProxy():Promise<void>;
 
 export function RestartToUpdate():Promise<void>;
+
+export function RestoreHostProtection():Promise<main.HostProtectionStatus>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
