@@ -402,15 +402,24 @@ func (a *App) GetDetectedPaths() DetectedPaths {
 }
 
 // BrowseForPath 打开系统文件浏览对话框，让用户选择应用程序
+//
+// macOS 不设扩展名过滤器:.app 是 bundle(目录),而新版 macOS(setAllowedFileTypes 已废弃)
+// 一旦收到扩展名过滤器——尤其掺入 "*" 通配(会污染 allowedFileTypes 数组)——会把 .app 连同
+// 全部条目置灰、彻底无法选中。不设过滤器时 .app 默认即可选,与「Codex 设置」里可用的选择框一致。
+// Windows/Linux 无 bundle 问题,保留扩展名过滤帮助用户定位可执行文件。
 func (a *App) BrowseForPath(title string) string {
-	result, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	opts := runtime.OpenDialogOptions{
 		Title:                title,
 		CanCreateDirectories: false,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "应用程序", Pattern: "*.app;*.exe"},
+	}
+	switch goruntime.GOOS {
+	case "windows":
+		opts.Filters = []runtime.FileFilter{
+			{DisplayName: "应用程序", Pattern: "*.exe"},
 			{DisplayName: "所有文件", Pattern: "*"},
-		},
-	})
+		}
+	}
+	result, err := runtime.OpenFileDialog(a.ctx, opts)
 	if err != nil {
 		return ""
 	}

@@ -53,6 +53,14 @@ const (
 	codexDefaultOriginator = "codex-tui"
 )
 
+// codexAttestationFailureEnvelope 是「app-server 尝试取设备证明但失败」的信封
+// (README 状态码:2=request failed,无 t 字段)。桌面 app 发来的真 DeviceCheck token 被
+// copyCodexHeaders 剥离后,池号路径用它回填 x-oai-attestation:模拟一台 DeviceCheck 失败的
+// 真桌面。既不泄漏「订户设备 ↔ 池号」绑定(=池化铁证),又与我们外发的桌面身份自洽
+// (比「桌面却完全不带证明」更像真实发生的状态)。无法为池号伪造 s:0 成功证明(Apple 硬件
+// 签名不可伪造),失败信封是唯一既止血又自洽的形态。见 [[codex-attestation-egress-strip]]。
+const codexAttestationFailureEnvelope = `{"v":1,"s":2}`
+
 // applyCodexOfficialHeaders 在转发生成请求前补齐 Codex 官方头(仅在下游未带时补)。
 // dst 是发往上游的请求头,src 是 Codex 发来的原始头。
 func applyCodexOfficialHeaders(dst, src http.Header) {
@@ -67,6 +75,11 @@ func applyCodexOfficialHeaders(dst, src http.Header) {
 		dst.Set("Accept", "text/event-stream")
 	}
 	dst.Set("Connection", "Keep-Alive")
+	// src 带过设备证明(桌面 app)→ 回填「失败」信封(真 token 已在 copyCodexHeaders 剥离)。
+	// src 本就没证明(如内置 CLI)→ 不回填,保持该客户端「无证明」的原生形态。
+	if src.Get("X-Oai-Attestation") != "" {
+		dst.Set("X-Oai-Attestation", codexAttestationFailureEnvelope)
+	}
 }
 
 // CodexRelayConfig 配置"API 卡密 / 第三方中转"模式:不租号、不要 card,直接用本地
@@ -968,10 +981,25 @@ func (p *CodexProxy) reportProblemSafe(card, deviceId string, details ReportDeta
 	GetUsageStats().AddError()
 }
 
+// codexEgressStripHeaders:转发上游前必须剥离的客户端头(小写)。
+//   - x-oai-attestation:桌面 Codex 发的 Apple DeviceCheck 设备证明(硬件签名,不可伪造)。
+//     它绑定「订户真机 ↔ 本次请求」。而我们用的是池号 token —— 一并透传 = 把「一个池号被多台
+//     设备证明 / 一台设备证明多个池号」的池化关系亲手交给 OpenAI,是封号铁证。既无法为池号伪造
+//     出「对得上的设备」,唯一安全做法就是不发真 token。
+//     注意:这里只剥离**真 token**;池号路径(applyCodexOfficialHeaders)随后会回填一个
+//     「生成失败」信封(codexAttestationFailureEnvelope, s:2),模拟 DeviceCheck 失败的真桌面,
+//     既不泄漏绑定又与桌面身份自洽。relay 路径不回填(中转站不校验 ChatGPT 证明)。
+var codexEgressStripHeaders = map[string]bool{
+	"x-oai-attestation": true,
+}
+
 func copyCodexHeaders(dst, src http.Header) {
 	for key, values := range src {
 		lower := strings.ToLower(key)
 		if lower == "host" || lower == "authorization" || lower == "content-length" {
+			continue
+		}
+		if codexEgressStripHeaders[lower] {
 			continue
 		}
 		for _, value := range values {
