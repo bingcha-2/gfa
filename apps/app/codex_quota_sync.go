@@ -222,10 +222,13 @@ func parseCodexUsage(u *codexUsageResponse) *CodexQuotaWindow {
 	return w
 }
 
-// remaining% = 100 - used% (matches cockpit's normalize_remaining_percentage).
+// remaining% = 100 - used%. used_percent 缺失(窗口在但上游没给)= 未知 → -1,不伪造满血 100。
+// 伪造 100 会让服务端 fair-share 低水位被抬到假满血,真值回来时整段跌幅一次性砸给在场卡
+// (真27↔假100 抖动的源头)。used=0 是真·满血 → 100,与"未知"区分。c41aea4f 只堵了整段缺 window,
+// 这里补上"window 在、used=null"的内层洞。
 func codexRemainingPercent(used *float64) float64 {
 	if used == nil {
-		return 100
+		return -1
 	}
 	r := 100 - *used
 	if r < 0 {

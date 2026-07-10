@@ -497,29 +497,53 @@ export class CodexService {
         writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
         return { ok: true, email: acc.email, tokenValid: true, quotaError: "上游额度获取失败(usage 接口无数据或被拒)" };
       }
-      // 落盘:与 codex.provider.applyQuotaSnapshot 同字段,供血条/选号读取。
+      // 落盘:与 codex.provider.applyQuotaSnapshot 同口径 —— known/keep-prior。
+      // 上游缺窗口/缺 used_percent 时 codex-usage 报 -1(未知)。绝不能把 -1 或伪造的 100 落盘覆盖
+      // 真实值:未知窗口保留上次真实值,只持久化本次学到的窗口。否则控制台点一次「获取额度」就能把
+      // 真实值刷成假满血,污染 fair-share 基线(见 fairshare-quota-root-cause)。
       if (snap.planType) acc.planType = snap.planType;
       const cq = snap.codexQuota;
-      const weeklyBinds = cq.weeklyPercent < cq.hourlyPercent;
-      const bindingPercent = weeklyBinds ? cq.weeklyPercent : cq.hourlyPercent;
-      const bindingReset = weeklyBinds ? cq.weeklyResetTime : cq.hourlyResetTime;
-      acc.modelQuotaFractions = { codex: bindingPercent / 100 };
-      if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
-      acc.modelQuotaRefreshedAt = Date.now();
-      acc.codexHourlyPercent = cq.hourlyPercent;
-      acc.codexWeeklyPercent = cq.weeklyPercent;
-      acc.codexHourlyResetTime = cq.hourlyResetTime || "";
-      acc.codexWeeklyResetTime = cq.weeklyResetTime || "";
+      const hourlyKnown = Number.isFinite(cq.hourlyPercent) && cq.hourlyPercent >= 0;
+      const weeklyKnown = Number.isFinite(cq.weeklyPercent) && cq.weeklyPercent >= 0;
+      if (hourlyKnown || weeklyKnown) {
+        const prevHourly = Number(acc.codexHourlyPercent ?? -1);
+        const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
+        const hourly = hourlyKnown ? cq.hourlyPercent : prevHourly;
+        const weekly = weeklyKnown ? cq.weeklyPercent : prevWeekly;
+        // binding = 更紧的 KNOWN 窗口;一侧未知(-1)则另一侧 binds。
+        let weeklyBinds: boolean;
+        if (hourly < 0) weeklyBinds = true;
+        else if (weekly < 0) weeklyBinds = false;
+        else weeklyBinds = weekly < hourly;
+        const bindingPercent = weeklyBinds ? weekly : hourly;
+        const bindingReset = weeklyBinds
+          ? (weeklyKnown ? cq.weeklyResetTime : String(acc.codexWeeklyResetTime || ""))
+          : (hourlyKnown ? cq.hourlyResetTime : String(acc.codexHourlyResetTime || ""));
+        if (bindingPercent >= 0) acc.modelQuotaFractions = { codex: bindingPercent / 100 };
+        if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
+        acc.modelQuotaRefreshedAt = Date.now();
+        // 只写本次学到的窗口,未知窗口保留旧值。
+        if (hourlyKnown) {
+          acc.codexHourlyPercent = cq.hourlyPercent;
+          acc.codexHourlyResetTime = cq.hourlyResetTime || "";
+        }
+        if (weeklyKnown) {
+          acc.codexWeeklyPercent = cq.weeklyPercent;
+          acc.codexWeeklyResetTime = cq.weeklyResetTime || "";
+        }
+      }
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
       return {
         ok: true,
         email: acc.email,
         tokenValid: true,
         planType: acc.planType || "",
-        hourlyPercent: cq.hourlyPercent,
-        weeklyPercent: cq.weeklyPercent,
-        hourlyResetTime: cq.hourlyResetTime || "",
-        weeklyResetTime: cq.weeklyResetTime || "",
+        // 回带持久化后的真实值(未知窗口 = 保留的旧值);两窗口皆未知时回 quotaError 提示。
+        hourlyPercent: Number(acc.codexHourlyPercent ?? -1),
+        weeklyPercent: Number(acc.codexWeeklyPercent ?? -1),
+        hourlyResetTime: String(acc.codexHourlyResetTime || ""),
+        weeklyResetTime: String(acc.codexWeeklyResetTime || ""),
+        ...(hourlyKnown || weeklyKnown ? {} : { quotaError: "上游未返回额度窗口(已保留上次真实值)" }),
       };
     } catch (err: any) {
       return { ok: false, email: acc.email, error: String(err?.message || err) };
@@ -582,7 +606,9 @@ export class CodexService {
 
       await consumeResetCreditUpstream(token, acc.proxyUrl);
       // 重置后额度已变,拉一次落盘(失败不影响重置本身已成功)。
-      const refreshed = await this.refreshCodexAccountQuota({ accountId }).catch(() => null);
+      const refreshed = (await this.refreshCodexAccountQuota({ accountId }).catch(() => null)) as
+        | { hourlyPercent?: number; weeklyPercent?: number }
+        | null;
       return {
         ok: true,
         email: acc.email,

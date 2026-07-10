@@ -37,9 +37,15 @@ interface RawUsageResponse {
   } | null;
 }
 
-/** remaining% = 100 - used% (matches cockpit's normalize_remaining_percentage). */
+/**
+ * remaining% = 100 - used%. A missing/non-finite used_percent is UNKNOWN → -1,
+ * never a fabricated 100 (mirrors the client contract in codex_quota_sync.go and
+ * applyQuotaSnapshot's <0 = keep-prior). Fabricating a healthy 100 here is the
+ * root of the "真27↔假100" snapshot flapping that poisons fair-share. A genuine
+ * used_percent=0 is real fullness → 100, distinct from unknown.
+ */
 function remainingPercent(used: number | null | undefined): number {
-  if (used == null || !Number.isFinite(used)) return 100;
+  if (used == null || !Number.isFinite(used)) return -1;
   return Math.max(0, Math.min(100, 100 - used));
 }
 
@@ -108,7 +114,9 @@ export async function fetchCodexQuotaUpstream(
   if (!rl) return null;
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const window: CodexQuotaWindow = { hourlyPercent: 100, weeklyPercent: 100 };
+  // Windows default to UNKNOWN (-1), not fabricated 100. An absent primary/secondary
+  // window stays -1 so the caller keeps its last real value instead of flapping to full.
+  const window: CodexQuotaWindow = { hourlyPercent: -1, weeklyPercent: -1 };
   if (rl.primary_window) {
     window.hourlyPercent = remainingPercent(rl.primary_window.used_percent);
     window.hourlyResetTime = resetIso(rl.primary_window, nowSec);

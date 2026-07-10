@@ -105,4 +105,30 @@ describe("RosettaService — 入库探活 + 单账号刷新", () => {
     expect(r).toMatchObject({ ok: true, tokenValid: true });
     expect(r.quotaError).toContain("上游额度获取失败");
   });
+
+  it("codex 刷新:上游缺 weekly 窗口(报 -1)→ 不覆盖已存真实 weekly,保留旧值", async () => {
+    vi.mocked(refreshCodexAccessToken).mockResolvedValue("access-tok");
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addCodexAccount({ email: "q3@x.com", refreshToken: "rt" });
+    const id = readAccounts(tempDir, "codex-accounts.json")[0].id;
+
+    // 1) 先一次完整真实值,落盘 weekly=67。
+    vi.mocked(fetchCodexQuotaUpstream).mockResolvedValueOnce({
+      planType: "plus",
+      codexQuota: { hourlyPercent: 96, weeklyPercent: 67, hourlyResetTime: "", weeklyResetTime: "2099-01-01T00:00:00Z" },
+    });
+    await svc.refreshCodexAccountQuota({ accountId: id });
+    expect(readAccounts(tempDir, "codex-accounts.json")[0].codexWeeklyPercent).toBe(67);
+
+    // 2) 再一次:上游缺 weekly(报 -1),5h 更新到 90 —— weekly 必须保留 67,不被 -1/伪造100 覆盖。
+    vi.mocked(fetchCodexQuotaUpstream).mockResolvedValueOnce({
+      planType: "plus",
+      codexQuota: { hourlyPercent: 90, weeklyPercent: -1, hourlyResetTime: "", weeklyResetTime: "" },
+    });
+    const r: any = await svc.refreshCodexAccountQuota({ accountId: id });
+    const acc = readAccounts(tempDir, "codex-accounts.json")[0];
+    expect(acc.codexHourlyPercent).toBe(90); // 5h 更新
+    expect(acc.codexWeeklyPercent).toBe(67); // weekly 保留真实值,未被 -1 覆盖
+    expect(r.weeklyPercent).toBe(67); // 回带的也是保留值
+  });
 });

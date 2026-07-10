@@ -466,7 +466,8 @@ export class FairShareTracker {
         if (tracker.primed && fraction >= 0 && fraction < tracker.lastFraction) {
           tracker.windowStart = newStart;
         } else {
-          this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0);
+          // 有真实 fraction → 真基线 primed=true;fraction 未知(-1)回退到猜的 1.0 → primed=false。
+          this.resetWindow(accountId, tracker, newStart, fraction >= 0 ? fraction : 1.0, fraction >= 0);
           return;
         }
       }
@@ -574,22 +575,28 @@ export class FairShareTracker {
     }
   }
 
-  /** 窗口 reset:清零 T_i/u_i,重算锁定 D + participants + 预留,设低水位为 fresh。 */
-  private resetWindow(accountId: number, tracker: BucketTracker, windowStart: number, freshFraction: number): void {
+  /**
+   * 窗口 reset:清零 T_i/u_i,重算锁定 D + participants + 预留,设低水位为 fresh。
+   * primed:该 fresh 基线是否为【真实上游确认过的值】。
+   *  - true(默认):上游驱动的真 reset(带真实 fraction)→ 后续快照走归并。
+   *  - false:自计时过期 / 无真实 fraction 的猜测 1.0 → 占位基线,后续首个真实快照走【采纳】
+   *    (cold-adopt,见 applySnapshot §3a),绝不对着猜的 1.0 归并出凭空消耗(S2/S5 毒根)。
+   */
+  private resetWindow(accountId: number, tracker: BucketTracker, windowStart: number, freshFraction: number, primed = true): void {
     tracker.windowStart = windowStart;
     tracker.perCard.clear();
     tracker.attributed.clear();
     tracker.lastFraction = clamp01(freshFraction);
-    tracker.primed = true; // reset 出来的基线是真值(账号刚刷新 ≈1 或自计时归 1),非占位。
+    tracker.primed = primed;
     tracker.pendingRise = null; // 新窗口重新累计回升确认。
     tracker.locked = this.computeLocked(accountId);
     this.dirty = true;
   }
 
-  /** 自计时过期检测:跨过窗口长度 → reset(离线/无快照路径,fresh=1)。 */
+  /** 自计时过期检测:跨过窗口长度 → reset(离线/无快照路径,fresh=1 是【猜的】→ primed=false)。 */
   private ensureWindow(accountId: number, tracker: BucketTracker, now: number): void {
     if (now - tracker.windowStart >= tracker.windowMs) {
-      this.resetWindow(accountId, tracker, now, 1.0);
+      this.resetWindow(accountId, tracker, now, 1.0, false);
     }
   }
 
@@ -749,8 +756,9 @@ export class FairShareTracker {
         perCard,
         attributed,
         lastFraction: expired ? 1.0 : lf,
-        // 恢复出的基线是真值:未过期 → 持久化的低水位;过期 → 真·reset 归 1。均非冷建占位。
-        primed: true,
+        // 未过期 → 持久化低水位是真值,primed=true。过期 → 归 1 是【猜的】(本地时钟过期不代表上游
+        // 真 reset,尤其缺 weeklyResetAt 时会误判过期)→ primed=false,首个真值走采纳不归并,重启不毒化。
+        primed: !expired,
         locked,
       });
     }

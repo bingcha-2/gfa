@@ -24,6 +24,34 @@ func TestParseCodexUsageAbsentWindowReportsUnknownNotFull(t *testing.T) {
 	}
 }
 
+// 契约:窗口"在"但 used_percent 为 nil 时,必须报 -1(未知),不能伪造满血 100。
+// 这曾是线上 accountId=19 等 13 个 codex 号"真27↔假100"抖动的源头:上游窗口在、used_percent 缺失
+// → 旧代码 codexRemainingPercent(nil)=100 → 灌进 fair-share 假基线。c41aea4f 只修了"窗口整个缺失",
+// 漏了"窗口在、used=null"这一内层洞,本测试封住它。used=0(真满血)仍应 → 100。
+func TestParseCodexUsagePresentWindowNilUsedReportsUnknown(t *testing.T) {
+	// primary/secondary 窗口都"在",但 used_percent 都为 nil(上游未返回该字段)→ -1。
+	u := &codexUsageResponse{
+		RateLimit: &codexUsageRateLimit{
+			PrimaryWindow:   &codexUsageWindow{UsedPercent: nil},
+			SecondaryWindow: &codexUsageWindow{UsedPercent: nil},
+		},
+	}
+	w := parseCodexUsage(u)
+	if w == nil {
+		t.Fatalf("expected a window, got nil")
+	}
+	if w.HourlyPercent != -1 || w.WeeklyPercent != -1 {
+		t.Fatalf("window 在但 used=null 必须报 -1/-1(未知),却得 %v/%v(伪造满血会毒化 fair-share)", w.HourlyPercent, w.WeeklyPercent)
+	}
+
+	// 对照:used_percent=0 是真·满血,必须 → 100(区分"未知"与"真满")。
+	zero := 0.0
+	u2 := &codexUsageResponse{RateLimit: &codexUsageRateLimit{PrimaryWindow: &codexUsageWindow{UsedPercent: &zero}}}
+	if w2 := parseCodexUsage(u2); w2 == nil || w2.HourlyPercent != 100 {
+		t.Fatalf("used=0 应为真满血 100,却得 %v", w2)
+	}
+}
+
 // rate_limit 整段缺失 → 无快照(nil),而不是一份全 -1/100 的快照。
 func TestParseCodexUsageNoRateLimitReturnsNil(t *testing.T) {
 	if got := parseCodexUsage(&codexUsageResponse{}); got != nil {
