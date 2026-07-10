@@ -52,8 +52,11 @@ export interface CodexBrowserLoginResult {
 const DEFAULT_MAX_STEPS = 16;
 const DEFAULT_SMS_TIMEOUT_MS = 90_000;
 const SMS_POLL_INTERVAL_MS = 3_000;
-const SECURITY_VERIFICATION_TIMEOUT_MS = 45_000;
+const SECURITY_VERIFICATION_TIMEOUT_MS = 120_000;
 const SECURITY_VERIFICATION_POLL_MS = 1_000;
+const LOGIN_SURFACE_SETTLE_MS = 2_000;
+const HUMAN_INPUT_DELAY_MS = 80;
+const POST_INPUT_SETTLE_MS = 350;
 
 /**
  * 解析接码接口返回里的验证码。yuntl.cc 纯文本：
@@ -130,9 +133,19 @@ async function fillFirst(page: Page, selector: string, value: string): Promise<b
   for (let i = 0; i < n; i++) {
     const el = loc.nth(i);
     if (await el.isVisible().catch(() => false)) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+      await sleep(LOGIN_SURFACE_SETTLE_MS);
       await el.click().catch(() => {});
       await el.fill("").catch(() => {});
-      await el.fill(value).catch(() => {});
+      let typed = false;
+      if (value) {
+        await el.pressSequentially(value, { delay: HUMAN_INPUT_DELAY_MS }).then(
+          () => { typed = true; },
+          () => {},
+        );
+      }
+      if (!typed) await el.fill(value).catch(() => {});
+      await sleep(POST_INPUT_SETTLE_MS);
       return true;
     }
   }
@@ -181,13 +194,29 @@ async function pageTitle(page: Page): Promise<string> {
   return maybeTitle.call(page).catch(() => "");
 }
 
+function looksLikeStaleChatGptAuthTab(url: string): boolean {
+  return /chatgpt\.com\/(?:auth|api\/auth)\//i.test(url);
+}
+
+async function openInitialOpenAiAuthPage(context: BrowserContext): Promise<Page> {
+  let closedStaleTab = false;
+  for (const page of context.pages()) {
+    if (looksLikeStaleChatGptAuthTab(page.url())) {
+      await page.close().catch(() => {});
+      closedStaleTab = true;
+    }
+  }
+  if (closedStaleTab) return context.newPage();
+  return context.pages()[0] || (await context.newPage());
+}
+
 function matchesInput(inputs: Array<Record<string, string | null>>, re: RegExp): boolean {
   return inputs.some((input) => re.test(JSON.stringify(input)));
 }
 
 function looksLikeOpenAiSecurityVerification(url: string, title: string, text: string): boolean {
   if (!/auth\.openai\.com/i.test(url)) return false;
-  return /performing security verification|protect against malicious bots|just a moment/i.test(`${title} ${text}`);
+  return /performing security verification|protect against malicious bots|verification successful|enable javascript and cookies|just a moment/i.test(`${title} ${text}`);
 }
 
 function looksLikeOpenAiLoginSurface(inputs: Array<Record<string, string | null>>, text: string): boolean {
@@ -473,7 +502,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
     context.on("request", (req) => grab(req.url()));
     context.on("framenavigated", (f) => grab(f.url()));
 
-    const page = context.pages()[0] || (await context.newPage());
+    const page = await openInitialOpenAiAuthPage(context);
     onStep("opening_authorize_url");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 40_000 }).catch(() => {});
     const securityGate = await waitForOpenAiSecurityVerification(page, onStep);

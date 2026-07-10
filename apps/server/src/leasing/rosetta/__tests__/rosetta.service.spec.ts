@@ -341,7 +341,16 @@ describe("RosettaService", () => {
       text: `后台的 codex 池能否支持 {"WARNING_BANNER":"secret","user":{"email":"codex@example.com","name":"Codex User"},"expires":"2026-08-28T03:53:24.296Z","account":{"planType":"plus"},"accessToken":"access-token-value","sessionToken":"session-token-value","ignoredField":"ignored"}`,
     });
 
-    expect(result).toMatchObject({ ok: true, email: "codex@example.com", isUpdate: false, totalAccounts: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      email: "codex@example.com",
+      isUpdate: false,
+      totalAccounts: 1,
+      hasRefreshToken: false,
+      hasAccessToken: true,
+      hasSessionToken: true,
+      credentialMode: "access-session",
+    });
 
     const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "codex-accounts.json"), "utf8"));
     expect(stored.accounts).toHaveLength(1);
@@ -356,6 +365,17 @@ describe("RosettaService", () => {
     });
     expect(stored.accounts[0]).not.toHaveProperty("WARNING_BANNER");
     expect(stored.accounts[0]).not.toHaveProperty("ignoredField");
+
+    const listed = svc.listCodexAccounts().accounts[0];
+    expect(listed).toMatchObject({
+      email: "codex@example.com",
+      hasToken: true,
+      hasRefreshToken: false,
+      hasAccessToken: true,
+      hasSessionToken: true,
+      credentialMode: "access-session",
+      accessTokenExpiresAt: Date.parse("2026-08-28T03:53:24.296Z"),
+    });
   });
 
   it("updates an existing codex account when importing the same email", () => {

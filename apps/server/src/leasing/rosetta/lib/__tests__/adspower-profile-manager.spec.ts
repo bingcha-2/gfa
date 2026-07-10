@@ -84,6 +84,41 @@ describe("ensureAdspowerProfileForAccount", () => {
     );
   });
 
+  it("creates new AdsPower profiles with a desktop-only fingerprint", async () => {
+    const account: any = {
+      id: 11,
+      email: "desktop@openai.test",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+    };
+    const client = mockClient();
+
+    await ensureAdspowerProfileForAccount({
+      dataDir,
+      provider: "codex",
+      account,
+      client,
+      now: () => new Date("2026-07-06T00:00:00.000Z"),
+      profileCap: 10,
+    });
+
+    expect(client.createProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fingerprintConfig: expect.objectContaining({
+          automatic_timezone: "1",
+          language_switch: "0",
+          language: ["en-US", "en"],
+          webrtc: "proxy",
+          screen_resolution: "1920_1080",
+          browser_kernel_config: { type: "chrome", version: "ua_auto" },
+          random_ua: {
+            ua_browser: ["chrome"],
+            ua_system_version: ["Windows 10", "Windows 11"],
+          },
+        }),
+      }),
+    );
+  });
+
   it("creates a per-account sticky Claude profile with the static IP baked into the profile", async () => {
     const account: any = {
       id: 0,

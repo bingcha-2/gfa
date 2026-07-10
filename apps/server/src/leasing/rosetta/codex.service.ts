@@ -39,6 +39,43 @@ const CODEX_OAUTH_SCOPES = "openid profile email offline_access api.connectors.r
 const CODEX_OAUTH_ORIGINATOR = "codex_vscode";
 const CODEX_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
+type CodexCredentialMode = "refresh" | "access-session" | "access" | "session" | "none";
+
+function tokenPresent(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function codexCredentialMeta(source: any): {
+  hasToken: boolean;
+  hasRefreshToken: boolean;
+  hasAccessToken: boolean;
+  hasSessionToken: boolean;
+  credentialMode: CodexCredentialMode;
+  accessTokenExpiresAt: number;
+} {
+  const hasRefreshToken = tokenPresent(source?.refreshToken);
+  const hasAccessToken = tokenPresent(source?.accessToken);
+  const hasSessionToken = tokenPresent(source?.sessionToken);
+  const credentialMode: CodexCredentialMode = hasRefreshToken
+    ? "refresh"
+    : hasAccessToken && hasSessionToken
+      ? "access-session"
+      : hasAccessToken
+        ? "access"
+        : hasSessionToken
+          ? "session"
+          : "none";
+  const accessTokenExpiresAt = Number(source?.accessTokenExpiresAt || 0);
+  return {
+    hasToken: hasRefreshToken || hasAccessToken || hasSessionToken,
+    hasRefreshToken,
+    hasAccessToken,
+    hasSessionToken,
+    credentialMode,
+    accessTokenExpiresAt: Number.isFinite(accessTokenExpiresAt) ? accessTokenExpiresAt : 0,
+  };
+}
+
 type CodexOAuthPending = {
   loginId: string;
   state: string;
@@ -153,34 +190,37 @@ export class CodexService {
     const data = readJson(filePath, { accounts: [] });
     const boundCounts = this.accessKey.boundCardCounts("codex");
     const shares = this.accessKey.boundSharesByAccount("codex");
-    const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
-      id: Number(account.id || 0),
-      email: String(account.email || ""),
-      enabled: account.enabled !== false,
-      poolEnabled: account.poolEnabled !== false,
-      alias: String(account.alias || ""),
-      planType: String(account.planType || ""),
-      proxyUrl: String(account.proxyUrl || ""),
-      adspowerProfileId: String(account.adspowerProfileId || ""),
-      adspowerProfileStatus: String(account.adspowerProfileStatus || ""),
-      adspowerProfileProvider: String(account.adspowerProfileProvider || ""),
-      adspowerProfileLastUsedAt: String(account.adspowerProfileLastUsedAt || ""),
-      autoLoginStatus: account.autoLoginStatus ? String(account.autoLoginStatus) : undefined,
-      autoLoginStep: account.autoLoginStep ? String(account.autoLoginStep) : undefined,
-      autoLoginError: account.autoLoginError ? String(account.autoLoginError) : undefined,
-      hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
-      boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
-      usedShares: shares.get(Number(account.id || 0)) || 0,
-      shareCapacity: ACCOUNT_SHARE_CAPACITY,
-      codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
-      codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
-      modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
-      // Persisted dead-account verdict (written by lease-service) so the console
-      // can surface invalid_grant / repeatedly-failing accounts as dead.
-      quotaStatus: String(account.quotaStatus || "ok"),
-      quotaStatusReason: String(account.quotaStatusReason || ""),
-      blockedUntil: Number(account.blockedUntil || 0),
-    }));
+    const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => {
+      const credential = codexCredentialMeta(account);
+      return {
+        id: Number(account.id || 0),
+        email: String(account.email || ""),
+        enabled: account.enabled !== false,
+        poolEnabled: account.poolEnabled !== false,
+        alias: String(account.alias || ""),
+        planType: String(account.planType || ""),
+        proxyUrl: String(account.proxyUrl || ""),
+        adspowerProfileId: String(account.adspowerProfileId || ""),
+        adspowerProfileStatus: String(account.adspowerProfileStatus || ""),
+        adspowerProfileProvider: String(account.adspowerProfileProvider || ""),
+        adspowerProfileLastUsedAt: String(account.adspowerProfileLastUsedAt || ""),
+        autoLoginStatus: account.autoLoginStatus ? String(account.autoLoginStatus) : undefined,
+        autoLoginStep: account.autoLoginStep ? String(account.autoLoginStep) : undefined,
+        autoLoginError: account.autoLoginError ? String(account.autoLoginError) : undefined,
+        ...credential,
+        boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
+        usedShares: shares.get(Number(account.id || 0)) || 0,
+        shareCapacity: ACCOUNT_SHARE_CAPACITY,
+        codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
+        codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
+        modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+        // Persisted dead-account verdict (written by lease-service) so the console
+        // can surface invalid_grant / repeatedly-failing accounts as dead.
+        quotaStatus: String(account.quotaStatus || "ok"),
+        quotaStatusReason: String(account.quotaStatusReason || ""),
+        blockedUntil: Number(account.blockedUntil || 0),
+      };
+    });
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }
 
@@ -264,16 +304,19 @@ export class CodexService {
     Object.assign(updates, fields.extra);
 
     let accountId: number;
+    let account: any;
     if (existing) {
       Object.assign(existing, updates);
       this.clearCodexAutoLoginFields(existing);
       accountId = Number(existing.id);
+      account = existing;
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
       accountId = maxId + 1;
-      accounts.push({ id: accountId, email: fields.email, alias: "", planType: "", refreshToken: "", ...updates });
+      account = { id: accountId, email: fields.email, alias: "", planType: "", refreshToken: "", ...updates };
+      accounts.push(account);
     }
-    return { id: accountId, email: fields.email, isUpdate: Boolean(existing), hasRefreshToken: Boolean(fields.refreshToken) };
+    return { id: accountId, email: fields.email, isUpdate: Boolean(existing), ...codexCredentialMeta(account) };
   }
 
   importCodexAccountFromText(payload: any) {
@@ -289,7 +332,18 @@ export class CodexService {
     const r = this.upsertCodexAccount(accounts, fields);
     if ("error" in r) return { ok: false, error: r.error };
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, id: r.id, email: r.email, isUpdate: r.isUpdate, totalAccounts: accounts.length, hasRefreshToken: r.hasRefreshToken };
+    return {
+      ok: true,
+      id: r.id,
+      email: r.email,
+      isUpdate: r.isUpdate,
+      totalAccounts: accounts.length,
+      hasRefreshToken: r.hasRefreshToken,
+      hasAccessToken: r.hasAccessToken,
+      hasSessionToken: r.hasSessionToken,
+      credentialMode: r.credentialMode,
+      accessTokenExpiresAt: r.accessTokenExpiresAt,
+    };
   }
 
   /** Export the full codex pool for backup / migration. Lossless: every stored
@@ -333,7 +387,17 @@ export class CodexService {
       }
       if (r.isUpdate) updated += 1;
       else added += 1;
-      results.push({ ok: true, id: r.id, email: r.email, isUpdate: r.isUpdate, hasRefreshToken: r.hasRefreshToken });
+      results.push({
+        ok: true,
+        id: r.id,
+        email: r.email,
+        isUpdate: r.isUpdate,
+        hasRefreshToken: r.hasRefreshToken,
+        hasAccessToken: r.hasAccessToken,
+        hasSessionToken: r.hasSessionToken,
+        credentialMode: r.credentialMode,
+        accessTokenExpiresAt: r.accessTokenExpiresAt,
+      });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, bulk: true, added, updated, failed, totalAccounts: accounts.length, results };

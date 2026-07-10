@@ -30,6 +30,11 @@ type CodexAccount = {
   alias: string;
   planType: string;
   hasToken: boolean;
+  hasRefreshToken: boolean;
+  hasAccessToken: boolean;
+  hasSessionToken: boolean;
+  credentialMode: "refresh" | "access-session" | "access" | "session" | "none";
+  accessTokenExpiresAt: number;
   boundCardCount: number;
   usedShares: number;
   shareCapacity: number;
@@ -50,6 +55,19 @@ type CodexAccount = {
 
 function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
+}
+
+function tokenBadge(account: CodexAccount): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; title: string } {
+  if (account.hasRefreshToken) {
+    return { label: "长期", variant: "default", title: "refresh token 可刷新" };
+  }
+  if (!account.hasToken) {
+    return { label: "无", variant: "destructive", title: "未保存可用 token" };
+  }
+  if (account.hasAccessToken && account.accessTokenExpiresAt > 0 && account.accessTokenExpiresAt <= Date.now() + 60_000) {
+    return { label: "需重导", variant: "destructive", title: "GPT 会话 access token 已过期或即将过期" };
+  }
+  return { label: "短会话", variant: "secondary", title: "GPT 授权 JSON 导入，无 refresh token" };
 }
 
 // 自动上号各步骤的中文文案
@@ -88,6 +106,8 @@ export default function CodexAccountsPage() {
   const [adding, setAdding] = useState(false);
   const [importText, setImportText] = useState("");
   const [importing, setImporting] = useState(false);
+  const [gptSessionText, setGptSessionText] = useState("");
+  const [gptSessionImporting, setGptSessionImporting] = useState(false);
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
   const [oauthStatusText, setOauthStatusText] = useState("");
@@ -185,6 +205,15 @@ export default function CodexAccountsPage() {
     }
   }
 
+  async function postCodexImport(text: string) {
+    const res = await fetch(consoleApiPath("rosetta/codex-import-account"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    return res.json();
+  }
+
   async function handleImport() {
     if (!importText.trim()) {
       toast.error("请粘贴 JSON 文本");
@@ -192,12 +221,7 @@ export default function CodexAccountsPage() {
     }
     setImporting(true);
     try {
-      const res = await fetch(consoleApiPath("rosetta/codex-import-account"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: importText }),
-      });
-      const data = await res.json();
+      const data = await postCodexImport(importText);
       if (!data.ok) throw new Error(data.error || "导入失败");
       if (data.bulk) {
         const parts = [`新增 ${data.added}`, `更新 ${data.updated}`];
@@ -208,12 +232,36 @@ export default function CodexAccountsPage() {
         toast.success(data.isUpdate ? "已更新账号" : "已导入账号");
       }
       setImportText("");
-      await refreshQuotaSilently(data.id);
+      if (data.hasRefreshToken !== false) await refreshQuotaSilently(data.id);
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "导入失败");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleGptSessionImport() {
+    if (!gptSessionText.trim()) {
+      toast.error("请粘贴 GPT 授权 JSON");
+      return;
+    }
+    setGptSessionImporting(true);
+    try {
+      const data = await postCodexImport(gptSessionText);
+      if (!data.ok) throw new Error(data.error || "导入失败");
+      if (data.hasRefreshToken) {
+        toast.success(data.isUpdate ? "已更新长期账号" : "已导入长期账号");
+        await refreshQuotaSilently(data.id);
+      } else {
+        toast.warning(data.isUpdate ? "已更新 GPT 短会话，过期后需重新导入" : "已导入 GPT 短会话，过期后需重新导入");
+      }
+      setGptSessionText("");
+      fetchAccounts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导入失败");
+    } finally {
+      setGptSessionImporting(false);
     }
   }
 
@@ -738,6 +786,25 @@ export default function CodexAccountsPage() {
       <div className="rounded-lg border bg-card p-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
           <Field className="min-w-0 flex-1">
+            <FieldLabel>GPT 授权 JSON 导入</FieldLabel>
+            <Textarea
+              rows={3}
+              value={gptSessionText}
+              onChange={(e) => setGptSessionText(e.target.value)}
+              placeholder='{"user":{"email":"account@example.com"},"accessToken":"...","sessionToken":"...","expires":"..."}'
+              className="h-20 max-h-28 resize-none overflow-auto font-mono text-xs [field-sizing:fixed]"
+            />
+          </Field>
+          <Button className="lg:mb-0.5" onClick={handleGptSessionImport} disabled={gptSessionImporting || !gptSessionText.trim()}>
+            {gptSessionImporting ? <Spinner data-icon className="size-4" /> : <FileJsonIcon data-icon className="size-4" />}
+            导入 GPT 会话
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+          <Field className="min-w-0 flex-1">
             <FieldLabel>JSON 导入(支持单条 token JSON,或「导出全部」生成的数据)</FieldLabel>
             <Textarea
               rows={2}
@@ -794,7 +861,10 @@ export default function CodexAccountsPage() {
                     <TableCell className="text-sm">{pct(a.codexHourlyPercent)}</TableCell>
                     <TableCell className="text-sm">{pct(a.codexWeeklyPercent)}</TableCell>
                     <TableCell>
-                      <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
+                      {(() => {
+                        const badge = tokenBadge(a);
+                        return <Badge variant={badge.variant} title={badge.title}>{badge.label}</Badge>;
+                      })()}
                     </TableCell>
                     <TableCell>
                       <AccountStatusCell account={a} />

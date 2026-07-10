@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 import { makeDefaultAdsPowerClient } from "./adspower-profile-manager";
 import { fetchAnthropicMagicLinkViaWeb } from "./mailcom-web-magic-link";
@@ -11,6 +11,8 @@ export type ClaudeVerificationCodeInput = {
   sinceMs?: number;
   waitMs?: number;
   closeCodeTab?: boolean;
+  closeBrowser?: boolean;
+  clearBrowserData?: boolean;
 };
 
 export type ClaudeVerificationCodeResult = {
@@ -30,6 +32,8 @@ export type OpenMagicLinkInBrowserInput = {
   magicLinkUrl: string;
   timeoutMs: number;
   closeCodeTab: boolean;
+  closeBrowser?: boolean;
+  clearBrowserData?: boolean;
 };
 
 export type OpenMagicLinkInBrowserResult = {
@@ -44,9 +48,15 @@ type ClaudeVerificationCodeDeps = {
   openMagicLinkInBrowser?: (opts: OpenMagicLinkInBrowserInput) => Promise<OpenMagicLinkInBrowserResult>;
 };
 
+type VerificationAdsPowerClient = Pick<
+  ReturnType<typeof makeDefaultAdsPowerClient>,
+  "openProfile" | "closeProfile"
+>;
+
 const DEFAULT_ADSPOWER_PROFILE_ID = "k1e8c364";
 const DEFAULT_WAIT_MS = 120_000;
 const DEFAULT_CODE_PAGE_TIMEOUT_MS = 45_000;
+const CODE_PAGE_SETTLE_MS = 2_000;
 
 export function extractClaudeVerificationCode(text: string): string {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
@@ -69,6 +79,8 @@ export async function fetchClaudeVerificationCode(
   const waitMs = Math.max(1_000, Number(input.waitMs || DEFAULT_WAIT_MS));
   const sinceMs = Number(input.sinceMs || Date.now() - 30 * 60_000);
   const closeCodeTab = input.closeCodeTab !== false;
+  const closeBrowser = input.closeBrowser !== false;
+  const clearBrowserData = input.clearBrowserData !== false;
 
   if (!email) return { ok: false, error: "email 必填" };
   if (!password) return { ok: false, error: "password 必填" };
@@ -98,6 +110,8 @@ export async function fetchClaudeVerificationCode(
     magicLinkUrl: mail.url,
     timeoutMs: DEFAULT_CODE_PAGE_TIMEOUT_MS,
     closeCodeTab,
+    closeBrowser,
+    clearBrowserData,
   });
   if (!codePage.ok || !codePage.code) {
     return {
@@ -129,18 +143,22 @@ export async function openClaudeMagicLinkForVerificationCode(
   if (!input.magicLinkUrl) return { ok: false, error: "Claude magic link 为空" };
 
   let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
   let page: Page | null = null;
   let startedProfile = false;
+  let adspowerClient: VerificationAdsPowerClient | null = null;
 
   try {
     const debugUrlResult = await getAdsPowerDebugUrl(adspowerProfileId);
     startedProfile = debugUrlResult.started;
+    adspowerClient = debugUrlResult.client;
     browser = await chromium.connectOverCDP(debugUrlResult.debugUrl);
-    const context = browser.contexts()[0];
+    context = browser.contexts()[0];
     if (!context) throw new Error("AdsPower 浏览器中没有可用上下文");
 
     page = await context.newPage();
     await page.goto(input.magicLinkUrl, { waitUntil: "domcontentloaded", timeout: input.timeoutMs }).catch(() => {});
+    await waitForClaudeCodePageToSettle(page);
 
     const deadline = Date.now() + input.timeoutMs;
     while (Date.now() < deadline) {
@@ -155,11 +173,17 @@ export async function openClaudeMagicLinkForVerificationCode(
   } catch (err: any) {
     return { ok: false, error: err?.message || String(err), startedProfile };
   } finally {
+    if (input.clearBrowserData !== false && context && page) {
+      await clearClaudeVerificationBrowserData(context, page);
+    }
     if (input.closeCodeTab !== false && page) {
       await page.close().catch(() => {});
     }
     if (browser) {
       await browser.close().catch(() => {});
+    }
+    if (input.closeBrowser !== false && adspowerClient) {
+      await adspowerClient.closeProfile(adspowerProfileId).catch(() => {});
     }
   }
 }
@@ -169,13 +193,39 @@ async function readCodeFromPage(page: Page): Promise<string> {
   return extractClaudeVerificationCode(String(text || ""));
 }
 
-async function getAdsPowerDebugUrl(profileId: string): Promise<{ debugUrl: string; started: boolean }> {
-  const client = makeDefaultAdsPowerClient();
-  const active = await client.checkProfile(profileId);
-  if (active.active && active.debugUrl) {
-    return { debugUrl: active.debugUrl, started: false };
-  }
+async function waitForClaudeCodePageToSettle(page: Page): Promise<void> {
+  await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+  await page.waitForTimeout(CODE_PAGE_SETTLE_MS).catch(() => {});
+}
 
+async function clearClaudeVerificationBrowserData(context: BrowserContext, page: Page): Promise<void> {
+  await context.clearCookies().catch(() => {});
+  await page.evaluate(() => {
+    try { window.localStorage.clear(); } catch {}
+    try { window.sessionStorage.clear(); } catch {}
+    try { window.history.replaceState(null, "", "about:blank"); } catch {}
+  }).catch(() => {});
+
+  const cdp = await context.newCDPSession(page).catch(() => null);
+  if (!cdp) return;
+  await cdp.send("Network.clearBrowserCookies").catch(() => {});
+  await cdp.send("Network.clearBrowserCache").catch(() => {});
+  for (const origin of ["https://claude.ai", "https://claude.com"]) {
+    await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" }).catch(() => {});
+  }
+  await cdp.send("Page.resetNavigationHistory").catch(() => {});
+  await cdp.detach?.().catch(() => {});
+}
+
+async function getAdsPowerDebugUrl(profileId: string): Promise<{
+  debugUrl: string;
+  started: boolean;
+  client: VerificationAdsPowerClient;
+}> {
+  const client = makeDefaultAdsPowerClient();
+  // Verification-code runs need a visible, short-lived browser window. Do not
+  // reuse an already-active profile; AdsPowerClient.openProfile will close a
+  // stale active instance and start a fresh one.
   const opened = await client.openProfile(profileId);
-  return { debugUrl: opened.debugUrl, started: true };
+  return { debugUrl: opened.debugUrl, started: true, client };
 }

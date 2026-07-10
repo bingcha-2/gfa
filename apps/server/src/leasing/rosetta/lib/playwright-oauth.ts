@@ -15,10 +15,14 @@
 //   7. Return code; caller exchanges for tokens
 
 import * as net from "net";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { SocksClient } from "socks";
 import * as OTPAuth from "otpauth";
 import { AdsPowerClient, parseProxyToAdsPowerUserConfig } from "./adspower-client";
+
+const LOGIN_SURFACE_SETTLE_MS = 2_000;
+const HUMAN_INPUT_DELAY_MS = 80;
+const POST_INPUT_SETTLE_MS = 350;
 
 export type PlaywrightOAuthOpts = {
   authorizeUrl: string;
@@ -41,6 +45,22 @@ export function generateGoogleTOTP(secret: string): string {
     secret: OTPAuth.Secret.fromBase32(cleaned),
   });
   return totp.generate();
+}
+
+async function typeIntoLoginInput(page: Page, input: Locator, value: string): Promise<void> {
+  await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+  await page.waitForTimeout(LOGIN_SURFACE_SETTLE_MS).catch(() => {});
+  await input.click().catch(() => {});
+  await input.fill("").catch(() => {});
+  let typed = false;
+  if (value) {
+    await input.pressSequentially(value, { delay: HUMAN_INPUT_DELAY_MS }).then(
+      () => { typed = true; },
+      () => {},
+    );
+  }
+  if (!typed) await input.fill(value).catch(() => {});
+  await page.waitForTimeout(POST_INPUT_SETTLE_MS).catch(() => {});
 }
 
 export type TriggerResult = {
@@ -871,7 +891,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
             const val = await emailInput.inputValue().catch(() => "");
             if (!val) {
               console.log("[playwright-oauth] Entering Google email address...");
-              await emailInput.fill(opts.email);
+              await typeIntoLoginInput(targetPage, emailInput, opts.email);
               await targetPage.keyboard.press("Enter");
               emailSubmitted = true;
               await page.waitForTimeout(2000);
@@ -885,7 +905,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
             const val = await pwdInput.inputValue().catch(() => "");
             if (!val && opts.password) {
               console.log("[playwright-oauth] Entering Google password...");
-              await pwdInput.fill(opts.password);
+              await typeIntoLoginInput(targetPage, pwdInput, opts.password);
               await targetPage.keyboard.press("Enter");
               passwordSubmitted = true;
               await page.waitForTimeout(2000);
@@ -932,7 +952,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
             if (opts.totpSecret && timeSinceLastSubmit > 15000) {
               console.log("[playwright-oauth] Generating and entering TOTP verification code...");
               const totpCode = generateGoogleTOTP(opts.totpSecret);
-              await totpInput.fill(totpCode);
+              await typeIntoLoginInput(targetPage, totpInput, totpCode);
               await targetPage.keyboard.press("Enter");
               lastTotpSubmitTime = Date.now();
               await page.waitForTimeout(2000);
@@ -964,7 +984,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
               const timeSinceLastSubmit = Date.now() - lastRecoverySubmitTime;
               if (opts.recoveryEmail && timeSinceLastSubmit > 15000) {
                 console.log("[playwright-oauth] Confirming recovery email on challenge page...");
-                await recoveryInput.fill(opts.recoveryEmail);
+                await typeIntoLoginInput(targetPage, recoveryInput, opts.recoveryEmail);
                 await targetPage.keyboard.press("Enter");
                 lastRecoverySubmitTime = Date.now();
                 await page.waitForTimeout(2000);
@@ -1132,7 +1152,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
       }
 
       console.log(`[playwright-oauth] filling email: ${opts.email}`);
-      await emailInput.fill(opts.email);
+      await typeIntoLoginInput(page, emailInput, opts.email);
       await clickEmailSubmit(page);
       await page.waitForTimeout(2000);
 

@@ -170,8 +170,18 @@ function buildProfileName(provider: AdspowerProfileProvider, account: AdspowerPr
 function defaultFingerprintConfig(): Record<string, unknown> {
   return {
     automatic_timezone: "1",
+    language_switch: "0",
     language: ["en-US", "en"],
     webrtc: "proxy",
+    screen_resolution: "1920_1080",
+    browser_kernel_config: {
+      type: "chrome",
+      version: "ua_auto",
+    },
+    random_ua: {
+      ua_browser: ["chrome"],
+      ua_system_version: ["Windows 10", "Windows 11"],
+    },
   };
 }
 

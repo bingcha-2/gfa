@@ -1,8 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EventEmitter } from "node:events";
 
-import { PlaywrightOAuthSession, clickEmailSubmit } from "../playwright-oauth";
+const oauthMocks = vi.hoisted(() => ({
+  connectOverCDP: vi.fn(),
+  openProfile: vi.fn(async () => ({ debugUrl: "ws://adspower/debug" })),
+  closeProfile: vi.fn(async () => {}),
+}));
+
+vi.mock("playwright", () => ({
+  chromium: {
+    connectOverCDP: oauthMocks.connectOverCDP,
+  },
+}));
+
+vi.mock("../adspower-client", () => ({
+  AdsPowerClient: vi.fn(function () {
+    return {
+      openProfile: oauthMocks.openProfile,
+      closeProfile: oauthMocks.closeProfile,
+    };
+  }),
+  parseProxyToAdsPowerUserConfig: vi.fn(() => ({ proxy_type: "socks5" })),
+}));
+
+import { PlaywrightOAuthSession, clickEmailSubmit, triggerMagicLinkViaBrowser } from "../playwright-oauth";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("clickEmailSubmit", () => {
   it("falls back to DOM click when Playwright native click times out on the email button", async () => {
@@ -81,5 +107,61 @@ describe("PlaywrightOAuthSession.consumeMagicLink", () => {
     });
     expect(page.goto).toHaveBeenNthCalledWith(1, magicLinkUrl, expect.any(Object));
     expect(page.goto).toHaveBeenNthCalledWith(2, authorizeUrl, expect.any(Object));
+  });
+});
+
+describe("triggerMagicLinkViaBrowser", () => {
+  it("lets the Claude email page settle and types the email gradually before submitting", async () => {
+    const events: string[] = [];
+    const emailInput = {
+      first: () => emailInput,
+      isVisible: vi.fn(async () => true),
+      click: vi.fn(async () => { events.push("click-email"); }),
+      fill: vi.fn(async (value: string) => { events.push(`fill:${value}`); }),
+      pressSequentially: vi.fn(async (value: string, options?: { delay?: number }) => {
+        events.push(`press:${value}:${options?.delay ?? 0}`);
+      }),
+    };
+    const submitButton = {
+      isVisible: vi.fn(async () => true),
+      click: vi.fn(async () => { events.push("click-submit"); }),
+    };
+    const page = {
+      goto: vi.fn(async () => { events.push("goto"); }),
+      waitForLoadState: vi.fn(async () => { events.push("load"); }),
+      waitForTimeout: vi.fn(async (ms: number) => { events.push(`wait:${ms}`); }),
+      locator: vi.fn(() => emailInput),
+      getByRole: vi.fn(() => submitButton),
+      evaluate: vi.fn(async () => true),
+      textContent: vi.fn(async () => "Check your email"),
+      url: vi.fn(() => "https://claude.ai/login"),
+      keyboard: { press: vi.fn(async () => {}) },
+      isClosed: vi.fn(() => false),
+    };
+    const context = {
+      clearCookies: vi.fn(async () => {}),
+      pages: vi.fn(() => [page]),
+      newPage: vi.fn(async () => page),
+    };
+    const browser = {
+      contexts: vi.fn(() => [context]),
+      close: vi.fn(async () => {}),
+    };
+    oauthMocks.connectOverCDP.mockResolvedValueOnce(browser);
+
+    const result = await triggerMagicLinkViaBrowser({
+      authorizeUrl: "https://claude.ai/cai/oauth/authorize",
+      email: "mail-user@example.com",
+      adspowerProfileId: "profile-1",
+    });
+
+    expect(result.ok).toBe(true);
+    const settleIndex = events.findIndex((event) => event.startsWith("wait:"));
+    const pressIndex = events.findIndex((event) => event.startsWith("press:mail-user@example.com"));
+    expect(settleIndex).toBeGreaterThan(events.indexOf("goto"));
+    expect(pressIndex).toBeGreaterThan(settleIndex);
+    expect(emailInput.fill).not.toHaveBeenCalledWith("mail-user@example.com");
+
+    await result.session?.close();
   });
 });

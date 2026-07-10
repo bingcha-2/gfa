@@ -54,8 +54,8 @@ class FakeLocator {
     this.page.fillFor(this.selector, value);
   }
 
-  async pressSequentially(value: string) {
-    this.page.fillFor(this.selector, value);
+  async pressSequentially(value: string, options?: { delay?: number }) {
+    this.page.pressSequentiallyFor(this.selector, value, options);
   }
 
   async evaluate(fn: (node: HTMLElement) => void) {
@@ -71,19 +71,33 @@ class FakePage {
   private stage = "blank";
   private codeFilled = false;
   private securityReleaseAt = 0;
+  closed = false;
+  loginSurfaceReadyAt = 0;
+  events: Array<{
+    type: "click" | "fill" | "press";
+    selector: string;
+    value?: string;
+    delay?: number;
+    at: number;
+  }> = [];
 
-  constructor(private readonly role: "auth" | "outlook") {}
+  constructor(
+    private readonly role: "auth" | "outlook",
+    private readonly securityReleaseDelayMs = 20_000,
+    private readonly initialUrl = "",
+  ) {}
 
   private syncFromClock() {
     if (this.role === "auth" && this.stage === "security" && Date.now() >= this.securityReleaseAt) {
       this.stage = "auth-email";
+      this.loginSurfaceReadyAt = Date.now();
     }
   }
 
   async goto(url: string) {
     if (this.role === "auth") {
       this.stage = "security";
-      this.securityReleaseAt = Date.now() + 20_000;
+      this.securityReleaseAt = Date.now() + this.securityReleaseDelayMs;
       return;
     }
     this.stage = url.includes("outlook.live.com/mail") ? "outlook-mail" : "outlook-mail";
@@ -94,6 +108,7 @@ class FakePage {
   url() {
     this.syncFromClock();
     if (this.role === "auth") {
+      if (this.stage === "blank" && this.initialUrl) return this.initialUrl;
       if (this.stage === "auth-code") return "https://auth.openai.com/email-verification";
       if (this.stage === "redirect") return "http://localhost:1455/auth/callback?code=oauth-code";
       return "https://auth.openai.com/log-in";
@@ -124,7 +139,9 @@ class FakePage {
     return [];
   }
 
-  async close() {}
+  async close() {
+    this.closed = true;
+  }
 
   async reload() {}
 
@@ -152,6 +169,7 @@ class FakePage {
 
   clickFor(selector: string) {
     this.syncFromClock();
+    this.events.push({ type: "click", selector, at: Date.now() });
     if (this.role !== "auth") return;
     if ((selector.includes("button") || selector.includes("submit")) && this.stage === "auth-email") {
       this.stage = "auth-code";
@@ -164,9 +182,16 @@ class FakePage {
 
   fillFor(selector: string, value: string) {
     this.syncFromClock();
+    this.events.push({ type: "fill", selector, value, at: Date.now() });
     if (this.role === "auth" && this.stage === "auth-code" && selector.includes("code") && value) {
       this.codeFilled = true;
     }
+  }
+
+  pressSequentiallyFor(selector: string, value: string, options?: { delay?: number }) {
+    this.syncFromClock();
+    this.events.push({ type: "press", selector, value, delay: options?.delay, at: Date.now() });
+    this.fillFor(selector, value);
   }
 }
 
@@ -207,6 +232,99 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
     await vi.runAllTimersAsync();
     const result = await resultPromise;
 
+    expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+  });
+
+  it("keeps waiting when OpenAI security verification takes longer than 45 seconds", async () => {
+    const authPage = new FakePage("auth", 60_000);
+    const outlookPage = new FakePage("outlook");
+    const context = {
+      pages: () => [authPage],
+      newPage: vi.fn(async () => outlookPage),
+      addInitScript: vi.fn(async () => {}),
+      on: vi.fn(),
+    };
+    mocks.connectOverCDP.mockResolvedValue({
+      contexts: () => [context],
+      close: vi.fn(async () => {}),
+    });
+
+    const resultPromise = runCodexBrowserLogin({
+      authorizeUrl: "https://auth.openai.com/oauth/authorize",
+      redirectUri: "http://localhost:1455/auth/callback",
+      email: "paintergilton06@hotmail.com",
+      password: "mail-password",
+      adspowerProfileId: "profile-1",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+  });
+
+  it("closes stale ChatGPT auth tabs before opening a fresh authorization page", async () => {
+    const staleChatgptPage = new FakePage("auth", 20_000, "https://chatgpt.com/auth/login_with?callback_path=/");
+    const authPage = new FakePage("auth");
+    const outlookPage = new FakePage("outlook");
+    const context = {
+      pages: () => [staleChatgptPage],
+      newPage: vi.fn().mockResolvedValueOnce(authPage).mockResolvedValueOnce(outlookPage),
+      addInitScript: vi.fn(async () => {}),
+      on: vi.fn(),
+    };
+    mocks.connectOverCDP.mockResolvedValue({
+      contexts: () => [context],
+      close: vi.fn(async () => {}),
+    });
+
+    const resultPromise = runCodexBrowserLogin({
+      authorizeUrl: "https://auth.openai.com/oauth/authorize",
+      redirectUri: "http://localhost:1455/auth/callback",
+      email: "paintergilton06@hotmail.com",
+      password: "mail-password",
+      adspowerProfileId: "profile-1",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(staleChatgptPage.closed).toBe(true);
+    expect(context.newPage).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+  });
+
+  it("waits for the OpenAI login surface to settle and types credentials gradually", async () => {
+    const authPage = new FakePage("auth", 0);
+    const outlookPage = new FakePage("outlook");
+    const context = {
+      pages: () => [authPage],
+      newPage: vi.fn(async () => outlookPage),
+      addInitScript: vi.fn(async () => {}),
+      on: vi.fn(),
+    };
+    mocks.connectOverCDP.mockResolvedValue({
+      contexts: () => [context],
+      close: vi.fn(async () => {}),
+    });
+
+    const resultPromise = runCodexBrowserLogin({
+      authorizeUrl: "https://auth.openai.com/oauth/authorize",
+      redirectUri: "http://localhost:1455/auth/callback",
+      email: "paintergilton06@hotmail.com",
+      password: "mail-password",
+      adspowerProfileId: "profile-1",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    const emailPress = authPage.events.find(
+      (event) => event.type === "press" && event.value === "paintergilton06@hotmail.com",
+    );
+    expect(emailPress).toBeDefined();
+    expect(emailPress?.delay).toBeGreaterThanOrEqual(50);
+    expect((emailPress?.at || 0) - authPage.loginSurfaceReadyAt).toBeGreaterThanOrEqual(2_000);
     expect(result).toMatchObject({ ok: true, code: "oauth-code" });
   });
 });
