@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createQuotaWindows, reduceQuotaWindows, type SnapshotEvent, type UsageCuEvent } from "./fair-share-window";
 import { FairShareWindowRepository } from "./fair-share-window-repository";
+import { FairShareTracker } from "../token-server/fair-share-tracker";
 
 const T = 1_800_000_000_000;
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
@@ -125,5 +126,33 @@ describe("FairShareWindowRepository with SQLite", () => {
       ok: false,
       reason: "WINDOW_STATE_CORRUPT",
     });
+  });
+
+  it("restores window-cu-v1 through the production tracker facade", async () => {
+    const now = { value: T };
+    const options = {
+      algorithm: "window-cu-v1" as const,
+      provider: "codex",
+      trackWeekly: true,
+      prisma,
+      now: () => now.value,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }],
+      getSeatCapacity: () => 2,
+    };
+    const first = new FairShareTracker(options);
+    first.applyAccountQuotaSnapshotAt(7, "codex-gpt", { fraction: 1, resetAt: T + FIVE_HOURS, observedAt: T, snapshotId: "p0" });
+    first.applyWeeklyAccountQuotaSnapshotAt(7, "codex-gpt", { fraction: 1, resetAt: T + WEEK, observedAt: T, snapshotId: "w0" });
+    now.value = T + 10;
+    first.recordUsage(7, "A", "codex-gpt", 1_000_000, 0, 0, "gpt-5.6-luna");
+    first.applyAccountQuotaSnapshotAt(7, "codex-gpt", { fraction: 0.8, resetAt: T + FIVE_HOURS, observedAt: T + 20, snapshotId: "p1" });
+    const expected = first.getWindowStateForTesting(7, "codex-gpt");
+    await first.flush();
+    first.destroy();
+
+    const restored = new FairShareTracker(options);
+    await restored.load();
+    expect(restored.getWindowStateForTesting(7, "codex-gpt")).toEqual(expected);
+    restored.destroy();
   });
 });

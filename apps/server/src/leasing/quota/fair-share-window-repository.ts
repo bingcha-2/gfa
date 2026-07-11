@@ -101,4 +101,18 @@ export class FairShareWindowRepository {
       return { ok: false, reason: "WINDOW_STATE_CORRUPT" };
     }
   }
+
+  async loadProvider(): Promise<Array<{ accountId: number; bucket: string; result: LoadWindowResult }>> {
+    const heads = await this.prisma.fairShareWindowHead.findMany({
+      where: { provider: this.provider },
+      select: { accountId: true, bucket: true },
+    });
+    const keys = new Map<string, { accountId: number; bucket: string }>();
+    for (const head of heads) keys.set(`${head.accountId}\u0000${head.bucket}`, head);
+    const result: Array<{ accountId: number; bucket: string; result: LoadWindowResult }> = [];
+    for (const key of keys.values()) {
+      result.push({ ...key, result: await this.loadAccount(key.accountId, key.bucket) });
+    }
+    return result;
+  }
 }

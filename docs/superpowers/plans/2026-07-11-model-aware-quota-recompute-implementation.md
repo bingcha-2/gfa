@@ -205,19 +205,19 @@ Commit: `feat(quota): persist fixed-size window checkpoints`
 - Modify: `apps/server/src/leasing/token-server/__tests__/fair-share-exclusive-weekly-coldstart.spec.ts`
 - Create: `apps/server/src/leasing/token-server/__tests__/fair-share-window-cu.spec.ts`
 
-- [ ] **Step 1: Add failing compatibility and invariant tests**
+- [x] **Step 1: Add failing compatibility and invariant tests**
 
 Prove no `perCard.clear()`, mother rebound raises personal quota, primary/weekly remain independent, oversell uses `D=max(N,sumW)`, pool usable totals never exceed mother, exclusive accounts allow one active subject, and an invalid multi-subject exclusive account falls back to scaling.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/token-server/__tests__/fair-share-window-cu.spec.ts`
 
-- [ ] **Step 3: Replace tracker internals behind its public API**
+- [x] **Step 3: Replace tracker internals behind its public API**
 
 Keep callers stable while delegating record/snapshot/reset/check/recovery to the reducer and repository. Remove 30-second provider-wide replacement as the correctness path; retain only dirty retry fallback.
 
-- [ ] **Step 4: Verify focused and legacy tests, commit**
+- [x] **Step 4: Verify focused and legacy tests, commit**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/token-server/__tests__/fair-share*.spec.ts`
 
