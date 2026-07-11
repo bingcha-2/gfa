@@ -181,6 +181,8 @@ export class WindowCuFairShareEngine {
     return windows ? { accountId, bucket, windows } : null;
   }
 
+  accountIds(): number[] { return [...this.states.keys()]; }
+
   restore(accountId: number, bucket: string, windows: QuotaWindowsState): void {
     let buckets = this.states.get(accountId);
     if (!buckets) this.states.set(accountId, (buckets = new Map()));

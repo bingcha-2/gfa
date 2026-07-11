@@ -1472,8 +1472,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return { ok: true };
   }
 
-  reloadAccessKeys() {
+  async reloadAccessKeys() {
     this.accessKeyStore.reload();
+    this.fairShareTracker?.refreshAllParticipants();
+    await this.fairShareTracker?.flush();
     return { ok: true, reloaded: true };
   }
 

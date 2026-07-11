@@ -444,6 +444,12 @@ export class FairShareTracker {
     this.dirty = true;
   }
 
+  refreshAllParticipants(): void {
+    const ids = new Set<number>(this.trackers.keys());
+    for (const id of this.windowCu?.accountIds() || []) ids.add(id);
+    for (const id of ids) this.refreshParticipants(id);
+  }
+
   /** 一张卡本 5h 窗口的段内加权用量(跨该号所有 5h bucket 求和)。 */
   getCardWindowUsed(accountId: number, cardId: string): number {
     const bucketMap = this.trackers.get(accountId);

@@ -346,25 +346,25 @@ Commit: `fix(dashboard): show exact model-aware API values`
 - Modify: root `package.json`
 - Modify: `apps/server/package.json`
 
-- [ ] **Step 1: Write the failing harness smoke test**
+- [x] **Step 1: Write the failing harness smoke test**
 
 Start a temporary SQLite-backed actual Nest server on an ephemeral port, run the actual Go helper through lease/report/status HTTP, and assert a non-zero request changes both client-visible and server-visible state. No direct tracker mutation is allowed.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `node tests/quota-e2e/run.mjs --case smoke`
 
 Expected: FAIL because the helper/control fixtures are absent.
 
-- [ ] **Step 3: Implement the minimal harness**
+- [x] **Step 3: Implement the minimal harness**
 
 The harness may control upstream quota responses and time, but every business transition must use production lease/report/subscription/snapshot endpoints.
 
-- [ ] **Step 4: Add the required matrix test-first**
+- [x] **Step 4: Add the required matrix test-first**
 
 Add cases for snapshot-before-report, 1s/30s/9m59s late reports, >10m missing evidence, official reset, resetAt drift, rebound, cold start, normal restart, crash/retry, mid-window join/leave/renew/rebind, exclusive fallback, oversell, old snapshot, cross-account snapshot, duplicate report, model changes, pricing parity, and 100-user randomized concurrency.
 
-- [ ] **Step 5: Verify complete E2E and commit**
+- [x] **Step 5: Verify complete E2E and commit**
 
 Run: `node tests/quota-e2e/run.mjs`
 

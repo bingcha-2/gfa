@@ -30,7 +30,7 @@ export class RemoteAnthropicController {
         case "report-result":
           return response.status(200).json(await this.remoteAnthropic.reportResult(request, body));
         case "reload-access-keys":
-          return response.status(200).json(this.remoteAnthropic.reloadAccessKeys());
+          return response.status(200).json(await this.remoteAnthropic.reloadAccessKeys());
         case "reload-accounts":
           return response.status(200).json({ ok: true, status: this.remoteAnthropic.getStatus() });
         default:
