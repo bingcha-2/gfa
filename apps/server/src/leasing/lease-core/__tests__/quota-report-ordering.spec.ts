@@ -58,6 +58,16 @@ describe("causal report-result integration", () => {
       provider TEXT NOT NULL, reportId TEXT NOT NULL, accountId INTEGER NOT NULL, bucket TEXT NOT NULL,
       revision INTEGER NOT NULL, createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (provider, reportId))`);
+    await prisma.$executeRawUnsafe(`CREATE TABLE CardUsageHourly (
+      id TEXT NOT NULL PRIMARY KEY, hourStart DATETIME NOT NULL, accessKeyId TEXT NOT NULL,
+      accountEmail TEXT NOT NULL DEFAULT '', customerId TEXT NOT NULL DEFAULT '', modelKey TEXT NOT NULL,
+      bucket TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, failedRequests INTEGER NOT NULL DEFAULT 0,
+      inputTokens INTEGER NOT NULL DEFAULT 0, outputTokens INTEGER NOT NULL DEFAULT 0,
+      cachedInputTokens INTEGER NOT NULL DEFAULT 0, cacheCreationTokens INTEGER NOT NULL DEFAULT 0,
+      rawTotalTokens INTEGER NOT NULL DEFAULT 0, totalTokens INTEGER NOT NULL DEFAULT 0,
+      reverseProxyHits INTEGER NOT NULL DEFAULT 0, priorityTokens INTEGER NOT NULL DEFAULT 0,
+      updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(hourStart, accessKeyId, accountEmail, customerId, modelKey, bucket))`);
   });
 
   afterEach(async () => {
@@ -195,6 +205,9 @@ describe("causal report-result integration", () => {
 
     expect(duplicate).toMatchObject({ ok: true, ignored: true, reason: "already_reported" });
     expect(restarted.fairShareTracker!.getWindowStateForTesting(11, BUCKET)).toEqual(expected);
+    expect(await prisma.cardUsageHourly.aggregate({ _sum: { requests: true, totalTokens: true } })).toMatchObject({
+      _sum: { requests: 1, totalTokens: 1_000_000 },
+    });
   });
 
   it("retries a failed SQLite checkpoint without double-applying usage", async () => {
@@ -216,5 +229,31 @@ describe("causal report-result integration", () => {
     const state = value.fairShareTracker!.getWindowStateForTesting(11, BUCKET);
     expect(state!.primary.subjects["card-A"].cumulativeCu).toBe(1);
     expect(value.accessKeyStore.hasUsageReport("card-A", "failure-u1")).toBe(true);
+    expect(await prisma.cardUsageHourly.aggregate({ _sum: { requests: true } })).toMatchObject({ _sum: { requests: 1 } });
+  });
+
+  it("drops only the expired primary enforcement after restart", async () => {
+    const first = service();
+    const currentLease = await lease(first);
+    await quotaOnly(first, currentLease.leaseId, "expiry-q0", 0, T);
+    // Keep the weekly scope alive and non-empty while primary reaches resetAt.
+    first.fairShareTracker!.applyWeeklyAccountQuotaSnapshotAt(11, BUCKET, {
+      fraction: 0.7, resetAt: T + WEEK, observedAt: T + 1, snapshotId: "weekly-live",
+    });
+    await first.fairShareTracker!.flush();
+    await first.onModuleDestroy();
+    services.splice(services.indexOf(first), 1);
+
+    now = T + 5 * HOUR;
+    const restarted = service();
+    await restarted.fairShareTracker!.load();
+    const beforeCheck = restarted.fairShareTracker!.getWindowStateForTesting(11, BUCKET)!;
+    expect(beforeCheck.weekly.subjects["card-A"]?.active).toBe(true);
+    expect(restarted.fairShareTracker!.checkFairShare(11, "card-A", BUCKET)).toMatchObject({
+      allowed: true,
+    });
+    const state = restarted.fairShareTracker!.getWindowStateForTesting(11, BUCKET)!;
+    expect(state.primary.primed).toBe(false);
+    expect(state.weekly.primed).toBe(true);
   });
 });

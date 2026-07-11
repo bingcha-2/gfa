@@ -71,6 +71,20 @@ describe("QuotaWriteCoordinator", () => {
     await expect(retry).resolves.toBe(1);
   });
 
+  it("can persist a new receipt even when reducer revision did not change", async () => {
+    vi.useFakeTimers();
+    const commit = vi.fn(async () => undefined);
+    const coordinator = new QuotaWriteCoordinator<{ receipt: string }>({ commit });
+    const first = coordinator.enqueue("account-1", 1, { receipt: "r1" }, true);
+    await vi.advanceTimersByTimeAsync(10);
+    await first;
+    const second = coordinator.enqueue("account-1", 1, { receipt: "r2" }, true);
+    await vi.advanceTimersByTimeAsync(10);
+    await second;
+    expect(commit).toHaveBeenCalledTimes(2);
+    expect(commit.mock.calls[1][0][0].payload.receipt).toBe("r2");
+  });
+
   it("runs low-priority prune only after checkpoint work is empty", async () => {
     vi.useFakeTimers();
     const order: string[] = [];

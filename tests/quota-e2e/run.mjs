@@ -118,7 +118,12 @@ try {
     ]);
     // Cross-account snapshot must not mutate account 7.
     await runScenario("cross-account", "card-7", [lease("card-7"), report({ reportId: "cross", status: 0, accountQuota: quota(8, 0, 0, now + 700_000) })]);
-    assert(await prisma.fairShareWindowHead.count({ where: { accountId: 7 } }) === 0, "cross-account snapshot polluted window");
+    const crossHeads = await prisma.fairShareWindowHead.findMany({ where: { accountId: 7 } });
+    assert(crossHeads.length === 2, "cross-account report receipt did not checkpoint current windows");
+    for (const head of crossHeads) {
+      const state = JSON.parse(head.stateJson);
+      assert(state.primed === false && state.fraction === 1, "cross-account snapshot polluted window");
+    }
     // Join, renew, leave, and rebind through the production reload endpoint.
     await runScenario("member-base", "card-9", [lease("card-9"), report({ reportId: "m-q0", status: 0, accountQuota: quota(9, 100, 100, now + 710_000) })]);
     cards[9].bindings.codex = 9; cards[9].salesSeatCapacity = { codex: 2 }; await persistKeys();

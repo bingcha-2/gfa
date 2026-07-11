@@ -92,6 +92,17 @@ describe("FairShareWindowRepository with SQLite", () => {
         PRIMARY KEY (provider, reportId)
       )
     `);
+    await prisma.$executeRawUnsafe(`CREATE TABLE CardUsageHourly (
+      id TEXT NOT NULL PRIMARY KEY, hourStart DATETIME NOT NULL, accessKeyId TEXT NOT NULL,
+      accountEmail TEXT NOT NULL DEFAULT '', customerId TEXT NOT NULL DEFAULT '', modelKey TEXT NOT NULL,
+      bucket TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, failedRequests INTEGER NOT NULL DEFAULT 0,
+      inputTokens INTEGER NOT NULL DEFAULT 0, outputTokens INTEGER NOT NULL DEFAULT 0,
+      cachedInputTokens INTEGER NOT NULL DEFAULT 0, cacheCreationTokens INTEGER NOT NULL DEFAULT 0,
+      rawTotalTokens INTEGER NOT NULL DEFAULT 0, totalTokens INTEGER NOT NULL DEFAULT 0,
+      reverseProxyHits INTEGER NOT NULL DEFAULT 0, priorityTokens INTEGER NOT NULL DEFAULT 0,
+      updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(hourStart, accessKeyId, accountEmail, customerId, modelKey, bucket)
+    )`);
   });
 
   afterEach(async () => {
@@ -143,6 +154,24 @@ describe("FairShareWindowRepository with SQLite", () => {
     await expect(repository.hasReport("report-1")).resolves.toBe(true);
     await expect(repository.hasReport("missing")).resolves.toBe(false);
     await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows });
+  });
+
+  it("atomically aggregates authoritative usage exactly once with its receipt", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const checkpoint = {
+      accountId: 7, bucket: "codex-gpt", windows: populatedWindows(), reportIds: ["report-accounting"],
+      accountings: [{
+        reportId: "report-accounting", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
+        customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
+      }],
+    };
+    await repository.checkpointBatch([checkpoint]);
+    await repository.checkpointBatch([checkpoint]);
+    const rows = await prisma.cardUsageHourly.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
   });
 
   it("prunes only receipts older than three days without touching window state", async () => {

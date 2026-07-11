@@ -27,9 +27,9 @@ export class QuotaWriteCoordinator<T> {
     maxBatchSize?: number;
   }) {}
 
-  enqueue(key: string, revision: number, payload: T): Promise<number> {
+  enqueue(key: string, revision: number, payload: T, force = false): Promise<number> {
     const persisted = this.persisted.get(key) || 0;
-    if (persisted >= revision) return Promise.resolve(persisted);
+    if (!force && persisted >= revision) return Promise.resolve(persisted);
     const promise = new Promise<number>((resolve, reject) => {
       const current = this.pending.get(key);
       const waiter = { revision, resolve, reject };

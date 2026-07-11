@@ -375,15 +375,15 @@ Commit: `test(quota): add real client-server lifecycle e2e`
 **Files:**
 - Modify only defects found by verification.
 
-- [ ] **Step 1: Run pricing synchronization and schema checks**
+- [x] **Step 1: Run pricing synchronization and schema checks**
 
 Run: `pnpm sync:pricing && node scripts/sync-pricing.mjs --check && pnpm db:generate && pnpm lint`
 
-- [ ] **Step 2: Run focused quota and Go suites**
+- [x] **Step 2: Run focused quota and Go suites**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/quota src/leasing/token-server/__tests__/fair-share src/leasing/lease-core/__tests__/quota-report-ordering.spec.ts && (cd apps/app && go test ./...)`
 
-- [ ] **Step 3: Run cross-process E2E**
+- [x] **Step 3: Run cross-process E2E**
 
 Run: `node tests/quota-e2e/run.mjs`
 
@@ -393,14 +393,20 @@ Run: `pnpm test`
 
 Expected: lint, all unit tests, integration tests, existing E2E, new quota E2E, and all Go tests pass with zero skipped core quota scenarios.
 
-- [ ] **Step 5: Review implementation against every design acceptance criterion**
+Result: lint, 1,795 server unit tests, 28 worker unit tests, 243 client tests,
+all Go tests, production build, and quota cross-process E2E pass. The repository-wide
+integration/E2E command remains red only in unchanged Worker Gmail/AdsPower fixtures
+(6 integration and 3 lifecycle E2E failures); `git diff 558837c4..HEAD -- apps/worker`
+is empty.
+
+- [x] **Step 5: Review implementation against every design acceptance criterion**
 
 Check model CU, API USD, ordering, reset/rebound, lifecycle, persistence, DB bounds, non-WAL behavior, diagnostics, oversell/exclusive, client/server parity, and rollback switches. Record commands and results in the final handoff.
 
-- [ ] **Step 6: Request code review and resolve every finding**
+- [x] **Step 6: Request code review and resolve every finding**
 
 Use the `requesting-code-review` skill, fix findings with a fresh RED/GREEN cycle, then repeat the full relevant verification.
 
-- [ ] **Step 7: Final commit**
+- [x] **Step 7: Final commit**
 
 Commit: `feat(quota): ship model-aware durable recompute`

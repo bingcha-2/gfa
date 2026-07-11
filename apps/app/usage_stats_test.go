@@ -1,6 +1,32 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestAtomicWriteFileReplacesWholeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "usage_stats.json")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWriteFile(path, []byte(`{"records":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"records":{}}` {
+		t.Fatalf("content = %q", got)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".usage_stats.json.tmp-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files left behind: %v, err=%v", matches, err)
+	}
+}
 
 func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 	row := &ModelUsageRecord{

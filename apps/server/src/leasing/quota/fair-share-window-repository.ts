@@ -13,7 +13,27 @@ export interface WindowCheckpoint {
   bucket: string;
   windows: QuotaWindowsState;
   reportIds?: string[];
+  accountings?: HourlyUsageAccounting[];
   createdAt?: Date;
+}
+
+export interface HourlyUsageAccounting {
+  reportId: string;
+  at: Date;
+  accessKeyId: string;
+  accountEmail: string;
+  customerId: string;
+  modelKey: string;
+  bucket: string;
+  status: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  rawTotalTokens: number;
+  totalTokens: number;
+  reverseProxy: boolean;
+  serviceTier: string;
 }
 
 function storedBucket(bucket: string, scope: QuotaScope): string {
@@ -80,12 +100,55 @@ export class FairShareWindowRepository {
           if (rows.length > 0) await tx.fairShareWindow.createMany({ data: rows });
         }
         const revision = BigInt(Math.max(windows.primary.revision, windows.weekly.revision));
+        const accountings = new Map((checkpoint.accountings || []).map((value) => [value.reportId, value]));
         for (const reportId of new Set(checkpoint.reportIds || [])) {
           if (!reportId) continue;
-          await tx.quotaReportReceipt.upsert({
-            where: { provider_reportId: { provider: this.provider, reportId } },
-            create: { provider: this.provider, reportId, accountId, bucket, revision, createdAt: checkpoint.createdAt },
-            update: {},
+          const accounting = accountings.get(reportId);
+          if (!accounting) {
+            await tx.quotaReportReceipt.upsert({
+              where: { provider_reportId: { provider: this.provider, reportId } },
+              create: { provider: this.provider, reportId, accountId, bucket, revision, createdAt: checkpoint.createdAt },
+              update: {},
+            });
+            continue;
+          }
+          // The receipt is the idempotency gate for the aggregate. Both writes
+          // live in this same SQLite transaction: either quota + billing exist,
+          // or neither does. Retrying a committed report increments nothing.
+          const inserted = await tx.$executeRawUnsafe(
+            `INSERT OR IGNORE INTO QuotaReportReceipt
+              (provider, reportId, accountId, bucket, revision, createdAt)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            this.provider, reportId, accountId, bucket, revision, checkpoint.createdAt || accounting.at,
+          );
+          if (Number(inserted) === 0) continue;
+          const hourStart = new Date(Math.floor(accounting.at.getTime() / 3_600_000) * 3_600_000);
+          const failed = accounting.status >= 200 && accounting.status < 300 ? 0 : 1;
+          const reverseProxyHits = accounting.reverseProxy ? 1 : 0;
+          const priorityTokens = accounting.serviceTier === "priority" ? accounting.totalTokens : 0;
+          const sums = {
+            requests: 1, failedRequests: failed,
+            inputTokens: accounting.inputTokens, outputTokens: accounting.outputTokens,
+            cachedInputTokens: accounting.cachedInputTokens, cacheCreationTokens: accounting.cacheCreationTokens,
+            rawTotalTokens: accounting.rawTotalTokens, totalTokens: accounting.totalTokens,
+            reverseProxyHits, priorityTokens,
+          };
+          await tx.cardUsageHourly.upsert({
+            where: { hourStart_accessKeyId_accountEmail_customerId_modelKey_bucket: {
+              hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+              customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket,
+            } },
+            create: {
+              hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+              customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket, ...sums,
+            },
+            update: {
+              requests: { increment: sums.requests }, failedRequests: { increment: sums.failedRequests },
+              inputTokens: { increment: sums.inputTokens }, outputTokens: { increment: sums.outputTokens },
+              cachedInputTokens: { increment: sums.cachedInputTokens }, cacheCreationTokens: { increment: sums.cacheCreationTokens },
+              rawTotalTokens: { increment: sums.rawTotalTokens }, totalTokens: { increment: sums.totalTokens },
+              reverseProxyHits: { increment: sums.reverseProxyHits }, priorityTokens: { increment: sums.priorityTokens },
+            },
           });
         }
       }

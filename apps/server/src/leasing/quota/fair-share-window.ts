@@ -305,9 +305,9 @@ export function getSubjectQuota(state: FairShareWindowState, quotaSubjectId: str
   const activeSubjects = Object.values(state.subjects).filter((value) => value.active);
   const rawTotal = activeSubjects
     .reduce((sum, value) => sum + Math.max(0, value.share - value.attributedShare), 0);
-  const activeExclusive = activeSubjects.filter((value) => value.exclusive && value.share > 0);
-  const mayBypassScale = subject.exclusive && activeExclusive.length === 1 && activeSubjects.length === 1;
-  const scale = !mayBypassScale && rawTotal > state.fraction ? state.fraction / rawTotal : 1;
+  // Exclusive changes allocation ownership, never conservation: even one sole
+  // exclusive card cannot expose more absolute quota than the mother has left.
+  const scale = rawTotal > state.fraction ? state.fraction / rawTotal : 1;
   const absoluteRemaining = raw * scale;
   return {
     fraction: clamp01(absoluteRemaining / subject.share),

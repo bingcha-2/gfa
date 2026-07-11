@@ -87,6 +87,30 @@ describe("FairShareTracker window-cu-v1 facade", () => {
     expect(a.fraction * a.share + b.fraction * b.share).toBeCloseTo(0.2, 12);
   });
 
+  it("expires primary independently at resetAt and never keeps an exhausted card blocked", () => {
+    const now = { value: T };
+    const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));
+    applyBaseline(value);
+    value.applyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0, resetAt: T + FIVE_HOURS, observedAt: T + 20, snapshotId: "p-empty",
+    });
+    value.applyWeeklyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.7, resetAt: T + WEEK, observedAt: T + 20, snapshotId: "w-live",
+    });
+    expect(value.checkFairShare(1, "A", BUCKET).allowed).toBe(false);
+
+    now.value = T + FIVE_HOURS;
+    expect(value.checkFairShare(1, "A", BUCKET)).toMatchObject({
+      allowed: true,
+      remainingFraction: 0.7,
+    });
+    const state = value.getWindowStateForTesting(1, BUCKET)!;
+    expect(state.primary.primed).toBe(false);
+    expect(value.getWindowReasons(1, BUCKET)?.primary).toBe("WINDOW_EXPIRED");
+    expect(state.weekly.primed).toBe(true);
+    expect(state.weekly.fraction).toBe(0.7);
+  });
+
   it("falls back to pool scaling when an exclusive account has multiple active subjects", () => {
     const now = { value: T };
     const value = tracked(tracker(
@@ -99,6 +123,20 @@ describe("FairShareTracker window-cu-v1 facade", () => {
     const a = value.getCardQuotaFractions(1, "A")[BUCKET];
     const b = value.getCardQuotaFractions(1, "B")[BUCKET];
     expect(a.fraction * a.share + b.fraction * b.share).toBeCloseTo(0.1, 12);
+  });
+
+  it("still caps a sole exclusive card at the mother account remainder", () => {
+    const now = { value: T };
+    const value = tracked(tracker(
+      { 1: [{ cardId: "A", weight: 2 }] },
+      now,
+      new Set(["A"]),
+    ));
+    value.applyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.2, resetAt: T + FIVE_HOURS, observedAt: T, snapshotId: "exclusive-low",
+    });
+    const a = value.getCardQuotaFractions(1, "A")[BUCKET];
+    expect(a.fraction * a.share).toBeCloseTo(0.2, 12);
   });
 
   it("refreshes membership without erasing stable subject accounting", () => {

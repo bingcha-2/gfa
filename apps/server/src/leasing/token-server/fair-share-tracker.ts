@@ -24,7 +24,7 @@ import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/pro
 import { sharedFairShareRegistry } from "./fair-share-registry";
 import { WindowCuFairShareEngine } from "../quota/window-cu-fair-share-engine";
 import type { FairShareUsageEvent } from "../quota/fair-share-cu";
-import { FairShareWindowRepository } from "../quota/fair-share-window-repository";
+import { FairShareWindowRepository, type HourlyUsageAccounting } from "../quota/fair-share-window-repository";
 import { QuotaWriteCoordinator } from "../quota/quota-write-coordinator";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
@@ -173,6 +173,8 @@ export class FairShareTracker {
   private readonly nowFn: () => number;
   private readonly trackWeekly: boolean;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private receiptPruneTimer: ReturnType<typeof setInterval> | null = null;
+  private receiptPruneRunning = false;
   private dirty = false;
   private readonly windowCu: WindowCuFairShareEngine | null;
   private readonly windowRepository: FairShareWindowRepository | null;
@@ -181,6 +183,7 @@ export class FairShareTracker {
     bucket: string;
     windows: import("../quota/fair-share-window").QuotaWindowsState;
     reportIds: string[];
+    accountings: HourlyUsageAccounting[];
     createdAt: Date;
   }> | null;
 
@@ -210,19 +213,28 @@ export class FairShareTracker {
           commit: async (batch) => {
             await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
           },
-          mergePayload: (current, incoming) => ({
-            accountId: incoming.accountId,
-            bucket: incoming.bucket,
-            windows: incoming.windows,
-            reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
-            createdAt: incoming.createdAt,
-          }),
+          mergePayload: (current, incoming) => {
+            const currentRevision = Math.max(current.windows.primary.revision, current.windows.weekly.revision);
+            const incomingRevision = Math.max(incoming.windows.primary.revision, incoming.windows.weekly.revision);
+            return {
+              accountId: incoming.accountId,
+              bucket: incoming.bucket,
+              windows: incomingRevision >= currentRevision ? incoming.windows : current.windows,
+              reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
+              accountings: [...new Map([...current.accountings, ...incoming.accountings]
+                .map((value) => [value.reportId, value])).values()],
+              createdAt: incoming.createdAt,
+            };
+          },
         })
       : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
         void this.flush();
       }, FLUSH_INTERVAL_MS);
+      if (this.writeCoordinator) {
+        this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
+      }
     }
     // Self-register so the heartbeat (app-auth) can read this provider's live
     // 我的份额 without a cross-module DI path. See fair-share-registry.ts.
@@ -242,7 +254,12 @@ export class FairShareTracker {
   }
 
   /** Acknowledge only after the current state and report receipt share one SQLite commit. */
-  async checkpointReport(accountId: number, bucket: string, reportId: string): Promise<void> {
+  async checkpointReport(
+    accountId: number,
+    bucket: string,
+    reportId: string,
+    accounting?: HourlyUsageAccounting,
+  ): Promise<void> {
     if (!this.windowCu || !this.writeCoordinator) return;
     const entry = this.windowCu.entry(accountId, bucket);
     if (!entry) return;
@@ -250,8 +267,9 @@ export class FairShareTracker {
     await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
       ...entry,
       reportIds: reportId ? [reportId] : [],
+      accountings: accounting ? [accounting] : [],
       createdAt: new Date(this.nowFn()),
-    });
+    }, true);
   }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
@@ -805,13 +823,19 @@ export class FairShareTracker {
     if (this.windowCu && this.windowRepository) {
       const groups = await this.windowRepository.loadProvider();
       for (const group of groups) {
-        if (group.result.ok) this.windowCu.restore(group.accountId, group.bucket, group.result.windows);
+        if (group.result.ok) {
+          const beforeRevision = Math.max(group.result.windows.primary.revision, group.result.windows.weekly.revision);
+          this.windowCu.restore(group.accountId, group.bucket, group.result.windows);
+          const restored = this.windowCu.entry(group.accountId, group.bucket);
+          const afterRevision = restored
+            ? Math.max(restored.windows.primary.revision, restored.windows.weekly.revision)
+            : beforeRevision;
+          if (afterRevision > beforeRevision) this.dirty = true;
+        }
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
       if (this.writeCoordinator) {
-        await this.writeCoordinator.scheduleLowPriority(async () => {
-          await this.windowRepository!.pruneReceipts(new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000), 500);
-        });
+        await this.pruneExpiredReceipts();
       }
       return;
     }
@@ -951,6 +975,8 @@ export class FairShareTracker {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
+    if (this.receiptPruneTimer) clearInterval(this.receiptPruneTimer);
+    this.receiptPruneTimer = null;
   }
 
   private serializeRows(): Array<{
@@ -1036,6 +1062,24 @@ export class FairShareTracker {
 
   getWindowReasons(accountId: number, bucket: string) {
     return this.windowCu?.getReasons(accountId, bucket) ?? null;
+  }
+
+  private async pruneExpiredReceipts(): Promise<void> {
+    if (!this.writeCoordinator || !this.windowRepository || this.receiptPruneRunning) return;
+    this.receiptPruneRunning = true;
+    try {
+      await this.writeCoordinator.scheduleLowPriority(async () => {
+        const cutoff = new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000);
+        for (let batch = 0; batch < 20; batch++) {
+          const deleted = await this.windowRepository!.pruneReceipts(cutoff, 500);
+          if (deleted < 500) break;
+        }
+      });
+    } catch (error) {
+      console.error("[fair-share-tracker] receipt prune failed:", error);
+    } finally {
+      this.receiptPruneRunning = false;
+    }
   }
 }
 

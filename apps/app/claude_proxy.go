@@ -671,12 +671,15 @@ func extractClaudeModelKey(body []byte) string {
 
 // claudeReportDetailsFromUsage 由流式解析出的 usage 组装上报明细。
 func claudeReportDetailsFromUsage(status int, modelKey string, u claudeUsage) ReportDetails {
+	u = u.normalized()
 	return ReportDetails{
 		StatusCode:          status,
 		ModelKey:            modelKey,
 		InputTokens:         u.InputTokens,
 		OutputTokens:        u.OutputTokens,
 		CachedInputTokens:   u.CacheReadInputTokens,
+		CacheWrite5mTokens:  u.CacheWrite5mTokens,
+		CacheWrite1hTokens:  u.CacheWrite1hTokens,
 		RawTotalTokens:      u.rawTotal(),
 		BillableTotalTokens: u.rawTotal(),
 	}
@@ -692,6 +695,8 @@ func claudeReportDetailsFromBody(status int, modelKey string, body []byte) Repor
 		InputTokens:              payload.Usage.InputTokens,
 		OutputTokens:             payload.Usage.OutputTokens,
 		CacheCreationInputTokens: payload.Usage.CacheCreationInputTokens,
+		CacheWrite5mTokens:       payload.Usage.CacheCreation.Ephemeral5mInputTokens,
+		CacheWrite1hTokens:       payload.Usage.CacheCreation.Ephemeral1hInputTokens,
 		CacheReadInputTokens:     payload.Usage.CacheReadInputTokens,
 	}
 	return claudeReportDetailsFromUsage(status, modelKey, u)

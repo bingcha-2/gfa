@@ -5,8 +5,8 @@
  *   - 写:缓冲 + 每 ~5s 批量 createMany(热路径不阻塞,对齐 TokenUsageTracker);
  *   - 清:每 ~1h 分小批删 72 小时之前的行(短保留控量)。
  *
- * 行数 = 请求量 × 5 天,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
- * headers 是客户端过滤后的 JSON(去凭证头、跳超大值),这里再兜底截断,绝不存 body。
+ * 行数 = 请求量 × 3 天,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
+ * headers 即使客户端已过滤也必须在服务端再次递归脱敏,绝不存 body/凭证。
  */
 
 const FLUSH_INTERVAL_MS = 5_000;
@@ -20,6 +20,27 @@ export const REQUEST_LOG_RETENTION_MS = 72 * 60 * 60 * 1000;
 // 体积兜底:即便在保留期内,行数暴涨也封顶。超过就删最旧的多余部分(高量时实际保留 < 5 天)。
 // ~1KB/行 → 300 万行约 3GB,SQLite 仍健康。量级变了就改这个数。
 export const REQUEST_LOG_MAX_ROWS = 500_000;
+
+const SECRET_KEY = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-access-key|x-token-server-secret|access[-_]?token|refresh[-_]?token|password|secret)$/i;
+
+function safeHeaders(raw: unknown): string {
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    const redact = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(redact);
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !SECRET_KEY.test(key))
+        .map(([key, child]) => [key, redact(child)]));
+    };
+    const encoded = JSON.stringify(redact(parsed));
+    return encoded.length <= HEADERS_MAX ? encoded : JSON.stringify({ _truncated: true });
+  } catch {
+    // Invalid JSON cannot be safely inspected. Keep no attacker-controlled raw text.
+    return "";
+  }
+}
 
 export interface RequestLogEvent {
   provider: string;
@@ -89,7 +110,7 @@ export class RequestLogTracker {
       surface: e.surface || "",
       sourceIp: e.sourceIp || "",
       exitIp: e.exitIp || "",
-      headers: String(e.headers || "").slice(0, HEADERS_MAX),
+      headers: safeHeaders(e.headers),
       reportId: e.reportId || "",
       traceId: e.traceId || "",
       leaseId: e.leaseId || "",

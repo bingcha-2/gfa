@@ -1232,7 +1232,27 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     if (durableQuotaReport) {
-      await this.fairShareTracker!.checkpointReport(accountId, quotaBucket, dedupId);
+      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
+      const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
+      const accounting = detail.totalTokens > 0 ? {
+        reportId: dedupId,
+        at: new Date(this.now()),
+        accessKeyId: cardId,
+        accountEmail: (servingAccount as { email?: string } | undefined)?.email || "",
+        customerId: String(auth.record?.customerId || ""),
+        modelKey: modelKey || "",
+        bucket: detail.bucket,
+        status,
+        inputTokens: detail.inputTokens,
+        outputTokens: detail.outputTokens,
+        cachedInputTokens: detail.cachedInputTokens,
+        cacheCreationTokens: detail.cacheCreationTokens,
+        rawTotalTokens: detail.rawTotalTokens,
+        totalTokens: detail.totalTokens,
+        reverseProxy: Boolean(payload?.clientFlag),
+        serviceTier: String(payload?.serviceTier || ""),
+      } : undefined;
+      await this.fairShareTracker!.checkpointReport(accountId, quotaBucket, dedupId, accounting);
       wasNew = this.accessKeyStore.recordUsage(
         cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""),
       );
@@ -1248,7 +1268,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // counted (exactly-once) reports — recordUsage above already deduped. We log
     // the same canonical numbers the card counters persist; skip zero-token
     // reports (errors / capacity rejections carry no usage).
-    if (this.tokenUsageTracker) {
+    // window-cu reports already aggregate CardUsageHourly atomically with their
+    // durable receipt. Other algorithms retain the buffered legacy path.
+    if (this.tokenUsageTracker && !durableQuotaReport) {
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         // Stamp the STABLE account identity (email) alongside the volatile positional

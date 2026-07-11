@@ -249,18 +249,20 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 		return
 	}
 	payload := map[string]interface{}{
-		"leaseId":           lease.LeaseId,
-		"accountId":         lease.AccountId,
-		"status":            details.StatusCode,
-		"modelKey":          details.ModelKey,
-		"reason":            details.Reason,
-		"retryAfterMs":      details.RetryAfterMs,
-		"inputTokens":       details.InputTokens,
-		"outputTokens":      details.OutputTokens,
-		"cachedInputTokens": details.CachedInputTokens,
-		"rawTotalTokens":    details.RawTotalTokens,
-		"totalTokens":       details.BillableTotalTokens,
-		"errorText":         getErrorSnippet(details.ErrorText),
+		"leaseId":            lease.LeaseId,
+		"accountId":          lease.AccountId,
+		"status":             details.StatusCode,
+		"modelKey":           details.ModelKey,
+		"reason":             details.Reason,
+		"retryAfterMs":       details.RetryAfterMs,
+		"inputTokens":        details.InputTokens,
+		"outputTokens":       details.OutputTokens,
+		"cachedInputTokens":  details.CachedInputTokens,
+		"cacheWrite5mTokens": details.CacheWrite5mTokens,
+		"cacheWrite1hTokens": details.CacheWrite1hTokens,
+		"rawTotalTokens":     details.RawTotalTokens,
+		"totalTokens":        details.BillableTotalTokens,
+		"errorText":          getErrorSnippet(details.ErrorText),
 	}
 	addCausalReportFields(payload, lease.LeaseId, details)
 	// 反代嫌疑(非真 Claude Code 客户端):仅在命中时带上,供服务端按卡聚合定位反代。

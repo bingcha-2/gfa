@@ -264,4 +264,35 @@ describe("causal current-window reducer", () => {
       expect(usable).toBeLessThanOrEqual(state.fraction + 1e-9);
     }
   });
+
+  it("never oversells the mother account across 100 users and randomized changes", () => {
+    const hundred = Array.from({ length: 100 }, (_, i) => ({
+      quotaSubjectId: `U${i}`,
+      share: 0.01,
+    }));
+    let state = reduceWindow(
+      createWindowState({ scope: "primary", windowMs: FIVE_HOURS, subjects: hundred }),
+      snapshot(T, 1),
+    );
+    let seed = 0x5eed1234;
+    const random = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x1_0000_0000;
+    };
+    let fraction = 1;
+    for (let i = 1; i <= 1_000; i += 1) {
+      const id = `U${Math.floor(random() * 100)}`;
+      state = reduceWindow(state, usage(id, T + i * 10, T + i * 10, 1 + Math.floor(random() * 10_000)));
+      if (i % 7 === 0) {
+        // Includes both downward use and upward rebound observations.
+        fraction = Math.max(0, Math.min(1, fraction + (random() - 0.58) * 0.08));
+        state = reduceWindow(state, snapshot(T + i * 10 + 1, fraction));
+      }
+      const totalUsable = hundred.reduce(
+        (sum, subject) => sum + getSubjectQuota(state, subject.quotaSubjectId).absoluteRemaining,
+        0,
+      );
+      expect(totalUsable).toBeLessThanOrEqual(state.fraction + 1e-9);
+    }
+  });
 });

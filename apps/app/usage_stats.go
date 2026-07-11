@@ -298,6 +298,68 @@ func migrateUsagePricing(records map[string]*DailyRecord, hourly map[string]*Hou
 	return migrated
 }
 
+func atomicWriteFile(path string, data []byte, mode os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	if err = os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err = tmp.Chmod(mode); err == nil {
+		_, err = tmp.Write(data)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	closeErr := tmp.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	if dirHandle, openErr := os.Open(dir); openErr == nil {
+		err = dirHandle.Sync()
+		_ = dirHandle.Close()
+	}
+	return err
+}
+
+func createBackupIfAbsent(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		_ = f.Close()
+		if !ok {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
 // Load 从磁盘加载
 func (s *UsageStatsStore) Load() {
 	s.mu.Lock()
@@ -313,19 +375,32 @@ func (s *UsageStatsStore) Load() {
 		HourlyRecords map[string]*HourlyRecord `json:"hourlyRecords"`
 	}
 	if json.Unmarshal(data, &loaded) == nil {
-		if loaded.Records != nil {
-			s.Records = loaded.Records
+		records := loaded.Records
+		hourly := loaded.HourlyRecords
+		if records == nil {
+			records = map[string]*DailyRecord{}
 		}
-		if loaded.HourlyRecords != nil {
-			s.HourlyRecords = loaded.HourlyRecords
+		if hourly == nil {
+			hourly = map[string]*HourlyRecord{}
 		}
-		if migrateUsagePricing(s.Records, s.HourlyRecords) {
+		if migrateUsagePricing(records, hourly) {
 			backup := filepath.Join(getAppDataDir(), "usage_stats.pre-model-pricing.json")
-			if _, statErr := os.Stat(backup); os.IsNotExist(statErr) {
-				_ = os.WriteFile(backup, data, 0600)
+			if backupErr := createBackupIfAbsent(backup, data); backupErr != nil {
+				Log("[stats] pricing migration backup failed: %v", backupErr)
+				// Never publish migrated values without a recoverable original.
+				_ = json.Unmarshal(data, &loaded)
+				records, hourly = loaded.Records, loaded.HourlyRecords
+				if records == nil {
+					records = map[string]*DailyRecord{}
+				}
+				if hourly == nil {
+					hourly = map[string]*HourlyRecord{}
+				}
+			} else {
+				s.dirty = true
 			}
-			s.dirty = true
 		}
+		s.Records, s.HourlyRecords = records, hourly
 	}
 	// 清理超过 7 天的小时记录
 	cutoff := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15")
@@ -347,7 +422,6 @@ func (s *UsageStatsStore) Save() {
 	}
 
 	dir := getAppDataDir()
-	_ = os.MkdirAll(dir, 0755)
 	path := filepath.Join(dir, "usage_stats.json")
 
 	payload := struct {
@@ -359,7 +433,10 @@ func (s *UsageStatsStore) Save() {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0644)
+	if err := atomicWriteFile(path, data, 0644); err != nil {
+		Log("[stats] save failed: %v", err)
+		return
+	}
 	s.dirty = false
 }
 

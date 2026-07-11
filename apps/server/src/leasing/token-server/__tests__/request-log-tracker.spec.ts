@@ -54,6 +54,21 @@ describe("RequestLogTracker", () => {
     expect(data[0].headers.length).toBeLessThanOrEqual(2000);
   });
 
+  it("服务端递归移除凭证头,不信任客户端过滤", () => {
+    const t = new RequestLogTracker(makePrisma(), { autoStart: false });
+    t.record({
+      provider: "anthropic",
+      headers: JSON.stringify({
+        "user-agent": "claude-cli/2",
+        Authorization: "Bearer secret",
+        Cookie: "session=secret",
+        nested: { "x-api-key": "secret", harmless: "kept" },
+      }),
+    });
+    const stored = JSON.parse(t.getQueueForTesting()[0].headers);
+    expect(stored).toEqual({ "user-agent": "claude-cli/2", nested: { harmless: "kept" } });
+  });
+
   it("pruneOld 删保留期之前的行", async () => {
     const prisma = makePrisma();
     const now = REQUEST_LOG_RETENTION_MS + 5000;

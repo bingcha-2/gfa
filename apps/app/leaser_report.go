@@ -114,18 +114,20 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 		details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.BillableTotalTokens)
 
 	payload := map[string]interface{}{
-		"leaseId":           lease.LeaseId,
-		"accountId":         lease.AccountId,
-		"status":            details.StatusCode,
-		"modelKey":          details.ModelKey,
-		"reason":            details.Reason,
-		"retryAfterMs":      details.RetryAfterMs,
-		"inputTokens":       details.InputTokens,
-		"outputTokens":      details.OutputTokens,
-		"cachedInputTokens": details.CachedInputTokens,
-		"rawTotalTokens":    details.RawTotalTokens,
-		"totalTokens":       details.BillableTotalTokens,
-		"errorText":         getErrorSnippet(details.ErrorText),
+		"leaseId":            lease.LeaseId,
+		"accountId":          lease.AccountId,
+		"status":             details.StatusCode,
+		"modelKey":           details.ModelKey,
+		"reason":             details.Reason,
+		"retryAfterMs":       details.RetryAfterMs,
+		"inputTokens":        details.InputTokens,
+		"outputTokens":       details.OutputTokens,
+		"cachedInputTokens":  details.CachedInputTokens,
+		"cacheWrite5mTokens": details.CacheWrite5mTokens,
+		"cacheWrite1hTokens": details.CacheWrite1hTokens,
+		"rawTotalTokens":     details.RawTotalTokens,
+		"totalTokens":        details.BillableTotalTokens,
+		"errorText":          getErrorSnippet(details.ErrorText),
 	}
 	addCausalReportFields(payload, lease.LeaseId, details)
 

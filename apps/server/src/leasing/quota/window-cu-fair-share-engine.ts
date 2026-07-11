@@ -1,6 +1,7 @@
 import { calculateFairShareCu, type FairShareUsageEvent } from "./fair-share-cu";
 import {
   createQuotaWindows,
+  createWindowState,
   getSubjectQuota,
   reduceQuotaWindows,
   type FairShareWindowState,
@@ -121,7 +122,8 @@ export class WindowCuFairShareEngine {
     const buckets = this.states.get(accountId);
     if (!buckets) return {};
     const result: Record<string, { fraction: number; resetAt: number; share: number }> = {};
-    for (const [bucket, windows] of buckets) {
+    for (const bucket of buckets.keys()) {
+      const windows = this.ensure(accountId, bucket);
       const state = weekly ? windows.weekly : windows.primary;
       if (!state.primed) continue;
       const quota = getSubjectQuota(state, quotaSubjectId);
@@ -164,7 +166,7 @@ export class WindowCuFairShareEngine {
   }
 
   getStateForTesting(accountId: number, bucket: string): { primary: AccountingView; weekly: AccountingView } | null {
-    const state = this.states.get(accountId)?.get(bucket);
+    const state = this.states.get(accountId)?.has(bucket) ? this.ensure(accountId, bucket) : null;
     return state ? { primary: view(state.primary), weekly: view(state.weekly) } : null;
   }
 
@@ -176,13 +178,13 @@ export class WindowCuFairShareEngine {
   entries(): Array<{ accountId: number; bucket: string; windows: QuotaWindowsState }> {
     const result: Array<{ accountId: number; bucket: string; windows: QuotaWindowsState }> = [];
     for (const [accountId, buckets] of this.states) {
-      for (const [bucket, windows] of buckets) result.push({ accountId, bucket, windows });
+      for (const bucket of buckets.keys()) result.push({ accountId, bucket, windows: this.ensure(accountId, bucket) });
     }
     return result;
   }
 
   entry(accountId: number, bucket: string): { accountId: number; bucket: string; windows: QuotaWindowsState } | null {
-    const windows = this.states.get(accountId)?.get(bucket);
+    const windows = this.states.get(accountId)?.has(bucket) ? this.ensure(accountId, bucket) : null;
     return windows ? { accountId, bucket, windows } : null;
   }
 
@@ -192,6 +194,7 @@ export class WindowCuFairShareEngine {
     let buckets = this.states.get(accountId);
     if (!buckets) this.states.set(accountId, (buckets = new Map()));
     buckets.set(bucket, windows);
+    this.ensure(accountId, bucket);
   }
 
   private ensure(accountId: number, bucket: string): QuotaWindowsState {
@@ -206,7 +209,32 @@ export class WindowCuFairShareEngine {
       });
       buckets.set(bucket, state);
     }
+    state = this.expireElapsedWindows(accountId, state);
+    buckets.set(bucket, state);
     return state;
+  }
+
+  /**
+   * resetAt is the upstream authority for a window boundary. Once it is reached,
+   * the old exhausted state must stop enforcing immediately, even if the first
+   * post-reset snapshot has not arrived yet (including after process restart).
+   * The two scopes are reset independently; the fresh scope remains unprimed so
+   * its next real snapshot establishes the new baseline without inventing burn.
+   */
+  private expireElapsedWindows(accountId: number, state: QuotaWindowsState): QuotaWindowsState {
+    const now = this.options.now();
+    const subjects = this.subjects(accountId);
+    const expire = (window: FairShareWindowState): FairShareWindowState => {
+      if (!window.primed || window.resetAt <= 0 || now < window.resetAt) return window;
+      return {
+        ...createWindowState({ scope: window.scope, windowMs: window.windowMs, subjects }),
+        revision: window.revision + 1,
+        lastReason: "WINDOW_EXPIRED",
+      };
+    };
+    const primary = expire(state.primary);
+    const weekly = expire(state.weekly);
+    return primary === state.primary && weekly === state.weekly ? state : { primary, weekly };
   }
 
   private set(accountId: number, bucket: string, state: QuotaWindowsState): void {
