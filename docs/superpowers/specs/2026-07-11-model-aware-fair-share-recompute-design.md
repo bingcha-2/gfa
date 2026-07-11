@@ -163,6 +163,7 @@ account
 - `perCardCumulativeCu`
 - `attributedShare`
 - `unattributedShare`
+- `unattributedRefundDebt`(回血欠账,见 7.2/7.3)
 
 模型不是窗口维度。模型只参与 `requestCU` 的计算。
 
@@ -249,6 +250,95 @@ finalCU = requestCU × fastMultiplier(modelId, occurredAt)
 ### 6.3 Claude
 
 Claude 的 CU 表示官方价格等价单位，仅用于同一母号绑定用户之间的相对分摊。母号实际消耗仍以 `five_hour`/`seven_day` 快照为准，所以即使 Anthropic 订阅内部算法与 API 价格不完全一致，总体血条也不会脱离母号真实水位；误差只可能影响不同模型用户之间的相对分配。
+
+### 6.4 API 等价价值与额度 CU 必须分离
+
+“额度 CU”和“官方 API 等价价值 USD”是两个不同概念：
+
+- CU 用于在共享母号内分配 5h/周消耗。
+- USD 只用于看板估算“同样 Token 按官方 API 价价值多少”。
+- 订阅实际成本不等于 API 价，所以 UI 不再把它无条件称为“已节省金额”。
+
+两者可以引用相同模型 id 和生效日期，但必须使用不同注册表、不同类型和不同函数，禁止再次从一个 family 均价同时派生额度与金额。
+
+当前 OpenAI Standard 短上下文官方 API 价为：
+
+| 模型 | 输入 $/M | 缓存读 | 缓存写 | 输出 |
+|---|---:|---:|---:|---:|
+| GPT-5.6 Sol | 5.00 | 0.50 | 6.25 | 30.00 |
+| GPT-5.6 Terra | 2.50 | 0.25 | 3.125 | 15.00 |
+| GPT-5.6 Luna | 1.00 | 0.10 | 1.25 | 6.00 |
+| GPT-5.5 | 5.00 | 0.50 | — | 30.00 |
+| GPT-5.4 | 2.50 | 0.25 | — | 15.00 |
+| GPT-5.4 mini | 0.75 | 0.075 | — | 4.50 |
+
+GPT-5.6、GPT-5.5 和 GPT-5.4 系列还可能有 long-context 价格。`api-pricing.json` 为每个模型和生效区间保存官方 `contextThreshold`；当前相关官方表使用 272K 上下文分界，但不能把它永久写死成所有模型的全局常量。价格档必须在单次请求产生时确定，不能把一小时或一天 Token 聚合后再用平均值猜档位。
+
+Fast 使用官方 Priority 价格，不使用统一倍率。当前相关 Priority 短上下文价包括：
+
+| 模型 | 输入 $/M | 缓存读 | 缓存写 | 输出 |
+|---|---:|---:|---:|---:|
+| GPT-5.6 Sol | 10.00 | 1.00 | 12.50 | 60.00 |
+| GPT-5.6 Terra | 5.00 | 0.50 | 6.25 | 30.00 |
+| GPT-5.6 Luna | 2.00 | 0.20 | 2.50 | 12.00 |
+| GPT-5.5 | 12.50 | 1.25 | — | 75.00 |
+| GPT-5.4 | 5.00 | 0.50 | — | 30.00 |
+| GPT-5.4 mini | 1.50 | 0.15 | — | 9.00 |
+
+来源：[OpenAI API Pricing](https://developers.openai.com/api/docs/pricing)。Claude API 价值继续使用 [Anthropic Pricing](https://docs.claude.com/en/docs/about-claude/pricing) 的具体模型、缓存写入 TTL 和生效日期。
+
+### 6.5 USD 单请求计算与聚合
+
+每次请求在仍有完整 usage 维度时计算：
+
+```text
+apiValueUSD =
+  inputTokens × inputUSD
+  + cachedInputTokens × cacheReadUSD
+  + cacheWrite5mTokens × cacheWrite5mUSD
+  + cacheWrite1hTokens × cacheWrite1hUSD
+  + outputTokens × outputUSD
+```
+
+同时保存：
+
+- `apiPricingVersion`
+- `apiPricingMode=standard|priority`
+- `contextTier=short|long|unknown`
+- `valuationQuality=exact|recalculated|legacy`
+- `apiValueUSD`
+
+`CardUsageHourly` 和客户端日/小时统计只累加已经按单请求算好的 USD，不能再从聚合后的 family Token 反推金额。这样 mixed model、mixed Fast、mixed short/long context 同处一小时也不会算错。
+
+用户提供的 Sol 示例在全部属于 Standard 短上下文时应为：
+
+```text
+593.41K × $5/M
++ 24.47M × $0.50/M
++ 102.56K × $30/M
+= $18.2788
+```
+
+当前显示 `$4.83`，可以反推出旧代码错误套用了 GPT family 统一价 `$1.25/$0.125/$10`。该示例作为客户端与服务端共同 golden test；若部分单次请求实际属于 long context，逐请求正确总值应高于短上下文基线。
+
+### 6.6 历史累计金额迁移
+
+客户端 `usage_stats.json` 和服务端 `CardUsageHourly` 中已累加的旧 USD 不能假装精确：
+
+- 有模型、输入、输出、缓存拆分且无 Fast/long-context 歧义的旧记录：按请求日期对应的模型 Standard 短上下文费率重算，标记 `recalculated`。
+- 只有小时/日模型聚合、无法判断单次 long-context 的旧记录：按 short-context 重算并显示“短上下文假设”。
+- 旧 Fast 记录只有 `fastTokens` 总量、没有输入/输出/缓存拆分时：保留为 `legacy`，不能把总量强乘一个倍率冒充精确。
+- 缺少真实模型的旧记录：使用当时 family 估算并标记 `legacy`，不混入“精确价值”而不加说明。
+- 新版本上线后的请求全部保存 exact 单请求 USD。
+
+客户端启动迁移只执行一次，写入 `apiPricingMigrationVersion`，并保留原文件备份直到新文件原子落盘成功。服务端历史行使用可重复执行的 migration/backfill；重复运行结果必须相同。
+
+UI 调整为：
+
+- “今日官方 API 价值”改为“今日 API 等价价值”。
+- “累计 API 价值 · 已节省”改为“累计 API 等价价值”。
+- tooltip 解释 Standard/Priority、short/long 和估算质量。
+- 混有 `legacy` 数据时显示“含旧版估算”，不得只显示一个看似精确的美元数字。
 
 ## 7. 当前窗口累计与实时重算
 
@@ -512,10 +602,12 @@ primary 个人剩余 > 0
 - `apps/server/src/leasing/rosetta/quota-diagnostics.service.ts`：按 trace/support code 查询、确定性 diagnosis 和脱敏导出。
 - `apps/web/src/app/(console)/console/(dashboard)/(product)/quota-diagnostics/page.tsx`：管理员额度诊断搜索与时间线。
 - `packages/shared/src/quota-rates.json`：Codex Credits 与 Claude 相对 CU 的独立版本化费率源。
+- `packages/shared/src/api-pricing.json`：逐模型、逐模式、short/long、带生效日期的官方 API USD 费率源。
 
 修改：
 
-- `packages/shared/src/pricing.json`：继续只负责现有 API 美元成本展示，不再被公平额度直接读取；额度 registry 只读取新的 `quota-rates.json`，避免把 API 价格与订阅 Credits 混成一个概念。
+- `packages/shared/src/pricing.json`：降为旧 family 数据兼容读取，新金额不再使用；额度 registry 只读取 `quota-rates.json`，金额 registry 只读取 `api-pricing.json`。
+- `scripts/sync-pricing.mjs`：同步 `api-pricing.json` 与 `quota-rates.json` 到 Go 客户端 embed 目录，并在 CI 校验同步后工作树无差异。
 - `apps/server/src/leasing/lease-core/product-bucket.ts`：移除未知模型默认 Claude 的额度归类行为。
 - `apps/server/src/leasing/token-server/fair-share-tracker.ts`：加入累计窗口重算模式和快照时间校验。
 - `apps/server/src/leasing/lease-core/lease-service.ts`：请求完成后记录模型 CU，再同步母号快照。
@@ -527,8 +619,12 @@ primary 个人剩余 > 0
 - `apps/app/claude_sse.go`：完整保留缓存读取与缓存创建信息；能取得 5m/1h 明细时分别上报。
 - `apps/app/codex_proxy.go`、`apps/app/codex_ws.go`：继续以上游响应实际模型和 usage 为准，并携带快照采集时间。
 - `apps/app/leaser_report.go`、`apps/app/codex_leaser.go`、`apps/app/claude_leaser.go`：贯穿 traceId/supportCode 与完整 usage 字段。
+- `apps/app/pricing_price.go`：从 family 定价改为真实模型 + mode + context tier + 生效时间查询。
+- `apps/app/usage_stats.go`：按单请求计算 USD、保存定价版本/质量并执行历史金额迁移；删除 Fast 统一 ×1.5。
+- `apps/app/frontend/src/pages/DashboardPage.tsx`：金额文案改为 API 等价价值并展示估算质量。
+- `apps/server/src/leasing/account/portal/portal.service.ts`：删除硬编码 `FAMILY_PRICING`，直接累计单请求持久化 USD。
 - `apps/web/src/components/console/shell/console-sidebar.tsx`：增加“额度诊断”管理员入口。
-- `prisma/schema.prisma`：扩展当前热表、RequestLog、AccountQuotaSnapshot、小时聚合并增加 QuotaDiagnosticEvent；不新增历史窗口表。
+- `prisma/schema.prisma`：扩展当前热表、RequestLog、AccountQuotaSnapshot、小时聚合的 CU/USD/定价质量字段并增加 QuotaDiagnosticEvent；不新增历史窗口表。
 
 ## 15. 兼容与上线
 
@@ -610,6 +706,11 @@ interface QuotaRequestDiagnostic {
   requestedModel: string;
   actualModel: string;
   rateVersion: string;
+  apiPricingVersion: string;
+  apiPricingMode: "standard" | "priority";
+  contextTier: "short" | "long" | "unknown";
+  valuationQuality: "exact" | "recalculated" | "legacy";
+  apiValueUSD: number;
   serviceTier: string;
   inputTokens: number;
   cachedInputTokens: number;
@@ -646,6 +747,9 @@ restart_recovered
 checkpoint_failed
 enforcement_denied
 unknown_model_fallback
+api_price_unknown
+api_price_short_assumption
+api_price_legacy
 ```
 
 一条事件包含公共字段：
@@ -685,6 +789,9 @@ USAGE_DUPLICATE_REPORT
 USAGE_ZERO
 MODEL_UNKNOWN_CONSERVATIVE_RATE
 CACHE_WRITE_ASSUMED_5M
+API_PRICE_UNKNOWN
+API_PRICE_SHORT_ASSUMPTION
+API_PRICE_LEGACY
 COLD_START_BASELINE_ONLY
 CHECKPOINT_FAILED
 CHECKPOINT_RETRY_SUCCEEDED
@@ -807,7 +914,7 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 3. 客户端集成测试：真实 Go 代理解析上游 SSE/响应头、生成 usage/quota report、消费服务端状态。
 4. 客户端—服务端跨进程端到端测试：实际 Go 客户端和实际 Nest HTTP 服务串联，中间不替换额度业务逻辑。
 
-### 17.1 模型 CU
+### 17.1 模型 CU 与 API 等价价值
 
 - Sol、Terra、Luna 同样 Token 得出 5:2.5:1 的输入 Credits 比例。
 - Codex 缓存输入按各模型输入的 0.1 计算。
@@ -818,6 +925,15 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - 未识别模型走 provider 保守费率并产生告警，不误归到 Claude。
 - 自动补全及其他辅助模型返回非零 usage 时正常计入，不允许无条件跳过。
 - 请求失败且 usage 为零时不产生 CU；失败但上游返回非零 usage 时仍按真实 usage 计入。
+- 客户端与服务端读取同一份 `api-pricing.json` golden fixtures，对每个模型得到完全相同 USD。
+- Sol 示例 `593.41K input + 24.47M cache read + 102.56K output` 在 Standard short 下严格得到 `$18.2788`，不能回到 `$4.83`。
+- Terra、Luna、5.4 mini、Fable、Opus、Sonnet、Haiku 分别使用自身价格，不回退 family 均价。
+- 同一模型 Standard、Priority、short、long 分别命中正确价格。
+- context tier 按单请求判定；把两个 short 请求聚合后超过 272K 不能误算成 long。
+- Claude cache write 5m/1h 分别使用正确价格；只有总量时标记估算质量。
+- 未知模型金额使用显式 fallback 并标记 `legacy/unknown`，不能悄悄显示为精确官方价。
+- 历史迁移重复执行结果相同；原子写失败保留原文件，不能把累计数据清空。
+- 本地今日、累计、逐模型金额与服务端 Portal 对同一事件序列完全一致。
 
 ### 17.2 归因时序
 
@@ -916,6 +1032,7 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - 服务端拒绝旧快照/跨账号快照后，客户端不能把它们重新显示出来。
 - 旧客户端缺少 `observedAt`、缓存写入拆分或新模型字段时，新服务端走明确兼容降级且不记成零用量。
 - 新客户端连接仍运行 `segment-v1` 的服务端时，新增字段可被忽略，旧链路不崩溃。
+- 客户端今日/累计/逐模型 API 等价价值与服务端同事件结果逐分一致，并展示相同 pricing version/quality。
 
 测试控制接口只负责制造外部事件，不得直接写 `FairShareTracker` 内存状态；所有状态变化必须经过与生产相同的 lease/report/subscription/quota snapshot 入口。
 
@@ -1038,6 +1155,9 @@ node tests/quota-e2e/run.mjs
 - Codex 使用官方逐模型 Credits，而不是统一 GPT 权重。
 - Claude 使用带有效期的官方模型相对价格。
 - 所有返回非零上游 usage 的模型请求都计入 CU，模型之间仅倍率不同。
+- API 等价价值按单请求的真实模型、Standard/Priority、short/long、缓存读写 TTL 和请求时间计算，与额度 CU 使用不同注册表。
+- 客户端与服务端对同一请求得出相同 USD、pricing version 和估算质量；Sol golden case 在 Standard short 下严格得到 `$18.2788`。
+- 历史金额只能标记为 `exact`、`recalculated` 或 `legacy`；无法精确还原的旧记录不得冒充官方精确价值，UI 不再无条件宣称“已节省”。
 - 每次请求累计 CU，普通快照变化不清空窗口累计用量。
 - 请求累计 CU 后不使用陈旧母号快照搬动旧归因；新的可信 fraction 变化才触发重算。
 - 母号可信下降和上涨都会立即重算用户额度。
