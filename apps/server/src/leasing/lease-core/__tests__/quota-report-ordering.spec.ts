@@ -130,12 +130,8 @@ describe("causal report-result integration", () => {
     await usage(second, secondLease.leaseId, "u1-second", T + 10);
     const actual = second.fairShareTracker!.getWindowStateForTesting(11, BUCKET);
 
-    expect({
-      ...actual,
-      primary: { ...actual!.primary, lastReason: undefined },
-      weekly: { ...actual!.weekly, lastReason: undefined },
-    }).toEqual(expected);
-    expect(actual!.primary.lastReason).toBe("LATE_USAGE_RECONCILED");
+    expect(actual).toEqual(expected);
+    expect(second.fairShareTracker!.getWindowReasons(11, BUCKET)?.primary).toBe("LATE_USAGE_RECONCILED");
     expect(actual!.primary.subjects["card-A"].attributedShare).toBeCloseTo(0.1, 12);
     expect(actual!.primary.unattributedShare).toBe(0);
   });

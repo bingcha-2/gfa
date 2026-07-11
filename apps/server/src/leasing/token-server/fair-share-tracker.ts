@@ -1033,6 +1033,10 @@ export class FairShareTracker {
   getWindowStateForTesting(accountId: number, bucket: string) {
     return this.windowCu?.getStateForTesting(accountId, bucket) ?? null;
   }
+
+  getWindowReasons(accountId: number, bucket: string) {
+    return this.windowCu?.getReasons(accountId, bucket) ?? null;
+  }
 }
 
 function clamp01(n: number): number {

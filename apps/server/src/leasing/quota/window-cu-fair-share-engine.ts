@@ -23,17 +23,17 @@ export interface WindowCuEngineOptions {
 
 type AccountingView = Pick<FairShareWindowState,
   "scope" | "windowMs" | "primed" | "windowStart" | "resetAt" | "fraction" | "lastSnapshotAt"
-  | "assignedBurn" | "unattributedShare" | "subjects" | "lastReason"
+  | "assignedBurn" | "unattributedShare" | "subjects"
 >;
 
 function view(state: FairShareWindowState): AccountingView {
   const {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects, lastReason,
+    assignedBurn, unattributedShare, subjects,
   } = state;
   return {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects, lastReason,
+    assignedBurn, unattributedShare, subjects,
   };
 }
 
@@ -166,6 +166,11 @@ export class WindowCuFairShareEngine {
   getStateForTesting(accountId: number, bucket: string): { primary: AccountingView; weekly: AccountingView } | null {
     const state = this.states.get(accountId)?.get(bucket);
     return state ? { primary: view(state.primary), weekly: view(state.weekly) } : null;
+  }
+
+  getReasons(accountId: number, bucket: string): { primary: string; weekly: string } | null {
+    const state = this.states.get(accountId)?.get(bucket);
+    return state ? { primary: state.primary.lastReason || "", weekly: state.weekly.lastReason || "" } : null;
   }
 
   entries(): Array<{ accountId: number; bucket: string; windows: QuotaWindowsState }> {

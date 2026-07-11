@@ -1298,8 +1298,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const sessionId = String(payload?.sessionId || "");
       const headers = typeof payload?.headers === "string" ? payload.headers : payload?.headers ? JSON.stringify(payload.headers) : "";
       const reverseProxy = Boolean(payload?.clientFlag);
-      const quotaState = quotaBucket
-        ? this.fairShareTracker?.getWindowStateForTesting(accountId, quotaBucket)
+      const quotaReasons = quotaBucket
+        ? this.fairShareTracker?.getWindowReasons(accountId, quotaBucket)
         : null;
 
       if (accountId && this.banEventRecorder) {
@@ -1321,8 +1321,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
         snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
         reason: String(payload?.reason || ""),
-        primaryReason: quotaState?.primary.lastReason || "",
-        weeklyReason: quotaState?.weekly.lastReason || "",
+        primaryReason: quotaReasons?.primary || "",
+        weeklyReason: quotaReasons?.weekly || "",
       });
     }
 
