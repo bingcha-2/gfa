@@ -111,17 +111,17 @@ Commit: `feat(pricing): add per-model API equivalent values`
 - Create: `apps/server/src/leasing/quota/fair-share-window.ts`
 - Create: `apps/server/src/leasing/quota/fair-share-window.spec.ts`
 
-- [ ] **Step 1: Write failing CU adapter tests**
+- [x] **Step 1: Write failing CU adapter tests**
 
 Assert all non-zero upstream usage counts, zero usage does not, model multipliers differ, and one event feeds both scopes without double-counting either scope.
 
-- [ ] **Step 2: Verify CU RED, implement, verify GREEN**
+- [x] **Step 2: Verify CU RED, implement, verify GREEN**
 
 Run RED/GREEN: `pnpm --filter @gfa/server exec vitest run src/leasing/quota/fair-share-cu.spec.ts`
 
 Implementation must delegate rates to `@gfa/shared`; it must not own a second price table.
 
-- [ ] **Step 3: Write failing reducer tests**
+- [x] **Step 3: Write failing reducer tests**
 
 Test these event sequences in both arrival orders:
 
@@ -133,17 +133,17 @@ expect(snapshotFirst).toEqual(reportFirst);
 
 Add first-request late report, existing A then late B, 1 second/30 second/9m59s lateness, >10m evidence missing, stale snapshot rejection, rebound, independent reset, resetAt drift, join/leave/rebind, and randomized arrival permutations.
 
-- [ ] **Step 4: Verify reducer RED**
+- [x] **Step 4: Verify reducer RED**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/quota/fair-share-window.spec.ts`
 
 Expected: FAIL because the reducer is missing.
 
-- [ ] **Step 5: Implement minimal deterministic reducer**
+- [x] **Step 5: Implement minimal deterministic reducer**
 
 State must contain primary/weekly reset metadata, per-subject cumulative CU/T, assigned/unattributed burn, stable participant metadata, revision, and a reorder tail capped at 10 minutes, 128 segments, and 16 KB serialized. Sorting uses clamped `upstreamCompletedAt`/`observedAt`, never arrival order.
 
-- [ ] **Step 6: Verify GREEN and property invariants**
+- [x] **Step 6: Verify GREEN and property invariants**
 
 Assert after every generated event:
 
