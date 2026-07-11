@@ -120,6 +120,28 @@ Anthropic 公布了模型 Token 价格。本项目用它作为绑定用户之间
 - Codex 使用官方 Credits 表。
 - Claude 使用官方价格作为相对权重，并由真实母号快照持续校准总量。
 
+### 4.1 不回归边界：超卖、独享与套餐份额
+
+本次不是套餐、席位或销售策略改造。以下现有语义必须保持不变：
+
+- 卡权重 `w_i` 的来源与计算方式不变。
+- 母号保底席位数 `N` 不变。
+- 份额分母继续使用 `D = max(N, Σw)`。
+- 超卖订单是否允许创建、绑定账号选择、超卖后份额切薄规则不变。
+- `exclusive` 显式标记、满权重自动识别独享、客户端独享徽标不变。
+- 独享血条是否跳过拼车 scale 的现有产品语义不变。
+- 中途加绑调用 `refreshParticipants()` 后即时重算 `D` 的现有语义不变。
+- 5h 和周窗口各自锁定参与者与 reset 的行为不变。
+
+允许改变的只有：
+
+- 原始 Token 如何按真实模型换算成 CU。
+- `weightedUsed` 从段内增量改为当前窗口累计 CU。
+- 母号可信变化后 `T_i` 如何按窗口累计 CU 重算。
+- 快照时序校验与当前窗口持久化可靠性。
+
+任何导致 `w_i`、`N`、`D`、`e_i`、独享判定、超卖订单结果或徽标发生变化的代码，都视为本次范围外回归，必须阻止合并，不能通过修改旧测试期望来掩盖。
+
 ## 5. 核心数据模型
 
 ### 5.1 两个窗口，不拆模型池
@@ -481,7 +503,7 @@ primary 个人剩余 > 0
 
 ## 14. 代码边界
 
-建议新增：
+新增：
 
 - `apps/server/src/leasing/quota/model-rate-registry.ts`：模型精确映射、费率版本与生效时间。
 - `apps/server/src/leasing/quota/fair-share-cu.ts`：纯函数 CU 计算，不读取数据库或快照。
@@ -522,6 +544,13 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 不需要客户端 UI 大改。客户端继续接收和显示 5h、周两根血条；主要变化在服务端计算和快照可信性。
 
 ## 16. 测试要求
+
+本次必须同时具备四层测试，不能只增加 `FairShareTracker` 单元测试：
+
+1. 纯函数单测：模型映射、费率和 CU。
+2. 服务端集成测试：真实 lease、report、订阅同步、持久化和血条接口。
+3. 客户端集成测试：真实 Go 代理解析上游 SSE/响应头、生成 usage/quota report、消费服务端状态。
+4. 客户端—服务端跨进程端到端测试：实际 Go 客户端和实际 Nest HTTP 服务串联，中间不替换额度业务逻辑。
 
 ### 16.1 模型 CU
 
@@ -564,6 +593,173 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - reset 后不产生历史窗口行。
 - 小时聚合 CU 丢失或延迟不能影响实时额度执行。
 
+### 16.5 超卖与独享回归套件
+
+现有以下测试不能删除或放宽断言，只能补充 `window-cu-v1` 参数化用例：
+
+- `apps/server/src/leasing/token-server/__tests__/fair-share-tracker.spec.ts`
+- `apps/server/src/leasing/token-server/__tests__/fair-share-exclusive-weekly-coldstart.spec.ts`
+- `apps/server/src/leasing/token-server/__tests__/fair-share-exclusive-load-selfheal.spec.ts`
+- `apps/server/src/leasing/account/billing/__tests__/catalog-lifecycle-e2e.spec.ts`
+- `apps/server/src/leasing/remote-codex/__tests__/codex-quota-e2e-weighting.spec.ts`
+
+必须锁定：
+
+- 未超卖、刚好满员、轻度超卖和严重超卖时 `D=max(N,Σw)` 不变。
+- 任意序列 `Σe_i ≤ 1`。
+- 拼车所有用户展示的账号级剩余合计不超过母号真实剩余。
+- 独享卡继续按现有独享语义展示并在自身份额耗尽时拦截。
+- 中途加入导致的份额切薄与当前生产语义一致。
+- 新算法只改变 CU/T 归因，不改变订单、绑定、徽标和套餐权重。
+
+### 16.6 服务端真实链路集成测试
+
+在现有 Codex 场景套基础上增加 Anthropic 对称场景，并使用真实 Prisma 临时数据库、真实 `LeaseService`、`EntitlementSyncService` 和 HTTP controller：
+
+- `leaseToken → reportResult → FairShareTracker → FairShareWindow → public status` 全链路。
+- 用量 exactly-once 去重与关键 checkpoint 同时验证。
+- 服务实例销毁、重新创建、`onModuleInit()` 恢复后结果一致。
+- 订阅创建、加入、退出、续费、凭证更换和换母号走真实订阅同步入口，不直接修改 tracker 私有 Map。
+- primary 与 weekly 分别 reset，不允许一个窗口清掉另一个。
+- 旧算法开关和新算法开关在同一 fixture 下运行，除明确改变的 CU/T 外，其余业务输出一致。
+
+新增：
+
+- `apps/server/src/leasing/remote-codex/__tests__/codex-window-cu-lifecycle.e2e.spec.ts`
+- `apps/server/src/leasing/remote-anthropic/__tests__/anthropic-window-cu-lifecycle.e2e.spec.ts`
+- `apps/server/src/leasing/subscription/__tests__/fair-share-subscription-lifecycle.e2e.spec.ts`
+- `apps/server/src/leasing/token-server/__tests__/fair-share-checkpoint-restart.e2e.spec.ts`
+
+### 16.7 客户端—服务端跨进程 E2E Harness
+
+新增一个独立黑盒测试入口，真实启动服务端并运行 Go 客户端测试：
+
+```text
+脚本 orchestrator
+  ├── 创建临时 SQLite/账号/订阅数据
+  ├── 启动真实 Nest HTTP 服务（随机端口）
+  ├── 等待 health ready
+  ├── 启动脚本化 OpenAI/Anthropic 假上游
+  ├── 运行 apps/app 中的 Go E2E tests
+  ├── 查询服务端公开 quota/status
+  └── 关闭服务并检查无未落盘 revision
+```
+
+新增：
+
+- `tests/quota-e2e/run.mjs`：跨进程编排、临时目录、端口和退出码管理。
+- `tests/quota-e2e/server-fixture.ts`：以测试配置启动真实 Nest app；只替换外部 OpenAI/Anthropic 网络端点和可控时钟，不替换额度服务。
+- `tests/quota-e2e/test-control.controller.ts`：仅测试构建启用，用于推进时钟、脚本化母号快照、触发优雅重启/异常退出和订阅生命周期动作；生产模块不得注册。
+- `apps/app/quota_client_server_e2e_test.go`：实际 Codex/Claude leaser、proxy、usage parser、reporter、血条状态串联测试。
+
+这套 E2E 必须验证真实 JSON/HTTP 契约，包括：
+
+- Go 客户端以上游响应实际模型为准，而不是只用请求模型。
+- 输入、缓存读取、缓存写入、输出、Fast 和 `observedAt` 完整上报。
+- 服务端返回 primary/weekly 个人 fraction 和各自 resetAt。
+- Go 客户端正确更新两根血条、倒计时和拦截原因。
+- 服务端拒绝旧快照/跨账号快照后，客户端不能把它们重新显示出来。
+- 旧客户端缺少 `observedAt`、缓存写入拆分或新模型字段时，新服务端走明确兼容降级且不记成零用量。
+- 新客户端连接仍运行 `segment-v1` 的服务端时，新增字段可被忽略，旧链路不崩溃。
+
+测试控制接口只负责制造外部事件，不得直接写 `FairShareTracker` 内存状态；所有状态变化必须经过与生产相同的 lease/report/subscription/quota snapshot 入口。
+
+### 16.8 极限场景矩阵
+
+以下场景 Codex 与 Anthropic 都要覆盖；仅某 provider 支持的模型字段可以单独标注：
+
+#### 官方 reset 与 reset 时间变化
+
+- primary 单独 reset，weekly 保持原窗口。
+- weekly 单独 reset，primary 保持原窗口。
+- 两个窗口同时 reset。
+- fraction 从接近 0 跳回 1，`resetAt` 正确前移到下一窗口。
+- fraction 上升但 `resetAt` 不变：按同窗口官方修正处理，不误清 CU。
+- fraction 下降但 `resetAt` 小幅后移：按现有 drift 容差继续同窗口归因。
+- `resetAt` 在容差内前后抖动，不 reset。
+- `resetAt` 明确推进超过容差，只清对应窗口。
+- 旧窗口快照晚到、`resetAt` 已过期、observedAt 更旧：全部拒绝。
+- reset 与 usage report 同时发生：按 revision/observedAt 得出唯一确定结果，不重复计费、不丢 CU。
+
+#### 用户中途加入
+
+- 母号尚未消耗时加入。
+- 母号已消耗 1%、50%、99% 时加入。
+- 加入后未产生 usage：不承担旧归因。
+- 加入后产生 usage、母号快照尚未变化：只累计 CU，不搬旧账。
+- 加入后母号下降、上涨、reset：分别验证重算。
+- 第 `N` 个用户刚好满员、第 `N+1` 个用户触发超卖切薄。
+- 独享订阅所在母号中途出现新绑定时，既有独享标签/份额业务语义保持现状。
+
+#### 用户中途退出与续费
+
+- idle 用户退出。
+- 已产生大量 CU/T 的用户退出：历史会计残留保留，不能转嫁。
+- 退出与母号快照并发。
+- 退出后同一订阅恢复：沿用同一 `quotaSubjectId`。
+- 到期后续费：当前未 reset 窗口不能获得新额度。
+- 退出用户跨 primary reset、weekly 未 reset：只清 primary 残留。
+
+#### 用户订阅换号/换凭证
+
+- 同一订阅只换 access key：CU/T 完全连续。
+- 同一订阅换客户端设备：不产生新额度主体。
+- 同一订阅从母号 A 迁到母号 B：A 保留会计残留，B 按半路加入。
+- 换号时 A/B 的 resetAt 不同：分别遵循各自窗口。
+- 换号与 usage report 同时发生：lease 所属账号决定唯一归属，不能双记或漏记。
+- 旧 lease 在换号后迟到上报：仍归原 lease 账号，不能污染新账号。
+
+#### 重启、故障与乱序
+
+- usage 后、快照前正常重启。
+- 快照重算后正常重启。
+- checkpoint 写入过程中异常退出。
+- checkpoint 失败后客户端重试相同 reportId。
+- 服务端重启后收到重启前生成的旧快照。
+- 同一 reportId 重复 2 次、100 次，最终只计一次。
+- 100 个用户并发上报，同时穿插 fraction 上升、下降和 reset。
+- 数据库同组窗口标量不一致：拒绝部分恢复并走明确冷启动，不拼接脏状态。
+
+#### 数值极限与模型变化
+
+- 0 Token、1 Token、超大 Token、输出远大于输入、全部缓存命中。
+- Claude 5m/1h cache write 拆分与只能得到总 cache creation 的降级路径。
+- Sol、Terra、Luna、Fable、Opus、Sonnet、Haiku、autocomplete 和未知模型混用。
+- 模型费率生效时间恰好跨过窗口中点与 reset 边界。
+- fraction 为 0、1、极小浮点、NaN、Infinity、-1 unknown。
+- CU、T、fraction 永远不能产生 NaN、Infinity、负数或超过合法上界。
+
+### 16.9 全局性质测试
+
+除场景用例外，使用固定 seed 的属性/随机序列测试生成 usage、snapshot、join、leave、rebind、restart、reset 事件，持续验证：
+
+```text
+窗口内 CU_i 单调不减，只有对应 reset 清零
+ΣT_i + unattributedShare 不超过已确认母号消耗
+Σe_i ≤ 1
+T_i ≥ 0
+个人剩余在 [0,1]
+旧 observedAt 不能改变状态
+重复 reportId 不能改变状态
+primary 操作不能清 weekly，weekly 操作不能清 primary
+序列化→加载后状态等价
+```
+
+随机测试失败时必须打印 seed 和完整事件序列，保证 CI 中可以复现。
+
+### 16.10 CI 门禁
+
+合并前至少执行：
+
+```bash
+pnpm --filter @gfa/server test
+pnpm --filter @gfa/server lint
+(cd apps/app && go test ./...)
+node tests/quota-e2e/run.mjs
+```
+
+跨进程 E2E 不得设为默认跳过。若运行时间过长，可拆成每次 PR 的核心矩阵与 nightly 的 100 用户并发/随机长序列，但官方 reset、resetAt 漂移、中途加入/退出、换号、重启和客户端—服务端契约必须属于每次 PR 的必跑集合。
+
 ## 17. 已知限制
 
 1. 母号同时被 GFA 外部客户端使用时，仅靠母号 fraction 和本地 CU 无法精确判断外部消耗属于谁。无本地 CU 时可记为未归因；与本地请求交错时只能按当前累计比例近似分配。
@@ -584,4 +780,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - 不新增历史窗口表。
 - 乱序和跨账号快照不能污染当前状态。
 - 冷启动不追责历史未知消耗，正常重启连续恢复，中途加订阅不继承旧归因。
+- 超卖、独享、席位权重、订单与徽标语义通过旧测试和新算法参数化测试保持不变。
+- 客户端—服务端跨进程 E2E 覆盖 reset、resetAt 变化、加入、退出、续费、换号、重启、乱序与并发。
+- 所有端到端必跑用例和全局不变量通过后才允许开启 `window-cu-v1`。
 - 可以通过环境变量分别回退 Codex 或 Anthropic 到旧算法。
