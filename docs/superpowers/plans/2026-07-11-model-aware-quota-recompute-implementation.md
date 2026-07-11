@@ -324,15 +324,15 @@ Commit: `feat(quota): add bounded diagnostic trace chain`
 - Modify: `apps/app/frontend/src/lib/usageSummary.test.ts`
 - Modify: server portal service/tests
 
-- [ ] **Step 1: Write failing UI/portal tests**
+- [x] **Step 1: Write failing UI/portal tests**
 
 Assert “API 等价价值” wording, exact/recalculated/legacy indication, client/server per-model parity, separate 5h/weekly blood bars, and no invented combined minimum pool.
 
-- [ ] **Step 2: Verify RED, implement, verify GREEN**
+- [x] **Step 2: Verify RED, implement, verify GREEN**
 
 Run: `pnpm --dir apps/app/frontend test --run && pnpm --filter @gfa/server exec vitest run src/leasing/account/portal`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Commit: `fix(dashboard): show exact model-aware API values`
 

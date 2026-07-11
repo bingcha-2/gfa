@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildModelUsageRows, buildUsageOverview } from './usageSummary'
+import { buildModelUsageRows, buildUsageOverview, pricingQualityLabel } from './usageSummary'
 
 describe('usage summary helpers', () => {
   it('builds the user-facing overview without billable tokens', () => {
@@ -38,6 +38,8 @@ describe('usage summary helpers', () => {
         cacheWriteTokens: 20,
         totalTokens: 210,
         estimatedCostUSD: 0.8,
+        pricingQuality: 'exact',
+        pricingVersion: 'api-pricing-2026-07-11',
       },
       'gpt-5-codex': {
         modelKey: 'gpt-5-codex',
@@ -57,5 +59,8 @@ describe('usage summary helpers', () => {
     expect(rows[0].totalTokens).toBe(210)
     expect(rows[0].costShare).toBe(0.8)
     expect(rows[1].costShare).toBe(0.2)
+    expect(rows[0].pricingQuality).toBe('exact')
+    expect(pricingQualityLabel(rows[0].pricingQuality)).toBe('精确模型价')
+    expect(pricingQualityLabel(rows[1].pricingQuality)).toBe('旧版家族估算')
   })
 })
