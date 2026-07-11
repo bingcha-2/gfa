@@ -150,6 +150,15 @@ export class CodexProvider implements Provider<CodexAccount> {
    * for console display. No credits concept.
    */
   applyQuotaSnapshot(account: CodexAccount, quota: any): { account: CodexAccount } {
+    // 跨账号污染防护(系统性根因):客户端只有一份全局额度缓存,不认账号(codex_leaser.go
+    // globalCodexLeaser 单例)。服务端换号接力/改绑(lease-service「账户级接力」)把卡从母号 X 换到
+    // 母号 10 时,客户端缓存里可能还是 X 探来的额度,却随本次上报带来。客户端已把额度探自哪个号记在
+    // accountQuota.accountId(codex_quota_sync.go) → 与本号 id 不符即丢弃,绝不让别号额度污染本号的
+    // 显示与 fair-share 基线。缺 accountId(老格式)→ 不拦,向后兼容。
+    const probedAccountId = Number((quota as any)?.accountId);
+    if (Number.isFinite(probedAccountId) && probedAccountId > 0 && probedAccountId !== account.id) {
+      return { account };
+    }
     const acc = account as Record<string, unknown>;
     if (quota?.planType && typeof quota.planType === "string") {
       account.planType = quota.planType;
