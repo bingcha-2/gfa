@@ -241,7 +241,7 @@ export function createWindowState(config: {
     assignedBurn: 0,
     unattributedShare: 0,
     subjects,
-    compactedThroughAt: Number.NEGATIVE_INFINITY,
+    compactedThroughAt: 0,
   };
   return { ...cloneCore(base), revision: 0, base, reorderTail: [] };
 }

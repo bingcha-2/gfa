@@ -168,29 +168,29 @@ Commit: `feat(quota): add causal current-window reducer`
 - Create: `apps/server/src/leasing/quota/quota-write-coordinator.ts`
 - Create: `apps/server/src/leasing/quota/quota-write-coordinator.spec.ts`
 
-- [ ] **Step 1: Write failing repository tests against temporary SQLite**
+- [x] **Step 1: Write failing repository tests against temporary SQLite**
 
 Test intact restart restore, expired-scope reset, corrupt/inconsistent group rejection, fixed row count after 10,000 reports, and current journal mode unchanged.
 
-- [ ] **Step 2: Verify repository RED**
+- [x] **Step 2: Verify repository RED**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/quota/fair-share-window-repository.spec.ts`
 
-- [ ] **Step 3: Add schema/migration and repository**
+- [x] **Step 3: Add schema/migration and repository**
 
 `FairShareWindowHead` is one row per provider/account/bucket/scope; card rows remain one row per active/current accounting subject. Upsert only the affected account; never provider-wide `deleteMany/createMany`.
 
-- [ ] **Step 4: Write failing coordinator tests**
+- [x] **Step 4: Write failing coordinator tests**
 
 Use a fake transactional repository to prove 1/10/64 requests become one commit, 65 split at the cap, same-account revisions collapse to latest, acknowledgements wait for their persisted revision, failure stays retryable, and prune work yields to checkpoints.
 
-- [ ] **Step 5: Verify coordinator RED, implement, verify GREEN**
+- [x] **Step 5: Verify coordinator RED, implement, verify GREEN**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/quota/quota-write-coordinator.spec.ts`
 
 Use one in-process queue, a 10 ms timer, maximum 64 account revisions, and no WAL/journal changes.
 
-- [ ] **Step 6: Verify migration and commit**
+- [x] **Step 6: Verify migration and commit**
 
 Run: `pnpm db:generate && pnpm --filter @gfa/server lint && pnpm --filter @gfa/server exec vitest run src/leasing/quota/fair-share-window-repository.spec.ts src/leasing/quota/quota-write-coordinator.spec.ts`
 
