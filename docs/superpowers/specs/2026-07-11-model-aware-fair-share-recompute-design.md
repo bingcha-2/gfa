@@ -173,6 +173,7 @@ account
 
 ```ts
 interface FairShareUsageEvent {
+  reportId: string;
   provider: "codex" | "anthropic";
   accountId: number;
   cardId: string;
@@ -183,10 +184,14 @@ interface FairShareUsageEvent {
   cacheWrite1hTokens: number;
   outputTokens: number;
   serviceTier: "standard" | "fast";
-  occurredAt: number;
+  requestStartedAt: number;
+  upstreamCompletedAt: number;
+  arrivedAt: number;
   rateVersion: string;
 }
 ```
+
+`requestStartedAt` 和 `upstreamCompletedAt` 使用客户端记录的上游请求时刻，`arrivedAt` 只表示服务端收到上报的时刻。归因排序使用 `upstreamCompletedAt`，不能使用 `arrivedAt`，否则快照先到、上报后到时仍会得到不同结果。客户端时钟明显漂移时，以该 lease 的服务端签发时间和接收时间夹住并标记 `clock-clamped`；不得把异常时间写到其他窗口。
 
 Codex 没有缓存写入字段时，两种 cache write 均为零。Claude 若上游只给缓存创建总量而没有 5 分钟/1 小时拆分，第一版统一按 5 分钟缓存写入计算，并记录 `cacheWriteResolution="assumed-5m"` 供排障；不得静默当普通输入计算。
 
@@ -352,9 +357,9 @@ CU_i ← CU_i + requestCU
 
 `CU_i` 在当前官方窗口 reset 前不清空。
 
-请求到达时只累计 CU，不立即重新分配已经确认的旧消耗。原因是此刻持有的母号 fraction 可能仍是请求发生前的旧快照；如果立刻按新 CU 比例重分，会让刚加入或刚产生第一笔用量的用户继承快照之前的消耗。
+请求到达时先按 `upstreamCompletedAt` 写入当前 5h/周窗口的因果分段。如果它属于最后快照之后的开放段，只累计 CU，不立即重新分配已经确认的旧消耗；如果它属于一个已经关闭的快照段，说明这是晚到上报，必须从该段开始重放后续分段并立即修正归因。
 
-只有母号出现新的可信 fraction 变化时，才使用截至该快照的窗口累计 CU 重新计算：
+正常顺序下，只有母号出现新的可信 fraction 变化时，才使用截至该快照 `observedAt` 已发生的窗口累计 CU 重新计算：
 
 ```text
 T_i = assignedBurn × CU_i / ΣCU
@@ -366,7 +371,7 @@ T_i = assignedBurn × CU_i / ΣCU
 - `assignedBurn`：当前已确认、可分配给 GFA 绑定用户的母号消耗比例。
 - `T_i`：该卡当前承担的母号消耗比例。
 
-如果请求完成后母号快照尚未更新，个人归因暂时保持上一次可信结果；新快照到达后一次性追平。这是“等待总量真相源”，不是丢失用量。
+如果请求完成后母号快照尚未更新，个人归因暂时保持上一次可信结果；新快照到达后一次性追平。反过来，如果快照先到而用量上报在支持的乱序期限内到达，晚到上报会插回它真实发生的分段并重放，最终结果必须与“上报先到、快照后到”完全一致。
 
 ### 7.2 母号快照下降
 
@@ -379,9 +384,33 @@ burnDelta = previousFraction - nextFraction
 当 `burnDelta > 0`：
 
 - 当前窗口 `ΣCU > 0`：增加 `assignedBurn`，按整个窗口累计 CU 重算所有卡。
-- 当前窗口 `ΣCU = 0`：增加 `unattributedShare`，不把这段消耗留给后来出现的用户。
+- 当前窗口 `ΣCU = 0`：该段暂记 `unattributedShare`；若之后收到 `upstreamCompletedAt <= snapshot.observedAt` 的晚到上报，重放会自动把该段从无主账搬回真实用户。只有上报始终没有到达，才保持无主账。
 
 不再执行 `perCard.clear()`。
+
+### 7.2.1 快照先到、上报后到
+
+每个已接受的 fraction 变化先在内存中关闭一个当前窗口因果段，至少保存：
+
+```text
+fromObservedAt / toObservedAt
+beforeFraction / afterFraction
+burnDelta / recovery
+截至该段的 per-card cumulative CU
+result revision
+```
+
+服务端对同一账号、同一 scope 按事件发生时间确定性重放：
+
+1. 快照先到时立即更新母号总剩余并建立分段；不等待客户端，不阻塞账号血条。
+2. 上报到达时用 `reportId` exactly-once 去重，再按 `upstreamCompletedAt` 找到所属分段。
+3. 如果命中已经关闭的分段，从该段开始重算 `assignedBurn`、`unattributedShare` 和所有 `T_i`。
+4. primary 与 weekly 分别重放，因为两者快照边界不同；同一 usage event 可以同时被两个当前窗口引用。
+5. 重放后的新 revision checkpoint 成功后才向客户端确认上报成功。
+
+已经没有乱序可能的连续前缀立即折叠进累计 CU、`assignedBurn` 和 `T_i`；checkpoint 只保存折叠后的当前状态与尚未对齐的短尾巴，不按请求永久保存事件行。相邻、同方向且没有成员变更的尾段允许合并。`REORDER_HORIZON_MS` 固定为 10 分钟，单窗口最多 128 段、序列化后最多 16 KB；任一上限到达时把最老且无法匹配的段折叠为确定的 `unattributedShare` 并记录 `USAGE_EVIDENCE_MISSING`。这样数据库规模由“账号数 × 两个当前窗口 × 卡数”决定，不随历史请求数线性增长。
+
+因此，描述中的“几秒到几十秒”竞态可以确定性解决：usage report 在 10 分钟内到达时，网络到达顺序不影响最终归因。客户端正常重试必须在该期限内持续进行；超过期限或永久丢失的上报属于证据缺失，服务端只能保留 `unattributedShare`，不能在固定存储约束下无限等待或猜测某个用户。
 
 ### 7.3 母号快照上升
 
@@ -480,13 +509,23 @@ reset 操作：
 
 当前实现主要依赖 30 秒定时 flush，意外崩溃可能丢失最近一段 CU 或快照。新实现不能把定时 flush 当作唯一正确性保障：
 
-- 每次 exactly-once 用量上报完成 CU 累计后，必须 checkpoint 受影响母号的 primary 与 weekly 当前状态。
-- 每次接受可信母号快照并完成重算后，必须 checkpoint 对应窗口。
+- 每次 exactly-once 用量上报完成 CU 累计后，必须把受影响母号的 primary 与 weekly revision 交给单体进程内唯一的 checkpoint 协调器。
+- 每次接受可信母号快照并完成重算后，必须把对应窗口 revision 交给同一个协调器。
 - 用量报告只有在关键 checkpoint 成功后才标记为已持久化完成；失败保持可重试状态。
 - 定时 flush 继续保留，作为脏状态重试和兜底，不再承担唯一持久化责任。
 - checkpoint 只覆盖当前账号受影响的两个窗口，不能继续每次删除重建整个 provider 的全部行。
 
-为避免并发请求造成“一次请求一次全量写”，每个账号维护单调递增的内存 `revision`。多个相邻变更可以合并为一次事务，但每个报告只有在 `persistedRevision >= itsRevision` 后才返回持久化成功。exactly-once 去重状态与 checkpoint 的提交顺序必须保证：checkpoint 失败后的客户端重试不会被误判成“已经上报”而直接忽略。
+本服务是单体进程，不引入外部消息队列，也不为此改 SQLite journal mode 或开启 WAL。所有额度持久化经过一个进程内单写协调器：
+
+- 每个账号维护单调递增的内存 `revision`。
+- 协调器使用最多 10 ms 的微批窗口；同一批最多 64 个账号 revision，任一条件到达立即提交。
+- 同一账号连续变化只写批次内最新 revision；primary、weekly、report dedup 和紧凑会计摘要在同一事务中提交。
+- 每个报告只有在 `persistedRevision >= itsRevision` 后才返回持久化成功。
+- checkpoint 写入优先级最高；普通诊断日志只批量写，TTL 清理只在关键写队列为空时运行。
+- exactly-once 去重状态与 checkpoint 的提交顺序必须保证：checkpoint 失败后的客户端重试不会被误判成“已经上报”而直接忽略。
+- 禁止每个请求单独开启一个 checkpoint 事务，禁止每次删除重建整个 provider，禁止诊断日志与 checkpoint 各抢一次写锁。
+
+10 ms 是落盘组批等待上限，不是额度刷新延迟：内存状态和响应中的血条立即重算；只有“上报已可靠接收”的确认等待包含自身 revision 的事务成功。
 
 无法解决的边界是“上游请求已经消耗母号，但客户端在发送 usage report 前彻底崩溃”。这部分只能由后续母号 fraction 变化发现，并按无本地证据消耗处理。
 
@@ -540,7 +579,7 @@ primary 个人剩余 > 0
 
 任一窗口耗尽时，返回该窗口自己的 `resetAt` 和原因，客户端可以准确告诉用户等 5 小时窗口还是周窗口恢复。
 
-## 12. 持久化：不建历史窗口表
+## 12. 持久化：固定规模当前状态，不建历史窗口表
 
 ### 12.1 当前热状态
 
@@ -551,9 +590,11 @@ primary 个人剩余 > 0
 - `lastFraction`：最后接受的可信 fraction，不再是永久低水位。
 - 新增 `lastSnapshotAt`：拒绝旧快照倒灌。
 - 新增 `unattributedShare`：保存无法归因给本地用户的母号消耗。
+- 新增 `reorderTail`：紧凑保存尚可能被晚到上报修正的因果尾段；已稳定部分立即折叠，不保存逐请求历史。
+- 新增 `revision/persistedRevision`：支持单体进程内组提交和崩溃恢复。
 - 新增 `algorithm`：识别当前状态使用的归因算法版本。窗口内可能混合多个模型费率版本，因此热表不保存一个会误导人的单一 `rateVersion`；已经累计的 CU 本身就是跨版本恢复所需的权威值。
 
-同一个账号的 `lastSnapshotAt`、`unattributedShare` 等窗口标量沿用当前模式，重复写在该账号窗口的各卡行中。序列化时从同一个内存 tracker 生成全部行；加载时要求同组标量一致，不一致时拒绝恢复该组并按冷启动处理。本次不新增窗口头表，也不新增历史归档表。
+为避免 `reorderTail` 在每张卡重复保存，新增固定基数的 `FairShareWindowHead`：每个 `provider × accountId × scope` 只有一行，保存 fraction、reset、revision、未归因量和紧凑尾段；现有 `FairShareWindow` 只保存逐卡 CU/T。两张表的行数都由当前账号和当前卡数决定，reset 后覆盖，不保留关闭窗口，不新增逐请求事件表。
 
 ### 12.2 排障数据
 
@@ -598,6 +639,7 @@ primary 个人剩余 > 0
 - `apps/server/src/leasing/quota/model-rate-registry.ts`：模型精确映射、费率版本与生效时间。
 - `apps/server/src/leasing/quota/fair-share-cu.ts`：纯函数 CU 计算，不读取数据库或快照。
 - `apps/server/src/leasing/quota/fair-share-window-repository.ts`：按账号保存当前窗口 revision，提供关键 checkpoint 和启动恢复。
+- `apps/server/src/leasing/quota/quota-write-coordinator.ts`：单体进程内唯一写协调器，负责 10 ms/64 revision 微批、写入优先级和等待持久化水位。
 - `apps/server/src/leasing/token-server/quota-diagnostic-tracker.ts`：紧凑诊断事件、队列上限、72h TTL 和行数封顶。
 - `apps/server/src/leasing/rosetta/quota-diagnostics.service.ts`：按 trace/support code 查询、确定性 diagnosis 和脱敏导出。
 - `apps/web/src/app/(console)/console/(dashboard)/(product)/quota-diagnostics/page.tsx`：管理员额度诊断搜索与时间线。
@@ -624,7 +666,7 @@ primary 个人剩余 > 0
 - `apps/app/frontend/src/pages/DashboardPage.tsx`：金额文案改为 API 等价价值并展示估算质量。
 - `apps/server/src/leasing/account/portal/portal.service.ts`：删除硬编码 `FAMILY_PRICING`，直接累计单请求持久化 USD。
 - `apps/web/src/components/console/shell/console-sidebar.tsx`：增加“额度诊断”管理员入口。
-- `prisma/schema.prisma`：扩展当前热表、RequestLog、AccountQuotaSnapshot、小时聚合的 CU/USD/定价质量字段并增加 QuotaDiagnosticEvent；不新增历史窗口表。
+- `prisma/schema.prisma`：增加固定基数 `FairShareWindowHead`，扩展逐卡热表、RequestLog、AccountQuotaSnapshot、小时聚合的 CU/USD/定价质量字段并增加 QuotaDiagnosticEvent；不新增历史窗口或逐请求额度事件表。
 
 ## 15. 兼容与上线
 
@@ -750,6 +792,8 @@ unknown_model_fallback
 api_price_unknown
 api_price_short_assumption
 api_price_legacy
+late_usage_reconciled
+usage_evidence_missing
 ```
 
 一条事件包含公共字段：
@@ -792,6 +836,8 @@ CACHE_WRITE_ASSUMED_5M
 API_PRICE_UNKNOWN
 API_PRICE_SHORT_ASSUMPTION
 API_PRICE_LEGACY
+LATE_USAGE_RECONCILED
+USAGE_EVIDENCE_MISSING
 COLD_START_BASELINE_ONLY
 CHECKPOINT_FAILED
 CHECKPOINT_RETRY_SUCCEEDED
@@ -819,11 +865,11 @@ SUBJECT_REBOUND_ACCOUNT_CHANGED
 清理规则：
 
 - 服务启动完成数据库连接后立即 prune 一次，然后每小时执行。
-- 先按 `at/timestamp < now-72h` 分批删除，每批最多 10,000 行，避免长事务锁库。
+- 先按 `at/timestamp < now-72h` 分批删除，每批最多 500 行；每批提交后重新进入低优先级队列，先让出写入机会给 checkpoint。
 - 再检查行数硬上限，超限时删除最旧数据；高流量期间允许实际保留少于 72 小时，优先保护数据库。
 - 内存日志队列同样有上限；队列满时丢弃最旧诊断事件、增加 `diagnosticDropped` 计数并输出一次限频告警，不能拖垮请求主链。
 - 清理失败记录 `DIAGNOSTIC_PRUNE_FAILED` 并重试，不能影响额度执行。
-- SQLite 每日低峰执行 WAL checkpoint/`PRAGMA optimize`；使用 incremental vacuum 时分小批运行，禁止请求高峰做阻塞式全库 `VACUUM`。
+- 不为本功能开启 WAL 或增加额外 journal 运维。仅在低峰、关键写队列为空时执行 `PRAGMA optimize`；禁止请求高峰做阻塞式全库 `VACUUM`。
 
 以下不是诊断日志，不受 72 小时 TTL 影响：
 
@@ -940,7 +986,11 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - A 大请求后母号分两次下降，B 在两次下降之间发小请求；B 不承担全部第二段下降。
 - 轮询一次报告 40% 下降与分四次报告 10% 下降，最终归因近似一致。
 - 新用户加入后不立即搬动旧归因；新的可信快照到达时，已分配总消耗按最新累计 CU 比例重新分布。
-- 没有本地 CU 时发生的母号下降进入 `unattributedShare`，后来用户不继承。
+- 没有本地 CU 证据时发生的母号下降先进入 `unattributedShare`；发生时间晚于该快照的后来请求不继承。
+- 窗口第一笔请求的快照先到、usage report 在 1 秒、30 秒、9 分 59 秒后到：晚到上报插回原段后，结果与 report 先到完全一致，无主账搬回请求用户。
+- 窗口已有 A 的 CU，B 请求造成快照先下降、B report 后到：最终结果与 B report 先到完全一致，不能长期错扣 A。
+- 同一组 usage/snapshot 事件随机打乱网络到达顺序，按事件时间重放后的 primary/weekly 状态逐字段一致。
+- usage report 在 10 分钟后才到或永久未到时保持 `unattributedShare` 并记录 `USAGE_EVIDENCE_MISSING`，不能猜用户；尾段始终满足 128 段/16 KB 上限。
 - 新订阅加入并产生 CU、但母号尚无新快照时，不得立即搬动已经确认的旧归因。
 
 ### 17.3 上涨与快照
@@ -956,7 +1006,11 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - 重启后恢复累计 CU、当前归因、最后 fraction 和快照时间。
 - 启动恢复完成前不发放 lease。
 - 正常关机等待 checkpoint；意外崩溃恢复到最后一次成功的关键 checkpoint。
-- 并发报告可以合并 checkpoint，但每个报告必须等待覆盖自身 revision 的提交。
+- 1、10、64、65 个并发 revision 验证 10 ms/64 条微批边界；每个报告必须等待覆盖自身 revision 的提交。
+- 同一账号一批内多次变化只写最新 revision，两个窗口、dedup 和会计摘要原子提交。
+- SQLite 保持项目现有 journal mode，不因本功能开启 WAL。
+- 连续高并发上报同时触发 72h 清理：checkpoint 优先，清理每批不超过 500 行并在批间让出写入机会。
+- 固定账号和卡数下连续运行大量请求，`FairShareWindowHead/FairShareWindow` 行数不随请求数增长。
 - checkpoint 失败后重试不能被 exactly-once 去重错误忽略。
 - 中途加入的新订阅从 CU/T 为零开始，但受母号真实剩余缩放。
 - 退出订阅的历史 CU/T 保留到 reset，不转嫁给其他用户。
@@ -1090,6 +1144,7 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - 服务端重启后收到重启前生成的旧快照。
 - 同一 reportId 重复 2 次、100 次，最终只计一次。
 - 100 个用户并发上报，同时穿插 fraction 上升、下降和 reset。
+- 100 个用户并发上报期间启动 TTL 清理，验证无逐请求 checkpoint、无全 provider 重建、无明显写锁尖刺。
 - 数据库同组窗口标量不一致：拒绝部分恢复并走明确冷启动，不拼接脏状态。
 
 #### 数值极限与模型变化
@@ -1149,6 +1204,7 @@ node tests/quota-e2e/run.mjs
 2. Claude 没有公开订阅额度的完整内部公式，官方 API 价格只是相对权重。母号快照保证总量正确，但不同模型用户之间仍可能存在小幅相对误差。
 3. 去掉历史窗口表后，关闭窗口不能精确回滚。这是本次主动接受的复杂度取舍。
 4. 每次可信变化都重算意味着母号水位真实抖动时用户血条也会跟随变化；本次不增加额外平滑。
+5. 为保持单体 SQLite 数据规模固定，乱序重放只保证 10 分钟内的晚到上报；超过期限或永久缺失的凭证按无本地证据消耗处理，并留下稳定诊断原因。
 
 ## 19. 验收标准
 
@@ -1160,6 +1216,7 @@ node tests/quota-e2e/run.mjs
 - 历史金额只能标记为 `exact`、`recalculated` 或 `legacy`；无法精确还原的旧记录不得冒充官方精确价值，UI 不再无条件宣称“已节省”。
 - 每次请求累计 CU，普通快照变化不清空窗口累计用量。
 - 请求累计 CU 后不使用陈旧母号快照搬动旧归因；新的可信 fraction 变化才触发重算。
+- 快照先到、usage report 后到时按事件发生时间重放；上报在 10 分钟乱序期限内到达时，结果必须与相反网络到达顺序一致。
 - 母号可信下降和上涨都会立即重算用户额度。
 - 5h 和周窗口完全独立，不按模型拆池，不合成最低血条。
 - 只有官方 reset 清理对应窗口。
@@ -1171,5 +1228,6 @@ node tests/quota-e2e/run.mjs
 - 所有端到端必跑用例和全局不变量通过后才允许开启 `window-cu-v1`。
 - 任一线上问题能在 72 小时内按 trace/report/lease/account/subject 查询完整决策链并导出脱敏支持包。
 - 逐请求、额度事件、母号快照和结构化运行日志均执行 72 小时 TTL 与硬容量上限。
+- 单体服务只使用进程内单写协调器和微批 checkpoint，不为本功能开启 WAL；当前窗口表规模不随请求量增长。
 - 全仓 `pnpm test` 与 quota 跨进程 E2E 全绿，不允许只回归局部额度测试。
 - 可以通过环境变量分别回退 Codex 或 Anthropic 到旧算法。
