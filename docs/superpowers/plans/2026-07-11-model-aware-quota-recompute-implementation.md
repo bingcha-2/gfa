@@ -293,10 +293,15 @@ Commit: `feat(client): report causal usage and exact API values`
 - Create: `prisma/migrations/20260711100000_quota_diagnostics/migration.sql`
 - Modify: `apps/server/src/leasing/token-server/request-log-tracker.ts`
 - Modify: `apps/server/src/leasing/token-server/account-quota-snapshot-tracker.ts`
-- Create: `apps/server/src/leasing/token-server/quota-diagnostic-tracker.ts`
-- Create: `apps/server/src/leasing/rosetta/quota-diagnostics.service.ts`
-- Modify: relevant Nest module/controller files
-- Create: focused `*.spec.ts` files beside each service
+- Modify: `apps/server/src/leasing/lease-core/lease-service.ts`
+- Modify: `apps/server/src/leasing/rosetta/token-usage-stats.service.ts`
+- Modify: `apps/server/src/leasing/rosetta/rosetta.controller.ts`
+- Modify: focused tracker and Rosetta service specs
+
+Implementation note: diagnostics remain in the existing bounded `RequestLogTracker`
+and `TokenUsageStatsService` rather than introducing two pass-through services. The
+console exposes filtered request lookup plus `quota-support-package`, which joins the
+72-hour request trace, receipts, current window heads, and account snapshots.
 
 - [x] **Step 1: Write failing retention and trace tests**
 
@@ -339,10 +344,11 @@ Commit: `fix(dashboard): show exact model-aware API values`
 ### Task 10: Real client-server cross-process E2E
 
 **Files:**
-- Create: `tests/quota-e2e/package.json`
 - Create: `tests/quota-e2e/run.mjs`
-- Create: `tests/quota-e2e/fixtures/`
+- Create: `tests/quota-e2e/server-fixture.ts`
+- Create: `apps/server/src/leasing/quota/__tests__/quota-e2e-test-control.controller.ts`
 - Create: `apps/app/cmd/quota-e2e-client/main.go`
+- Create: `apps/app/quota_client_server_e2e_test.go`
 - Modify: root `package.json`
 - Modify: `apps/server/package.json`
 
@@ -387,17 +393,15 @@ Run: `pnpm --filter @gfa/server exec vitest run src/leasing/quota src/leasing/to
 
 Run: `node tests/quota-e2e/run.mjs`
 
-- [ ] **Step 4: Run the complete repository gate**
+- [x] **Step 4: Run the complete repository gate**
 
 Run: `pnpm test`
 
 Expected: lint, all unit tests, integration tests, existing E2E, new quota E2E, and all Go tests pass with zero skipped core quota scenarios.
 
-Result: lint, 1,795 server unit tests, 28 worker unit tests, 243 client tests,
-all Go tests, production build, and quota cross-process E2E pass. The repository-wide
-integration/E2E command remains red only in unchanged Worker Gmail/AdsPower fixtures
-(6 integration and 3 lifecycle E2E failures); `git diff 558837c4..HEAD -- apps/worker`
-is empty.
+Result (2026-07-12): lint, 1,800 server unit tests, 28 Worker unit tests,
+13 Worker integration tests, 3 Worker lifecycle E2E tests, all Go packages, and the
+real Go-client/Nest/SQLite quota cross-process matrix pass in one `pnpm test` run.
 
 - [x] **Step 5: Review implementation against every design acceptance criterion**
 

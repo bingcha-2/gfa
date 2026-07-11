@@ -14,6 +14,11 @@ function writeJson(filePath: string, value: unknown) {
 }
 
 describe("RemoteAnthropicService", () => {
+  it("enables the bounded replayable quota algorithm by default", () => {
+    const service = new RemoteAnthropicService({ accessKeysFilePath: "/tmp/missing-anthropic-keys.json" });
+    expect(service.fairShareTracker?.isWindowCuEnabled()).toBe(true);
+  });
+
   let tempDir: string;
   let accountsFilePath: string;
   let accessKeysFilePath: string;
@@ -65,6 +70,9 @@ describe("RemoteAnthropicService", () => {
       now: () => currentTime,
       randomId: () => "claude-lease-fixed",
       minClientVersion: "",
+      // Most cases below are legacy-compatibility assertions over the segment-v1
+      // inspection shape. Default selection is covered independently above.
+      fairShareAlgorithm: "segment-v1",
     }));
   }
 

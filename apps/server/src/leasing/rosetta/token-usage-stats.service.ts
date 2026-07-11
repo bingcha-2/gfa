@@ -668,6 +668,7 @@ export class TokenUsageStatsService {
   async getRequestLogs(opts: {
     accountEmail?: string; accessKeyId?: string; surface?: string;
     reportId?: string; traceId?: string; leaseId?: string;
+    accountId?: number; quotaSubjectId?: string;
     reverseProxyOnly?: boolean; hours?: number; limit?: number;
   } = {}) {
     const hours = Math.max(1, Math.min(72, opts.hours || 72));
@@ -681,6 +682,8 @@ export class TokenUsageStatsService {
     if (opts.reportId) where.reportId = opts.reportId.trim();
     if (opts.traceId) where.traceId = opts.traceId.trim();
     if (opts.leaseId) where.leaseId = opts.leaseId.trim();
+    if (Number(opts.accountId) > 0) where.accountId = Number(opts.accountId);
+    if (opts.quotaSubjectId) where.quotaSubjectId = opts.quotaSubjectId.trim();
     if (opts.reverseProxyOnly) where.reverseProxy = true;
 
     const logs = await this.prisma.requestLog.findMany({ where, orderBy: { at: "desc" }, take: limit });
@@ -689,10 +692,80 @@ export class TokenUsageStatsService {
     const emailById = await this.customerEmailById([...new Set(logs.map((l: any) => String(l.customerId || "")).filter(Boolean))]);
     const enriched = logs.map((l: any) => ({
       ...l,
+      // Prisma returns SQLite BigInt columns as JS bigint, which JSON.stringify
+      // cannot serialize. Convert epoch-ms fields at the HTTP boundary.
+      requestStartedAt: Number(l.requestStartedAt || 0),
+      upstreamCompletedAt: Number(l.upstreamCompletedAt || 0),
+      snapshotObservedAt: Number(l.snapshotObservedAt || 0),
       customerEmail: emailById.get(l.customerId) ?? "",
       canonicalUserId: canonicalUserId(Number(l.accountId || 0)),
     }));
     return { hours, logs: enriched };
+  }
+
+  /**
+   * 一键额度支持包：从任一因果 id / 母号 / 卡出发，拼出近 72h 请求证据、
+   * exactly-once 回执、当前双窗口和母号快照。仅查询已有脱敏/定长表，不读取
+   * token、请求 body 或账号凭证；每一组都硬封顶，避免排障本身拖垮 SQLite。
+   */
+  async getQuotaSupportPackage(opts: {
+    reportId?: string; traceId?: string; leaseId?: string;
+    accountId?: number; accessKeyId?: string; quotaSubjectId?: string;
+  }) {
+    const filters = {
+      ...(opts.reportId?.trim() ? { reportId: opts.reportId.trim() } : {}),
+      ...(opts.traceId?.trim() ? { traceId: opts.traceId.trim() } : {}),
+      ...(opts.leaseId?.trim() ? { leaseId: opts.leaseId.trim() } : {}),
+      ...(Number(opts.accountId) > 0 ? { accountId: Number(opts.accountId) } : {}),
+      ...(opts.accessKeyId?.trim() ? { accessKeyId: opts.accessKeyId.trim() } : {}),
+      ...(opts.quotaSubjectId?.trim() ? { quotaSubjectId: opts.quotaSubjectId.trim() } : {}),
+    };
+    if (Object.keys(filters).length === 0) {
+      return { generatedAt: new Date().toISOString(), retentionHours: 72, filters, logs: [], receipts: [], windows: [], snapshots: [], error: "selector_required" };
+    }
+
+    const since = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    const logResult = await this.getRequestLogs({ ...filters, hours: 72, limit: 200 });
+    const logs = logResult.logs.map((row: any) => ({
+      ...row,
+      requestStartedAt: Number(row.requestStartedAt || 0),
+      upstreamCompletedAt: Number(row.upstreamCompletedAt || 0),
+      snapshotObservedAt: Number(row.snapshotObservedAt || 0),
+    }));
+    const reportIds = [...new Set([filters.reportId, ...logs.map((row: any) => row.reportId)].filter(Boolean))] as string[];
+    const accountIds = [...new Set([filters.accountId, ...logs.map((row: any) => Number(row.accountId || 0))].filter((id) => Number(id) > 0))] as number[];
+    const receiptWhere: any = { createdAt: { gte: since } };
+    const receiptOr: any[] = [];
+    if (reportIds.length) receiptOr.push({ reportId: { in: reportIds } });
+    if (accountIds.length) receiptOr.push({ accountId: { in: accountIds } });
+    receiptWhere.OR = receiptOr.length ? receiptOr : [{ reportId: "__none__" }];
+    const receiptRows = await this.prisma.quotaReportReceipt.findMany({ where: receiptWhere, orderBy: { createdAt: "desc" }, take: 200 });
+    const receipts = receiptRows.map((row: any) => ({ ...row, revision: Number(row.revision || 0) }));
+    for (const row of receipts) if (Number(row.accountId) > 0 && !accountIds.includes(Number(row.accountId))) accountIds.push(Number(row.accountId));
+
+    const refMap = new Map<string, { provider: string; accountId: number }>();
+    for (const row of [...logs, ...receipts] as any[]) {
+      const ref = { provider: String(row.provider || ""), accountId: Number(row.accountId || 0) };
+      if (ref.provider && ref.accountId > 0) refMap.set(`${ref.provider}:${ref.accountId}`, ref);
+    }
+    const refs = [...refMap.values()];
+    const accountWhere: any = refs.length ? { OR: refs } : { accountId: { in: accountIds.length ? accountIds : [-1] } };
+    const headRows = await this.prisma.fairShareWindowHead.findMany({ where: accountWhere, orderBy: { updatedAt: "desc" }, take: 200 });
+    const windows = headRows.map((row: any) => {
+      let state: any = {};
+      try { state = JSON.parse(String(row.stateJson || "{}")); } catch { state = { corrupt: true }; }
+      return {
+        provider: row.provider, accountId: row.accountId, bucket: row.bucket, scope: row.scope,
+        revision: Number(row.revision || 0), updatedAt: row.updatedAt,
+        fraction: state.fraction, resetAt: state.resetAt, lastReason: state.lastReason || "",
+        assignedBurn: state.assignedBurn, unattributedShare: state.unattributedShare,
+        subjects: state.subjects || {}, corrupt: state.corrupt === true,
+      };
+    });
+    const snapshots = await this.prisma.accountQuotaSnapshot.findMany({
+      where: { ...accountWhere, timestamp: { gte: since } }, orderBy: { timestamp: "desc" }, take: 200,
+    });
+    return { generatedAt: new Date().toISOString(), retentionHours: 72, filters, logs, receipts, windows, snapshots };
   }
 
   /**

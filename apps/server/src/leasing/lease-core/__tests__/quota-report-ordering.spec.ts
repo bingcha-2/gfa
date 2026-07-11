@@ -178,6 +178,26 @@ describe("causal report-result integration", () => {
     expect(afterRetry!.weekly.subjects["card-A"].attributedShare).toBeCloseTo(0.1, 12);
   });
 
+  it("charges nonzero upstream usage even when the request finishes with an error", async () => {
+    const value = service();
+    const currentLease = await lease(value);
+    await quotaOnly(value, currentLease.leaseId, "failed-q0", 1, T);
+    now = T + 20;
+    await value.reportResult(sessionReqFor("card-A"), {
+      leaseId: currentLease.leaseId, reportId: "failed-u1", status: 500,
+      modelKey: "gpt-5.6-luna", inputTokens: 1_000_000, outputTokens: 0,
+      cachedInputTokens: 0, totalTokens: 1_000_000,
+      requestStartedAt: T + 5, upstreamCompletedAt: T + 10,
+      accountQuota: accountQuota(90, 90, T + 20),
+    });
+
+    const state = value.fairShareTracker!.getWindowStateForTesting(11, BUCKET)!;
+    expect(state.primary.subjects["card-A"].cumulativeCu).toBe(1);
+    expect(state.primary.subjects["card-A"].attributedShare).toBeCloseTo(0.1, 12);
+    expect(await prisma.cardUsageHourly.aggregate({ _sum: { requests: true, failedRequests: true, totalTokens: true } }))
+      .toMatchObject({ _sum: { requests: 1, failedRequests: 1, totalTokens: 1_000_000 } });
+  });
+
   it("restores the window and ignores an acknowledged report after service restart", async () => {
     const first = service();
     const currentLease = await lease(first);

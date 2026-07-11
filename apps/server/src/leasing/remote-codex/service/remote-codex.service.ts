@@ -65,7 +65,7 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
       provider: provider.id,
       now: options.now,
       algorithm: options.fairShareAlgorithm
-        ?? (process.env.BCAI_CODEX_FAIR_SHARE_ALGO === "window-cu-v1" ? "window-cu-v1" : "segment-v1"),
+        ?? (process.env.BCAI_CODEX_FAIR_SHARE_ALGO === "segment-v1" ? "segment-v1" : "window-cu-v1"),
     });
     super(
       provider,

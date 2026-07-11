@@ -1137,6 +1137,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
     const usage = this.usageForBilling(payload);
+    const usageDetail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
     const quotaBucket = modelKey ? bucketKey(this.provider.id, modelKey) : "";
     if (dedupId && this.accessKeyStore.hasUsageReport(cardId, dedupId)) {
       return {
@@ -1159,7 +1160,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       && dedupId
       && quotaBucket
       && this.fairShareTracker?.isWindowCuEnabled()
-      && (success || (payload?.accountQuota && typeof payload.accountQuota === "object")),
+      && (success || usageDetail.totalTokens > 0 || (payload?.accountQuota && typeof payload.accountQuota === "object")),
     );
     // In window-cu-v1 the card counters are committed only after the quota
     // checkpoint. If SQLite fails, a retry can replay the same reportId without
@@ -1177,8 +1178,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // Fair-share: record weighted usage FIRST (accumulate u_i), gated to hard-bound
     // cards only — pool/universal cards record elsewhere (accessKeyStore + tokenUsage)
     // but never into the per-account fraction-share window.
-    if (hardBound && this.fairShareTracker && success) {
-      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
+    if (hardBound && this.fairShareTracker) {
+      const detail = usageDetail;
       if (detail.totalTokens > 0) {
         const bucket = quotaBucket;
         // Codex 快速档(service_tier=priority)按乘数多扣份额,反映其占用稀缺的共享快速容量。
@@ -1232,7 +1233,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     if (durableQuotaReport) {
-      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
+      const detail = usageDetail;
       const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
       const accounting = detail.totalTokens > 0 ? {
         reportId: dedupId,

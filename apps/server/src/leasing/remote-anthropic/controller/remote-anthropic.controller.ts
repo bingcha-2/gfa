@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Req, Res } from "@nestjs/common";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteAnthropicHttpError, RemoteAnthropicService } from "../service/remote-anthropic.service";
@@ -6,7 +6,7 @@ import { RemoteAnthropicHttpError, RemoteAnthropicService } from "../service/rem
 @Public()
 @Controller("app/lease/anthropic")
 export class RemoteAnthropicController {
-  constructor(private readonly remoteAnthropic: RemoteAnthropicService) {}
+  constructor(@Inject(RemoteAnthropicService) private readonly remoteAnthropic: RemoteAnthropicService) {}
 
   @Get()
   root(@Res() response: any) {

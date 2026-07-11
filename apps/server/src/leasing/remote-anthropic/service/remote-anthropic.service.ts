@@ -66,7 +66,7 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
       provider: provider.id,
       now: options.now,
       algorithm: options.fairShareAlgorithm
-        ?? (process.env.BCAI_ANTHROPIC_FAIR_SHARE_ALGO === "window-cu-v1" ? "window-cu-v1" : "segment-v1"),
+        ?? (process.env.BCAI_ANTHROPIC_FAIR_SHARE_ALGO === "segment-v1" ? "segment-v1" : "window-cu-v1"),
     });
     super(
       provider,

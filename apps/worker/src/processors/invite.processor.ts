@@ -204,6 +204,7 @@ export async function processInvite(
     let debugUrl: string | null = null;
     const maxRetries = pool.poolSize;
     const failedProfiles = new Set<string>();
+    let lastOpenError = "";
     const canForceClose = pool.createForceCloseGuard(workerId);
 
     try {
@@ -233,6 +234,7 @@ export async function processInvite(
         break; // Success!
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        lastOpenError = msg;
         await logger.log("WARN", `openProfile(${profileId}) failed: ${msg}. Retrying...`);
         failedProfiles.add(profileId);
         await adspower.closeProfile(profileId).catch(() => {});
@@ -244,7 +246,7 @@ export async function processInvite(
     }
 
     if (!debugUrl || !profileId) {
-      throw new Error(`Failed to open any adspower profile for account ${accountId}`);
+      throw new Error(`Failed to open any adspower profile for account ${accountId}${lastOpenError ? `: ${lastOpenError}` : ""}`);
     }
 
     // Start heartbeat AFTER successful profile open

@@ -45,6 +45,7 @@ describe("Codex 额度 E2E 场景", () => {
     return withSessionResolver(new RemoteCodexService({
       accountsFilePath: accountsFile, accessKeysFilePath: keysFile, tokenProvider,
       now: () => now, randomId: () => `lease-${++leaseSeq}`, minClientVersion: "",
+      fairShareAlgorithm: "segment-v1", // explicit rollback-path compatibility suite
     }));
   }
   const acct = (id: number, extra: any = {}) => ({ id, email: `a${id}@x.com`, refreshToken: `rt-${id}`, enabled: true, planType: "pro", ...extra });

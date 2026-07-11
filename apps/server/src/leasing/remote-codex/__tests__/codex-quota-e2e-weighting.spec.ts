@@ -41,6 +41,7 @@ describe("Codex 额度 E2E · 权重/超卖/窗口独立", () => {
     return withSessionResolver(new RemoteCodexService({
       accountsFilePath: accountsFile, accessKeysFilePath: keysFile, tokenProvider,
       now: () => now, randomId: () => `lease-${++seq}`, minClientVersion: "",
+      fairShareAlgorithm: "segment-v1", // explicit rollback-path compatibility suite
     }));
   }
   const acct = (id: number) => ({ id, email: `a${id}@x.com`, refreshToken: `rt-${id}`, enabled: true, planType: "pro" });
