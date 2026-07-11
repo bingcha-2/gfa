@@ -321,7 +321,7 @@ apiValueUSD =
 593.41K × $5/M
 + 24.47M × $0.50/M
 + 102.56K × $30/M
-= $18.2788
+= $18.27885
 ```
 
 当前显示 `$4.83`，可以反推出旧代码错误套用了 GPT family 统一价 `$1.25/$0.125/$10`。该示例作为客户端与服务端共同 golden test；若部分单次请求实际属于 long context，逐请求正确总值应高于短上下文基线。
@@ -972,9 +972,9 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - 自动补全及其他辅助模型返回非零 usage 时正常计入，不允许无条件跳过。
 - 请求失败且 usage 为零时不产生 CU；失败但上游返回非零 usage 时仍按真实 usage 计入。
 - 客户端与服务端读取同一份 `api-pricing.json` golden fixtures，对每个模型得到完全相同 USD。
-- Sol 示例 `593.41K input + 24.47M cache read + 102.56K output` 在 Standard short 下严格得到 `$18.2788`，不能回到 `$4.83`。
+- Sol 示例 `593.41K input + 24.47M cache read + 102.56K output` 在 Standard short 下严格得到 `$18.27885`（界面四舍五入 `$18.28`），不能回到 `$4.83`。
 - Terra、Luna、5.4 mini、Fable、Opus、Sonnet、Haiku 分别使用自身价格，不回退 family 均价。
-- 同一模型 Standard、Priority、short、long 分别命中正确价格。
+- 同一模型 Standard short/long 与 Priority 官方已公布档位分别命中正确价格；当前 Priority 只公布 short，long 请求必须标记 `unsupported-context`，不得虚构 exact 价格。
 - context tier 按单请求判定；把两个 short 请求聚合后超过 272K 不能误算成 long。
 - Claude cache write 5m/1h 分别使用正确价格；只有总量时标记估算质量。
 - 未知模型金额使用显式 fallback 并标记 `legacy/unknown`，不能悄悄显示为精确官方价。
@@ -1212,7 +1212,7 @@ node tests/quota-e2e/run.mjs
 - Claude 使用带有效期的官方模型相对价格。
 - 所有返回非零上游 usage 的模型请求都计入 CU，模型之间仅倍率不同。
 - API 等价价值按单请求的真实模型、Standard/Priority、short/long、缓存读写 TTL 和请求时间计算，与额度 CU 使用不同注册表。
-- 客户端与服务端对同一请求得出相同 USD、pricing version 和估算质量；Sol golden case 在 Standard short 下严格得到 `$18.2788`。
+- 客户端与服务端对同一请求得出相同 USD、pricing version 和估算质量；Sol golden case 在 Standard short 下严格得到 `$18.27885`。
 - 历史金额只能标记为 `exact`、`recalculated` 或 `legacy`；无法精确还原的旧记录不得冒充官方精确价值，UI 不再无条件宣称“已节省”。
 - 每次请求累计 CU，普通快照变化不清空窗口累计用量。
 - 请求累计 CU 后不使用陈旧母号快照搬动旧归因；新的可信 fraction 变化才触发重算。

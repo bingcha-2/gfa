@@ -72,7 +72,7 @@ Commit: `feat(quota): add versioned model CU registry`
 - Modify: `packages/shared/package.json`
 - Modify: `scripts/sync-pricing.mjs`
 
-- [ ] **Step 1: Write failing pricing tests**
+- [x] **Step 1: Write failing pricing tests**
 
 ```ts
 const value = calculateApiValue({
@@ -81,23 +81,23 @@ const value = calculateApiValue({
   cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, outputTokens: 102_560,
   contextTokens: 100_000, occurredAt: Date.parse("2026-07-11T00:00:00Z"),
 });
-expect(value.usd).toBeCloseTo(18.2788, 4);
+expect(value.usd).toBeCloseTo(18.27885, 8);
 expect(value.quality).toBe("exact");
 ```
 
-Also cover Standard/Priority, short/long context per request, Claude 5m/1h cache writes, effective dates, and unknown models.
+Also cover Standard short/long per request, published Priority tiers, explicit unsupported Priority-long quality, Claude 5m/1h cache writes, effective dates, and unknown models.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @gfa/shared exec vitest run src/api-pricing.spec.ts`
 
 Expected: FAIL because model-aware pricing is absent.
 
-- [ ] **Step 3: Implement registry and sync validation**
+- [x] **Step 3: Implement registry and sync validation**
 
 Make `sync-pricing.mjs` copy both new registries to `apps/app/` and add a `--check` mode that exits non-zero when generated copies differ.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @gfa/shared exec vitest run src/api-pricing.spec.ts && pnpm sync:pricing && node scripts/sync-pricing.mjs --check`
 
@@ -266,7 +266,7 @@ Commit: `feat(quota): make report ingestion causal and durable`
 
 - [ ] **Step 1: Write failing Go pricing tests**
 
-Assert the Sol golden value `$18.2788`, Luna/Terra/mini differences, Standard/Priority, short/long per request, Claude cache TTLs, and explicit legacy quality.
+Assert the Sol golden value `$18.27885`, Luna/Terra/mini differences, Standard short/long, published Priority tiers, unsupported Priority-long quality, Claude cache TTLs, and explicit legacy quality.
 
 - [ ] **Step 2: Verify RED**
 
