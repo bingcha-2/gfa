@@ -552,12 +552,15 @@ export class RosettaController {
     @Query("accountEmail") accountEmail?: string,
     @Query("accessKeyId") accessKeyId?: string,
     @Query("surface") surface?: string,
+    @Query("reportId") reportId?: string,
+    @Query("traceId") traceId?: string,
+    @Query("leaseId") leaseId?: string,
     @Query("reverseProxy") reverseProxy?: string,
     @Query("hours") hours?: string,
     @Query("limit") limit?: string,
   ) {
     const res = await this.tokenUsageStats.getRequestLogs({
-      accountEmail, accessKeyId, surface,
+      accountEmail, accessKeyId, surface, reportId, traceId, leaseId,
       reverseProxyOnly: reverseProxy === "1" || reverseProxy === "true",
       hours: hours ? Number(hours) : undefined,
       limit: limit ? Number(limit) : undefined,

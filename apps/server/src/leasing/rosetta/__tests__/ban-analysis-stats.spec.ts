@@ -448,10 +448,12 @@ describe("getRequestLogs — per-request 热表浏览", () => {
     const findMany = vi.fn().mockResolvedValue([{ id: "r1", surface: "desktop", reverseProxy: true }]);
     const res = await makeService({ requestLog: { findMany } }).getRequestLogs({
       accountEmail: "a@x.com", surface: "desktop", reverseProxyOnly: true, hours: 24, limit: 50,
+      reportId: "r1", traceId: "t1", leaseId: "l1",
     });
     expect(res.logs).toHaveLength(1);
     const arg = findMany.mock.calls[0][0];
     expect(arg.where).toMatchObject({ accountEmail: "a@x.com", surface: "desktop", reverseProxy: true });
+    expect(arg.where).toMatchObject({ reportId: "r1", traceId: "t1", leaseId: "l1" });
     expect(arg.where.provider).toEqual({ in: ["codex", "anthropic"] });
     expect(arg.where.at.gte).toBeInstanceOf(Date);
     expect(arg.orderBy).toEqual({ at: "desc" });

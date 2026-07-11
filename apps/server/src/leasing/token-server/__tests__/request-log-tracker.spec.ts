@@ -20,7 +20,9 @@ describe("RequestLogTracker", () => {
     t.record({
       provider: "anthropic", accountId: 1, accountEmail: "a@x.com", accessKeyId: "c1",
       status: 200, totalTokens: 50, reverseProxy: true, surface: "cli", sourceIp: "1.2.3.4",
-      exitIp: "9.9.9.9", headers: '{"user-agent":"claude-cli/2"}',
+      exitIp: "9.9.9.9", headers: '{"user-agent":"claude-cli/2"}', reportId: "r1", traceId: "t1",
+      leaseId: "l1", quotaSubjectId: "c1", requestStartedAt: 100, upstreamCompletedAt: 200,
+      snapshotObservedAt: 250, primaryReason: "LATE_USAGE_RECONCILED",
     });
     expect(t.getQueueForTesting()).toHaveLength(1);
 
@@ -30,6 +32,9 @@ describe("RequestLogTracker", () => {
     expect(data[0]).toMatchObject({
       provider: "anthropic", accessKeyId: "c1", surface: "cli", sourceIp: "1.2.3.4",
       exitIp: "9.9.9.9", reverseProxy: true, status: 200,
+      reportId: "r1", traceId: "t1", leaseId: "l1", quotaSubjectId: "c1",
+      requestStartedAt: 100n, upstreamCompletedAt: 200n, snapshotObservedAt: 250n,
+      primaryReason: "LATE_USAGE_RECONCILED",
     });
     expect(t.getQueueForTesting()).toHaveLength(0);
   });
@@ -46,7 +51,7 @@ describe("RequestLogTracker", () => {
     t.record({ provider: "codex", headers: "x".repeat(20000) });
     await t.flush();
     const data = (prisma.requestLog.createMany as any).mock.calls[0][0].data;
-    expect(data[0].headers.length).toBeLessThanOrEqual(8000);
+    expect(data[0].headers.length).toBeLessThanOrEqual(2000);
   });
 
   it("pruneOld 删保留期之前的行", async () => {
@@ -54,7 +59,7 @@ describe("RequestLogTracker", () => {
     const now = REQUEST_LOG_RETENTION_MS + 5000;
     const t = new RequestLogTracker(prisma, { autoStart: false, now: () => now });
     await t.pruneOld();
-    const where = (prisma.requestLog.deleteMany as any).mock.calls[0][0].where;
+    const where = (prisma.requestLog.findMany as any).mock.calls[0][0].where;
     expect(where.at.lt).toBeInstanceOf(Date);
     expect(where.at.lt.getTime()).toBe(5000); // now - 保留期
   });
@@ -68,7 +73,8 @@ describe("RequestLogTracker", () => {
     await t.pruneOld();
 
     // findMany 用 skip=MAX、take=1、按 at 倒序取边界行
-    const fmArg = (prisma.requestLog.findMany as any).mock.calls[0][0];
+    const fmCalls = (prisma.requestLog.findMany as any).mock.calls;
+    const fmArg = fmCalls[fmCalls.length - 1][0];
     expect(fmArg).toMatchObject({ orderBy: { at: "desc" }, skip: REQUEST_LOG_MAX_ROWS, take: 1 });
     // 第二次 deleteMany 删 < 边界 at
     const delCalls = (prisma.requestLog.deleteMany as any).mock.calls;
@@ -80,8 +86,16 @@ describe("RequestLogTracker", () => {
     prisma.requestLog.count = vi.fn().mockResolvedValue(100);
     const t = new RequestLogTracker(prisma, { autoStart: false });
     await t.pruneOld();
-    expect(prisma.requestLog.findMany).not.toHaveBeenCalled();
-    expect((prisma.requestLog.deleteMany as any).mock.calls).toHaveLength(1); // 只有时间删除
+    expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(1); // 仅 TTL 小批扫描
+    expect((prisma.requestLog.deleteMany as any).mock.calls).toHaveLength(0);
+  });
+
+  it("队列封顶并暴露溢出计数", () => {
+    const t = new RequestLogTracker(makePrisma(), { autoStart: false });
+    for (let i = 0; i < 10_001; i++) t.record({ provider: "codex", reportId: `r${i}` });
+    expect(t.getQueueForTesting()).toHaveLength(10_000);
+    expect(t.getQueueForTesting()[0].reportId).toBe("r1");
+    expect(t.getOverflowCountForTesting()).toBe(1);
   });
 
   it("空队列 flush 不调库;flush 失败不抛", async () => {

@@ -622,11 +622,24 @@ model RequestLog {
   sourceIp     String   @default("")          // 用户来源 IP
   exitIp       String   @default("")          // 出口代理端点
   headers      String   @default("")          // 过滤后的请求头 JSON
+  reportId     String   @default("")
+  traceId      String   @default("")
+  leaseId      String   @default("")
+  quotaSubjectId String @default("")
+  requestStartedAt BigInt @default(0)
+  upstreamCompletedAt BigInt @default(0)
+  snapshotObservedAt BigInt @default(0)
+  reason       String   @default("")
+  primaryReason String  @default("")
+  weeklyReason String   @default("")
 
   @@index([at])
   @@index([accountEmail, at])
   @@index([accessKeyId, at])
   @@index([provider, at])
+  @@index([reportId])
+  @@index([traceId])
+  @@index([leaseId])
 }
 
 // ─── Customer Account System ────────────────────────────────────────────────

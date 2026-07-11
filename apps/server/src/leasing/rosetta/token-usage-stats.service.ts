@@ -667,9 +667,10 @@ export class TokenUsageStatsService {
    */
   async getRequestLogs(opts: {
     accountEmail?: string; accessKeyId?: string; surface?: string;
+    reportId?: string; traceId?: string; leaseId?: string;
     reverseProxyOnly?: boolean; hours?: number; limit?: number;
   } = {}) {
-    const hours = Math.max(1, Math.min(120, opts.hours || 120)); // ≤5 天(对齐 RequestLog 保留期)
+    const hours = Math.max(1, Math.min(72, opts.hours || 72));
     const limit = Math.max(1, Math.min(500, opts.limit || 200));
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
@@ -677,6 +678,9 @@ export class TokenUsageStatsService {
     if (opts.accountEmail) where.accountEmail = opts.accountEmail.trim();
     if (opts.accessKeyId) where.accessKeyId = opts.accessKeyId.trim();
     if (opts.surface) where.surface = opts.surface.trim();
+    if (opts.reportId) where.reportId = opts.reportId.trim();
+    if (opts.traceId) where.traceId = opts.traceId.trim();
+    if (opts.leaseId) where.leaseId = opts.leaseId.trim();
     if (opts.reverseProxyOnly) where.reverseProxy = true;
 
     const logs = await this.prisma.requestLog.findMany({ where, orderBy: { at: "desc" }, take: limit });

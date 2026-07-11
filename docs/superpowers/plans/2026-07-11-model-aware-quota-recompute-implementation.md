@@ -298,19 +298,19 @@ Commit: `feat(client): report causal usage and exact API values`
 - Modify: relevant Nest module/controller files
 - Create: focused `*.spec.ts` files beside each service
 
-- [ ] **Step 1: Write failing retention and trace tests**
+- [x] **Step 1: Write failing retention and trace tests**
 
 Prove one compact request summary per deduped report, trace/report/lease/account/subject lookup, stable reason codes, 72-hour expiry, row caps, 2 KB headers, 500-row low-priority prune batches, queue overflow counters, and no quota-path failure when diagnostics fail.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/token-server/__tests__/request-log-tracker.spec.ts src/leasing/token-server/__tests__/account-quota-snapshot-tracker.spec.ts src/leasing/token-server/quota-diagnostic-tracker.spec.ts`
 
-- [ ] **Step 3: Implement diagnostics and support export**
+- [x] **Step 3: Implement diagnostics and support export**
 
 Include `LATE_USAGE_RECONCILED`, `USAGE_EVIDENCE_MISSING`, snapshot rejection, reset, lifecycle, checkpoint, CU and pricing fields. Do not store credentials or request bodies.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @gfa/server test:unit`
 

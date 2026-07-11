@@ -114,6 +114,16 @@ export type RequestLogRecorder = {
     sourceIp?: string;
     exitIp?: string;
     headers?: string;
+    reportId?: string;
+    traceId?: string;
+    leaseId?: string;
+    quotaSubjectId?: string;
+    requestStartedAt?: number;
+    upstreamCompletedAt?: number;
+    snapshotObservedAt?: number;
+    reason?: string;
+    primaryReason?: string;
+    weeklyReason?: string;
   }) => void;
 };
 
@@ -1288,6 +1298,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const sessionId = String(payload?.sessionId || "");
       const headers = typeof payload?.headers === "string" ? payload.headers : payload?.headers ? JSON.stringify(payload.headers) : "";
       const reverseProxy = Boolean(payload?.clientFlag);
+      const quotaState = quotaBucket
+        ? this.fairShareTracker?.getWindowStateForTesting(accountId, quotaBucket)
+        : null;
 
       if (accountId && this.banEventRecorder) {
         this.banEventRecorder.observeRequest({
@@ -1300,6 +1313,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         provider: this.provider.id, accountId, accountEmail, accessKeyId: cardId,
         customerId: auth.record?.customerId as string | undefined, deviceId, userId, sessionId,
         modelKey, status, totalTokens: tokens, reverseProxy, surface, sourceIp, exitIp, headers,
+        reportId: dedupId,
+        traceId: String(payload?.traceId || ""),
+        leaseId,
+        quotaSubjectId: cardId,
+        requestStartedAt: Number(payload?.requestStartedAt || 0),
+        upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
+        snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
+        reason: String(payload?.reason || ""),
+        primaryReason: quotaState?.primary.lastReason || "",
+        weeklyReason: quotaState?.weekly.lastReason || "",
       });
     }
 
