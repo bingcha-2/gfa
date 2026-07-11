@@ -75,7 +75,6 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
-		"reportId":          newReportID(lease.LeaseId),
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -88,6 +87,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 		"totalTokens":       details.BillableTotalTokens, // 折扣后计费总量
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	addCausalReportFields(payload, lease.LeaseId, details)
 
 	go l.doReportWithRetry(payload, card, upstreamProxy)
 }
@@ -115,7 +115,6 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
-		"reportId":          newReportID(lease.LeaseId),
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -128,12 +127,31 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	addCausalReportFields(payload, lease.LeaseId, details)
 
 	go l.doReportWithRetry(payload, card, upstreamProxy)
 }
 
 func newReportID(leaseID string) string {
 	return fmt.Sprintf("%s:%d", leaseID, time.Now().UnixNano())
+}
+
+// addCausalReportFields is called once before retry/queue ownership begins.
+// The same map is retried, so ids and event times never change on retransmit.
+func addCausalReportFields(payload map[string]interface{}, leaseID string, details ReportDetails) {
+	reportID := newReportID(leaseID)
+	completedAt := details.UpstreamCompletedAt
+	if completedAt <= 0 {
+		completedAt = time.Now().UnixMilli()
+	}
+	startedAt := details.RequestStartedAt
+	if startedAt <= 0 || startedAt > completedAt {
+		startedAt = completedAt
+	}
+	payload["reportId"] = reportID
+	payload["traceId"] = reportID
+	payload["requestStartedAt"] = startedAt
+	payload["upstreamCompletedAt"] = completedAt
 }
 
 // ── 影子校验通道 ──

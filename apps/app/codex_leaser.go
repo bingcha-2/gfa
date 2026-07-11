@@ -244,7 +244,6 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 	}
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
-		"reportId":          newReportID(lease.LeaseId),
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -257,6 +256,7 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	addCausalReportFields(payload, lease.LeaseId, details)
 	// 快速档:仅在本次生效 priority 时带上,供服务端 fair-share 按 fast 乘数扣份额。
 	if details.ServiceTier != "" {
 		payload["serviceTier"] = details.ServiceTier

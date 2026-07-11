@@ -1214,7 +1214,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       if (accepted && this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
         if (account) this.syncFairShareQuotaSnapshot(accountId, account, {
-          observedAt: payload.accountQuota.observedAt,
+          observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
           arrivedAt: this.now(),
           snapshotId: dedupId || String(payload?.traceId || ""),
         });

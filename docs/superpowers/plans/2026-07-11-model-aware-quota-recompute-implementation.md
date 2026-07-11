@@ -264,23 +264,23 @@ Commit: `feat(quota): make report ingestion causal and durable`
 - Modify: `apps/app/usage_stats_test.go`
 - Create: `apps/app/report_timing_test.go`
 
-- [ ] **Step 1: Write failing Go pricing tests**
+- [x] **Step 1: Write failing Go pricing tests**
 
 Assert the Sol golden value `$18.27885`, Luna/Terra/mini differences, Standard short/long, published Priority tiers, unsupported Priority-long quality, Claude cache TTLs, and explicit legacy quality.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `cd apps/app && go test ./... -run 'Test(API|UsageStats)'`
 
-- [ ] **Step 3: Implement embedded model-aware pricing and migration**
+- [x] **Step 3: Implement embedded model-aware pricing and migration**
 
 Replace family prices and Fast `x1.5`; store per-request USD/version/mode/context/quality before aggregation. One-time historical migration must be atomic, idempotent, and retain a backup until success.
 
-- [ ] **Step 4: Write failing report timing/retry tests**
+- [x] **Step 4: Write failing report timing/retry tests**
 
 Assert every report carries stable `traceId/reportId`, actual model, complete token split, `requestStartedAt`, `upstreamCompletedAt`, and snapshot `observedAt`; queued retries preserve original ids/times.
 
-- [ ] **Step 5: Implement, verify GREEN, commit**
+- [x] **Step 5: Implement, verify GREEN, commit**
 
 Run: `cd apps/app && go test ./...`
 

@@ -279,6 +279,7 @@ func extractQuotaResetDelayMs(errorText string) int64 {
 // parseRetryAfterHeaderMs 解析 HTTP `Retry-After` 头 → 毫秒。支持两种标准格式:
 //   - 秒数:        "60"
 //   - HTTP-date:   "Wed, 21 Oct 2026 07:28:00 GMT"
+//
 // Anthropic 的 rate_limit_error 429 把恢复时间放在【这个响应头】里(body 里没有,
 // extractQuotaResetDelayMs 解析不到),body 取不到 retryAfterMs 时回退读它。解析不到返回 0。
 func parseRetryAfterHeaderMs(v string) int64 {
@@ -450,6 +451,8 @@ type ReportDetails struct {
 	RawTotalTokens      int64 // input + output 原始总量
 	BillableTotalTokens int64 // 折扣后的计费总量
 	ErrorText           string
+	RequestStartedAt    int64 // epoch ms at upstream request start
+	UpstreamCompletedAt int64 // epoch ms after the complete upstream response/stream
 
 	// ServiceTier 是本次请求实际生效的 Codex 服务档:"priority"=快速(Fast),空=标准。
 	// 随用量上报回服务端,供 fair-share 按 fast 乘数扣份额(多快就多扣)。仅 codex 用。

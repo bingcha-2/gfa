@@ -46,10 +46,14 @@ const tokens = (value: number) => Number.isFinite(value) && value > 0 ? value : 
 
 function findModel(usage: ApiValueUsage): ApiPriceModel | undefined {
   const id = norm(usage.modelId);
+  const matchLength = (model: ApiPriceModel) => [model.canonicalModelId, ...model.aliases]
+    .map(norm)
+    .filter((alias) => id === alias || id.startsWith(`${alias}-`))
+    .reduce((longest, alias) => Math.max(longest, alias.length), 0);
   return registry.models
     .filter((model) => model.provider === usage.provider && activeAt(model, usage.occurredAt))
-    .filter((model) => norm(model.canonicalModelId) === id || model.aliases.some((alias) => norm(alias) === id))
-    .sort((a, b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
+    .filter((model) => matchLength(model) > 0)
+    .sort((a, b) => matchLength(b) - matchLength(a) || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
 }
 
 function conservativePrice(provider: QuotaProvider, mode: ApiPricingMode, at: number): TokenPrice {

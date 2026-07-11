@@ -80,6 +80,14 @@ describe("API-equivalent pricing", () => {
     expect(value.quality).toBe("exact");
   });
 
+  it("resolves dated provider model ids through the longest alias", () => {
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 3, canonicalModelId: "claude-sonnet-5", quality: "exact" });
+  });
+
   it("marks unknown models instead of presenting fallback as exact", () => {
     const value = calculateApiValue(usage({ modelId: "gpt-future", inputTokens: 1_000_000 }));
     expect(value.usd).toBeGreaterThan(0);
