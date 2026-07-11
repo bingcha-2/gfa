@@ -25,6 +25,7 @@ import { sharedFairShareRegistry } from "./fair-share-registry";
 import { WindowCuFairShareEngine } from "../quota/window-cu-fair-share-engine";
 import type { FairShareUsageEvent } from "../quota/fair-share-cu";
 import { FairShareWindowRepository } from "../quota/fair-share-window-repository";
+import { QuotaWriteCoordinator } from "../quota/quota-write-coordinator";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
 export { quotaWeightFor };
@@ -175,6 +176,13 @@ export class FairShareTracker {
   private dirty = false;
   private readonly windowCu: WindowCuFairShareEngine | null;
   private readonly windowRepository: FairShareWindowRepository | null;
+  private readonly writeCoordinator: QuotaWriteCoordinator<{
+    accountId: number;
+    bucket: string;
+    windows: import("../quota/fair-share-window").QuotaWindowsState;
+    reportIds: string[];
+    createdAt: Date;
+  }> | null;
 
   constructor(opts: FairShareTrackerOptions) {
     this.opts = opts;
@@ -195,6 +203,22 @@ export class FairShareTracker {
     this.windowRepository = this.windowCu && this.prisma
       ? new FairShareWindowRepository(this.prisma, this.providerId)
       : null;
+    this.writeCoordinator = this.windowRepository
+      ? new QuotaWriteCoordinator({
+          maxDelayMs: 10,
+          maxBatchSize: 64,
+          commit: async (batch) => {
+            await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
+          },
+          mergePayload: (current, incoming) => ({
+            accountId: incoming.accountId,
+            bucket: incoming.bucket,
+            windows: incoming.windows,
+            reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
+            createdAt: incoming.createdAt,
+          }),
+        })
+      : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
         void this.flush();
@@ -206,6 +230,29 @@ export class FairShareTracker {
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
+
+  /** Whether this tracker is using the causal, replayable window algorithm. */
+  isWindowCuEnabled(): boolean {
+    return this.windowCu !== null;
+  }
+
+  /** True only when a previous acknowledgement survived a process restart. */
+  async hasPersistedReport(reportId: string): Promise<boolean> {
+    return this.windowRepository ? this.windowRepository.hasReport(reportId) : false;
+  }
+
+  /** Acknowledge only after the current state and report receipt share one SQLite commit. */
+  async checkpointReport(accountId: number, bucket: string, reportId: string): Promise<void> {
+    if (!this.windowCu || !this.writeCoordinator) return;
+    const entry = this.windowCu.entry(accountId, bucket);
+    if (!entry) return;
+    const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
+    await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
+      ...entry,
+      reportIds: reportId ? [reportId] : [],
+      createdAt: new Date(this.nowFn()),
+    });
+  }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
    *  costMultiplier:请求级成本乘数(默认 1)。Codex 快速档(service_tier=priority)按 >1 计,
@@ -755,6 +802,11 @@ export class FairShareTracker {
         if (group.result.ok) this.windowCu.restore(group.accountId, group.bucket, group.result.windows);
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
+      if (this.writeCoordinator) {
+        await this.writeCoordinator.scheduleLowPriority(async () => {
+          await this.windowRepository!.pruneReceipts(new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000), 500);
+        });
+      }
       return;
     }
     if (!this.prisma || !this.providerId) return;
@@ -866,9 +918,7 @@ export class FairShareTracker {
       if (!this.dirty) return;
       this.dirty = false;
       try {
-        for (const entry of this.windowCu.entries()) {
-          await this.windowRepository.checkpointAccount(entry.accountId, entry.bucket, entry.windows);
-        }
+        await this.windowRepository.checkpointBatch(this.windowCu.entries());
       } catch (error) {
         this.dirty = true;
         throw error;

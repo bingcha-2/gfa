@@ -232,19 +232,19 @@ Commit: `refactor(quota): use cumulative current-window accounting`
 - Modify: `apps/server/src/leasing/token-server/__tests__/token-server.service.spec.ts`
 - Modify: `apps/server/src/leasing/remote-anthropic/__tests__/claude-usage.spec.ts`
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Cover usage-before-attached-snapshot, independent quota-only snapshot before usage, duplicate report before/after restart, stale lease/account mismatch, old snapshot rejection, and atomic report dedup + two-window checkpoint semantics.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/lease-core/__tests__/quota-report-ordering.spec.ts`
 
-- [ ] **Step 3: Implement canonical report ingestion**
+- [x] **Step 3: Implement canonical report ingestion**
 
 Parse `traceId/reportId/requestStartedAt/upstreamCompletedAt/observedAt`, clamp bad clocks to lease bounds, calculate CU/API USD once, apply usage before attached snapshot, route independent snapshots through the same account reducer, and await the write coordinator revision before returning success.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @gfa/server exec vitest run src/leasing/lease-core/__tests__/quota-report-ordering.spec.ts src/leasing/token-server/__tests__/token-server.service.spec.ts src/leasing/remote-anthropic/__tests__/claude-usage.spec.ts`
 

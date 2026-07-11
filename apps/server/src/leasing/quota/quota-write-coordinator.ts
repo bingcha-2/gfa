@@ -22,6 +22,7 @@ export class QuotaWriteCoordinator<T> {
 
   constructor(private readonly options: {
     commit: (batch: PendingRevision<T>[]) => Promise<void>;
+    mergePayload?: (current: T, incoming: T) => T;
     maxDelayMs?: number;
     maxBatchSize?: number;
   }) {}
@@ -34,9 +35,12 @@ export class QuotaWriteCoordinator<T> {
       const waiter = { revision, resolve, reject };
       if (current) {
         current.waiters.push(waiter);
+        if (this.options.mergePayload) {
+          current.payload = this.options.mergePayload(current.payload, payload);
+        }
         if (revision >= current.revision) {
           current.revision = revision;
-          current.payload = payload;
+          if (!this.options.mergePayload) current.payload = payload;
         }
       } else {
         this.pending.set(key, { key, revision, payload, waiters: [waiter] });

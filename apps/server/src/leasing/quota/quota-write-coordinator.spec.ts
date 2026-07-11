@@ -39,6 +39,23 @@ describe("QuotaWriteCoordinator", () => {
     expect(commit.mock.calls[0][0]).toEqual([{ key: "account-1", revision: 2, payload: { value: 2 } }]);
   });
 
+  it("merges receipt ids while collapsing the same account revision", async () => {
+    vi.useFakeTimers();
+    const commit = vi.fn(async () => undefined);
+    const coordinator = new QuotaWriteCoordinator<{ value: number; receipts: string[] }>({
+      commit,
+      mergePayload: (oldValue, newValue) => ({
+        value: newValue.value,
+        receipts: [...new Set([...oldValue.receipts, ...newValue.receipts])],
+      }),
+    });
+    const p1 = coordinator.enqueue("account-1", 1, { value: 1, receipts: ["r1"] });
+    const p2 = coordinator.enqueue("account-1", 2, { value: 2, receipts: ["r2"] });
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all([p1, p2]);
+    expect(commit.mock.calls[0][0][0].payload).toEqual({ value: 2, receipts: ["r1", "r2"] });
+  });
+
   it("rejects failed checkpoints so the caller can retry the same revision", async () => {
     vi.useFakeTimers();
     const commit = vi.fn()

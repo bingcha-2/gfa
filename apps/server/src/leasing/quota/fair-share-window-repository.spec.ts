@@ -8,6 +8,7 @@ import { FairShareWindowRepository } from "./fair-share-window-repository";
 import { FairShareTracker } from "../token-server/fair-share-tracker";
 
 const T = 1_800_000_000_000;
+const HOUR = 60 * 60 * 1000;
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
@@ -80,6 +81,17 @@ describe("FairShareWindowRepository with SQLite", () => {
         PRIMARY KEY (provider, accountId, bucket, cardId)
       )
     `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE QuotaReportReceipt (
+        provider TEXT NOT NULL,
+        reportId TEXT NOT NULL,
+        accountId INTEGER NOT NULL,
+        bucket TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (provider, reportId)
+      )
+    `);
   });
 
   afterEach(async () => {
@@ -116,6 +128,42 @@ describe("FairShareWindowRepository with SQLite", () => {
     const after = await prisma.$queryRawUnsafe<Array<{ journal_mode: string }>>("PRAGMA journal_mode");
     expect(after).toEqual(before);
     expect(after[0].journal_mode.toLowerCase()).not.toBe("wal");
+  });
+
+  it("atomically stores a report receipt with the window checkpoint", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const windows = populatedWindows();
+    await repository.checkpointBatch([{
+      accountId: 7,
+      bucket: "codex-gpt",
+      windows,
+      reportIds: ["report-1"],
+    }]);
+
+    await expect(repository.hasReport("report-1")).resolves.toBe(true);
+    await expect(repository.hasReport("missing")).resolves.toBe(false);
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows });
+  });
+
+  it("prunes only receipts older than three days without touching window state", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const windows = populatedWindows();
+    await repository.checkpointBatch([{
+      accountId: 7, bucket: "codex-gpt", windows, reportIds: ["old", "fresh"],
+    }]);
+    await prisma.$executeRawUnsafe(
+      "UPDATE QuotaReportReceipt SET createdAt = ? WHERE reportId = 'old'",
+      new Date(T - 4 * 24 * HOUR),
+    );
+    await prisma.$executeRawUnsafe(
+      "UPDATE QuotaReportReceipt SET createdAt = ? WHERE reportId = 'fresh'",
+      new Date(T - 2 * 24 * HOUR),
+    );
+
+    await repository.pruneReceipts(new Date(T - 3 * 24 * HOUR), 100);
+    await expect(repository.hasReport("old")).resolves.toBe(false);
+    await expect(repository.hasReport("fresh")).resolves.toBe(true);
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows });
   });
 
   it("rejects a partially corrupt window group instead of stitching state", async () => {

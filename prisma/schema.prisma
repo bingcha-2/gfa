@@ -543,6 +543,20 @@ model FairShareWindowHead {
   @@index([provider, accountId, bucket])
 }
 
+/// Exactly-once quota acknowledgements. Kept for only three days; the current
+/// window checkpoint remains fixed-size and does not retain request history.
+model QuotaReportReceipt {
+  provider  String
+  reportId  String
+  accountId Int
+  bucket    String
+  revision  BigInt
+  createdAt DateTime @default(now())
+
+  @@id([provider, reportId])
+  @@index([createdAt])
+}
+
 /// 封号事件档案(P0 定因靶子)。每次某母号被上游永久封禁(403 service_disabled /
 /// 封号 / 401 invalid_grant 等)记一行,带当时上游 status/文案 + 触发模型 + 死亡计数。
 /// 仅 codex / anthropic 落库(antigravity 不接)。行数 = 封号次数(罕见),自带 90 天保留。

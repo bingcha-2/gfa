@@ -804,6 +804,11 @@ export class AccessKeyStore {
 
   // ── Usage recording ────────────────────────────────────────────────────
 
+  /** Read-only fast path used before mutating the causal quota reducer. */
+  hasUsageReport(cardId: string, reportId: string): boolean {
+    return Boolean(reportId && this.reportDedup.get(cardId)?.has(reportId));
+  }
+
   /**
    * Normalize a raw usage payload into the canonical token counts (and billing
    * bucket) that recordUsage() persists. Exposed so callers (e.g. the per-call

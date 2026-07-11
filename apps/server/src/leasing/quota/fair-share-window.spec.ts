@@ -51,6 +51,15 @@ function primed() {
 }
 
 describe("causal current-window reducer", () => {
+  it("does not apply the same report id twice while a failed checkpoint is retried", () => {
+    let state = primed();
+    state = reduceWindow(state, usage("A", T + 10));
+    const once = state.subjects.A.cumulativeCu;
+    state = reduceWindow(state, usage("A", T + 10));
+    expect(state.subjects.A.cumulativeCu).toBe(once);
+    expect(state.lastReason).toBe("EVENT_DUPLICATE");
+  });
+
   it("makes first-request snapshot-before-report equal report-before-snapshot", () => {
     const initial = primed();
     const reportFirst = reduceWindow(

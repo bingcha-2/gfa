@@ -99,6 +99,13 @@ function compareEvents(a: WindowEvent, b: WindowEvent): number {
   return aId.localeCompare(bId);
 }
 
+function sameEventId(a: WindowEvent, b: WindowEvent): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "usage" && b.kind === "usage") return a.reportId === b.reportId;
+  if (a.kind === "snapshot" && b.kind === "snapshot") return a.snapshotId === b.snapshotId;
+  return a.kind === "membership" && b.kind === "membership" && a.membershipId === b.membershipId;
+}
+
 function totalCu(core: WindowCoreState): number {
   return Object.values(core.subjects).reduce((sum, subject) => sum + positive(subject.cumulativeCu), 0);
 }
@@ -247,6 +254,9 @@ export function createWindowState(config: {
 }
 
 export function reduceWindow(state: FairShareWindowState, incoming: WindowEvent): FairShareWindowState {
+  if (state.reorderTail.some((event) => sameEventId(event, incoming))) {
+    return { ...state, lastReason: "EVENT_DUPLICATE" };
+  }
   if (incoming.kind === "snapshot" && state.primed && incoming.observedAt <= state.lastSnapshotAt) {
     return { ...state, lastReason: "SNAPSHOT_STALE_OBSERVED_AT" };
   }

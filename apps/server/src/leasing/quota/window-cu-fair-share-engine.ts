@@ -176,6 +176,11 @@ export class WindowCuFairShareEngine {
     return result;
   }
 
+  entry(accountId: number, bucket: string): { accountId: number; bucket: string; windows: QuotaWindowsState } | null {
+    const windows = this.states.get(accountId)?.get(bucket);
+    return windows ? { accountId, bucket, windows } : null;
+  }
+
   restore(accountId: number, bucket: string, windows: QuotaWindowsState): void {
     let buckets = this.states.get(accountId);
     if (!buckets) this.states.set(accountId, (buckets = new Map()));
