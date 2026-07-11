@@ -448,43 +448,14 @@ describe("getRequestLogs — per-request 热表浏览", () => {
     const findMany = vi.fn().mockResolvedValue([{ id: "r1", surface: "desktop", reverseProxy: true }]);
     const res = await makeService({ requestLog: { findMany } }).getRequestLogs({
       accountEmail: "a@x.com", surface: "desktop", reverseProxyOnly: true, hours: 24, limit: 50,
-      reportId: "r1", traceId: "t1", leaseId: "l1", accountId: 17, quotaSubjectId: "subject-1",
     });
     expect(res.logs).toHaveLength(1);
     const arg = findMany.mock.calls[0][0];
     expect(arg.where).toMatchObject({ accountEmail: "a@x.com", surface: "desktop", reverseProxy: true });
-    expect(arg.where).toMatchObject({ reportId: "r1", traceId: "t1", leaseId: "l1" });
-    expect(arg.where).toMatchObject({ accountId: 17, quotaSubjectId: "subject-1" });
     expect(arg.where.provider).toEqual({ in: ["codex", "anthropic"] });
     expect(arg.where.at.gte).toBeInstanceOf(Date);
     expect(arg.orderBy).toEqual({ at: "desc" });
     expect(arg.take).toBe(50);
-  });
-
-  it("exports a bounded causal support package without raw credentials or bodies", async () => {
-    const at = new Date("2026-07-11T00:00:00Z");
-    const prisma = {
-      requestLog: { findMany: vi.fn().mockResolvedValue([{
-        id: "log-1", at, provider: "codex", accountId: 17, reportId: "r1", traceId: "t1",
-        accessKeyId: "card-1", quotaSubjectId: "card-1", headers: '{"user-agent":"codex"}',
-      }]) },
-      customer: { findMany: vi.fn().mockResolvedValue([]) },
-      fairShareWindowHead: { findMany: vi.fn().mockResolvedValue([{
-        provider: "codex", accountId: 17, bucket: "codex-gpt", scope: "primary", revision: 3n,
-        stateJson: JSON.stringify({ fraction: 0.7, resetAt: 123, lastReason: "LATE_USAGE_RECONCILED", assignedBurn: 0.3, unattributedShare: 0, subjects: {} }),
-      }]) },
-      quotaReportReceipt: { findMany: vi.fn().mockResolvedValue([{ provider: "codex", reportId: "r1", accountId: 17 }]) },
-      accountQuotaSnapshot: { findMany: vi.fn().mockResolvedValue([{ provider: "codex", accountId: 17, hourlyPercent: 70 }]) },
-    };
-    const result = await makeService(prisma).getQuotaSupportPackage({ reportId: "r1" });
-    expect(result).toMatchObject({ retentionHours: 72, filters: { reportId: "r1" } });
-    expect(result.logs).toHaveLength(1);
-    expect(result.windows[0]).toMatchObject({ fraction: 0.7, lastReason: "LATE_USAGE_RECONCILED" });
-    expect(result.receipts).toHaveLength(1);
-    expect(result.snapshots).toHaveLength(1);
-    expect(JSON.stringify(result)).not.toMatch(/authorization|refreshToken|requestBody/i);
-    expect(prisma.quotaReportReceipt.findMany.mock.calls[0][0].take).toBe(200);
-    expect(prisma.accountQuotaSnapshot.findMany.mock.calls[0][0].take).toBe(200);
   });
 
   it("无过滤时不带 reverseProxy/accountEmail 条件", async () => {
@@ -498,14 +469,13 @@ describe("getRequestLogs — per-request 热表浏览", () => {
   it("逐请求富集客户邮箱(customerId → Customer.email)", async () => {
     const prisma = {
       requestLog: { findMany: vi.fn().mockResolvedValue([
-        { id: "r1", customerId: "cust1", requestStartedAt: 10n, upstreamCompletedAt: 20n, snapshotObservedAt: 30n },
+        { id: "r1", customerId: "cust1" },
         { id: "r2", customerId: "" }, // 文件卡无 customerId
       ]) },
       customer: { findMany: vi.fn().mockResolvedValue([{ id: "cust1", email: "buyer@mail.com" }]) },
     };
     const res = await makeService(prisma).getRequestLogs({});
     expect(res.logs[0].customerEmail).toBe("buyer@mail.com");
-    expect(res.logs[0]).toMatchObject({ requestStartedAt: 10, upstreamCompletedAt: 20, snapshotObservedAt: 30 });
     expect(res.logs[1].customerEmail).toBe(""); // 无客户 → 空
   });
 });

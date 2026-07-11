@@ -249,22 +249,20 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 		return
 	}
 	payload := map[string]interface{}{
-		"leaseId":            lease.LeaseId,
-		"accountId":          lease.AccountId,
-		"status":             details.StatusCode,
-		"modelKey":           details.ModelKey,
-		"reason":             details.Reason,
-		"retryAfterMs":       details.RetryAfterMs,
-		"inputTokens":        details.InputTokens,
-		"outputTokens":       details.OutputTokens,
-		"cachedInputTokens":  details.CachedInputTokens,
-		"cacheWrite5mTokens": details.CacheWrite5mTokens,
-		"cacheWrite1hTokens": details.CacheWrite1hTokens,
-		"rawTotalTokens":     details.RawTotalTokens,
-		"totalTokens":        details.BillableTotalTokens,
-		"errorText":          getErrorSnippet(details.ErrorText),
+		"leaseId":           lease.LeaseId,
+		"reportId":          newReportID(lease.LeaseId),
+		"accountId":         lease.AccountId,
+		"status":            details.StatusCode,
+		"modelKey":          details.ModelKey,
+		"reason":            details.Reason,
+		"retryAfterMs":      details.RetryAfterMs,
+		"inputTokens":       details.InputTokens,
+		"outputTokens":      details.OutputTokens,
+		"cachedInputTokens": details.CachedInputTokens,
+		"rawTotalTokens":    details.RawTotalTokens,
+		"totalTokens":       details.BillableTotalTokens,
+		"errorText":         getErrorSnippet(details.ErrorText),
 	}
-	addCausalReportFields(payload, lease.LeaseId, details)
 	// 反代嫌疑(非真 Claude Code 客户端):仅在命中时带上,供服务端按卡聚合定位反代。
 	// 服务端可暂不消费(未知字段安全忽略),不影响计费/账号健康。
 	if details.ClientFlag != "" {
@@ -287,8 +285,6 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 	// 字段名对齐服务端 claude.provider.applyQuotaSnapshot(quota.claudeQuota.*)。
 	if details.HasClaudeWindows {
 		payload["accountQuota"] = map[string]interface{}{
-			"accountId":  lease.AccountId,
-			"observedAt": details.UpstreamCompletedAt,
 			"claudeQuota": map[string]interface{}{
 				"hourlyPercent":   details.ClaudeHourlyPercent,
 				"weeklyPercent":   details.ClaudeWeeklyPercent,

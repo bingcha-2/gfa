@@ -22,10 +22,6 @@ import { QUOTA_WEIGHTS } from "@gfa/shared";
 
 import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/product-bucket";
 import { sharedFairShareRegistry } from "./fair-share-registry";
-import { WindowCuFairShareEngine } from "../quota/window-cu-fair-share-engine";
-import type { FairShareUsageEvent } from "../quota/fair-share-cu";
-import { FairShareWindowRepository, type HourlyUsageAccounting } from "../quota/fair-share-window-repository";
-import { QuotaWriteCoordinator } from "../quota/quota-write-coordinator";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
 export { quotaWeightFor };
@@ -142,8 +138,6 @@ export interface FairShareCheck {
 }
 
 export interface FairShareTrackerOptions {
-  /** 归因算法；默认 segment-v1，灰度开启 window-cu-v1。 */
-  algorithm?: "segment-v1" | "window-cu-v1";
   /** 单卡份额权重 w_i(按会员等级;独占号给 w=N)。不再 clamp。 */
   getCardWeight: (cardId: string) => number;
   /** 某号所有硬绑定主人 + 各自权重(算 Σw / participants / D)。 */
@@ -173,19 +167,7 @@ export class FairShareTracker {
   private readonly nowFn: () => number;
   private readonly trackWeekly: boolean;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private receiptPruneTimer: ReturnType<typeof setInterval> | null = null;
-  private receiptPruneRunning = false;
   private dirty = false;
-  private readonly windowCu: WindowCuFairShareEngine | null;
-  private readonly windowRepository: FairShareWindowRepository | null;
-  private readonly writeCoordinator: QuotaWriteCoordinator<{
-    accountId: number;
-    bucket: string;
-    windows: import("../quota/fair-share-window").QuotaWindowsState;
-    reportIds: string[];
-    accountings: HourlyUsageAccounting[];
-    createdAt: Date;
-  }> | null;
 
   constructor(opts: FairShareTrackerOptions) {
     this.opts = opts;
@@ -193,48 +175,10 @@ export class FairShareTracker {
     this.providerId = opts.provider || "";
     this.nowFn = opts.now || Date.now;
     this.trackWeekly = opts.trackWeekly === true;
-    this.windowCu = opts.algorithm === "window-cu-v1" && (this.providerId === "codex" || this.providerId === "anthropic")
-      ? new WindowCuFairShareEngine({
-          provider: this.providerId,
-          trackWeekly: this.trackWeekly,
-          now: this.nowFn,
-          getBoundCardWeights: opts.getBoundCardWeights,
-          getSeatCapacity: (accountId) => opts.getSeatCapacity?.(accountId) ?? DEFAULT_SEAT_CAPACITY,
-          isExclusive: (cardId) => opts.isExclusive?.(cardId) ?? false,
-        })
-      : null;
-    this.windowRepository = this.windowCu && this.prisma
-      ? new FairShareWindowRepository(this.prisma, this.providerId)
-      : null;
-    this.writeCoordinator = this.windowRepository
-      ? new QuotaWriteCoordinator({
-          maxDelayMs: 10,
-          maxBatchSize: 64,
-          commit: async (batch) => {
-            await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
-          },
-          mergePayload: (current, incoming) => {
-            const currentRevision = Math.max(current.windows.primary.revision, current.windows.weekly.revision);
-            const incomingRevision = Math.max(incoming.windows.primary.revision, incoming.windows.weekly.revision);
-            return {
-              accountId: incoming.accountId,
-              bucket: incoming.bucket,
-              windows: incomingRevision >= currentRevision ? incoming.windows : current.windows,
-              reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
-              accountings: [...new Map([...current.accountings, ...incoming.accountings]
-                .map((value) => [value.reportId, value])).values()],
-              createdAt: incoming.createdAt,
-            };
-          },
-        })
-      : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
         void this.flush();
       }, FLUSH_INTERVAL_MS);
-      if (this.writeCoordinator) {
-        this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
-      }
     }
     // Self-register so the heartbeat (app-auth) can read this provider's live
     // 我的份额 without a cross-module DI path. See fair-share-registry.ts.
@@ -242,35 +186,6 @@ export class FairShareTracker {
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
-
-  /** Whether this tracker is using the causal, replayable window algorithm. */
-  isWindowCuEnabled(): boolean {
-    return this.windowCu !== null;
-  }
-
-  /** True only when a previous acknowledgement survived a process restart. */
-  async hasPersistedReport(reportId: string): Promise<boolean> {
-    return this.windowRepository ? this.windowRepository.hasReport(reportId) : false;
-  }
-
-  /** Acknowledge only after the current state and report receipt share one SQLite commit. */
-  async checkpointReport(
-    accountId: number,
-    bucket: string,
-    reportId: string,
-    accounting?: HourlyUsageAccounting,
-  ): Promise<void> {
-    if (!this.windowCu || !this.writeCoordinator) return;
-    const entry = this.windowCu.entry(accountId, bucket);
-    if (!entry) return;
-    const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
-    await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
-      ...entry,
-      reportIds: reportId ? [reportId] : [],
-      accountings: accounting ? [accounting] : [],
-      createdAt: new Date(this.nowFn()),
-    }, true);
-  }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
    *  costMultiplier:请求级成本乘数(默认 1)。Codex 快速档(service_tier=priority)按 >1 计,
@@ -302,14 +217,6 @@ export class FairShareTracker {
     modelKey?: string,
     costMultiplier = 1,
   ): void {
-    if (this.windowCu) {
-      this.windowCu.recordLegacyUsage(
-        accountId, cardId, bucket, inputTokens, outputTokens, cachedInputTokens,
-        modelKey || bucket, costMultiplier > 1,
-      );
-      this.dirty = true;
-      return;
-    }
     // 自动补全(tab_*/flash_lite)不消耗额度:不计入任何窗口。
     if (modelKey && claudeModelTier(modelKey) === "autocomplete") return;
     const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens, costMultiplier);
@@ -324,76 +231,23 @@ export class FairShareTracker {
     this.dirty = true;
   }
 
-  /** window-cu-v1 的标准用量入口；保留原始因果时间，支持快照先到后的确定性重放。 */
-  recordUsageEvent(accountId: number, bucket: string, event: FairShareUsageEvent): void {
-    if (!this.windowCu) {
-      throw new Error("recordUsageEvent requires window-cu-v1");
-    }
-    this.windowCu.recordUsage(accountId, bucket, event);
-    this.dirty = true;
-  }
-
-  applyAccountQuotaSnapshotAt(
-    accountId: number,
-    bucket: string,
-    event: { fraction: number; resetAt: number; observedAt: number; snapshotId: string; arrivedAt?: number },
-  ): void {
-    if (!this.windowCu) {
-      this.applySnapshot(accountId, bucket, event.fraction, event.resetAt);
-      return;
-    }
-    this.windowCu.applySnapshot(accountId, bucket, "primary", event);
-    this.dirty = true;
-  }
-
-  applyWeeklyAccountQuotaSnapshotAt(
-    accountId: number,
-    bucket: string,
-    event: { fraction: number; resetAt: number; observedAt: number; snapshotId: string; arrivedAt?: number },
-  ): void {
-    if (!this.trackWeekly) return;
-    if (!this.windowCu) {
-      this.applySnapshot(accountId, weeklyBucketKey(bucket), event.fraction, event.resetAt);
-      return;
-    }
-    this.windowCu.applySnapshot(accountId, bucket, "weekly", event);
-    this.dirty = true;
-  }
-
   /**
    * 上游 5h 快照刷新:归并这一段账号消耗进各人 T_i,并对齐窗口 reset(QUOTA-REDESIGN §4.2a)。
    * @param fraction  上游剩余 fraction(-1 = 未知,不归并只累积 u_i)。
    * @param resetAtMs 上游窗口 reset 时间(epoch ms,0/缺省 = 不喂入)。
    */
   applyAccountQuotaSnapshot(accountId: number, bucket: string, fraction: number, resetAtMs = 0): void {
-    if (this.windowCu) {
-      const observedAt = this.nowFn();
-      this.applyAccountQuotaSnapshotAt(accountId, bucket, {
-        fraction, resetAt: resetAtMs, observedAt,
-        snapshotId: `legacy-primary-${accountId}-${bucket}-${observedAt}`,
-      });
-      return;
-    }
     this.applySnapshot(accountId, bucket, fraction, resetAtMs);
   }
 
   /** 上游周快照刷新(no-op unless trackWeekly)。 */
   applyWeeklyAccountQuotaSnapshot(accountId: number, bucket: string, fraction: number, resetAtMs = 0): void {
-    if (this.windowCu) {
-      const observedAt = this.nowFn();
-      this.applyWeeklyAccountQuotaSnapshotAt(accountId, bucket, {
-        fraction, resetAt: resetAtMs, observedAt,
-        snapshotId: `legacy-weekly-${accountId}-${bucket}-${observedAt}`,
-      });
-      return;
-    }
     if (!this.trackWeekly) return;
     this.applySnapshot(accountId, weeklyBucketKey(bucket), fraction, resetAtMs);
   }
 
   /** 校验某卡是否在公平份额内(5h + 周,任一超额即拦)。 */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
-    if (this.windowCu) return this.windowCu.check(accountId, cardId, bucket);
     const short = this.checkWindow(accountId, cardId, bucket);
     if (!this.trackWeekly) return short;
     const weekly = this.checkWindow(accountId, cardId, weeklyBucketKey(bucket));
@@ -423,13 +277,11 @@ export class FairShareTracker {
 
   /** 5h 每卡自份额剩余(供血条),键为基础桶名。share=e_i(我的份额占整号比例,供双层血条)。 */
   getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
-    if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, false);
     return this.collectFractions(accountId, cardId, false);
   }
 
   /** 周每卡自份额剩余(供周血条);仅 trackWeekly 有数据。 */
   getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
-    if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, true);
     if (!this.trackWeekly) return {};
     return this.collectFractions(accountId, cardId, true);
   }
@@ -449,23 +301,12 @@ export class FairShareTracker {
    * 绑定写库 + reloadAccessKeys 之后调用,使 getBoundCardWeights 已含新成员。
    */
   refreshParticipants(accountId: number): void {
-    if (this.windowCu) {
-      this.windowCu.refreshMembership(accountId);
-      this.dirty = true;
-      return;
-    }
     const bucketMap = this.trackers.get(accountId);
     if (!bucketMap) return;
     for (const tracker of bucketMap.values()) {
       tracker.locked = this.computeLocked(accountId);
     }
     this.dirty = true;
-  }
-
-  refreshAllParticipants(): void {
-    const ids = new Set<number>(this.trackers.keys());
-    for (const id of this.windowCu?.accountIds() || []) ids.add(id);
-    for (const id of ids) this.refreshParticipants(id);
   }
 
   /** 一张卡本 5h 窗口的段内加权用量(跨该号所有 5h bucket 求和)。 */
@@ -820,25 +661,6 @@ export class FairShareTracker {
 
   /** 启动时把持久化的每卡状态读回内存。 */
   async load(): Promise<void> {
-    if (this.windowCu && this.windowRepository) {
-      const groups = await this.windowRepository.loadProvider();
-      for (const group of groups) {
-        if (group.result.ok) {
-          const beforeRevision = Math.max(group.result.windows.primary.revision, group.result.windows.weekly.revision);
-          this.windowCu.restore(group.accountId, group.bucket, group.result.windows);
-          const restored = this.windowCu.entry(group.accountId, group.bucket);
-          const afterRevision = restored
-            ? Math.max(restored.windows.primary.revision, restored.windows.weekly.revision)
-            : beforeRevision;
-          if (afterRevision > beforeRevision) this.dirty = true;
-        }
-        else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
-      }
-      if (this.writeCoordinator) {
-        await this.pruneExpiredReceipts();
-      }
-      return;
-    }
     if (!this.prisma || !this.providerId) return;
     let rows: any[];
     try {
@@ -944,17 +766,6 @@ export class FairShareTracker {
 
   /** 持久化当前内存态(整池替换,dirty 门控)。 */
   async flush(): Promise<void> {
-    if (this.windowCu && this.windowRepository) {
-      if (!this.dirty) return;
-      this.dirty = false;
-      try {
-        await this.windowRepository.checkpointBatch(this.windowCu.entries());
-      } catch (error) {
-        this.dirty = true;
-        throw error;
-      }
-      return;
-    }
     if (!this.prisma || !this.providerId || !this.dirty) return;
     this.dirty = false;
     const rows = this.serializeRows();
@@ -975,8 +786,6 @@ export class FairShareTracker {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.receiptPruneTimer) clearInterval(this.receiptPruneTimer);
-    this.receiptPruneTimer = null;
   }
 
   private serializeRows(): Array<{
@@ -1054,32 +863,6 @@ export class FairShareTracker {
       totalUsed,
       totalAttributed,
     };
-  }
-
-  getWindowStateForTesting(accountId: number, bucket: string) {
-    return this.windowCu?.getStateForTesting(accountId, bucket) ?? null;
-  }
-
-  getWindowReasons(accountId: number, bucket: string) {
-    return this.windowCu?.getReasons(accountId, bucket) ?? null;
-  }
-
-  private async pruneExpiredReceipts(): Promise<void> {
-    if (!this.writeCoordinator || !this.windowRepository || this.receiptPruneRunning) return;
-    this.receiptPruneRunning = true;
-    try {
-      await this.writeCoordinator.scheduleLowPriority(async () => {
-        const cutoff = new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000);
-        for (let batch = 0; batch < 20; batch++) {
-          const deleted = await this.windowRepository!.pruneReceipts(cutoff, 500);
-          if (deleted < 500) break;
-        }
-      });
-    } catch (error) {
-      console.error("[fair-share-tracker] receipt prune failed:", error);
-    } finally {
-      this.receiptPruneRunning = false;
-    }
   }
 }
 

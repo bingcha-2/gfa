@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, Res } from "@nestjs/common";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteCodexHttpError, RemoteCodexService } from "../service/remote-codex.service";
@@ -6,7 +6,7 @@ import { RemoteCodexHttpError, RemoteCodexService } from "../service/remote-code
 @Public()
 @Controller("app/lease/codex")
 export class RemoteCodexController {
-  constructor(@Inject(RemoteCodexService) private readonly remoteCodex: RemoteCodexService) {}
+  constructor(private readonly remoteCodex: RemoteCodexService) {}
 
   @Get()
   root(@Res() response: any) {
@@ -30,7 +30,7 @@ export class RemoteCodexController {
         case "report-result":
           return response.status(200).json(await this.remoteCodex.reportResult(request, body));
         case "reload-access-keys":
-          return response.status(200).json(await this.remoteCodex.reloadAccessKeys());
+          return response.status(200).json(this.remoteCodex.reloadAccessKeys());
         case "reload-accounts":
           return response.status(200).json({ ok: true, status: this.remoteCodex.getStatus() });
         default:

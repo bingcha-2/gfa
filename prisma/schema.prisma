@@ -518,43 +518,10 @@ model FairShareWindow {
   lockedDenominator Float    @default(0)      // 窗口开始锁定的分母 D = max(N, Σw)
   lastFraction      Float    @default(1)      // 低水位:窗口内单调不增的上游剩余 fraction
   isParticipant     Boolean  @default(false)  // reset 时是否在册(锁定参与卡);重启不把窗口内新绑卡误升为 participant
-  share             Float    @default(0)      // 当前窗口份额 e_i
-  isActive          Boolean  @default(true)   // 当前是否仍有请求资格;退出者会计残留保留到 reset
-  isExclusive       Boolean  @default(false)  // 独享语义;多人异常时读取层回退普通缩放
   updatedAt         DateTime @default(now())
 
   @@id([provider, accountId, bucket, cardId])
   @@index([provider, accountId, bucket])
-}
-
-/// 每个母号当前 5h/周窗口的固定基数头状态。只保存当前窗口和有界乱序尾巴，reset 后覆盖。
-/// stateJson 是当前 reducer 的原子 checkpoint；不保存关闭窗口或逐请求历史。
-model FairShareWindowHead {
-  provider  String
-  accountId Int
-  bucket    String
-  scope     String   // primary | weekly
-  stateJson String
-  revision  BigInt
-  algorithm String   @default("window-cu-v1")
-  updatedAt DateTime @default(now())
-
-  @@id([provider, accountId, bucket, scope])
-  @@index([provider, accountId, bucket])
-}
-
-/// Exactly-once quota acknowledgements. Kept for only three days; the current
-/// window checkpoint remains fixed-size and does not retain request history.
-model QuotaReportReceipt {
-  provider  String
-  reportId  String
-  accountId Int
-  bucket    String
-  revision  BigInt
-  createdAt DateTime @default(now())
-
-  @@id([provider, reportId])
-  @@index([createdAt])
 }
 
 /// 封号事件档案(P0 定因靶子)。每次某母号被上游永久封禁(403 service_disabled /
@@ -622,24 +589,11 @@ model RequestLog {
   sourceIp     String   @default("")          // 用户来源 IP
   exitIp       String   @default("")          // 出口代理端点
   headers      String   @default("")          // 过滤后的请求头 JSON
-  reportId     String   @default("")
-  traceId      String   @default("")
-  leaseId      String   @default("")
-  quotaSubjectId String @default("")
-  requestStartedAt BigInt @default(0)
-  upstreamCompletedAt BigInt @default(0)
-  snapshotObservedAt BigInt @default(0)
-  reason       String   @default("")
-  primaryReason String  @default("")
-  weeklyReason String   @default("")
 
   @@index([at])
   @@index([accountEmail, at])
   @@index([accessKeyId, at])
   @@index([provider, at])
-  @@index([reportId])
-  @@index([traceId])
-  @@index([leaseId])
 }
 
 // ─── Customer Account System ────────────────────────────────────────────────

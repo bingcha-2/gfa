@@ -35,7 +35,7 @@ type CodexAccountQuotaSnapshot struct {
 	AccountId  int               `json:"accountId"`
 	PlanType   string            `json:"planType,omitempty"`
 	CodexQuota *CodexQuotaWindow `json:"codexQuota,omitempty"`
-	FetchedAt  int64             `json:"observedAt"`
+	FetchedAt  int64             `json:"fetchedAt"`
 }
 
 // Raw subset of the wham/usage response shape (see cockpit codex_quota.rs).

@@ -1,5 +1,4 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { calculateApiValue } from "@gfa/shared";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { rowToConfig } from "../../subscription/subscription-config";
@@ -72,26 +71,6 @@ function officialCostFor(
     (cacheRead / 1_000_000) * p.cacheReadPerM +
     (cacheWrite / 1_000_000) * p.cacheWritePerM
   );
-}
-
-function modelAwareCostForRow(row: any, netInput: number, output: number, cacheRead: number, cacheWrite: number): number {
-  const provider = String(row.bucket || "").startsWith("codex-")
-    ? "codex"
-    : String(row.bucket || "").startsWith("anthropic-") ? "anthropic" : null;
-  if (!provider || !row.modelKey) return officialCostFor(row.bucket, netInput, output, cacheRead, cacheWrite);
-  const totalRaw = Math.max(1, netInput + output + cacheRead + cacheWrite);
-  const priorityRatio = Math.min(1, Math.max(0, Number(row.priorityTokens || 0) / totalRaw));
-  const fast = (value: number) => Math.round(Math.max(0, value) * priorityRatio);
-  const fi = fast(netInput), fo = fast(output), fr = fast(cacheRead), fw = fast(cacheWrite);
-  const occurredAt = row.hourStart instanceof Date ? row.hourStart.getTime() : Date.now();
-  const value = (mode: "standard" | "priority", input: number, out: number, read: number, write: number) => calculateApiValue({
-    provider, modelId: String(row.modelKey), pricingMode: mode,
-    inputTokens: input, outputTokens: out, cachedInputTokens: read,
-    cacheWrite5mTokens: write, cacheWrite1hTokens: 0,
-    contextTokens: 0, occurredAt,
-  }).usd;
-  return value("standard", netInput - fi, output - fo, cacheRead - fr, cacheWrite - fw)
-    + (priorityRatio > 0 ? value("priority", fi, fo, fr, fw) : 0);
 }
 
 function numericRecord(value: unknown): Record<string, number> {
@@ -398,7 +377,7 @@ export class PortalService {
       m.outputTokens += output;
       m.cachedTokens += cached;
       // per-model 成本对齐客户端 estimateOfficialCostUSD(净输入 + 缓存读 + 缓存写)。
-      m.savedUSD += modelAwareCostForRow(r, netInput, output, cached, cacheCreation);
+      m.savedUSD += officialCostFor(r.bucket, netInput, output, cached, cacheCreation);
       byModel.set(r.modelKey, m);
 
       success += reqs - fails;
@@ -408,7 +387,7 @@ export class PortalService {
       totals.outputTokens += output;
       totals.totalTokens += total;
       totals.requests += reqs;
-      totals.savedUSD += modelAwareCostForRow(r, netInput, output, cached, cacheCreation);
+      totals.savedUSD += officialCostFor(r.bucket, netInput, output, cached, cacheCreation);
     }
 
     // 浮点累加去噪:保留到分以下 4 位,前端按 toFixed(2) 展示。

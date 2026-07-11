@@ -10,7 +10,7 @@ import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts } from '@/lib/usageBars'
 import { buildQuotaSections, shouldUseExclusiveDisplay, type QuotaDisplayBar } from '@/lib/quotaDisplay'
-import { buildModelUsageRows, buildUsageOverview, pricingQualityLabel, type ModelUsageRow } from '@/lib/usageSummary'
+import { buildModelUsageRows, buildUsageOverview, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as api from '@/services/wails'
@@ -72,7 +72,7 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
             <th className="text-right">缓存写</th>
             <th className="text-right">合计 Token</th>
             <th className="text-right">其中 fast</th>
-            <th className="text-right">API 等价价值</th>
+            <th className="text-right">官方 API 价估算</th>
             <th className="text-right">占今日成本比例</th>
           </tr>
         </thead>
@@ -91,15 +91,12 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cachedTokens)}</td>
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cacheWriteTokens)}</td>
               <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatTokens(row.totalTokens)}</td>
-              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums" title="走快速档（Priority）的原始 Token，价值按该模型官方 Priority 价格计算">
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums" title="走快速档(priority)请求的原始 token(与合计同口径),成本已按 1.5x 计">
                 {row.fastTokens > 0
                   ? <span className="text-[var(--primary)]">{formatTokens(row.fastTokens)}</span>
                   : <span className="text-[var(--text-muted)]">—</span>}
               </td>
-              <td className="px-3 py-2.5 text-right">
-                <div className="font-mono-data tabular-nums text-[var(--text-primary)]">{formatUSD(row.estimatedCostUSD)}</div>
-                <div className="mt-0.5 text-[9px] text-[var(--text-muted)]">{pricingQualityLabel(row.pricingQuality)}</div>
-              </td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatUSD(row.estimatedCostUSD)}</td>
               <td className="px-3 py-2.5">
                 <div className="flex items-center justify-end gap-2">
                   <span className="w-11 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatRatio(row.costShare)}</span>
@@ -216,7 +213,7 @@ export function DashboardPage() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">用量看板</h2>
-          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">订阅余量、本机调用和 API 等价价值放在同一视图</p>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">订阅余量、本机调用和官方 API 价值放在同一视图</p>
         </div>
         <Button size="sm" variant="secondary" disabled={refreshingQuota} onClick={handleRefreshQuota}>
           <RefreshCw size={13} className={cn(refreshingQuota && 'animate-spin')} />{t('account.refresh')}
@@ -252,12 +249,12 @@ export function DashboardPage() {
           </div>
           <div className="grid grid-rows-2 divide-y divide-[var(--border-light)]">
             <div className="px-5 py-4">
-              <p className="text-[10px] text-[var(--text-muted)]">今日 API 等价价值</p>
+              <p className="text-[10px] text-[var(--text-muted)]">今日官方 API 价值</p>
               <p className="mt-1 font-mono-data text-[22px] font-bold text-[var(--primary-strong)]">{formatUSD(overview.apiValueUSD)}</p>
-              <p className="mt-1 text-[9px] text-[var(--text-muted)]">按模型、上下文档位、缓存读写和 Priority 官方价格折算</p>
+              <p className="mt-1 text-[9px] text-[var(--text-muted)]">按模型真实输入、输出、缓存读写价格折算</p>
             </div>
             <div className="px-5 py-4">
-              <p className="text-[10px] text-[var(--text-muted)]">累计 API 等价价值</p>
+              <p className="text-[10px] text-[var(--text-muted)]">累计 API 价值 · 已节省</p>
               <p className="mt-1 font-mono-data text-[22px] font-bold text-[var(--text-primary)]">{formatUSD(overview.cumulativeApiValueUSD)}</p>
               <p className="mt-1 text-[9px] text-[var(--text-muted)]">从首次使用起，按官方 API 定价累计</p>
             </div>
@@ -269,7 +266,7 @@ export function DashboardPage() {
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <div>
             <CardTitle><BarChart3 size={15} />{t('dashboard.usageTitle')}</CardTitle>
-            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">5h 与周窗口分别计算；“我的剩余”始终受母号当前剩余约束</p>
+            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">逐订阅、逐产品展示 5h 与周窗口；拼车额度保留双层关系</p>
           </div>
           {exclusiveCard && <ExclusiveBadge />}
         </CardHeader>
@@ -320,8 +317,8 @@ export function DashboardPage() {
 
       <Card className="overflow-hidden">
         <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
-          <div><CardTitle><BarChart3 size={15} />今日模型明细</CardTitle><p className="mt-0.5 text-[10px] text-[var(--text-muted)]">输入、输出、缓存、Priority 与计价质量完整保留</p></div>
-          <div className="text-[10px] text-[var(--text-muted)]">本机实时 · API 等价价值（含缓存）</div>
+          <div><CardTitle><BarChart3 size={15} />今日模型明细</CardTitle><p className="mt-0.5 text-[10px] text-[var(--text-muted)]">输入、输出、缓存、Fast 与价值字段完整保留</p></div>
+          <div className="text-[10px] text-[var(--text-muted)]">本机实时 · 官方 API 价估算（含缓存）</div>
         </CardHeader>
         <CardContent className="p-0"><ModelUsageTable rows={modelUsageRows} /></CardContent>
       </Card>

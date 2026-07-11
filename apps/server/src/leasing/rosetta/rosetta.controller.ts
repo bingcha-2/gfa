@@ -552,18 +552,12 @@ export class RosettaController {
     @Query("accountEmail") accountEmail?: string,
     @Query("accessKeyId") accessKeyId?: string,
     @Query("surface") surface?: string,
-    @Query("reportId") reportId?: string,
-    @Query("traceId") traceId?: string,
-    @Query("leaseId") leaseId?: string,
-    @Query("accountId") accountId?: string,
-    @Query("quotaSubjectId") quotaSubjectId?: string,
     @Query("reverseProxy") reverseProxy?: string,
     @Query("hours") hours?: string,
     @Query("limit") limit?: string,
   ) {
     const res = await this.tokenUsageStats.getRequestLogs({
-      accountEmail, accessKeyId, surface, reportId, traceId, leaseId,
-      accountId: accountId ? Number(accountId) : undefined, quotaSubjectId,
+      accountEmail, accessKeyId, surface,
       reverseProxyOnly: reverseProxy === "1" || reverseProxy === "true",
       hours: hours ? Number(hours) : undefined,
       limit: limit ? Number(limit) : undefined,
@@ -573,22 +567,6 @@ export class RosettaController {
     try { uuidById = this.remoteAnthropic.accountUuidById(); } catch { /* best-effort */ }
     res.logs = (res.logs as any[]).map((l) => ({ ...l, rewrittenAccountUuid: uuidById.get(Number(l.accountId)) ?? "" }));
     return res;
-  }
-
-  /** 一键导出近 72h 的额度因果链；至少提供一个定位字段。 */
-  @Get("quota-support-package")
-  getQuotaSupportPackage(
-    @Query("reportId") reportId?: string,
-    @Query("traceId") traceId?: string,
-    @Query("leaseId") leaseId?: string,
-    @Query("accountId") accountId?: string,
-    @Query("accessKeyId") accessKeyId?: string,
-    @Query("quotaSubjectId") quotaSubjectId?: string,
-  ) {
-    return this.tokenUsageStats.getQuotaSupportPackage({
-      reportId, traceId, leaseId, accountId: accountId ? Number(accountId) : undefined,
-      accessKeyId, quotaSubjectId,
-    });
   }
 
   @Get("cliproxy-status")

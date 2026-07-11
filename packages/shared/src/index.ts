@@ -164,21 +164,3 @@ export {
   type ClaudeTier,
   type QuotaWeight,
 } from "./pricing";
-
-export {
-  calculateQuotaCu,
-  resolveQuotaRate,
-  type ModelQuotaRate,
-  type QuotaProvider,
-  type QuotaRateQuality,
-  type QuotaUsage,
-  type ResolvedQuotaRate,
-} from "./quota-rates";
-
-export {
-  calculateApiValue,
-  type ApiContextTier,
-  type ApiPricingMode,
-  type ApiValuationQuality,
-  type ApiValueUsage,
-} from "./api-pricing";

@@ -1,52 +1,6 @@
 package main
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-)
-
-func TestAtomicWriteFileReplacesWholeFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "usage_stats.json")
-	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := atomicWriteFile(path, []byte(`{"records":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != `{"records":{}}` {
-		t.Fatalf("content = %q", got)
-	}
-	matches, err := filepath.Glob(filepath.Join(dir, ".usage_stats.json.tmp-*"))
-	if err != nil || len(matches) != 0 {
-		t.Fatalf("temporary files left behind: %v, err=%v", matches, err)
-	}
-}
-
-func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
-	row := &ModelUsageRecord{
-		ModelKey: "gpt-5.6-sol", Family: "gpt",
-		InputTokens: 593_410, OutputTokens: 102_560, CachedTokens: 24_470_000,
-		TotalTokens: 25_165_970,
-	}
-	if !repriceModelUsage(row, mustUsageDate("2026-07-11")) {
-		t.Fatal("expected legacy row to migrate")
-	}
-	if row.EstimatedCostUSD < 18.27885-1e-9 || row.EstimatedCostUSD > 18.27885+1e-9 {
-		t.Fatalf("recalculated cost = %v", row.EstimatedCostUSD)
-	}
-	if row.PricingVersion != "api-pricing-2026-07-11" || row.PricingQuality != "recalculated-aggregate" {
-		t.Fatalf("migration metadata = %+v", row)
-	}
-	if repriceModelUsage(row, mustUsageDate("2026-07-11")) {
-		t.Fatal("migration must be idempotent")
-	}
-}
+import "testing"
 
 func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
@@ -82,7 +36,7 @@ func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 	if row.TotalTokens != 42360 {
 		t.Fatalf("total = %d, want 42360", row.TotalTokens)
 	}
-	wantCost := 0.15135
+	wantCost := 0.25225
 	if got := row.EstimatedCostUSD; got < wantCost-1e-9 || got > wantCost+1e-9 {
 		t.Fatalf("estimated cost = %v, want %v", got, wantCost)
 	}
@@ -113,27 +67,27 @@ func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
 	if row.ModelKey != "gpt" || row.DisplayName != "GPT" || row.Family != "gpt" {
 		t.Fatalf("fallback identity = %+v", row)
 	}
-	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 1.25 || row.PricingQuality != "legacy-family" {
+	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 1.25 {
 		t.Fatalf("fallback usage = %+v", row)
 	}
 }
 
-// 快速档使用官方 Priority 模型价,不再拿 Standard 粗暴乘 1.5。
-func TestAddModelTokensFastUsesOfficialPriorityAndTracksFastTokens(t *testing.T) {
+// 快速档(fast=true):成本按 1.5x 溢价计,且原始 token 记入 FastTokens(与 TotalTokens 同口径)。
+func TestAddModelTokensFastAppliesPremiumAndTracksFastTokens(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
 
-	// 标准档基线:gpt-5.5 1M input → $5。
+	// 标准档基线:gpt 1M input → $1.25。
 	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, false)
 	std := s.GetTodayRecord().ByModel["gpt-5.5"]
-	if std.EstimatedCostUSD != 10 || std.FastTokens != 0 {
-		t.Fatalf("标准档 row = %+v, want long-context cost=10 fastTokens=0", std)
+	if std.EstimatedCostUSD != 1.25 || std.FastTokens != 0 {
+		t.Fatalf("标准档 row = %+v, want cost=1.25 fastTokens=0", std)
 	}
 
-	// Priority 暂未发布 long 档,明确回退其 short 官方价 $12.5/M,累计 $22.5。
+	// 再来一条快速档:成本 1.25*1.5=1.875,累加到 1.25+1.875=3.125;FastTokens=1_000_000(原始量)。
 	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, true)
 	row := s.GetTodayRecord().ByModel["gpt-5.5"]
-	if got := row.EstimatedCostUSD; got < 22.5-1e-9 || got > 22.5+1e-9 {
-		t.Fatalf("fast 后成本 = %v, want 22.5", got)
+	if got := row.EstimatedCostUSD; got < 3.125-1e-9 || got > 3.125+1e-9 {
+		t.Fatalf("fast 后成本 = %v, want 3.125(标准1.25 + fast1.875)", got)
 	}
 	if row.FastTokens != 1_000_000 {
 		t.Fatalf("FastTokens = %d, want 1000000", row.FastTokens)
@@ -153,20 +107,20 @@ func TestReportUsageSafeCodexNetsOutCachedInput(t *testing.T) {
 	p := &CodexProxy{reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {}}
 	// gross 输入 1000(其中缓存 900)+ 输出 200,total = 1200。BillableTotalTokens=0 跳过本地额度入账。
 	p.reportUsageSafe("card", "dev", ReportDetails{
-		ModelKey:          "gpt-5.6-luna",
+		ModelKey:          "gpt-5",
 		InputTokens:       1000,
 		OutputTokens:      200,
 		CachedInputTokens: 900,
 		RawTotalTokens:    1200,
 	}, "", nil)
 
-	row := globalUsageStats.GetTodayRecord().ByModel["gpt-5.6-luna"]
+	row := globalUsageStats.GetTodayRecord().ByModel["gpt-5"]
 	if row == nil {
 		t.Fatalf("missing codex model row")
 	}
 	// 正确口径:净输入 100*1.25 + 输出 200*10 + 缓存读 900*0.125,/1e6 = 0.0022375 USD。
 	// bug 口径(gross 当净输入):1000*1.25 + 200*10 + 900*0.125 = 0.0033625,约多算 50%+。
-	want := 0.00139
+	want := 0.0022375
 	if got := row.EstimatedCostUSD; got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("codex cost = %v, want %v(缓存命中不得按整价重复计)", got, want)
 	}

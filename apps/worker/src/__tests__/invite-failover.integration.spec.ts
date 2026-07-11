@@ -112,13 +112,13 @@ describe("Invite Failover Integration", () => {
       inviteQueue: mockInviteQueue as any
     };
 
-    // Execute: the same BullMQ task is rebound and deliberately retried.
-    await expect(processInvite(job, deps)).rejects.toThrow("LOGIN_FAILED_SWITCHED");
+    // Execute
+    await processInvite(job, deps);
 
-    const reboundTask = await db.task.findUnique({ where: { id: task.id } });
-    expect(reboundTask!.status).toBe("FAILED_RETRYABLE");
-    expect(reboundTask!.accountId).toBe(healthyAccount.id);
-    expect(reboundTask!.familyGroupId).toBe(healthyGroup.id);
+    // Assert: Old task should be FAILED_FINAL with AUTO_REASSIGNED
+    const finalOldTask = await db.task.findUnique({ where: { id: task.id } });
+    expect(finalOldTask!.status).toBe("FAILED_FINAL");
+    expect(finalOldTask!.lastErrorCode).toBe("AUTO_REASSIGNED");
 
     // Assert: Order should be assigned to the new group
     const updatedOrder = await db.order.findUnique({ where: { id: order.id } });
@@ -139,10 +139,16 @@ describe("Invite Failover Integration", () => {
     // new pending count incremented (0 + 1 = 1)
     expect(newGroupAfter!.pendingInviteCount).toBe(1);
 
-    // The current implementation retries the rebound task; it does not create
-    // a second task or enqueue an out-of-band replacement job.
+    // Assert: A new task should be created
     const allTasks = await db.task.findMany({ where: { orderId: order.id } });
-    expect(allTasks).toHaveLength(1);
-    expect(queuedJobs).toHaveLength(0);
+    expect(allTasks.length).toBe(2); // The old one and the new one
+    const newTask = allTasks.find(t => t.id !== task.id);
+    expect(newTask!.familyGroupId).toBe(healthyGroup.id);
+    expect(newTask!.accountId).toBe(healthyAccount.id);
+    expect(newTask!.status).toBe("PENDING");
+
+    // Assert: New job should be enqueued
+    expect(queuedJobs.length).toBe(1);
+    expect(queuedJobs[0].data.familyGroupId).toBe(healthyGroup.id);
   });
 });

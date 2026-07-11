@@ -34,22 +34,17 @@ vi.mock("../browser-context", () => {
     async disconnect() {}
   }
   function createFakePage(): any {
-    let evaluateCalls = 0;
-    const permanentlyAbsent = (selector: string) => /input\[type="(?:password|tel)"\]|totpPin|one-time-code|Restart|progressbar|recaptcha|phoneNumberId|data-challengetype|aria-live|#error|B376fe/i.test(selector);
-    const mkLoc = (selector = "", absent = permanentlyAbsent(selector)): any => ({
-      count: async () => absent ? 0 : 1,
-      first: () => mkLoc(selector, absent),
-      last: () => mkLoc(selector, absent),
-      nth: () => mkLoc(selector, absent),
-      waitFor: async () => { if (absent) throw new Error("not visible"); },
-      isVisible: async () => !absent,
+    const mkLoc = (): any => ({
+      count: async () => 1,
+      first: () => mkLoc(),
+      last: () => mkLoc(),
+      nth: () => mkLoc(),
+      waitFor: async () => {},
       click: async () => {},
       fill: async () => {},
       press: async () => {},
       textContent: async () => "",
-      innerText: async () => "",
-      evaluate: async () => false,
-      locator: (child = "") => mkLoc(child),
+      locator: () => mkLoc(),
     });
     return {
       goto: async () => {},
@@ -57,12 +52,8 @@ vi.mock("../browser-context", () => {
       waitForURL: async () => {},
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
-      locator: (selector: string) => {
-        return mkLoc(selector, permanentlyAbsent(selector));
-      },
-      evaluate: async () => ++evaluateCalls === 1
-        ? 0
-        : "Your family invitation was sent successfully. ".repeat(4),
+      locator: () => mkLoc(),
+      evaluate: async () => [],
       screenshot: async () => Buffer.from(""),
     };
   }
@@ -265,6 +256,6 @@ describe("Invite Processor Integration", () => {
 
     const updatedTask = await db.task.findUnique({ where: { id: task.id } });
     expect(updatedTask!.status).toBe("FAILED_RETRYABLE");
-    expect(updatedTask!.lastErrorCode).toBe("PROFILE_ACQUIRE_FAILED");
+    expect(updatedTask!.lastErrorCode).toBe("INVITE_ERROR");
   });
 });

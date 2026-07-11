@@ -116,7 +116,6 @@ describe("gmailLogin — early exits", () => {
     });
     const result = await gmailLogin(page, { loginEmail: "a@g.com", loginPassword: "pw" }, buildMockLogger());
     expect(result.success).toBe(true);
-    expect(page.locator).not.toHaveBeenCalled();
   });
 
   it("returns success immediately when already on mail.google.com", async () => {
@@ -572,3 +571,4 @@ describe("gmailLogin — immediate identifier error detection", () => {
     }
   });
 });
+

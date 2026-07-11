@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,9 +22,6 @@ type ModelUsageRecord struct {
 	CacheWriteTokens int64   `json:"cacheWriteTokens"`
 	TotalTokens      int64   `json:"totalTokens"`
 	EstimatedCostUSD float64 `json:"estimatedCostUSD"`
-	PricingVersion   string  `json:"pricingVersion,omitempty"`
-	PricingMode      string  `json:"pricingMode,omitempty"`
-	PricingQuality   string  `json:"pricingQuality,omitempty"`
 	// FastTokens:走「快速档」(codex service_tier=priority)请求的**原始** token(与 TotalTokens
 	// 同口径,含缓存),供看板「其中 fast」列直接对比占比。成本溢价 1.5x 在 EstimatedCostUSD 里。
 	FastTokens int64 `json:"fastTokens"`
@@ -157,7 +153,7 @@ func estimateOfficialCostUSD(family string, input, output, cacheRead, cacheWrite
 		float64(cacheWrite)/1_000_000.0*cacheWriteP
 }
 
-func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, value apiValue, fastTokens int64) {
+func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, cost float64, fastTokens int64) {
 	key := modelUsageKey(family, modelKey)
 	row, ok := byModel[key]
 	if !ok {
@@ -174,20 +170,7 @@ func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string
 	row.CachedTokens += cacheRead
 	row.CacheWriteTokens += cacheWrite
 	row.TotalTokens += input + output + cacheRead + cacheWrite
-	row.EstimatedCostUSD += value.USD
-	if row.PricingVersion == "" {
-		row.PricingVersion = value.PricingVersion
-	}
-	if row.PricingMode == "" {
-		row.PricingMode = value.PricingMode
-	} else if row.PricingMode != value.PricingMode {
-		row.PricingMode = "mixed"
-	}
-	if row.PricingQuality == "" {
-		row.PricingQuality = value.Quality
-	} else if row.PricingQuality != value.Quality {
-		row.PricingQuality = "mixed"
-	}
+	row.EstimatedCostUSD += cost
 	row.FastTokens += fastTokens
 }
 
@@ -218,148 +201,6 @@ func cloneHourlyRecord(rec *HourlyRecord) HourlyRecord {
 	return cp
 }
 
-func mustUsageDate(value string) time.Time {
-	at, err := time.ParseInLocation("2006-01-02", value, time.Local)
-	if err != nil {
-		return time.Now()
-	}
-	return at.Add(12 * time.Hour)
-}
-
-func repriceModelUsage(row *ModelUsageRecord, at time.Time) bool {
-	if row == nil || row.PricingVersion == exactAPIPrices.Version {
-		return false
-	}
-	provider := ""
-	if row.Family == "gpt" {
-		provider = "codex"
-	}
-	if row.Family == "claude" {
-		provider = "anthropic"
-	}
-	if provider == "" || strings.TrimSpace(row.ModelKey) == "" {
-		return false
-	}
-	ratio := 0.0
-	if row.TotalTokens > 0 {
-		ratio = math.Min(1, math.Max(0, float64(row.FastTokens)/float64(row.TotalTokens)))
-	}
-	fastPart := func(value int64) int64 { return int64(math.Round(float64(value) * ratio)) }
-	fi, fo, fr, fw := fastPart(row.InputTokens), fastPart(row.OutputTokens), fastPart(row.CachedTokens), fastPart(row.CacheWriteTokens)
-	// Historical aggregates do not preserve per-request context length. Reprice
-	// them with the published short tier and label the result as aggregate.
-	const context int64 = 0
-	standard := calculateAPIValue(provider, row.ModelKey, "standard", context,
-		row.InputTokens-fi, row.OutputTokens-fo, row.CachedTokens-fr, row.CacheWriteTokens-fw, 0, at)
-	priority := apiValue{}
-	if ratio > 0 {
-		priority = calculateAPIValue(provider, row.ModelKey, "priority", context, fi, fo, fr, fw, 0, at)
-	}
-	row.EstimatedCostUSD = standard.USD + priority.USD
-	row.PricingVersion = exactAPIPrices.Version
-	row.PricingMode = "standard"
-	if ratio > 0 {
-		row.PricingMode = "mixed"
-	}
-	row.PricingQuality = "recalculated-aggregate"
-	return true
-}
-
-func migrateUsagePricing(records map[string]*DailyRecord, hourly map[string]*HourlyRecord) bool {
-	migrated := false
-	for date, record := range records {
-		if record == nil {
-			continue
-		}
-		value := 0.0
-		for _, row := range record.ByModel {
-			if repriceModelUsage(row, mustUsageDate(date)) {
-				migrated = true
-			}
-			if row != nil {
-				value += row.EstimatedCostUSD
-			}
-		}
-		if len(record.ByModel) > 0 {
-			record.SavedMoneyUSD = value
-		}
-	}
-	for key, record := range hourly {
-		if record == nil {
-			continue
-		}
-		date := strings.SplitN(key, "T", 2)[0]
-		for _, row := range record.ByModel {
-			if repriceModelUsage(row, mustUsageDate(date)) {
-				migrated = true
-			}
-		}
-	}
-	return migrated
-}
-
-func atomicWriteFile(path string, data []byte, mode os.FileMode) (err error) {
-	dir := filepath.Dir(path)
-	if err = os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err = tmp.Chmod(mode); err == nil {
-		_, err = tmp.Write(data)
-	}
-	if err == nil {
-		err = tmp.Sync()
-	}
-	closeErr := tmp.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	if dirHandle, openErr := os.Open(dir); openErr == nil {
-		err = dirHandle.Sync()
-		_ = dirHandle.Close()
-	}
-	return err
-}
-
-func createBackupIfAbsent(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if os.IsExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	ok := false
-	defer func() {
-		_ = f.Close()
-		if !ok {
-			_ = os.Remove(path)
-		}
-	}()
-	if _, err = f.Write(data); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	ok = true
-	return nil
-}
-
 // Load 从磁盘加载
 func (s *UsageStatsStore) Load() {
 	s.mu.Lock()
@@ -375,32 +216,12 @@ func (s *UsageStatsStore) Load() {
 		HourlyRecords map[string]*HourlyRecord `json:"hourlyRecords"`
 	}
 	if json.Unmarshal(data, &loaded) == nil {
-		records := loaded.Records
-		hourly := loaded.HourlyRecords
-		if records == nil {
-			records = map[string]*DailyRecord{}
+		if loaded.Records != nil {
+			s.Records = loaded.Records
 		}
-		if hourly == nil {
-			hourly = map[string]*HourlyRecord{}
+		if loaded.HourlyRecords != nil {
+			s.HourlyRecords = loaded.HourlyRecords
 		}
-		if migrateUsagePricing(records, hourly) {
-			backup := filepath.Join(getAppDataDir(), "usage_stats.pre-model-pricing.json")
-			if backupErr := createBackupIfAbsent(backup, data); backupErr != nil {
-				Log("[stats] pricing migration backup failed: %v", backupErr)
-				// Never publish migrated values without a recoverable original.
-				_ = json.Unmarshal(data, &loaded)
-				records, hourly = loaded.Records, loaded.HourlyRecords
-				if records == nil {
-					records = map[string]*DailyRecord{}
-				}
-				if hourly == nil {
-					hourly = map[string]*HourlyRecord{}
-				}
-			} else {
-				s.dirty = true
-			}
-		}
-		s.Records, s.HourlyRecords = records, hourly
 	}
 	// 清理超过 7 天的小时记录
 	cutoff := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15")
@@ -422,6 +243,7 @@ func (s *UsageStatsStore) Save() {
 	}
 
 	dir := getAppDataDir()
+	_ = os.MkdirAll(dir, 0755)
 	path := filepath.Join(dir, "usage_stats.json")
 
 	payload := struct {
@@ -433,10 +255,7 @@ func (s *UsageStatsStore) Save() {
 	if err != nil {
 		return
 	}
-	if err := atomicWriteFile(path, data, 0644); err != nil {
-		Log("[stats] save failed: %v", err)
-		return
-	}
+	_ = os.WriteFile(path, data, 0644)
 	s.dirty = false
 }
 
@@ -486,24 +305,10 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 	if cacheWrite < 0 {
 		cacheWrite = 0
 	}
-	provider := ""
-	if family == "gpt" {
-		provider = "codex"
-	}
-	if family == "claude" {
-		provider = "anthropic"
-	}
-	mode := "standard"
-	if fast {
-		mode = "priority"
-	}
-	value := apiValue{USD: estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite), Quality: "legacy-family", PricingMode: mode}
-	if provider != "" && strings.TrimSpace(modelKey) != "" {
-		value = calculateAPIValue(provider, modelKey, mode, input+cacheRead+cacheWrite,
-			input, output, cacheRead, cacheWrite, 0, time.Now())
-	}
+	cost := estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite)
 	var fastTokens int64
 	if fast {
+		cost *= codexFastCostMultiplier              // 快速档 1.5x 溢价(对齐 OpenAI service_tiers priority)
 		fastTokens = input + output + cacheRead + cacheWrite // 原始量,与 TotalTokens 同口径
 	}
 
@@ -513,11 +318,11 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 	rec.CachedTokens += cacheRead
 	rec.CacheWriteTokens += cacheWrite
 	rec.BillableTokens += billable
-	rec.SavedMoneyUSD += value.USD
+	rec.SavedMoneyUSD += cost
 	if rec.ByModel == nil {
 		rec.ByModel = make(map[string]*ModelUsageRecord)
 	}
-	addModelUsage(rec.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, value, fastTokens)
+	addModelUsage(rec.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost, fastTokens)
 
 	hr := s.getHour()
 	hr.InputTokens += input
@@ -527,7 +332,7 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 	if hr.ByModel == nil {
 		hr.ByModel = make(map[string]*ModelUsageRecord)
 	}
-	addModelUsage(hr.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, value, fastTokens)
+	addModelUsage(hr.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost, fastTokens)
 	s.dirty = true
 }
 

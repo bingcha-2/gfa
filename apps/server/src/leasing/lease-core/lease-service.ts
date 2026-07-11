@@ -114,16 +114,6 @@ export type RequestLogRecorder = {
     sourceIp?: string;
     exitIp?: string;
     headers?: string;
-    reportId?: string;
-    traceId?: string;
-    leaseId?: string;
-    quotaSubjectId?: string;
-    requestStartedAt?: number;
-    upstreamCompletedAt?: number;
-    snapshotObservedAt?: number;
-    reason?: string;
-    primaryReason?: string;
-    weeklyReason?: string;
   }) => void;
 };
 
@@ -1012,15 +1002,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return out;
   }
 
-  private syncFairShareQuotaSnapshot(
-    accountId: number,
-    account: TAccount,
-    meta?: { observedAt?: number; snapshotId?: string; arrivedAt?: number },
-  ): void {
+  private syncFairShareQuotaSnapshot(accountId: number, account: TAccount): void {
     if (!this.fairShareTracker) return;
-    const arrivedAt = this.clampEventTime(meta?.arrivedAt, 0, this.now());
-    const observedAt = this.clampEventTime(meta?.observedAt, 0, arrivedAt);
-    const snapshotBase = String(meta?.snapshotId || `poll-${accountId}-${observedAt}`);
 
     const inputs = this.provider.quotaSnapshotInputs?.(account) || [];
     if (inputs.length > 0) {
@@ -1029,25 +1012,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         // fraction=-1 表示未知(不归并,只继续累积 u_i);resetAt=0 表示上游未给(不喂窗口)。
         const hourlyFraction = this.quotaPercentToFraction(inp.hourlyPercent);
         const hourlyReset = inp.hourlyResetAt ? inp.hourlyResetAt.getTime() : 0;
-        if (this.fairShareTracker.isWindowCuEnabled()) {
-          this.fairShareTracker.applyAccountQuotaSnapshotAt(accountId, bucket, {
-            fraction: hourlyFraction ?? -1, resetAt: hourlyReset, observedAt, arrivedAt,
-            snapshotId: `${snapshotBase}:primary:${bucket}`,
-          });
-        } else {
-          this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, hourlyFraction ?? -1, hourlyReset);
-        }
+        this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, hourlyFraction ?? -1, hourlyReset);
 
         const weeklyFraction = this.quotaPercentToFraction(inp.weeklyPercent);
         const weeklyReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
-        if (this.fairShareTracker.isWindowCuEnabled()) {
-          this.fairShareTracker.applyWeeklyAccountQuotaSnapshotAt(accountId, bucket, {
-            fraction: weeklyFraction ?? -1, resetAt: weeklyReset, observedAt, arrivedAt,
-            snapshotId: `${snapshotBase}:weekly:${bucket}`,
-          });
-        } else {
-          this.fairShareTracker.applyWeeklyAccountQuotaSnapshot(accountId, bucket, weeklyFraction ?? -1, weeklyReset);
-        }
+        this.fairShareTracker.applyWeeklyAccountQuotaSnapshot(accountId, bucket, weeklyFraction ?? -1, weeklyReset);
       }
       return;
     }
@@ -1068,12 +1037,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, f, reset);
       }
     }
-  }
-
-  private clampEventTime(value: unknown, minimum: number, maximum: number): number {
-    const parsed = typeof value === "number" ? value : Date.parse(String(value || ""));
-    if (!Number.isFinite(parsed)) return maximum;
-    return Math.min(maximum, Math.max(minimum, parsed));
   }
 
   private quotaPercentToFraction(value: unknown): number | null {
@@ -1137,37 +1100,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
     const usage = this.usageForBilling(payload);
-    const usageDetail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
-    const quotaBucket = modelKey ? bucketKey(this.provider.id, modelKey) : "";
-    if (dedupId && this.accessKeyStore.hasUsageReport(cardId, dedupId)) {
-      return {
-        ok: true, ignored: true, reason: "already_reported",
-        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
-    }
-    if (
-      dedupId
-      && this.fairShareTracker?.isWindowCuEnabled()
-      && await this.fairShareTracker.hasPersistedReport(dedupId)
-    ) {
-      return {
-        ok: true, ignored: true, reason: "already_reported",
-        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
-    }
-    const durableQuotaReport = Boolean(
-      hardBound
-      && dedupId
-      && quotaBucket
-      && this.fairShareTracker?.isWindowCuEnabled()
-      && (success || usageDetail.totalTokens > 0 || (payload?.accountQuota && typeof payload.accountQuota === "object")),
-    );
-    // In window-cu-v1 the card counters are committed only after the quota
-    // checkpoint. If SQLite fails, a retry can replay the same reportId without
-    // being trapped by the in-memory dedup ring.
-    let wasNew = durableQuotaReport
-      ? true
-      : this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""));
+    const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""));
     if (!wasNew) {
       return {
         ok: true, ignored: true, reason: "already_reported",
@@ -1178,42 +1111,18 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // Fair-share: record weighted usage FIRST (accumulate u_i), gated to hard-bound
     // cards only — pool/universal cards record elsewhere (accessKeyStore + tokenUsage)
     // but never into the per-account fraction-share window.
-    if (hardBound && this.fairShareTracker) {
-      const detail = usageDetail;
+    if (hardBound && this.fairShareTracker && success) {
+      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
-        const bucket = quotaBucket;
+        const bucket = bucketKey(this.provider.id, modelKey);
         // Codex 快速档(service_tier=priority)按乘数多扣份额,反映其占用稀缺的共享快速容量。
         const tierMult = fairShareCostMultiplierForServiceTier(String(payload?.serviceTier || ""));
-        if (this.fairShareTracker.isWindowCuEnabled()) {
-          const arrivedAt = this.now();
-          const requestStartedAt = this.clampEventTime(payload?.requestStartedAt, lease?.createdAt ?? 0, arrivedAt);
-          const upstreamCompletedAt = this.clampEventTime(payload?.upstreamCompletedAt, requestStartedAt, arrivedAt);
-          const cacheWrite5mTokens = Math.max(0, Number(payload?.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0));
-          const cacheWrite1hTokens = Math.max(0, Number(payload?.cacheWrite1hTokens ?? 0));
-          this.fairShareTracker.recordUsageEvent(accountId, bucket, {
-            reportId: dedupId,
-            provider: this.provider.id as "codex" | "anthropic",
-            accountId,
-            quotaSubjectId: cardId,
-            modelId: modelKey,
-            inputTokens: Math.max(0, detail.inputTokens - detail.cachedInputTokens - cacheWrite5mTokens - cacheWrite1hTokens),
-            cachedInputTokens: detail.cachedInputTokens,
-            cacheWrite5mTokens,
-            cacheWrite1hTokens,
-            outputTokens: detail.outputTokens,
-            serviceTier: tierMult > 1 ? "fast" : "standard",
-            requestStartedAt,
-            upstreamCompletedAt,
-            arrivedAt,
-          });
-        } else {
-          this.fairShareTracker.recordUsage(
-            accountId, cardId, bucket,
-            detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
-            modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
-            tierMult,
-          );
-        }
+        this.fairShareTracker.recordUsage(
+          accountId, cardId, bucket,
+          detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
+          modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
+          tierMult,
+        );
       }
     }
 
@@ -1221,47 +1130,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // is attributed into T_i when syncFairShareQuotaSnapshot merges this segment.
     // (applyAccountQuotaSnapshot also mutates the account + feeds the snapshot tracker.)
     if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
-      const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
-      if (accepted && this.fairShareTracker) {
+      this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
+      if (this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
-        if (account) this.syncFairShareQuotaSnapshot(accountId, account, {
-          observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
-          arrivedAt: this.now(),
-          snapshotId: dedupId || String(payload?.traceId || ""),
-        });
-      }
-    }
-
-    if (durableQuotaReport) {
-      const detail = usageDetail;
-      const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
-      const accounting = detail.totalTokens > 0 ? {
-        reportId: dedupId,
-        at: new Date(this.now()),
-        accessKeyId: cardId,
-        accountEmail: (servingAccount as { email?: string } | undefined)?.email || "",
-        customerId: String(auth.record?.customerId || ""),
-        modelKey: modelKey || "",
-        bucket: detail.bucket,
-        status,
-        inputTokens: detail.inputTokens,
-        outputTokens: detail.outputTokens,
-        cachedInputTokens: detail.cachedInputTokens,
-        cacheCreationTokens: detail.cacheCreationTokens,
-        rawTotalTokens: detail.rawTotalTokens,
-        totalTokens: detail.totalTokens,
-        reverseProxy: Boolean(payload?.clientFlag),
-        serviceTier: String(payload?.serviceTier || ""),
-      } : undefined;
-      await this.fairShareTracker!.checkpointReport(accountId, quotaBucket, dedupId, accounting);
-      wasNew = this.accessKeyStore.recordUsage(
-        cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""),
-      );
-      if (!wasNew) {
-        return {
-          ok: true, ignored: true, reason: "already_reported",
-          accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-        };
+        if (account) this.syncFairShareQuotaSnapshot(accountId, account);
       }
     }
 
@@ -1269,9 +1141,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // counted (exactly-once) reports — recordUsage above already deduped. We log
     // the same canonical numbers the card counters persist; skip zero-token
     // reports (errors / capacity rejections carry no usage).
-    // window-cu reports already aggregate CardUsageHourly atomically with their
-    // durable receipt. Other algorithms retain the buffered legacy path.
-    if (this.tokenUsageTracker && !durableQuotaReport) {
+    if (this.tokenUsageTracker) {
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         // Stamp the STABLE account identity (email) alongside the volatile positional
@@ -1321,9 +1191,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const sessionId = String(payload?.sessionId || "");
       const headers = typeof payload?.headers === "string" ? payload.headers : payload?.headers ? JSON.stringify(payload.headers) : "";
       const reverseProxy = Boolean(payload?.clientFlag);
-      const quotaReasons = quotaBucket
-        ? this.fairShareTracker?.getWindowReasons(accountId, quotaBucket)
-        : null;
 
       if (accountId && this.banEventRecorder) {
         this.banEventRecorder.observeRequest({
@@ -1336,16 +1203,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         provider: this.provider.id, accountId, accountEmail, accessKeyId: cardId,
         customerId: auth.record?.customerId as string | undefined, deviceId, userId, sessionId,
         modelKey, status, totalTokens: tokens, reverseProxy, surface, sourceIp, exitIp, headers,
-        reportId: dedupId,
-        traceId: String(payload?.traceId || ""),
-        leaseId,
-        quotaSubjectId: cardId,
-        requestStartedAt: Number(payload?.requestStartedAt || 0),
-        upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
-        snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
-        reason: String(payload?.reason || ""),
-        primaryReason: quotaReasons?.primary || "",
-        weeklyReason: quotaReasons?.weekly || "",
       });
     }
 
@@ -1470,9 +1327,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * the (possibly mutated) account is persisted with debounce. Latest-wins,
    * idempotent — safe on duplicate reports.
    */
-  private applyAccountQuotaSnapshot(accountId: number, quota: any): boolean {
-    const claimedAccountId = Number(quota?.accountId || 0);
-    if (claimedAccountId > 0 && claimedAccountId !== accountId) return false;
+  private applyAccountQuotaSnapshot(accountId: number, quota: any): void {
     let snapshotAccount: TAccount | null = null;
     this.mutateAccount(accountId, (account) => {
       const result = this.provider.applyQuotaSnapshot(account, quota);
@@ -1487,7 +1342,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         this.accountQuotaSnapshotTracker.record({ provider: this.provider.id, accountId, email, ...inp });
       }
     }
-    return snapshotAccount !== null;
   }
 
   async shadowReport(req: any, payload: any) {
@@ -1495,10 +1349,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return { ok: true };
   }
 
-  async reloadAccessKeys() {
+  reloadAccessKeys() {
     this.accessKeyStore.reload();
-    this.fairShareTracker?.refreshAllParticipants();
-    await this.fairShareTracker?.flush();
     return { ok: true, reloaded: true };
   }
 
@@ -1889,7 +1741,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       inputTokens: payload?.inputTokens,
       outputTokens: payload?.outputTokens,
       cachedInputTokens: payload?.cachedInputTokens,
-      cacheCreationTokens: payload?.cacheCreationTokens,
       rawTotalTokens: payload?.rawTotalTokens,
       totalTokens: payload?.totalTokens,
     };

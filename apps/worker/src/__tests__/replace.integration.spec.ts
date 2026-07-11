@@ -38,12 +38,10 @@ vi.mock("../browser-context", () => {
       last: () => mkLoc(),
       nth: () => mkLoc(),
       waitFor: async () => {},
-      isVisible: async () => true,
       click: async () => {},
       fill: async () => {},
       press: async () => {},
       textContent: async () => "",
-      innerText: async () => "",
       locator: () => mkLoc(),
     });
     return {
@@ -53,15 +51,7 @@ vi.mock("../browser-context", () => {
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
-      evaluate: async (fn?: unknown) => {
-        const source = String(fn ?? "");
-        if (source.includes("document.body?.innerText ??")) {
-          return "Your family invitation was sent successfully. ".repeat(4);
-        }
-        if (source.includes("lowerTarget")) return null;
-        if (source.includes("memberCount")) return 0;
-        return [];
-      },
+      evaluate: async () => [],
       screenshot: async () => Buffer.from(""),
     };
   }
@@ -169,9 +159,9 @@ describe("Replace Processor Integration", () => {
     expect(members[0].status).toBe("REMOVED");
     expect(members[0].removedAt).not.toBeNull();
 
-    // Browser acquisition is encapsulated by BrowserPool.acquireAndOpen.
-    expect(mockPool.acquireCalls).toContain(mockPool.profileId);
-    expect(mockPool.releaseCalls).toContain(mockPool.profileId);
+    // Assert: AdsPower interactions
+    expect(mockAdspower.openCalls).toContain(mockPool.profileId);
+    expect(mockAdspower.closeCalls).toContain(mockPool.profileId);
   });
 
   it("should set Task to FAILED_FINAL when Account is not found", async () => {

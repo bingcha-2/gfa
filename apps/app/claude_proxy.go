@@ -403,7 +403,6 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		return
 	}
 	client := p.newUpstream(egress)
-	reqStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -437,8 +436,6 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		usage, copyErr := copyStreamingClaudeResponse(tee, streamReader)
 		audit.respBody = tee.captured()
 		details := claudeReportDetailsFromUsage(resp.StatusCode, modelKey, usage)
-		details.RequestStartedAt = reqStart.UnixMilli()
-		details.UpstreamCompletedAt = time.Now().UnixMilli()
 		details.ClientFlag = clientFlag
 		details.Surface = surfaceTag
 		details.Headers = reportHeaders
@@ -491,8 +488,6 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	_, _ = w.Write(respBody)
 
 	details := claudeReportDetailsFromBody(resp.StatusCode, modelKey, respBody)
-	details.RequestStartedAt = reqStart.UnixMilli()
-	details.UpstreamCompletedAt = time.Now().UnixMilli()
 	details.ClientFlag = clientFlag
 	details.Surface = surfaceTag
 	details.Headers = reportHeaders
@@ -671,15 +666,12 @@ func extractClaudeModelKey(body []byte) string {
 
 // claudeReportDetailsFromUsage 由流式解析出的 usage 组装上报明细。
 func claudeReportDetailsFromUsage(status int, modelKey string, u claudeUsage) ReportDetails {
-	u = u.normalized()
 	return ReportDetails{
 		StatusCode:          status,
 		ModelKey:            modelKey,
 		InputTokens:         u.InputTokens,
 		OutputTokens:        u.OutputTokens,
 		CachedInputTokens:   u.CacheReadInputTokens,
-		CacheWrite5mTokens:  u.CacheWrite5mTokens,
-		CacheWrite1hTokens:  u.CacheWrite1hTokens,
 		RawTotalTokens:      u.rawTotal(),
 		BillableTotalTokens: u.rawTotal(),
 	}
@@ -695,8 +687,6 @@ func claudeReportDetailsFromBody(status int, modelKey string, body []byte) Repor
 		InputTokens:              payload.Usage.InputTokens,
 		OutputTokens:             payload.Usage.OutputTokens,
 		CacheCreationInputTokens: payload.Usage.CacheCreationInputTokens,
-		CacheWrite5mTokens:       payload.Usage.CacheCreation.Ephemeral5mInputTokens,
-		CacheWrite1hTokens:       payload.Usage.CacheCreation.Ephemeral1hInputTokens,
 		CacheReadInputTokens:     payload.Usage.CacheReadInputTokens,
 	}
 	return claudeReportDetailsFromUsage(status, modelKey, u)

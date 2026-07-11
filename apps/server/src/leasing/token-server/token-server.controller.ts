@@ -40,7 +40,7 @@ export class TokenServerController {
         case "sr":
           return response.status(200).json(await this.tokenServer.shadowReport(request, body));
         case "reload-access-keys":
-          return response.status(200).json(await this.tokenServer.reloadAccessKeys());
+          return response.status(200).json(this.tokenServer.reloadAccessKeys());
         case "reload-accounts":
           return response.status(200).json({ ok: true, status: this.tokenServer.getStatus() });
         case "announcement":

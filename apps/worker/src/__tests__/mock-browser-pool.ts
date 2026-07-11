@@ -62,10 +62,6 @@ export class MockBrowserPool {
 
   async setLastAccount(_profileId: string, _accountId: string): Promise<void> {}
 
-  async clearAccountTaskFailures(_accountId: string): Promise<void> {}
-
-  async clearLoginCooldown(_accountId: string): Promise<void> {}
-
   async acquireForAccount(
     _workerId: string,
     _accountId: string,

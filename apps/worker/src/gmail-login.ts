@@ -221,16 +221,6 @@ export async function gmailLogin(
     // Step 1: Navigate to Google login
     await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
 
-    // Cached profiles can be redirected straight to an authenticated Google
-    // surface. Do not probe/login against a page that is already signed in;
-    // those generic locators can match unrelated inputs and create false
-    // password/challenge failures in both production and browser fixtures.
-    const landedUrl = page.url();
-    if (landedUrl.includes(SUCCESS_DOMAIN) || landedUrl.includes("mail.google.com")) {
-      await logger.log("INFO", "[gmail-login] Already authenticated — login successful");
-      return { success: true };
-    }
-
     // Step 2: Fill email — wait for input to appear (event-driven, no fixed delay)
     const emailInput = page.locator(
       'input[type="email"], input[id="identifierId"]'

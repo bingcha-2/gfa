@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, Res } from "@nestjs/common";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteAnthropicHttpError, RemoteAnthropicService } from "../service/remote-anthropic.service";
@@ -6,7 +6,7 @@ import { RemoteAnthropicHttpError, RemoteAnthropicService } from "../service/rem
 @Public()
 @Controller("app/lease/anthropic")
 export class RemoteAnthropicController {
-  constructor(@Inject(RemoteAnthropicService) private readonly remoteAnthropic: RemoteAnthropicService) {}
+  constructor(private readonly remoteAnthropic: RemoteAnthropicService) {}
 
   @Get()
   root(@Res() response: any) {
@@ -30,7 +30,7 @@ export class RemoteAnthropicController {
         case "report-result":
           return response.status(200).json(await this.remoteAnthropic.reportResult(request, body));
         case "reload-access-keys":
-          return response.status(200).json(await this.remoteAnthropic.reloadAccessKeys());
+          return response.status(200).json(this.remoteAnthropic.reloadAccessKeys());
         case "reload-accounts":
           return response.status(200).json({ ok: true, status: this.remoteAnthropic.getStatus() });
         default:

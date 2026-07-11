@@ -83,19 +83,4 @@ describe("AccountQuotaSnapshotTracker", () => {
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
-
-  it("分批删除 72 小时以前的快照", async () => {
-    const findMany = vi.fn()
-      .mockResolvedValueOnce(Array.from({ length: 500 }, (_, id) => ({ id: `a${id}` })))
-      .mockResolvedValueOnce([{ id: "last" }]);
-    const deleteMany = vi.fn().mockResolvedValue({ count: 500 });
-    const tracker = new AccountQuotaSnapshotTracker(
-      { accountQuotaSnapshot: { findMany, deleteMany } },
-      { autoStart: false, now: () => 4 * 24 * 60 * 60 * 1000 },
-    );
-    await tracker.pruneOld();
-    expect(deleteMany).toHaveBeenCalledTimes(2);
-    expect(deleteMany.mock.calls[0][0].where.id.in).toHaveLength(500);
-    expect(findMany.mock.calls[0][0].where.timestamp.lt.getTime()).toBe(24 * 60 * 60 * 1000);
-  });
 });

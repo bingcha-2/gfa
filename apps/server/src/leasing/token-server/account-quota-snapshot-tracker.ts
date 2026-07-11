@@ -10,8 +10,6 @@
  */
 
 const FLUSH_INTERVAL_MS = 10_000; // 10 秒
-const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
-const RETENTION_MS = 72 * 60 * 60 * 1000;
 const CHANGE_THRESHOLD_PCT = 0.1; // 水位变化 ≥0.1% 才记一笔
 
 export interface AccountQuotaSnapshotInput {
@@ -58,15 +56,9 @@ export class AccountQuotaSnapshotTracker {
   private queue: SnapshotRow[] = [];
   private last = new Map<string, LastSeen>();
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private pruneTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly now: () => number;
 
-  constructor(private readonly prisma: any, opts: { now?: () => number; autoStart?: boolean } = {}) {
-    this.now = opts.now || Date.now;
-    if (opts.autoStart !== false) {
-      this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
-      this.pruneTimer = setInterval(() => this.pruneOld(), PRUNE_INTERVAL_MS);
-    }
+  constructor(private readonly prisma: any) {
+    this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
   }
 
   /** 记录一笔水位快照(on-change 去重)。纯内存,不阻塞。 */
@@ -114,29 +106,11 @@ export class AccountQuotaSnapshotTracker {
     }
   }
 
-  async pruneOld(): Promise<void> {
-    try {
-      for (let batch = 0; batch < 20; batch++) {
-        const rows = await this.prisma.accountQuotaSnapshot.findMany({
-          where: { timestamp: { lt: new Date(this.now() - RETENTION_MS) } },
-          orderBy: { timestamp: "asc" }, take: 500, select: { id: true },
-        });
-        if (rows.length === 0) break;
-        await this.prisma.accountQuotaSnapshot.deleteMany({ where: { id: { in: rows.map((row: any) => row.id) } } });
-        if (rows.length < 500) break;
-      }
-    } catch (err) {
-      console.error("[account-quota-snapshot-tracker] prune failed:", err);
-    }
-  }
-
   destroy(): void {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.pruneTimer) clearInterval(this.pruneTimer);
-    this.pruneTimer = null;
   }
 
   /** 仅测试用。 */
