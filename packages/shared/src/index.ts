@@ -164,3 +164,13 @@ export {
   type ClaudeTier,
   type QuotaWeight,
 } from "./pricing";
+
+export {
+  calculateQuotaCu,
+  resolveQuotaRate,
+  type ModelQuotaRate,
+  type QuotaProvider,
+  type QuotaRateQuality,
+  type QuotaUsage,
+  type ResolvedQuotaRate,
+} from "./quota-rates";

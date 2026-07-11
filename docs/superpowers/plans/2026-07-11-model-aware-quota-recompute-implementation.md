@@ -36,7 +36,7 @@
 - Modify: `packages/shared/src/index.ts`
 - Modify: `packages/shared/package.json`
 
-- [ ] **Step 1: Write failing registry tests**
+- [x] **Step 1: Write failing registry tests**
 
 Cover exact aliases/effective dates for Sol, Terra, Luna, GPT-5.4 mini, Fable, Opus, Sonnet, Haiku; cache/input/output separation; Priority multipliers; and unknown-model conservative fallback with an explicit quality flag.
 
@@ -46,17 +46,17 @@ expect(calculateQuotaCu(event("gpt-5.6-luna", { input: 1_000_000 }))).toMatchObj
 expect(resolveQuotaRate("codex", "unknown-future-model", at).quality).toBe("conservative-fallback");
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @gfa/shared exec vitest run src/quota-rates.spec.ts`
 
 Expected: FAIL because `quota-rates.ts` and registry data do not exist.
 
-- [ ] **Step 3: Implement the typed registry**
+- [x] **Step 3: Implement the typed registry**
 
 Use canonical ids, aliases, `effectiveFrom/effectiveUntil`, separate input/cache-write/cache-read/output rates, and provider-scoped highest-known fallback. No model-name branching is allowed outside this registry.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @gfa/shared exec vitest run src/quota-rates.spec.ts && pnpm --filter @gfa/shared lint`
 
