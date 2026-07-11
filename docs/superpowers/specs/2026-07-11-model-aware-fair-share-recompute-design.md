@@ -508,18 +508,27 @@ primary 个人剩余 > 0
 - `apps/server/src/leasing/quota/model-rate-registry.ts`：模型精确映射、费率版本与生效时间。
 - `apps/server/src/leasing/quota/fair-share-cu.ts`：纯函数 CU 计算，不读取数据库或快照。
 - `apps/server/src/leasing/quota/fair-share-window-repository.ts`：按账号保存当前窗口 revision，提供关键 checkpoint 和启动恢复。
+- `apps/server/src/leasing/token-server/quota-diagnostic-tracker.ts`：紧凑诊断事件、队列上限、72h TTL 和行数封顶。
+- `apps/server/src/leasing/rosetta/quota-diagnostics.service.ts`：按 trace/support code 查询、确定性 diagnosis 和脱敏导出。
+- `apps/web/src/app/(console)/console/(dashboard)/(product)/quota-diagnostics/page.tsx`：管理员额度诊断搜索与时间线。
+- `packages/shared/src/quota-rates.json`：Codex Credits 与 Claude 相对 CU 的独立版本化费率源。
 
-建议修改：
+修改：
 
-- `packages/shared/src/pricing.json`：从 family 均价升级为明确模型费率，或只保留展示价格并把额度费率迁到 registry。
+- `packages/shared/src/pricing.json`：继续只负责现有 API 美元成本展示，不再被公平额度直接读取；额度 registry 只读取新的 `quota-rates.json`，避免把 API 价格与订阅 Credits 混成一个概念。
 - `apps/server/src/leasing/lease-core/product-bucket.ts`：移除未知模型默认 Claude 的额度归类行为。
 - `apps/server/src/leasing/token-server/fair-share-tracker.ts`：加入累计窗口重算模式和快照时间校验。
 - `apps/server/src/leasing/lease-core/lease-service.ts`：请求完成后记录模型 CU，再同步母号快照。
 - `apps/server/src/leasing/subscription/entitlement-sync.service.ts`：中途加入/退出时刷新份额，但保留窗口会计残留，并传递稳定 `quotaSubjectId`。
 - `apps/server/src/leasing/token-server/token-usage-tracker.ts`：小时聚合写入 CU 与费率版本。
+- `apps/server/src/leasing/token-server/request-log-tracker.ts`：扩展会计摘要，将实际 5 天保留改成 72h，并收紧 header/行数上限。
+- `apps/server/src/leasing/token-server/account-quota-snapshot-tracker.ts`：补充 observedAt、接受结果、72h TTL 和行数上限。
+- `apps/server/src/leasing/rosetta/rosetta.controller.ts`：增加管理员 quota diagnostics 查询与导出接口。
 - `apps/app/claude_sse.go`：完整保留缓存读取与缓存创建信息；能取得 5m/1h 明细时分别上报。
 - `apps/app/codex_proxy.go`、`apps/app/codex_ws.go`：继续以上游响应实际模型和 usage 为准，并携带快照采集时间。
-- `prisma/schema.prisma`：只扩展当前热表与小时聚合，不新增历史窗口表。
+- `apps/app/leaser_report.go`、`apps/app/codex_leaser.go`、`apps/app/claude_leaser.go`：贯穿 traceId/supportCode 与完整 usage 字段。
+- `apps/web/src/components/console/shell/console-sidebar.tsx`：增加“额度诊断”管理员入口。
+- `prisma/schema.prisma`：扩展当前热表、RequestLog、AccountQuotaSnapshot、小时聚合并增加 QuotaDiagnosticEvent；不新增历史窗口表。
 
 ## 15. 兼容与上线
 
@@ -541,9 +550,255 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 7. 再开启 Anthropic。
 8. 旧算法保留一个发布周期，稳定后删除。
 
-不需要客户端 UI 大改。客户端继续接收和显示 5h、周两根血条；主要变化在服务端计算和快照可信性。
+最终用户客户端 UI 不需要大改，继续显示 5h、周两根血条，并在额度错误中附 support code。管理员控制台新增额度诊断页面；主要计算变化仍在服务端。
 
-## 16. 测试要求
+## 16. 可观测性与三天诊断链
+
+### 16.1 目标
+
+线上出现“问两句额度没了”“过一会又涨回来”“reset 时间突然变了”时，管理员必须能在不重新开启 debug、不复现用户现场的前提下回答：
+
+1. 哪个客户端、订阅、lease 和母号处理了请求。
+2. 客户端请求模型与上游实际模型分别是什么。
+3. 输入、缓存读取、缓存写入、输出和 Fast 各有多少。
+4. 使用了哪个费率版本，算出多少 CU。
+5. 请求前后用户累计 CU、`T_i`、份额 `e_i` 和血条是多少。
+6. 母号 primary/weekly 快照来自哪里、何时采集、是否被接受。
+7. 如果快照被拒绝，具体是旧时间、旧窗口、跨账号、非法 fraction 还是 resetAt 漂移。
+8. 本次是否发生 reset、join、leave、rebind、cold start、restart recovery 或 checkpoint error。
+9. 最终为什么允许或拦截请求。
+
+诊断数据只能保存必要的计量元数据，不保存提示词、响应正文、工具输出、Authorization、Cookie、OAuth token、refresh token 或完整请求 body。
+
+### 16.2 统一关联标识
+
+每次推理请求建立一个 `traceId`，贯穿：
+
+```text
+Go 客户端代理
+→ lease
+→ 上游推理与 usage 解析
+→ reportResult(reportId/leaseId)
+→ CU 计算
+→ 快照接受/拒绝
+→ FairShare 重算
+→ checkpoint
+→ status/血条/拦截
+```
+
+规则：
+
+- 新客户端生成随机、不可猜测的 `traceId`，只发送给 GFA 服务端，不转发到 OpenAI/Anthropic。
+- `reportId` 继续负责 exactly-once 去重，`traceId` 负责诊断关联，两者不能混用。
+- 服务端日志同时记录 `traceId`、`reportId`、`leaseId`、`accountId` 和稳定 `quotaSubjectId`。
+- 旧客户端没有 `traceId` 时，服务端生成，并在 report/status 响应中返回。
+- 上游安全请求 id 可以单独保存；不得保存含凭证的完整响应头。
+
+### 16.3 一请求一条会计摘要
+
+扩展 `RequestLog`，每个去重后的请求最多写一条紧凑会计摘要：
+
+```ts
+interface QuotaRequestDiagnostic {
+  traceId: string;
+  reportId: string;
+  leaseId: string;
+  provider: "codex" | "anthropic";
+  accountId: number;
+  accessKeyId: string;
+  quotaSubjectId: string;
+  requestedModel: string;
+  actualModel: string;
+  rateVersion: string;
+  serviceTier: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  outputTokens: number;
+  requestCu: number;
+  primaryBeforeJson: string;
+  primaryAfterJson: string;
+  weeklyBeforeJson: string;
+  weeklyAfterJson: string;
+  decisionCode: string;
+  checkpointRevision: number;
+}
+```
+
+before/after JSON 只包含紧凑数值：`fraction/resetAt/observedAt/CU_i/ΣCU/T_i/e_i/unattributed/remaining`。每段最大 1 KB，超出即拒绝附加字段，不能无限截取大对象。
+
+### 16.4 状态变化事件
+
+新增 `QuotaDiagnosticEvent`，只记录真正改变或拒绝状态的事件，不为每次普通读取写日志：
+
+```text
+request_accounted
+snapshot_applied
+snapshot_rejected
+window_reset
+subscription_joined
+subscription_left
+subscription_rebound
+account_rebound
+cold_start_baseline
+restart_recovered
+checkpoint_failed
+enforcement_denied
+unknown_model_fallback
+```
+
+一条事件包含公共字段：
+
+- `at`、`traceId`、`eventType`
+- `provider`、`accountId`、`quotaSubjectId`
+- `reportId`、`leaseId`
+- `scope=primary|weekly|none`
+- `reasonCode`
+- `beforeJson`、`afterJson`、`detailJson`
+
+索引：
+
+- `[traceId, at]`
+- `[reportId]`
+- `[leaseId]`
+- `[provider, accountId, at]`
+- `[quotaSubjectId, at]`
+- `[eventType, at]`
+- `[at]`，供 TTL 清理
+
+正常成功 checkpoint 不单独写事件，它的 revision 合并在请求/快照事件中；只有失败、重试和恢复写独立事件。这样避免一条请求膨胀成大量日志。
+
+### 16.5 稳定 reason code
+
+所有诊断原因使用稳定机器码，中文文案仅用于展示。至少包含：
+
+```text
+SNAPSHOT_STALE_OBSERVED_AT
+SNAPSHOT_OLD_WINDOW
+SNAPSHOT_ACCOUNT_MISMATCH
+SNAPSHOT_INVALID_FRACTION
+SNAPSHOT_UNKNOWN
+RESET_ACCEPTED
+RESET_DRIFT_IGNORED
+USAGE_DUPLICATE_REPORT
+USAGE_ZERO
+MODEL_UNKNOWN_CONSERVATIVE_RATE
+CACHE_WRITE_ASSUMED_5M
+COLD_START_BASELINE_ONLY
+CHECKPOINT_FAILED
+CHECKPOINT_RETRY_SUCCEEDED
+DENY_PRIMARY_EXHAUSTED
+DENY_WEEKLY_EXHAUSTED
+DENY_NO_SHARE
+SUBJECT_JOINED_MID_WINDOW
+SUBJECT_LEFT_ACCOUNTING_RETAINED
+SUBJECT_REBOUND_ACCOUNT_CHANGED
+```
+
+测试和运维查询依赖 reason code，不依赖可能变化的中文错误文本。
+
+### 16.6 三天保留与容量保护
+
+逐请求及额度诊断数据统一保留 72 小时：
+
+| 数据 | 保留 | 硬上限 | 说明 |
+|---|---:|---:|---|
+| `RequestLog` | 72h | 200,000 行 | 当前代码实际为 5 天，改为 72h；header 上限从 8 KB 收紧到 2 KB |
+| `QuotaDiagnosticEvent` | 72h | 150,000 行 | 状态变化事件；单个 JSON 字段 ≤4 KB |
+| `AccountQuotaSnapshot` | 72h | 100,000 行 | 当前缺少清理，补 TTL 和行数上限 |
+| 客户端/服务端 quota 结构化文件日志 | 72h | 单文件 100 MB、总量 500 MB | 按年龄与总量双重轮转，旧文件压缩 |
+
+清理规则：
+
+- 服务启动完成数据库连接后立即 prune 一次，然后每小时执行。
+- 先按 `at/timestamp < now-72h` 分批删除，每批最多 10,000 行，避免长事务锁库。
+- 再检查行数硬上限，超限时删除最旧数据；高流量期间允许实际保留少于 72 小时，优先保护数据库。
+- 内存日志队列同样有上限；队列满时丢弃最旧诊断事件、增加 `diagnosticDropped` 计数并输出一次限频告警，不能拖垮请求主链。
+- 清理失败记录 `DIAGNOSTIC_PRUNE_FAILED` 并重试，不能影响额度执行。
+- SQLite 每日低峰执行 WAL checkpoint/`PRAGMA optimize`；使用 incremental vacuum 时分小批运行，禁止请求高峰做阻塞式全库 `VACUUM`。
+
+以下不是诊断日志，不受 72 小时 TTL 影响：
+
+- `FairShareWindow`：当前未结束的权威执行状态，必须保留到对应官方 reset；周窗口可能超过 3 天。
+- `CardUsageHourly`：低基数业务聚合，承担 30 天订阅退款/用量看板，继续使用现有 60 天保留。
+- 订单、订阅、退款和封号事件：业务审计数据，沿用各自保留政策。
+
+### 16.7 脱敏与安全
+
+- 不记录请求/响应 body、prompt、代码内容和工具输出。
+- 不记录 Authorization、Cookie、Set-Cookie、OAuth/refresh/access token。
+- 请求头仍使用白名单，不再采用“过滤黑名单后全存”。
+- IP 若诊断确需展示，默认存脱敏前缀或 HMAC；完整 IP 只沿用现有有权限的安全审计表，不复制进额度事件。
+- `detailJson` 必须经过字段级 schema 序列化，禁止直接 `JSON.stringify(payload)`。
+- 诊断 API 仅管理员可访问，所有查询记管理员审计日志。
+- 导出的支持包再次脱敏，默认不含邮箱，只含 accountId/subjectId；管理员显式选择后才带邮箱。
+
+### 16.8 诊断查询与支持包
+
+新增管理员查询：
+
+```text
+GET /rosetta/quota-diagnostics/search
+  ?traceId=
+  &supportCode=
+  &reportId=
+  &leaseId=
+  &accountId=
+  &accountEmail=
+  &accessKeyId=
+  &quotaSubjectId=
+  &from=
+  &to=
+
+GET /rosetta/quota-diagnostics/health
+GET /rosetta/quota-diagnostics/:traceId
+GET /rosetta/quota-diagnostics/:traceId/export
+```
+
+服务端从 `traceId` 生成短 `supportCode`，在额度拦截、额度异常响应以及客户端诊断日志中返回。用户只需要提供 support code，管理员即可反查完整 trace；support code 不能包含账号、邮箱或可推导的数据库 id。
+
+详情按时间排序返回：
+
+1. lease 和绑定关系。
+2. 请求模型、实际模型、完整 Token/CU 公式。
+3. primary/weekly 请求前后状态。
+4. 同时段母号快照及接受/拒绝原因。
+5. join/leave/rebind/reset/restart 事件。
+6. checkpoint revision 与持久化结果。
+7. 客户端最终收到的 fraction、resetAt 和拦截原因。
+
+服务端生成 `diagnosis` 摘要，使用确定性规则标出：
+
+- 旧快照倒灌尝试。
+- 模型未知/费率保守回退。
+- 客户端 usage 缺失或为零。
+- 上游实际模型与请求模型不一致。
+- 缓存写入精度降级。
+- 中途加入/退出造成的份额变化。
+- resetAt 漂移或真正 reset。
+- checkpoint 延迟/失败。
+- 母号存在无法归因消耗。
+
+摘要只能根据已记录事实生成，不使用猜测性“可能是”覆盖原始时间线。原始事件和计算字段始终可下钻。
+
+管理控制台增加“额度诊断”入口，支持按 support code、母号、订阅、卡、时间范围搜索，展示只读时间线和一键导出脱敏支持包。即使控制台页面不可用，管理员 API 仍可直接查询；诊断能力不能只存在于前端。
+
+health 接口返回各诊断表行数、最老/最新时间、内存队列深度、累计 dropped、最近 flush/prune 成功时间和最近错误。查询不到 trace 时，界面必须区分“客户端从未上报”“已超过 72 小时”“日志队列曾溢出”和“筛选条件错误”，不能统一显示“无数据”。
+
+### 16.9 可观测性测试
+
+- 给定 `traceId` 能串起客户端、服务端请求、快照、重算、checkpoint 和血条结果。
+- 每个稳定 reason code 至少一个测试。
+- 任何模型的 CU 日志能够按记录字段重新算出同一结果。
+- 旧/跨账号快照在诊断中可见为 rejected，且权威状态不变。
+- 71h59m 数据保留，72h 以后删除。
+- 超过行数上限删除最旧数据，不删除当前 `FairShareWindow`。
+- 日志队列溢出不阻塞请求，并产生限频告警与 dropped 指标。
+- 所有凭证、body 和 prompt 脱敏测试使用高风险哨兵字符串，数据库和导出包中均不得出现。
+- 跨进程 E2E 失败时自动输出对应 trace 支持包，CI artifact 保留用于定位。
+
+## 17. 测试要求
 
 本次必须同时具备四层测试，不能只增加 `FairShareTracker` 单元测试：
 
@@ -552,7 +807,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 3. 客户端集成测试：真实 Go 代理解析上游 SSE/响应头、生成 usage/quota report、消费服务端状态。
 4. 客户端—服务端跨进程端到端测试：实际 Go 客户端和实际 Nest HTTP 服务串联，中间不替换额度业务逻辑。
 
-### 16.1 模型 CU
+### 17.1 模型 CU
 
 - Sol、Terra、Luna 同样 Token 得出 5:2.5:1 的输入 Credits 比例。
 - Codex 缓存输入按各模型输入的 0.1 计算。
@@ -564,7 +819,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - 自动补全及其他辅助模型返回非零 usage 时正常计入，不允许无条件跳过。
 - 请求失败且 usage 为零时不产生 CU；失败但上游返回非零 usage 时仍按真实 usage 计入。
 
-### 16.2 归因时序
+### 17.2 归因时序
 
 - A 大请求后母号分两次下降，B 在两次下降之间发小请求；B 不承担全部第二段下降。
 - 轮询一次报告 40% 下降与分四次报告 10% 下降，最终归因近似一致。
@@ -572,7 +827,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - 没有本地 CU 时发生的母号下降进入 `unattributedShare`，后来用户不继承。
 - 新订阅加入并产生 CU、但母号尚无新快照时，不得立即搬动已经确认的旧归因。
 
-### 16.3 上涨与快照
+### 17.3 上涨与快照
 
 - 同一窗口 fraction 上升后，各卡归因立即下降。
 - 旧 `observedAt` 快照不能覆盖新状态。
@@ -580,7 +835,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - `resetAt` 小幅漂移不清窗口。
 - 真 reset 只清对应的 5h 或周窗口，另一个窗口不受影响。
 
-### 16.4 持久化与生命周期
+### 17.4 持久化与生命周期
 
 - 重启后恢复累计 CU、当前归因、最后 fraction 和快照时间。
 - 启动恢复完成前不发放 lease。
@@ -593,7 +848,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - reset 后不产生历史窗口行。
 - 小时聚合 CU 丢失或延迟不能影响实时额度执行。
 
-### 16.5 超卖与独享回归套件
+### 17.5 超卖与独享回归套件
 
 现有以下测试不能删除或放宽断言，只能补充 `window-cu-v1` 参数化用例：
 
@@ -612,7 +867,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - 中途加入导致的份额切薄与当前生产语义一致。
 - 新算法只改变 CU/T 归因，不改变订单、绑定、徽标和套餐权重。
 
-### 16.6 服务端真实链路集成测试
+### 17.6 服务端真实链路集成测试
 
 在现有 Codex 场景套基础上增加 Anthropic 对称场景，并使用真实 Prisma 临时数据库、真实 `LeaseService`、`EntitlementSyncService` 和 HTTP controller：
 
@@ -630,7 +885,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - `apps/server/src/leasing/subscription/__tests__/fair-share-subscription-lifecycle.e2e.spec.ts`
 - `apps/server/src/leasing/token-server/__tests__/fair-share-checkpoint-restart.e2e.spec.ts`
 
-### 16.7 客户端—服务端跨进程 E2E Harness
+### 17.7 客户端—服务端跨进程 E2E Harness
 
 新增一个独立黑盒测试入口，真实启动服务端并运行 Go 客户端测试：
 
@@ -664,7 +919,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 
 测试控制接口只负责制造外部事件，不得直接写 `FairShareTracker` 内存状态；所有状态变化必须经过与生产相同的 lease/report/subscription/quota snapshot 入口。
 
-### 16.8 极限场景矩阵
+### 17.8 极限场景矩阵
 
 以下场景 Codex 与 Anthropic 都要覆盖；仅某 provider 支持的模型字段可以单独标注：
 
@@ -729,7 +984,7 @@ BCAI_ANTHROPIC_FAIR_SHARE_ALGO=segment-v1|window-cu-v1
 - fraction 为 0、1、极小浮点、NaN、Infinity、-1 unknown。
 - CU、T、fraction 永远不能产生 NaN、Infinity、负数或超过合法上界。
 
-### 16.9 全局性质测试
+### 17.9 全局性质测试
 
 除场景用例外，使用固定 seed 的属性/随机序列测试生成 usage、snapshot、join、leave、rebind、restart、reset 事件，持续验证：
 
@@ -747,27 +1002,38 @@ primary 操作不能清 weekly，weekly 操作不能清 primary
 
 随机测试失败时必须打印 seed 和完整事件序列，保证 CI 中可以复现。
 
-### 16.10 CI 门禁
+### 17.10 全量回归与 CI 门禁
 
-合并前至少执行：
+额度改造合并前必须执行仓库全量回归，不允许只跑额度相关测试：
 
 ```bash
-pnpm --filter @gfa/server test
-pnpm --filter @gfa/server lint
-(cd apps/app && go test ./...)
+pnpm test
 node tests/quota-e2e/run.mjs
 ```
 
+`pnpm test` 已包含全仓 lint、单元测试、集成测试、现有 E2E 和全部 Go 测试。新增跨进程 quota E2E 应同时接入根 `test:e2e`，上方显式命令用于本地单独复跑；CI 中不得重复运行两遍。
+
+必须回归的核心域至少包括：
+
+- Codex/Claude lease、proxy、usage parsing、quota sync、429 和模型 gate。
+- 所有 `FairShareTracker`、独享、超卖、冷启动、自愈和持久化用例。
+- 订阅下单、绑定、到期、续费、退出、换绑和退款。
+- 客户端血条、倒计时、5h/weekly 同步和本地拦截。
+- 数据库 migration、旧数据 load、旧客户端兼容和旧算法回退。
+- 本次新增的跨进程客户端—服务端 E2E 与属性测试。
+
+任何失败必须先定位并修复；不得通过跳过测试、缩小测试集合、放宽断言或批量更新快照来取得绿色结果。
+
 跨进程 E2E 不得设为默认跳过。若运行时间过长，可拆成每次 PR 的核心矩阵与 nightly 的 100 用户并发/随机长序列，但官方 reset、resetAt 漂移、中途加入/退出、换号、重启和客户端—服务端契约必须属于每次 PR 的必跑集合。
 
-## 17. 已知限制
+## 18. 已知限制
 
 1. 母号同时被 GFA 外部客户端使用时，仅靠母号 fraction 和本地 CU 无法精确判断外部消耗属于谁。无本地 CU 时可记为未归因；与本地请求交错时只能按当前累计比例近似分配。
 2. Claude 没有公开订阅额度的完整内部公式，官方 API 价格只是相对权重。母号快照保证总量正确，但不同模型用户之间仍可能存在小幅相对误差。
 3. 去掉历史窗口表后，关闭窗口不能精确回滚。这是本次主动接受的复杂度取舍。
 4. 每次可信变化都重算意味着母号水位真实抖动时用户血条也会跟随变化；本次不增加额外平滑。
 
-## 18. 验收标准
+## 19. 验收标准
 
 - Codex 使用官方逐模型 Credits，而不是统一 GPT 权重。
 - Claude 使用带有效期的官方模型相对价格。
@@ -783,4 +1049,7 @@ node tests/quota-e2e/run.mjs
 - 超卖、独享、席位权重、订单与徽标语义通过旧测试和新算法参数化测试保持不变。
 - 客户端—服务端跨进程 E2E 覆盖 reset、resetAt 变化、加入、退出、续费、换号、重启、乱序与并发。
 - 所有端到端必跑用例和全局不变量通过后才允许开启 `window-cu-v1`。
+- 任一线上问题能在 72 小时内按 trace/report/lease/account/subject 查询完整决策链并导出脱敏支持包。
+- 逐请求、额度事件、母号快照和结构化运行日志均执行 72 小时 TTL 与硬容量上限。
+- 全仓 `pnpm test` 与 quota 跨进程 E2E 全绿，不允许只回归局部额度测试。
 - 可以通过环境变量分别回退 Codex 或 Anthropic 到旧算法。
