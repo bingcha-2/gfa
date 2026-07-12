@@ -216,6 +216,19 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	if got := snapshotMyWeeklyResetAts()["codex-gpt"]; got <= now.UnixMilli() {
 		t.Fatalf("Codex weekly resetAt was not consumed: %d", got)
 	}
+
+	// 会话切换清理(放在全部血条断言之后):登出/换号路径调用的 clearLocalCardState
+	// 必须把 GetStats 暴露给前端的个人血条一并清空,下一账号不能看到上一账号的
+	// 独享余量。
+	clearLocalCardState()
+	clearedStats := (&App{}).GetStats()
+	clearedLeaser := clearedStats["leaser"].(map[string]interface{})
+	if cleared, _ := clearedLeaser["myPersonalFractions"].(map[string]float64); len(cleared) != 0 {
+		t.Fatalf("personal fractions survived clearLocalCardState: %#v", cleared)
+	}
+	if cleared, _ := clearedLeaser["myPersonalWeeklyFractions"].(map[string]float64); len(cleared) != 0 {
+		t.Fatalf("personal weekly fractions survived clearLocalCardState: %#v", cleared)
+	}
 	t.Logf("production leasers completed against %s (%s, %s)", base, fmt.Sprint(codexLease.AccountId), fmt.Sprint(claudeLease.AccountId))
 }
 

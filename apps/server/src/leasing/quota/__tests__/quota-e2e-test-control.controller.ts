@@ -18,6 +18,8 @@ type CheckpointFault = {
   failures: number;
   patched: boolean;
   expected?: { accountId: number; bucket: string; primary: number; weekly: number };
+  /** When set, only checkpoints that carry a receipt for this target fail. */
+  matchReceipt?: { accountId: number; bucket: string } | null;
 };
 const checkpointFaults = new Map<Provider, CheckpointFault>();
 
@@ -98,7 +100,7 @@ export class QuotaE2ETestControlController {
   }
 
   @Post("background-flush-failure")
-  backgroundFlushFailure(@Body() body: { provider?: Provider; accountId?: number; bucket?: string }) {
+  backgroundFlushFailure(@Body() body: { provider?: Provider; accountId?: number; bucket?: string; requireReceipt?: boolean }) {
     const provider = body.provider === "anthropic" ? "anthropic" : "codex";
     const tracker = trackerFor(provider);
     let fault = checkpointFaults.get(provider);
@@ -111,7 +113,12 @@ export class QuotaE2ETestControlController {
       const original = repository.checkpointBatch.bind(repository);
       repository.checkpointBatch = async (...args: any[]) => {
         const current = checkpointFaults.get(provider)!;
-        if (current.armed > 0) {
+        const matcher = current.matchReceipt;
+        const matches = !matcher || (args[0] || []).some((checkpoint: any) =>
+          checkpoint.accountId === matcher.accountId
+          && checkpoint.bucket === matcher.bucket
+          && (checkpoint.reportIds || []).length > 0);
+        if (current.armed > 0 && matches) {
           current.armed--;
           current.failures++;
           throw new Error(`quota-e2e injected ${provider} checkpoint failure`);
@@ -121,11 +128,14 @@ export class QuotaE2ETestControlController {
       fault.patched = true;
     }
     fault.armed++;
-    // Mark real reducer state dirty without awaiting an explicit flush. The next
-    // production interval tick owns the rejected promise and retry behavior.
-    serviceFor(provider).fairShareTracker?.refreshAllParticipants();
     const accountId = Number(body.accountId || 0);
     const bucket = String(body.bucket || "");
+    fault.matchReceipt = body.requireReceipt === true ? { accountId, bucket } : null;
+    // Mark real reducer state dirty without awaiting an explicit flush. The next
+    // production interval tick owns the rejected promise and retry behavior.
+    // (Skipped in requireReceipt mode: there the fault targets the acknowledging
+    // report checkpoint itself, not a background tick.)
+    if (!fault.matchReceipt) serviceFor(provider).fairShareTracker?.refreshAllParticipants();
     const entry = tracker.windowCu.entry(accountId, bucket);
     if (!entry) throw new Error(`missing fault target ${provider}/${accountId}/${bucket}`);
     fault.expected = {
@@ -135,6 +145,16 @@ export class QuotaE2ETestControlController {
       weekly: Number(entry.windows.weekly.revision),
     };
     return { ok: true, armed: true, expected: fault.expected };
+  }
+
+  /** Arm/release the production subscription-readiness barrier on the shared store. */
+  @Post("subscription-barrier")
+  subscriptionBarrier(@Body() body: { provider?: Provider; ready?: boolean }) {
+    const provider = body.provider === "anthropic" ? "anthropic" : "codex";
+    const store = (serviceFor(provider) as any).accessKeyStore;
+    if (body?.ready === true) store.markSubscriptionsReady();
+    else store.beginSubscriptionBarrier();
+    return { ok: true, ready: store.areSubscriptionsReady() };
   }
 
   @Post("fault-status")

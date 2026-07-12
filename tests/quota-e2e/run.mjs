@@ -270,25 +270,11 @@ try {
     assert(Math.abs(raf.personalFraction - 0.6) < 1e-9 && Math.abs(rbf.personalFraction - 1) < 1e-9,
       `exclusive personal fractions changed after restart: A=${JSON.stringify(raf)} B=${JSON.stringify(rbf)}`);
 
-    // A real forward reset clears both personal attribution and conservation
-    // scaling for primary and weekly windows.
-    const resetObservedAt = t + 7 * 24 * 60 * 60_000 + 1_000;
-    await runScenario("exclusive-oversell-official-reset", "card-81", [
-      clock(resetObservedAt),
-      lease("card-81"),
-      report({ reportId: "exclusive-official-reset", status: 0,
-        accountQuota: quota(id, 100, 100, resetObservedAt, 1, resetObservedAt) }),
-    ]);
-    const resetA = await runScenario("exclusive-oversell-a-reset-read", "card-80", [lease("card-80")]);
-    const resetB = await runScenario("exclusive-oversell-b-reset-read", "card-81", [lease("card-81")]);
-    for (const body of [resetA.responses[0].body, resetB.responses[0].body]) {
-      const primary = body.fairShareQuota?.["codex-gpt"];
-      const weekly = body.weeklyFairShareQuota?.["codex-gpt"];
-      assert(primary.personalFraction === 1 && primary.fraction === 1,
-        `exclusive primary did not reset: ${JSON.stringify(primary)}`);
-      assert(weekly.personalFraction === 1 && weekly.fraction === 1,
-        `exclusive weekly did not reset: ${JSON.stringify(weekly)}`);
-    }
+    // NOTE: the official-reset continuation of this scenario (which jumps the
+    // global virtual clock forward by 7 days) runs at the very END of the
+    // matrix — see "exclusive-oversell-official-reset" below. Every scenario
+    // shares one virtual clock, so a +7d jump here would silently expire other
+    // accounts' windows mid-matrix (the cutover-restart flake).
   }
 
   // Mixed mother: the exclusive card keeps its single-bar flag and personal
@@ -641,10 +627,10 @@ try {
       assert(health.ok, "scheduled flush rejection terminated the server");
     }
     await useRealtimeClock();
-    // Restart the process before the independent official-reset scenario moves
-    // the global test clock beyond this legacy primary window's real boundary.
-    // This proves the cutover survives cold start without cross-scenario clock
-    // pollution legitimately resetting account 70.
+    // Cold-start proof for the cutover account: SIGKILL and restart, then the
+    // legacy blood bar must be identical. Clock-jumping scenarios all run at
+    // the end of the matrix, so no cross-scenario pollution can expire this
+    // window in the meantime.
     await crashServer();
     port = await startServer();
     const restartedCutoverA = await runScenario("cutover-restart-a", "card-70", [lease("card-70")]);
@@ -786,6 +772,89 @@ try {
     // Normal restart: state and receipt survive and old lease retry is ignored.
     const retry = await runScenario("restart-duplicate", "card-1", [report({ leaseId: smoke.leaseId, reportId: "smoke-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000 })]);
     assert(retry.responses[0].body.ignored === true, "restart duplicate was not ignored");
+
+    // 防重复扣:确认 checkpoint 失败(客户端拿到 5xx、必然重试)后,定时 flush
+    // 必须把「窗口状态 + 回执」原子落库;崩溃重启后重试同一 reportId 不再计 CU。
+    {
+      const t = now + 9_400_000;
+      const base = await runScenario("receipt-carry-base", "card-61", [clock(t), lease("card-61"),
+        report({ reportId: "receipt-carry-q0", status: 0, accountQuota: quota(61, 100, 100, t) }),
+      ]);
+      await testControl("background-flush-failure", { provider: "codex", accountId: 61, bucket: "codex-gpt", requireReceipt: true });
+      await runScenario("receipt-carry-usage", "card-61", [clock(t + 2_000),
+        { ...report({ leaseId: base.leaseId, reportId: "receipt-carry-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000 }), allowStatus: 500 },
+      ]);
+      await waitFor("failed receipt to ride the next scheduled flush", async () =>
+        (await prisma.quotaReportReceipt.count({ where: { reportId: "receipt-carry-u1" } })) === 1 ? true : null);
+      await crashServer();
+      port = await startServer();
+      const retryAfterCrash = await runScenario("receipt-carry-retry", "card-61", [clock(t + 10_000),
+        report({ leaseId: base.leaseId, reportId: "receipt-carry-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000 }),
+      ]);
+      assert(retryAfterCrash.responses.at(-1).body.ignored === true, "receipt-carry retry was not deduped after crash");
+      const carryHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 61, bucket: "codex-gpt", scope: "primary" } });
+      const carryCu = JSON.parse(carryHead.stateJson).subjects["card-61"].cumulativeCu;
+      assert(carryCu === 1, `receipt-carry CU=${carryCu}, want exactly 1 (no double count)`);
+    }
+
+    // 长流式归因:lease 过期 + 清扫触发之后、35 分钟补报宽限之内,完成上报
+    // 仍必须归因到原账号,不能变成无主消耗。
+    {
+      const t = now + 9_500_000;
+      const stream = await runScenario("long-stream-base", "card-63", [clock(t), lease("card-63"),
+        report({ reportId: "long-stream-q0", status: 0, accountQuota: quota(63, 100, 100, t) }),
+      ]);
+      // 42 分钟后:绑定 lease(TTL 40 分钟)已过期;另一张卡租号触发生产清扫路径。
+      await testControl("time", { now: t + 42 * 60_000 });
+      await runScenario("long-stream-sweeper", "card-64", [lease("card-64")]);
+      await runScenario("long-stream-report", "card-63", [
+        report({ leaseId: stream.leaseId, reportId: "long-stream-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 1_000, upstreamCompletedAt: t + 42 * 60_000 - 100 }),
+      ]);
+      await testControl("flush");
+      const streamHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });
+      const streamCu = JSON.parse(streamHead?.stateJson || "{}").subjects?.["card-63"]?.cumulativeCu;
+      assert(streamCu === 1, `long-stream usage was not attributed after lease expiry: CU=${streamCu}, want 1`);
+    }
+
+    // 启动屏障:订阅表未就绪时放租必须 503(而不是拿残缺成员表算出 429),
+    // 就绪后立即恢复正常租号。
+    {
+      await testControl("subscription-barrier", { provider: "codex" });
+      const gated = await runScenario("warming-up-lease", "card-65", [{ ...lease("card-65"), allowStatus: 503 }]);
+      assert(gated.responses[0].status === 503 && gated.responses[0].body.code === "server_warming_up",
+        `not-ready lease was not gated: ${JSON.stringify(gated.responses[0])}`);
+      await testControl("subscription-barrier", { provider: "codex", ready: true });
+      const released = await runScenario("warming-up-released", "card-65", [lease("card-65")]);
+      assert(released.responses[0].status === 200, `lease after readiness failed: ${JSON.stringify(released.responses[0])}`);
+    }
+
+    // A real forward reset clears both personal attribution and conservation
+    // scaling for primary and weekly windows. Runs LAST: it moves the shared
+    // virtual clock +7 days, which would expire every other scenario's window.
+    {
+      const id = 80, t = now + 8_000_000;
+      const resetObservedAt = t + 7 * 24 * 60 * 60_000 + 1_000;
+      await runScenario("exclusive-oversell-official-reset", "card-81", [
+        clock(resetObservedAt),
+        lease("card-81"),
+        report({ reportId: "exclusive-official-reset", status: 0,
+          accountQuota: quota(id, 100, 100, resetObservedAt, 1, resetObservedAt) }),
+      ]);
+      const resetA = await runScenario("exclusive-oversell-a-reset-read", "card-80", [lease("card-80")]);
+      const resetB = await runScenario("exclusive-oversell-b-reset-read", "card-81", [lease("card-81")]);
+      for (const body of [resetA.responses[0].body, resetB.responses[0].body]) {
+        const primary = body.fairShareQuota?.["codex-gpt"];
+        const weekly = body.weeklyFairShareQuota?.["codex-gpt"];
+        assert(primary.personalFraction === 1 && primary.fraction === 1,
+          `exclusive primary did not reset: ${JSON.stringify(primary)}`);
+        assert(weekly.personalFraction === 1 && weekly.fraction === 1,
+          `exclusive weekly did not reset: ${JSON.stringify(weekly)}`);
+      }
+      await useRealtimeClock();
+    }
     await prisma.$disconnect();
     console.log("quota-e2e full matrix: ok");
   }
