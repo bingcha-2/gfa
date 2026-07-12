@@ -459,11 +459,11 @@ describe("账号余量封顶(我的总剩余 ≤ 账号余量)", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 独享血条:营销标签 → 只反映自身用量 (e−T)/e,不随同号他人/未认领消耗缩放。
-// 取舍:号被他人烧爆时血条仍可显满(checkWindow 仍会在取号闸拦),换「不用就 100%」的展示。
+// 独享展示与后台有效额度分离:personalFraction 只反映自身用量,
+// fraction 仍受母号守恒缩放并供准入链路使用。
 // ────────────────────────────────────────────────────────────────────────────
-describe("独享血条只看自身用量(忽略 scale)", () => {
-  it("EXC1 独享卡 T=0、账号被未认领消耗烧到 6% → 血条仍 100%(不缩放)", () => {
+describe("独享个人展示与有效额度分离", () => {
+  it("EXC1 独享卡 T=0、账号被未认领消耗烧到 6% → 个人 100%、有效额度 60%", () => {
     const t = track(makeTracker({
       now: () => T,
       bound: { 1: [{ cardId: "EX", weight: 1 }] },
@@ -474,8 +474,8 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     t.applyAccountQuotaSnapshot(1, BK, 0.06); // 冷启动采纳基线 → T_EX=0,账号 6%
     const q = t.getCardQuotaFractions(1, "EX")[BK];
     expect(q.share).toBeCloseTo(0.1, 6); // e_i 几何不变(占整号 10%)
-    // 非独享同场景为 min(0.1,0.06)/0.1=60%(见 AC1);独享 = (e−0)/e = 100%
-    expect(q.fraction).toBeCloseTo(1, 6);
+    expect(q.personalFraction).toBeCloseTo(1, 6);
+    expect(q.fraction).toBeCloseTo(0.6, 6);
   });
 
   it("EXC2 独享卡按自身用量扣:烧掉自己份额一半 → 血条 50%", () => {
@@ -489,6 +489,7 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     use(t, 1, "EX", 1);
     t.applyAccountQuotaSnapshot(1, BK, 0.95); // 账号掉 0.05 全归因 EX → T_EX=0.05
     const q = t.getCardQuotaFractions(1, "EX")[BK];
+    expect(q.personalFraction).toBeCloseTo(0.5, 6);
     expect(q.fraction).toBeCloseTo(0.5, 6); // (0.1−0.05)/0.1 = 50%
   });
 
@@ -502,7 +503,9 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     t.applyAccountQuotaSnapshot(1, BK, 1.0);
     use(t, 1, "EX", 1);
     t.applyAccountQuotaSnapshot(1, BK, 0.85); // 账号掉 0.15 > e=0.1 → T_EX 封顶到 e
-    expect(t.getCardQuotaFractions(1, "EX")[BK].fraction).toBeCloseTo(0, 6);
+    const q = t.getCardQuotaFractions(1, "EX")[BK];
+    expect(q.personalFraction).toBeCloseTo(0, 6);
+    expect(q.fraction).toBeCloseTo(0, 6);
   });
 });
 

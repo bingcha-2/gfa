@@ -388,11 +388,14 @@ export function reduceWindow(state: FairShareWindowState, incoming: WindowEvent)
 
 export function getSubjectQuota(state: FairShareWindowState, quotaSubjectId: string): {
   fraction: number;
+  personalFraction: number;
   share: number;
   absoluteRemaining: number;
 } {
   const subject = state.subjects[quotaSubjectId];
-  if (!subject || !subject.active || subject.share <= 0) return { fraction: 0, share: subject?.share || 0, absoluteRemaining: 0 };
+  if (!subject || !subject.active || subject.share <= 0) {
+    return { fraction: 0, personalFraction: 0, share: subject?.share || 0, absoluteRemaining: 0 };
+  }
   const attributed = positive(subject.carriedAttributedShare) + positive(subject.attributedShare);
   const raw = Math.max(0, subject.share - attributed);
   const activeSubjects = Object.values(state.subjects).filter((value) => value.active);
@@ -407,6 +410,7 @@ export function getSubjectQuota(state: FairShareWindowState, quotaSubjectId: str
   const absoluteRemaining = raw * scale;
   return {
     fraction: clamp01(absoluteRemaining / subject.share),
+    personalFraction: clamp01(raw / subject.share),
     share: subject.share,
     absoluteRemaining,
   };

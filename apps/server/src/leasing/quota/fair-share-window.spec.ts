@@ -330,6 +330,20 @@ describe("causal current-window reducer", () => {
     expect(a.absoluteRemaining + b.absoluteRemaining).toBeCloseTo(0.2, 12);
   });
 
+  it("keeps personal remaining separate from mother-account conservation scaling", () => {
+    let state = primed();
+    state = reduceWindow(state, snapshot(T + 20, 0.2));
+
+    const a = getSubjectQuota(state, "A");
+    const b = getSubjectQuota(state, "B");
+
+    expect(a.personalFraction).toBe(1);
+    expect(b.personalFraction).toBe(1);
+    expect(a.fraction).toBeCloseTo(0.2, 12);
+    expect(b.fraction).toBeCloseTo(0.2, 12);
+    expect(a.absoluteRemaining + b.absoluteRemaining).toBeCloseTo(0.2, 12);
+  });
+
   it("updates primary and weekly independently", () => {
     let windows = createQuotaWindows({ subjects, primaryWindowMs: FIVE_HOURS, weeklyWindowMs: WEEK });
     windows = reduceQuotaWindows(windows, { scope: "primary", event: snapshot(T, 1) });

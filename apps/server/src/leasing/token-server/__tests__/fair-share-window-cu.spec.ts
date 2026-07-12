@@ -141,6 +141,8 @@ describe("FairShareTracker window-cu-v1 facade", () => {
     value.applyAccountQuotaSnapshotAt(1, BUCKET, { fraction: 0.1, resetAt: T + FIVE_HOURS, observedAt: T + 20, snapshotId: "p1" });
     const a = value.getCardQuotaFractions(1, "A")[BUCKET];
     const b = value.getCardQuotaFractions(1, "B")[BUCKET];
+    expect(a.personalFraction).toBe(1);
+    expect(b.personalFraction).toBe(1);
     expect(a.fraction * a.share + b.fraction * b.share).toBeCloseTo(0.1, 12);
   });
 

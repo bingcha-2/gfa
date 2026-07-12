@@ -435,13 +435,13 @@ export class FairShareTracker {
   }
 
   /** 5h 每卡自份额剩余(供血条),键为基础桶名。share=e_i(我的份额占整号比例,供双层血条)。 */
-  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, false);
     return this.collectFractions(accountId, cardId, false);
   }
 
   /** 周每卡自份额剩余(供周血条);仅 trackWeekly 有数据。 */
-  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, true);
     if (!this.trackWeekly) return {};
     return this.collectFractions(accountId, cardId, true);
@@ -501,11 +501,11 @@ export class FairShareTracker {
     accountId: number,
     cardId: string,
     weekly: boolean,
-  ): Record<string, { fraction: number; resetAt: number; share: number }> {
+  ): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     const bucketTrackers = this.trackers.get(accountId);
     if (!bucketTrackers) return {};
     const now = this.nowFn();
-    const out: Record<string, { fraction: number; resetAt: number; share: number }> = {};
+    const out: Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> = {};
     for (const [key, tracker] of bucketTrackers) {
       if (isWeeklyBucketKey(key) !== weekly) continue;
       this.ensureWindow(accountId, tracker, now);
@@ -516,6 +516,7 @@ export class FairShareTracker {
       // fraction = 我份额的剩余(血条);share = e_i 我份额占整号比例(双层血条外层几何)。
       out[baseBucketOf(key)] = {
         fraction: this.bloodBar(accountId, tracker, cardId),
+        personalFraction: this.personalBloodBar(accountId, tracker, cardId),
         resetAt,
         share: this.shareFor(accountId, tracker, cardId),
       };
@@ -550,16 +551,19 @@ export class FairShareTracker {
    * e_i≤0 → 0(空且拦)。
    */
   private bloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
+    const personal = this.personalBloodBar(accountId, tracker, cardId);
+    const e = this.shareFor(accountId, tracker, cardId);
+    if (e <= 0) return 0;
+    const sumRem = this.sumRemaining(accountId, tracker);
+    const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
+    return clamp01(personal * scale);
+  }
+
+  private personalBloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
     const e = this.shareFor(accountId, tracker, cardId);
     if (e <= 0) return 0;
     const t = tracker.attributed.get(cardId) || 0;
-    const mine = Math.max(0, e - t);
-    // 独享(营销标签):血条只反映自身用量 (e−T)/e,不被同号他人/未认领消耗缩放 —— 不用就 100%。
-    // 代价:号被他人烧爆时血条仍可显满,但实际请求会在取号闸(checkWindow)按真实余量被拦。
-    if (this.opts.isExclusive?.(cardId)) return clamp01(mine / e);
-    const sumRem = this.sumRemaining(accountId, tracker);
-    const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
-    return clamp01((mine * scale) / e);
+    return clamp01(Math.max(0, e - t) / e);
   }
 
   /** 单窗口(5h 或周)份额判定。 */

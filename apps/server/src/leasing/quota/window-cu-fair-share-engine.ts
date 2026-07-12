@@ -118,16 +118,21 @@ export class WindowCuFairShareEngine {
     }
   }
 
-  getCardFractions(accountId: number, quotaSubjectId: string, weekly: boolean): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardFractions(accountId: number, quotaSubjectId: string, weekly: boolean): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     const buckets = this.states.get(accountId);
     if (!buckets) return {};
-    const result: Record<string, { fraction: number; resetAt: number; share: number }> = {};
+    const result: Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> = {};
     for (const bucket of buckets.keys()) {
       const windows = this.ensure(accountId, bucket);
       const state = weekly ? windows.weekly : windows.primary;
       if (!state.primed) continue;
       const quota = getSubjectQuota(state, quotaSubjectId);
-      result[bucket] = { fraction: quota.fraction, resetAt: state.resetAt, share: quota.share };
+      result[bucket] = {
+        fraction: quota.fraction,
+        personalFraction: quota.personalFraction,
+        resetAt: state.resetAt,
+        share: quota.share,
+      };
     }
     return result;
   }
