@@ -32,6 +32,7 @@ const codex = new RemoteCodexService({
       minClientVersion: "",
       now,
       fairShareAlgorithm: "window-cu-v1",
+      fairShareFlushIntervalMs: Number(process.env.QUOTA_E2E_FLUSH_INTERVAL_MS || 30_000),
       requestLogRecorder: requestLogs,
       prisma,
 });
@@ -44,6 +45,7 @@ const anthropic = new RemoteAnthropicService({
       minClientVersion: "",
       now,
       fairShareAlgorithm: "window-cu-v1",
+      fairShareFlushIntervalMs: Number(process.env.QUOTA_E2E_FLUSH_INTERVAL_MS || 30_000),
       requestLogRecorder: requestLogs,
       prisma,
 });

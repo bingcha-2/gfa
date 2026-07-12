@@ -123,6 +123,13 @@ describe("causal report-result integration", () => {
     });
   }
 
+  function withoutProcessLocalTail<T extends ReturnType<NonNullable<RemoteCodexService["fairShareTracker"]>["getWindowStateForTesting"]>>(state: T) {
+    return state && Object.fromEntries(Object.entries(state).map(([scope, window]) => {
+      const { retainedEvents: _events, reorderTailBytes: _bytes, ...materialized } = window;
+      return [scope, materialized];
+    }));
+  }
+
   it("makes an independent snapshot-before-report equal report-before-snapshot", async () => {
     const first = service();
     const firstLease = await lease(first);
@@ -132,6 +139,16 @@ describe("causal report-result integration", () => {
     await quotaOnly(first, firstLease.leaseId, "q1", 0.9, T + 20);
     const expected = first.fairShareTracker!.getWindowStateForTesting(11, BUCKET);
 
+    // This assertion compares two independent arrival orders, not two writers
+    // racing on one production account. Tear down and clear the first fixture's
+    // durable rows so the revision guard is not accidentally under test here.
+    await first.onModuleDestroy();
+    services.splice(services.indexOf(first), 1);
+    await prisma.quotaReportReceipt.deleteMany();
+    await prisma.fairShareWindow.deleteMany();
+    await prisma.fairShareWindowHead.deleteMany();
+    await prisma.cardUsageHourly.deleteMany();
+
     const second = service();
     const secondLease = await lease(second);
     await quotaOnly(second, secondLease.leaseId, "q0-second", 1, T);
@@ -140,7 +157,7 @@ describe("causal report-result integration", () => {
     await usage(second, secondLease.leaseId, "u1-second", T + 10);
     const actual = second.fairShareTracker!.getWindowStateForTesting(11, BUCKET);
 
-    expect(actual).toEqual(expected);
+    expect(withoutProcessLocalTail(actual)).toEqual(withoutProcessLocalTail(expected));
     expect(second.fairShareTracker!.getWindowReasons(11, BUCKET)?.primary).toBe("LATE_USAGE_RECONCILED");
     expect(actual!.primary.subjects["card-A"].attributedShare).toBeCloseTo(0.1, 12);
     expect(actual!.primary.unattributedShare).toBe(0);
@@ -224,7 +241,8 @@ describe("causal report-result integration", () => {
     const duplicate = await restarted.reportResult(sessionReqFor("card-A"), payload);
 
     expect(duplicate).toMatchObject({ ok: true, ignored: true, reason: "already_reported" });
-    expect(restarted.fairShareTracker!.getWindowStateForTesting(11, BUCKET)).toEqual(expected);
+    expect(withoutProcessLocalTail(restarted.fairShareTracker!.getWindowStateForTesting(11, BUCKET)))
+      .toEqual(withoutProcessLocalTail(expected));
     expect(await prisma.cardUsageHourly.aggregate({ _sum: { requests: true, totalTokens: true } })).toMatchObject({
       _sum: { requests: 1, totalTokens: 1_000_000 },
     });

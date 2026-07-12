@@ -53,6 +53,49 @@ func TestRecordMyBucketFraction_StoresShare(t *testing.T) {
 	}
 }
 
+func TestRecordFairShareQuota_StoresPersonalFractionsSeparately(t *testing.T) {
+	clearBoundFractionsForTest()
+	recordFairShareQuota([]byte(`{
+		"fairShareQuota":{"codex-gpt":{"fraction":0.4,"personalFraction":0.8,"resetAt":2000,"share":0.5}},
+		"weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"personalFraction":0.7,"resetAt":3000,"share":0.5}}
+	}`))
+
+	if got := snapshotMyFractions()["codex-gpt"]; got != 0.4 {
+		t.Fatalf("effective primary fraction = %v, want 0.4", got)
+	}
+	if got := snapshotMyPersonalFractions()["codex-gpt"]; got != 0.8 {
+		t.Fatalf("personal primary fraction = %v, want 0.8", got)
+	}
+	if got := snapshotMyWeeklyFractions()["codex-gpt"]; got != 0.3 {
+		t.Fatalf("effective weekly fraction = %v, want 0.3", got)
+	}
+	if got := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; got != 0.7 {
+		t.Fatalf("personal weekly fraction = %v, want 0.7", got)
+	}
+}
+
+func TestRecordFairShareQuota_ClearsPersonalFractionsWhenServerOmitsThem(t *testing.T) {
+	clearBoundFractionsForTest()
+	recordFairShareQuota([]byte(`{
+        "accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+        "fairShareQuota":{"codex-gpt":{"fraction":0.4,"personalFraction":0.8,"resetAt":2000,"share":0.5}},
+        "weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"personalFraction":0.7,"resetAt":3000,"share":0.5}}
+    }`))
+
+	recordFairShareQuota([]byte(`{
+        "accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+        "fairShareQuota":{"codex-gpt":{"fraction":0.4,"resetAt":2000,"share":0.5}},
+        "weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"resetAt":3000,"share":0.5}}
+    }`))
+
+	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
+		t.Fatal("旧服务端缺 personalFraction 时不应保留上一服务端的个人 5h 血条")
+	}
+	if _, ok := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; ok {
+		t.Fatal("旧服务端缺 personalFraction 时不应保留上一服务端的个人周血条")
+	}
+}
+
 func TestResetBoundFractions(t *testing.T) {
 	clearBoundFractionsForTest()
 
@@ -101,7 +144,7 @@ func TestBucketQuotaTwoDimensionsIndependent(t *testing.T) {
 	const bucket = "antigravity-claude"
 
 	recordAccountBucketFraction(bucket, 0.87, 1000) // 整号充足
-	recordMyBucketFraction(bucket, 0.40, 2000, 0.4)      // 我的份额紧张
+	recordMyBucketFraction(bucket, 0.40, 2000, 0.4) // 我的份额紧张
 
 	if got, ok := snapshotAccountFractions()[bucket]; !ok || got != 0.87 {
 		t.Fatalf("account fraction = %v (ok=%v), want 0.87", got, ok)
@@ -139,7 +182,7 @@ func TestResetsArePerDimension(t *testing.T) {
 	const bucket = "antigravity-gemini"
 	now := int64(10_000)
 	recordAccountBucketFraction(bucket, 0.5, now+60_000) // 整号 60s 后恢复
-	recordMyBucketFraction(bucket, 0.2, now+30_000, 0.2)      // 份额 30s 后恢复
+	recordMyBucketFraction(bucket, 0.2, now+30_000, 0.2) // 份额 30s 后恢复
 
 	if got := snapshotAccountResets(now)[bucket]; got != 60_000 {
 		t.Fatalf("account reset = %v, want 60000", got)

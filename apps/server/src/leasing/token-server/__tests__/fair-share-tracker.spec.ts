@@ -59,6 +59,82 @@ describe("QUOTA_WEIGHTS 派生自定价源", () => {
   });
 });
 
+describe("window-cu background persistence", () => {
+  // 防重复扣:窗口状态落库了、reportId 回执没落库时,客户端重试会再计一次 CU。
+  // 任何 flush 都必须捎带尚未确认落库的回执(含小时账),让「状态 + 回执」原子持久。
+  it("carries unacknowledged receipts and accountings on the dirty-tick flush", async () => {
+    const T0 = 1_800_000_000_000;
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1",
+      provider: "codex",
+      prisma: {} as any,
+      now: () => T0,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "card-a", weight: 1 }],
+      getSeatCapacity: () => 2,
+    }));
+    const batches: any[] = [];
+    const commit = vi.fn()
+      .mockRejectedValueOnce(new Error("sqlite busy"))
+      .mockImplementation(async (batch: any[]) => { batches.push(...batch); });
+    (tracker as any).windowRepository.checkpointBatch = commit;
+
+    tracker.applyAccountQuotaSnapshotAt(1, BK, { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p0" });
+    tracker.recordUsageEvent(1, BK, {
+      reportId: "r-1", provider: "codex", accountId: 1, quotaSubjectId: "card-a", modelId: "gpt-5.4",
+      inputTokens: 1_000_000, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+      outputTokens: 0, serviceTier: "standard", requestStartedAt: T0 - 2_000,
+      upstreamCompletedAt: T0 - 1_000, arrivedAt: T0,
+    });
+    const accounting = {
+      reportId: "r-1", at: new Date(T0), accessKeyId: "card-a", accountEmail: "a@x", customerId: "",
+      modelKey: "gpt-5.4", bucket: BK, status: 200, inputTokens: 1_000_000, outputTokens: 0,
+      cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 1_000_000, totalTokens: 1_000_000,
+      reverseProxy: false, serviceTier: "",
+    };
+    // 首次 checkpoint 提交失败:客户端拿不到 ack,会重试;回执必须留在待送清单里。
+    await expect(tracker.checkpointReport(1, BK, "r-1", accounting as any)).rejects.toThrow("sqlite busy");
+
+    // 定时 flush(dirty tick)持久化状态时必须捎带该回执与小时账。
+    await tracker.flush();
+    const carried = batches.find((b) => (b.reportIds || []).includes("r-1"));
+    expect(carried).toBeTruthy();
+    expect((carried.accountings || []).map((a: any) => a.reportId)).toContain("r-1");
+
+    // 落库成功后不再重复携带。
+    batches.length = 0;
+    tracker.recordUsageEvent(1, BK, {
+      reportId: "r-2", provider: "codex", accountId: 1, quotaSubjectId: "card-a", modelId: "gpt-5.4",
+      inputTokens: 1_000, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+      outputTokens: 0, serviceTier: "standard", requestStartedAt: T0 - 500,
+      upstreamCompletedAt: T0 - 100, arrivedAt: T0,
+    });
+    await tracker.flush();
+    expect(batches.some((b) => (b.reportIds || []).includes("r-1"))).toBe(false);
+    expect(batches.some((b) => (b.reportIds || []).includes("r-2"))).toBe(true);
+  });
+
+  it("handles a scheduled flush rejection instead of leaking an unhandled promise", async () => {
+    vi.useFakeTimers();
+    const error = new Error("sqlite busy");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1",
+      provider: "codex",
+      prisma: {} as any,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [],
+    }));
+    vi.spyOn(tracker, "flush").mockRejectedValue(error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(logged).toHaveBeenCalledWith("[fair-share-tracker] scheduled flush failed:", error);
+    logged.mockRestore();
+    vi.useRealTimers();
+  });
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // Test harness:可变绑定表 + 注入时钟(支持窗口内加/解绑)
 // ────────────────────────────────────────────────────────────────────────────
@@ -437,11 +513,11 @@ describe("账号余量封顶(我的总剩余 ≤ 账号余量)", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 独享血条:营销标签 → 只反映自身用量 (e−T)/e,不随同号他人/未认领消耗缩放。
-// 取舍:号被他人烧爆时血条仍可显满(checkWindow 仍会在取号闸拦),换「不用就 100%」的展示。
+// 独享展示与后台有效额度分离:personalFraction 只反映自身用量,
+// fraction 仍受母号守恒缩放并供准入链路使用。
 // ────────────────────────────────────────────────────────────────────────────
-describe("独享血条只看自身用量(忽略 scale)", () => {
-  it("EXC1 独享卡 T=0、账号被未认领消耗烧到 6% → 血条仍 100%(不缩放)", () => {
+describe("独享个人展示与有效额度分离", () => {
+  it("EXC1 独享卡 T=0、账号被未认领消耗烧到 6% → 个人 100%、有效额度 60%", () => {
     const t = track(makeTracker({
       now: () => T,
       bound: { 1: [{ cardId: "EX", weight: 1 }] },
@@ -452,8 +528,8 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     t.applyAccountQuotaSnapshot(1, BK, 0.06); // 冷启动采纳基线 → T_EX=0,账号 6%
     const q = t.getCardQuotaFractions(1, "EX")[BK];
     expect(q.share).toBeCloseTo(0.1, 6); // e_i 几何不变(占整号 10%)
-    // 非独享同场景为 min(0.1,0.06)/0.1=60%(见 AC1);独享 = (e−0)/e = 100%
-    expect(q.fraction).toBeCloseTo(1, 6);
+    expect(q.personalFraction).toBeCloseTo(1, 6);
+    expect(q.fraction).toBeCloseTo(0.6, 6);
   });
 
   it("EXC2 独享卡按自身用量扣:烧掉自己份额一半 → 血条 50%", () => {
@@ -467,6 +543,7 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     use(t, 1, "EX", 1);
     t.applyAccountQuotaSnapshot(1, BK, 0.95); // 账号掉 0.05 全归因 EX → T_EX=0.05
     const q = t.getCardQuotaFractions(1, "EX")[BK];
+    expect(q.personalFraction).toBeCloseTo(0.5, 6);
     expect(q.fraction).toBeCloseTo(0.5, 6); // (0.1−0.05)/0.1 = 50%
   });
 
@@ -480,7 +557,9 @@ describe("独享血条只看自身用量(忽略 scale)", () => {
     t.applyAccountQuotaSnapshot(1, BK, 1.0);
     use(t, 1, "EX", 1);
     t.applyAccountQuotaSnapshot(1, BK, 0.85); // 账号掉 0.15 > e=0.1 → T_EX 封顶到 e
-    expect(t.getCardQuotaFractions(1, "EX")[BK].fraction).toBeCloseTo(0, 6);
+    const q = t.getCardQuotaFractions(1, "EX")[BK];
+    expect(q.personalFraction).toBeCloseTo(0, 6);
+    expect(q.fraction).toBeCloseTo(0, 6);
   });
 });
 

@@ -5,7 +5,7 @@ import { FairShareTracker } from "../fair-share-tracker";
 /**
  * 复现:未超卖的「独享」号,母号真实周剩 33%(控制台口径),但客户端「号·周窗口」血条显 100%。
  *
- * 独享血条 = (e − T)/e(fair-share-tracker.bloodBar 独享分支,不按母号真实余量缩放)。
+ * 独享个人血条 = personalFraction = (e − T)/e,不拿母号有效缩放值冒充个人消耗。
  * 号未超卖 → 只这一张卡,w=N=8 → D=8 → e=1.0(独占整号)。若从窗口 reset 起连续归因,
  * 这张卡自己烧的 67% 会累进 T=0.67 → 血条 (1−0.67)/1=33%,与母号一致(见「对照」用例)。
  *
@@ -40,6 +40,8 @@ function makeExclusiveTracker(now: () => number): FairShareTracker {
 
 const weeklyPct = (t: FairShareTracker): number =>
   Math.round((t.getCardWeeklyQuotaFractions(ACC, "C")[BUCKET]?.fraction ?? -1) * 100);
+const weeklyPersonalPct = (t: FairShareTracker): number =>
+  Math.round((t.getCardWeeklyQuotaFractions(ACC, "C")[BUCKET]?.personalFraction ?? -1) * 100);
 
 describe("独享周窗口:母号真实 33% → 血条应也 33%(修复后)", () => {
   it("冷启动/重启后首个周快照 0.33 → 真独占号回补 T=0.67 → 血条 = 母号真实 33%(不再虚高 100%)", () => {
@@ -53,6 +55,7 @@ describe("独享周窗口:母号真实 33% → 血条应也 33%(修复后)", () 
 
     // 修复前:T=0 → 血条 100%(对不上)。修复后:T=0.67 → 血条 (1−0.67)/1 = 33%,与母号一致。
     expect(weeklyPct(t)).toBe(33);
+    expect(weeklyPersonalPct(t)).toBe(33);
   });
 
   it("对照:未重启、从 reset 起连续归因 → 同一张独享卡血条正确显 33%(与母号一致)", () => {
@@ -67,6 +70,7 @@ describe("独享周窗口:母号真实 33% → 血条应也 33%(修复后)", () 
     t.applyWeeklyAccountQuotaSnapshot(ACC, BUCKET, 0.33, weeklyReset);
 
     expect(weeklyPct(t)).toBe(33);
+    expect(weeklyPersonalPct(t)).toBe(33);
   });
 });
 

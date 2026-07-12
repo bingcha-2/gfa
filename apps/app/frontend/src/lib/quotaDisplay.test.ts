@@ -343,17 +343,17 @@ describe('nestedBarDisplay (客户端遮超卖:8人车口径 + 账号封顶)', (
     expect(d.myTotalRemain).toBeLessThanOrEqual(d.accountRemain + 1e-9)
   })
 
-  it('N5 独享卡(单层):受母号余额封顶但不暴露账号层', () => {
-    const d = nestedBarDisplay({ myFraction: 0.3, accountFraction: 0.05, shareSeats: 8, shareCapacity: 8, exclusive: true })
-    expect(d.myTotalRemain).toBeCloseTo(0.05, 6)
-    expect(d.seatFill).toBeCloseTo(0.05, 6)
+  it('N5 独享卡(单层):只展示个人剩余,不受有效值或母号封顶', () => {
+    const d = nestedBarDisplay({ myFraction: 0.3, personalFraction: 0.8, accountFraction: 0.05, shareSeats: 8, shareCapacity: 8, exclusive: true })
+    expect(d.myTotalRemain).toBeCloseTo(0.8, 6)
+    expect(d.seatFill).toBeCloseTo(0.8, 6)
     expect(d.accountRemain).toBe(-1) // 独享不暴露账号层
   })
 
-  it('N5b 独享卡:自身剩余高于母号时显示母号剩余', () => {
+  it('N5b 旧服务端没有个人字段时回退有效 fraction,仍不直接读取母号', () => {
     const d = nestedBarDisplay({ myFraction: 0.8, accountFraction: 0.1, shareSeats: 1, shareCapacity: 8, exclusive: true })
-    expect(d.myTotalRemain).toBeCloseTo(0.1, 6)
-    expect(d.seatFill).toBeCloseTo(0.1, 6)
+    expect(d.myTotalRemain).toBeCloseTo(0.8, 6)
+    expect(d.seatFill).toBeCloseTo(0.8, 6)
   })
 
   it('N6 我的份额未知(-1)→ 我的总剩余未知', () => {

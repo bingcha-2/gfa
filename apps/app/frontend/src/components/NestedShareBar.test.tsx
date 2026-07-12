@@ -106,7 +106,8 @@ describe('独享单层血条', () => {
     render(
       <NestedShareBar
         label="5h 份额"
-        myFraction={0.7}
+        myFraction={0.3}
+        personalFraction={0.7}
         accountFraction={0.3}
         shareSeats={8}
         shareCapacity={8}
@@ -114,7 +115,7 @@ describe('独享单层血条', () => {
       />,
     )
 
-    expect(screen.getByText(/剩余 30%/)).toBeInTheDocument()
+    expect(screen.getByText(/剩余 70%/)).toBeInTheDocument()
     expect(screen.queryByText(/账号总剩余/)).toBeNull()
   })
 

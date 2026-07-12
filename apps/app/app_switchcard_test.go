@@ -4,9 +4,8 @@ import (
 	"testing"
 )
 
-// TestClearLocalCardState_ClearsStats verifies that clearLocalCardState resets
-// usage stats, bound fractions, and leaser errors.
-func TestClearLocalCardState_ClearsStats(t *testing.T) {
+// Auth/session transitions clear quota state but keep the user's local history.
+func TestClearLocalCardState_PreservesUsageHistory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	GetUsageStats().Reset()
 	resetBoundFractions()
@@ -25,8 +24,8 @@ func TestClearLocalCardState_ClearsStats(t *testing.T) {
 	// Clear state
 	clearLocalCardState()
 
-	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 0 || got.OutputTokens != 0 {
-		t.Fatalf("清空后 today token 应为零, 得到 %+v", got)
+	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 31_700 || got.OutputTokens != 47_300 {
+		t.Fatalf("会话切换不应删除 today token, 得到 %+v", got)
 	}
 	if n := len(snapshotAccountFractions()); n != 0 {
 		t.Fatalf("清空后血条应为零, 仍残留 %d 个 bucket", n)
@@ -64,8 +63,8 @@ func TestSaveConfig_TokenChange_ClearsState(t *testing.T) {
 		t.Fatalf("SaveConfig failed: %v", err)
 	}
 
-	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 0 {
-		t.Fatalf("换 token 后 today token 应清空, 得到 %+v", got)
+	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 100 {
+		t.Fatalf("换 token 后本地历史应保留, 得到 %+v", got)
 	}
 	if e := GetLeaser().LastError(); e != "" {
 		t.Fatalf("换 token 后 leaser error 应清空, got %q", e)

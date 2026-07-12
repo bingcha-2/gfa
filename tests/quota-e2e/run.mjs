@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { PrismaClient } from "@prisma/client";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -17,6 +18,41 @@ const cards = Array.from({ length: 110 }, (_, i) => ({
   bindings: { codex: i + 1, anthropic: i + 1 }, weight: 1,
 }));
 cards[8].salesSeatCapacity = { codex: 2 };
+// Legacy cutover fixture: two cards already share account 70 before the first
+// window-cu process starts.
+cards[69].salesSeatCapacity = { codex: 2 };
+cards[70].bindings.codex = 70;
+cards[70].salesSeatCapacity = { codex: 2 };
+// Two marketed-exclusive cards intentionally share one mother account. The
+// backend allocates each half of the real account while both clients retain
+// exclusive single-bar presentation.
+for (const index of [79, 80]) {
+  cards[index].bindings.codex = 80;
+  cards[index].weight = 8;
+  cards[index].exclusive = true;
+  cards[index].salesSeatCapacity = { codex: 8 };
+}
+// One exclusive plus one shared card on the same account.
+cards[81].bindings.codex = 82;
+cards[81].weight = 8;
+cards[81].exclusive = true;
+cards[81].salesSeatCapacity = { codex: 8 };
+cards[82].bindings.codex = 82;
+cards[82].weight = 1;
+cards[82].exclusive = false;
+cards[82].salesSeatCapacity = { codex: 8 };
+// Three ordinary shared cards sold into a two-seat mother account.
+for (const index of [83, 84, 85]) {
+  cards[index].bindings.codex = 84;
+  cards[index].weight = 1;
+  cards[index].exclusive = false;
+  cards[index].salesSeatCapacity = { codex: 2 };
+}
+// A single full-seat exclusive card used to cold-start at personal=100% even
+// when the first trusted mother snapshot was already partially consumed.
+cards[86].weight = 8;
+cards[86].exclusive = true;
+cards[86].salesSeatCapacity = { codex: 8 };
 await writeFile(accountsFile, JSON.stringify({ accounts: cards.map((_, i) => ({ id: i + 1, email: `a${i + 1}@x.test`, refreshToken: "rt", enabled: true, planType: "pro" })) }));
 await writeFile(keysFile, JSON.stringify({ keys: cards }));
 await writeFile(databasePath, "");
@@ -30,12 +66,24 @@ function exec(command, args, env = {}, cwd = root) {
   });
 }
 
-await exec("pnpm", ["prisma", "db", "push", "--skip-generate"], { DATABASE_URL: databaseUrl });
+// Exercise the production migration chain, not a schema-only db push. This
+// catches migration/schema drift before the quota fixture starts.
+await exec("pnpm", ["prisma", "migrate", "deploy"], { DATABASE_URL: databaseUrl });
+const legacySeedAt = Date.now() - 60_000;
+const seedPrisma = new PrismaClient({ datasourceUrl: databaseUrl });
+await seedPrisma.$connect();
+await seedPrisma.fairShareWindow.createMany({ data: [
+  { provider: "codex", accountId: 70, bucket: "codex-gpt", cardId: "card-70", windowStart: BigInt(legacySeedAt), weightedUsed: 999, attributedShare: 0.3, lockedDenominator: 2, lastFraction: 0.6, isParticipant: true, share: 0.5, isActive: true, isExclusive: false },
+  { provider: "codex", accountId: 70, bucket: "codex-gpt", cardId: "card-71", windowStart: BigInt(legacySeedAt), weightedUsed: 999, attributedShare: 0.1, lockedDenominator: 2, lastFraction: 0.6, isParticipant: true, share: 0.5, isActive: true, isExclusive: false },
+  { provider: "codex", accountId: 70, bucket: "codex-gpt::weekly", cardId: "card-70", windowStart: BigInt(legacySeedAt), weightedUsed: 999, attributedShare: 0.2, lockedDenominator: 2, lastFraction: 0.7, isParticipant: true, share: 0.5, isActive: true, isExclusive: false },
+  { provider: "codex", accountId: 70, bucket: "codex-gpt::weekly", cardId: "card-71", windowStart: BigInt(legacySeedAt), weightedUsed: 999, attributedShare: 0.05, lockedDenominator: 2, lastFraction: 0.7, isParticipant: true, share: 0.5, isActive: true, isExclusive: false },
+] });
+await seedPrisma.$disconnect();
 await exec("go", ["build", "-o", helperPath, "./cmd/quota-e2e-client"], {}, join(root, "apps/app"));
 let server;
 async function startServer() {
   server = spawn("pnpm", ["exec", "tsx", "--tsconfig", "apps/server/tsconfig.json", "tests/quota-e2e/server-fixture.ts"], {
-    cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl, QUOTA_E2E_ACCOUNTS: accountsFile, QUOTA_E2E_KEYS: keysFile, QUOTA_E2E_PORT: "0" },
+    cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl, QUOTA_E2E_ACCOUNTS: accountsFile, QUOTA_E2E_KEYS: keysFile, QUOTA_E2E_PORT: "0", QUOTA_E2E_FLUSH_INTERVAL_MS: "50" },
     stdio: ["ignore", "pipe", "pipe"], detached: true,
   });
   return new Promise((resolvePromise, reject) => {
@@ -94,6 +142,25 @@ async function runScenario(name, cardId, operations) {
 }
 async function persistKeys() { await writeFile(keysFile, JSON.stringify({ keys: cards })); }
 function assert(value, message) { if (!value) throw new Error(`${message}`); }
+async function testControl(path, body = {}, expectedStatus = null) {
+  const response = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const parsed = await response.json().catch(() => ({}));
+  assert(expectedStatus == null ? response.ok : response.status === expectedStatus,
+    `test control ${path} failed: HTTP ${response.status} ${JSON.stringify(parsed)}`);
+  return parsed;
+}
+async function waitFor(label, check, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    last = await check();
+    if (last) return last;
+    await delay(20);
+  }
+  throw new Error(`timed out waiting for ${label}: ${JSON.stringify(last)}`);
+}
 
 let port = await startServer();
 const now = Date.now();
@@ -109,12 +176,28 @@ try {
   ]);
   assert(smoke.responses.at(-1).body.ignored === true, "duplicate report was not ignored");
   const prisma = new PrismaClient({ datasourceUrl: databaseUrl }); await prisma.$connect();
+  // One-shot segment-v1 -> window-cu cutover happens during real Nest startup.
+  // Public blood bars must match the legacy T/e values and imported rows must
+  // become restartable heads without inventing post-cutover CU.
+  const cutoverHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 70, bucket: "codex-gpt" } });
+  assert(cutoverHeads.length === 2, "startup cutover did not checkpoint both heads");
+  for (const head of cutoverHeads) {
+    const state = JSON.parse(head.stateJson);
+    assert(Object.values(state.subjects).every((subject) => subject.cumulativeCu === 0), `cutover invented ${head.scope} CU`);
+  }
+  const cutoverA = await runScenario("cutover-a", "card-70", [{ ...lease("card-70"), allowStatus: 429 }]);
+  const cutoverB = await runScenario("cutover-b", "card-71", [{ ...lease("card-71"), allowStatus: 429 }]);
+  const cutoverPrimaryDebug = JSON.parse(cutoverHeads.find((head) => head.scope === "primary").stateJson);
+  assert(cutoverA.responses[0].status === 200 && Math.abs(cutoverA.responses[0].body.fairShareQuota["codex-gpt"].fraction - 0.4) < 1e-9,
+    `cutover changed card-70 primary blood bar: ${JSON.stringify(cutoverPrimaryDebug)}`);
+  assert(cutoverB.responses[0].status === 200 && Math.abs(cutoverB.responses[0].body.fairShareQuota["codex-gpt"].fraction - 0.8) < 1e-9,
+    `cutover changed card-71 primary blood bar: ${JSON.stringify(cutoverPrimaryDebug)}`);
   const heads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 1, bucket: "codex-gpt" } });
   assert(heads.length === 2, "smoke did not persist both windows");
   for (const head of heads) { const state = JSON.parse(head.stateJson); assert(state.subjects["card-1"].cumulativeCu === 1, `smoke ${head.scope} CU=${state.subjects["card-1"].cumulativeCu}`); }
   assert(await prisma.quotaReportReceipt.count({ where: { reportId: "smoke-u1" } }) === 1, "receipt missing");
   await useRealtimeClock();
-  await exec("go", ["test", ".", "-run", "^TestQuotaClientServerE2E$", "-count=1"], {
+  await exec("go", ["test", ".", "-run", "^TestQuota(ClientServer|PendingQueue)E2E$", "-count=1"], {
     BCAI_QUOTA_E2E_BASE: `http://127.0.0.1:${port}`,
   }, join(root, "apps/app"));
   const flush = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
@@ -124,9 +207,222 @@ try {
   assert(codexGoHeads.length === 2 && claudeGoHeads.length === 2, "production Go leasers did not persist both provider windows");
   assert(JSON.parse(codexGoHeads.find((h) => h.scope === "primary").stateJson).lastReason === "LATE_USAGE_RECONCILED", "Codex production late report was not causally reconciled");
   const claudeUsage = await prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "card-102", modelKey: "claude-opus-4-8" } });
-  assert(claudeUsage?.cacheCreationTokens === 80, `Claude cache TTL total=${claudeUsage?.cacheCreationTokens}, want 80`);
+  assert(claudeUsage?.cacheCreationTokens === 200_080, `Claude cache TTL total=${claudeUsage?.cacheCreationTokens}, want 200080`);
   assert(await prisma.requestLog.count({ where: { accessKeyId: { in: ["card-101", "card-102"] } } }) >= 2, "production Go reports missing from diagnostic trace");
-  if (only === "smoke") { await prisma.$disconnect(); console.log("quota-e2e smoke: ok"); process.exitCode = 0; }
+
+  // Exclusive oversell display contract: effective fraction remains conserved,
+  // while personalFraction only follows usage attributed to that card.
+  {
+    const id = 80, t = now + 8_000_000;
+    const a = await runScenario("exclusive-oversell-a-baseline", "card-80", [
+      clock(t), lease("card-80"),
+      report({ reportId: "exclusive-a-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    const b = await runScenario("exclusive-oversell-b-baseline", "card-81", [
+      clock(t + 1), lease("card-81"),
+      report({ reportId: "exclusive-b-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    // Unknown mother burn happens before A's request, so it cannot be falsely
+    // attributed to A when the later usage event is replayed.
+    await runScenario("exclusive-oversell-unattributed", "card-81", [
+      clock(t + 10),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: b.leaseId, reportId: "exclusive-unattributed", status: 0, modelKey: "gpt-5.6-luna",
+        accountQuota: quota(id, 80, 90, t + 10, 1, t),
+      } },
+    ]);
+    await runScenario("exclusive-oversell-a-use", "card-80", [
+      clock(t + 30),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: a.leaseId, reportId: "exclusive-a-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 20, upstreamCompletedAt: t + 25,
+        accountQuota: quota(id, 60, 80, t + 30, 1, t),
+      } },
+    ]);
+    const qa = await runScenario("exclusive-oversell-a-read", "card-80", [lease("card-80")]);
+    const qb = await runScenario("exclusive-oversell-b-read", "card-81", [lease("card-81")]);
+    const aBody = qa.responses[0].body, bBody = qb.responses[0].body;
+    const af = aBody.fairShareQuota?.["codex-gpt"], bf = bBody.fairShareQuota?.["codex-gpt"];
+    const aw = aBody.weeklyFairShareQuota?.["codex-gpt"], bw = bBody.weeklyFairShareQuota?.["codex-gpt"];
+    assert(aBody.accessKeyStatus?.exclusive === true && bBody.accessKeyStatus?.exclusive === true,
+      "oversold exclusive cards lost their exclusive display flag");
+    assert(Math.abs(af.personalFraction - 0.6) < 1e-9, `exclusive A personal=${af?.personalFraction}, want 0.6`);
+    assert(Math.abs(bf.personalFraction - 1) < 1e-9, `exclusive B personal=${bf?.personalFraction}, want 1`);
+    assert(af.fraction < af.personalFraction && bf.fraction < bf.personalFraction,
+      `effective fractions were not conservation-scaled: A=${JSON.stringify(af)} B=${JSON.stringify(bf)}`);
+    assert(af.fraction * af.share + bf.fraction * bf.share <= 0.6 + 1e-9,
+      `oversold exclusive effective total exceeded mother: A=${JSON.stringify(af)} B=${JSON.stringify(bf)}`);
+    assert(aw.personalFraction < 1 && bw.personalFraction === 1,
+      `exclusive weekly attribution leaked: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)}`);
+    assert(aw.fraction * aw.share + bw.fraction * bw.share <= 0.8 + 1e-9,
+      `oversold exclusive weekly total exceeded mother: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)}`);
+
+    const flush = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
+    assert(flush.ok, "exclusive display state did not flush before restart");
+    const diagnosticRow = await prisma.requestLog.findFirst({ where: { reportId: "exclusive-a-u1" } });
+    const diagnostic = JSON.parse(diagnosticRow?.reason || "{}");
+    assert(diagnostic.quota?.primary?.personalFraction != null
+      && diagnostic.quota?.primary?.effectiveFraction != null
+      && diagnostic.quota?.primary?.accountFraction != null
+      && diagnostic.quota?.primary?.revision != null
+      && diagnostic.quota?.primary?.retainedEvents != null
+      && diagnostic.quota?.primary?.retainedBytes != null
+      && diagnostic.quota?.primary?.compactedEvents != null
+      && diagnostic.quota?.primary?.compactedThroughAt != null,
+    `exclusive request diagnostic missing quota state: ${diagnosticRow?.reason}`);
+    await stopServer();
+    port = await startServer();
+    const restartedA = await runScenario("exclusive-oversell-a-restart", "card-80", [lease("card-80")]);
+    const restartedB = await runScenario("exclusive-oversell-b-restart", "card-81", [lease("card-81")]);
+    const raf = restartedA.responses[0].body.fairShareQuota?.["codex-gpt"];
+    const rbf = restartedB.responses[0].body.fairShareQuota?.["codex-gpt"];
+    assert(Math.abs(raf.personalFraction - 0.6) < 1e-9 && Math.abs(rbf.personalFraction - 1) < 1e-9,
+      `exclusive personal fractions changed after restart: A=${JSON.stringify(raf)} B=${JSON.stringify(rbf)}`);
+
+    // NOTE: the official-reset continuation of this scenario (which jumps the
+    // global virtual clock forward by 7 days) runs at the very END of the
+    // matrix — see "exclusive-oversell-official-reset" below. Every scenario
+    // shares one virtual clock, so a +7d jump here would silently expire other
+    // accounts' windows mid-matrix (the cutover-restart flake).
+  }
+
+  // Mixed mother: the exclusive card keeps its single-bar flag and personal
+  // fraction, while the shared card remains a dual-bar client of the same pool.
+  {
+    const id = 82, t = now + 8_200_000;
+    const exclusive = await runScenario("mixed-exclusive-baseline", "card-82", [
+      clock(t), lease("card-82"),
+      report({ reportId: "mixed-exclusive-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    await runScenario("mixed-shared-baseline", "card-83", [
+      clock(t + 1), lease("card-83"),
+      report({ reportId: "mixed-shared-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    await runScenario("mixed-exclusive-use", "card-82", [
+      clock(t + 20),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: exclusive.leaseId, reportId: "mixed-exclusive-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10, upstreamCompletedAt: t + 15,
+        accountQuota: quota(id, 90, 95, t + 20, 1, t),
+      } },
+    ]);
+    const exRead = await runScenario("mixed-exclusive-read", "card-82", [lease("card-82")]);
+    const shRead = await runScenario("mixed-shared-read", "card-83", [lease("card-83")]);
+    const exBody = exRead.responses[0].body, shBody = shRead.responses[0].body;
+    const ex = exBody.fairShareQuota?.["codex-gpt"], sh = shBody.fairShareQuota?.["codex-gpt"];
+    const exWeekly = exBody.weeklyFairShareQuota?.["codex-gpt"], shWeekly = shBody.weeklyFairShareQuota?.["codex-gpt"];
+    assert(exBody.accessKeyStatus?.exclusive === true, "mixed mother lost exclusive card flag");
+    assert(shBody.accessKeyStatus?.exclusive === false, "mixed mother marked shared card exclusive");
+    assert(ex.personalFraction < 1 && sh.personalFraction === 1,
+      `mixed personal attribution leaked between cards: ex=${JSON.stringify(ex)} shared=${JSON.stringify(sh)}`);
+    assert(ex.fraction * ex.share + sh.fraction * sh.share <= 0.9 + 1e-9,
+      `mixed effective total exceeded mother: ex=${JSON.stringify(ex)} shared=${JSON.stringify(sh)}`);
+    assert(exWeekly.personalFraction < 1 && shWeekly.personalFraction === 1,
+      `mixed weekly attribution leaked: ex=${JSON.stringify(exWeekly)} shared=${JSON.stringify(shWeekly)}`);
+    assert(exWeekly.fraction * exWeekly.share + shWeekly.fraction * shWeekly.share <= 0.95 + 1e-9,
+      `mixed weekly total exceeded mother: ex=${JSON.stringify(exWeekly)} shared=${JSON.stringify(shWeekly)}`);
+  }
+
+  // Pure shared oversell remains a shared/dual-bar contract for every card.
+  {
+    const id = 84, t = now + 8_400_000;
+    const a = await runScenario("shared-only-a-baseline", "card-84", [
+      clock(t), lease("card-84"),
+      report({ reportId: "shared-only-a-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    await runScenario("shared-only-b-baseline", "card-85", [
+      clock(t + 1), lease("card-85"),
+      report({ reportId: "shared-only-b-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    await runScenario("shared-only-c-baseline", "card-86", [
+      clock(t + 2), lease("card-86"),
+      report({ reportId: "shared-only-c-q0", status: 0, accountQuota: quota(id, 100, 100, t + 2, 1, t) }),
+    ]);
+    await runScenario("shared-only-a-use", "card-84", [
+      clock(t + 20),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: a.leaseId, reportId: "shared-only-a-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10, upstreamCompletedAt: t + 15,
+        accountQuota: quota(id, 80, 90, t + 20, 1, t),
+      } },
+    ]);
+    const ar = await runScenario("shared-only-a-read", "card-84", [lease("card-84")]);
+    const br = await runScenario("shared-only-b-read", "card-85", [lease("card-85")]);
+    const cr = await runScenario("shared-only-c-read", "card-86", [lease("card-86")]);
+    const ab = ar.responses[0].body, bb = br.responses[0].body, cb = cr.responses[0].body;
+    const aq = ab.fairShareQuota?.["codex-gpt"], bq = bb.fairShareQuota?.["codex-gpt"], cq = cb.fairShareQuota?.["codex-gpt"];
+    const aw = ab.weeklyFairShareQuota?.["codex-gpt"], bw = bb.weeklyFairShareQuota?.["codex-gpt"], cw = cb.weeklyFairShareQuota?.["codex-gpt"];
+    assert(ab.accessKeyStatus?.exclusive === false && bb.accessKeyStatus?.exclusive === false && cb.accessKeyStatus?.exclusive === false,
+      "pure shared mother changed display contract");
+    assert(aq.personalFraction < 1 && bq.personalFraction === 1 && cq.personalFraction === 1,
+      `pure shared attribution leaked: A=${JSON.stringify(aq)} B=${JSON.stringify(bq)} C=${JSON.stringify(cq)}`);
+    assert(aq.fraction * aq.share + bq.fraction * bq.share + cq.fraction * cq.share <= 0.8 + 1e-9,
+      `pure shared effective total exceeded mother: A=${JSON.stringify(aq)} B=${JSON.stringify(bq)} C=${JSON.stringify(cq)}`);
+    assert(aw.personalFraction < 1 && bw.personalFraction === 1 && cw.personalFraction === 1,
+      `pure shared weekly attribution leaked: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
+    assert(aw.fraction * aw.share + bw.fraction * bw.share + cw.fraction * cw.share <= 0.9 + 1e-9,
+      `pure shared weekly total exceeded mother: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
+  }
+
+  // Sole-exclusive cold start: the first partial mother snapshot must become
+  // the card's personal value too. A later attributable burn to zero exhausts
+  // that card normally rather than exposing phantom personal quota.
+  {
+    const id = 87, t = now + 8_700_000;
+    const baseline = await runScenario("exclusive-sole-cold-start", "card-87", [
+      clock(t), lease("card-87"),
+      report({ reportId: "exclusive-sole-q0", status: 0, accountQuota: quota(id, 33, 40, t) }),
+      lease("card-87"),
+    ]);
+    const primary = baseline.responses.at(-1).body.fairShareQuota?.["codex-gpt"];
+    const weekly = baseline.responses.at(-1).body.weeklyFairShareQuota?.["codex-gpt"];
+    assert(Math.abs(primary.personalFraction - 0.33) < 1e-9 && Math.abs(primary.fraction - 0.33) < 1e-9,
+      `sole exclusive primary cold start mismatch: ${JSON.stringify(primary)}`);
+    assert(Math.abs(weekly.personalFraction - 0.4) < 1e-9 && Math.abs(weekly.fraction - 0.4) < 1e-9,
+      `sole exclusive weekly cold start mismatch: ${JSON.stringify(weekly)}`);
+    const exhausted = await runScenario("exclusive-sole-exhausted", "card-87", [
+      clock(t + 20_000),
+      report({ leaseId: baseline.leaseId, reportId: "exclusive-sole-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10_000, upstreamCompletedAt: t + 15_000,
+        accountQuota: quota(id, 0, 40, t + 20_000, 1, t) }),
+      { ...lease("card-87"), allowStatus: 429 },
+    ]);
+    assert(exhausted.responses.at(-1).body.code === "primary_exhausted",
+      `sole exclusive exhaustion reason mismatch: ${JSON.stringify(exhausted.responses.at(-1))}`);
+  }
+
+  // Shared card with untouched personal quota but a temporarily empty mother
+  // account gets the explicit recovery reason/message instead of a false claim
+  // that the user's own five-hour allowance was consumed.
+  {
+    const id = 88, t = now + 8_800_000;
+    const recovering = await runScenario("account-recovering", "card-88", [
+      clock(t), lease("card-88"),
+      report({ reportId: "account-recovering-q0", status: 0, accountQuota: quota(id, 0, 0, t) }),
+      { ...lease("card-88"), allowStatus: 429 },
+    ]);
+    const denied = recovering.responses.at(-1);
+    assert(denied.body.code === "account_recovering" && denied.body.error === "上游额度恢复中，请稍后重试",
+      `account recovery contract mismatch: ${JSON.stringify(denied)}`);
+  }
+
+  // The real bounded request-log writer must retain a failed SQLite batch and
+  // persist it on retry; diagnostics are only useful if transient DB pressure
+  // does not erase the exact incident being investigated.
+  {
+    const result = await testControl("request-log-failure", { reportId: "request-log-retry-e2e" });
+    assert(result.failedOnce === true && result.queuedAfterFailure === 1 && result.persisted === 1,
+      `request-log retry did not recover: ${JSON.stringify(result)}`);
+  }
+
+  if (only === "smoke" || only === "oversell-display") {
+    await prisma.$disconnect();
+    console.log(`quota-e2e ${only}: ok`);
+    process.exitCode = 0;
+  }
   else {
     // Arrival permutations and boundary lateness, each isolated by account.
     for (const [index, late] of [1000, 30_000, 599_000, 601_000].entries()) {
@@ -163,18 +459,278 @@ try {
       const actualReason = trace?.primaryReason;
       assert(actualReason === expectedReason, `Claude lateness ${late} reason=${actualReason}, want ${expectedReason}`);
     }
+
+    // A1: an upstream "unknown" (-1) primary window must not be converted to
+    // empty quota or block the next lease. The first real primary snapshot is a
+    // baseline, not a fabricated 100% -> 90% burn.
+    {
+      const id = 41, t = now + 4_100_000;
+      const partial = await runScenario("invalid-fraction", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "invalid-fraction", status: 0, accountQuota: { accountId: id, observedAt: t, codexQuota: {
+          hourlyPercent: -1, weeklyPercent: 80,
+          weeklyResetTime: new Date(t + 7 * 24 * 60 * 60_000).toISOString(),
+        } } }),
+        lease(`card-${id}`),
+      ]);
+      assert(partial.responses[2].status === 200, "fraction=-1 falsely blocked the next lease");
+      let primary = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      assert(primary.primed === false && primary.fraction === 1 && primary.assignedBurn === 0, "fraction=-1 mutated the primary window");
+      await runScenario("invalid-fraction-real", `card-${id}`, [clock(t + 1_000), report({
+        leaseId: partial.leaseId, reportId: "invalid-fraction-real", status: 0,
+        accountQuota: { accountId: id, observedAt: t + 1_000, codexQuota: {
+          hourlyPercent: 90, weeklyPercent: -1,
+          hourlyResetTime: new Date(t + 5 * 60 * 60_000).toISOString(),
+        } },
+      })]);
+      primary = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      assert(primary.primed === true && primary.fraction === 0.9 && primary.assignedBurn === 0, "first real snapshot was not adopted as baseline");
+    }
+
+    // A2 + A15: once a window is established, missing or backward resetAt may
+    // update the observed fraction but cannot clear CU or shorten the boundary.
+    for (const [id, mode] of [[42, "missing"], [43, "backward"]]) {
+      const t = now + id * 100_000;
+      const resetAt = t + 5 * 60 * 60_000;
+      await runScenario(`reset-guard-${mode}`, `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: `reset-guard-${mode}-q0`, status: 0, accountQuota: quota(id, 100, 100, t) }),
+        clock(t + 2_000),
+        report({ reportId: `reset-guard-${mode}-u`, status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000,
+          accountQuota: { accountId: id, observedAt: t + 1_500, codexQuota: {
+            hourlyPercent: 80, weeklyPercent: 100,
+            ...(mode === "backward" ? { hourlyResetTime: new Date(resetAt - 60 * 60_000).toISOString() } : {}),
+            weeklyResetTime: new Date(t + 7 * 24 * 60 * 60_000).toISOString(),
+          } },
+        }),
+      ]);
+      const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      assert(state.resetAt === resetAt, `${mode} resetAt changed the established boundary`);
+      assert(state.subjects[`card-${id}`].cumulativeCu === 1, `${mode} resetAt cleared current-window CU`);
+      assert(Math.abs(state.assignedBurn - 0.2) < 1e-9, `${mode} resetAt lost the fraction delta`);
+    }
+
+    // A14: two snapshots plus the intervening usage must materialize exactly the
+    // same accounting state for every network arrival order inside ten minutes.
+    {
+      const t = now + 4_400_000;
+      const eventQuota = (id, percent, observedAt) => quota(id, percent, percent, observedAt, 1, t);
+      const permutations = [
+        ["old", "usage", "new"], ["old", "new", "usage"],
+        ["usage", "old", "new"], ["usage", "new", "old"],
+        ["new", "old", "usage"], ["new", "usage", "old"],
+      ];
+      const materialized = [];
+      for (const [index, ordering] of permutations.entries()) {
+        const id = 55 + index;
+        const operations = [clock(t), lease(`card-${id}`),
+          report({ reportId: `order-${id}-q0`, status: 0, accountQuota: eventQuota(id, 100, t) })];
+        for (const [arrivalIndex, event] of ordering.entries()) {
+          operations.push(clock(t + 30_000 + arrivalIndex * 1_000));
+          operations.push(event === "usage"
+            ? report({ reportId: `order-${id}-usage`, status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+                requestStartedAt: t + 14_000, upstreamCompletedAt: t + 15_000 })
+            : report({ reportId: `order-${id}-${event}`, status: 0,
+                accountQuota: eventQuota(id, event === "old" ? 90 : 70, event === "old" ? t + 10_000 : t + 20_000) }));
+        }
+        await runScenario(`snapshot-order-${ordering.join("-")}`, `card-${id}`, operations);
+        const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+        const subject = state.subjects[`card-${id}`];
+        materialized.push({ fraction: state.fraction, assignedBurn: state.assignedBurn, unattributedShare: state.unattributedShare,
+          cumulativeCu: subject.cumulativeCu, carriedAttributedShare: subject.carriedAttributedShare, attributedShare: subject.attributedShare });
+      }
+      for (const state of materialized.slice(1)) {
+        assert(JSON.stringify(state) === JSON.stringify(materialized[0]), `in-horizon arrival order changed accounting: ${JSON.stringify(materialized)}`);
+      }
+      assert(Math.abs(materialized[0].assignedBurn - 0.2) < 1e-9 && Math.abs(materialized[0].unattributedShare - 0.1) < 1e-9,
+        `snapshot permutation partitioned burn incorrectly: ${JSON.stringify(materialized[0])}`);
+    }
+
+    // A6: a dated model ID must resolve by the longest quota-rates alias. Mini is
+    // 0.75 CU/M input; matching the shorter gpt-5.4 alias would incorrectly charge 2.5.
+    {
+      const id = 46, t = now + 4_600_000, model = "gpt-5.4-mini-2026-03-17";
+      const result = await runScenario("dated-model-rate", `card-${id}`, [clock(t), lease(`card-${id}`, model),
+        report({ reportId: "dated-model-q0", status: 0, modelKey: model, accountQuota: quota(id, 100, 100, t) }),
+        clock(t + 1_000),
+        report({ reportId: "dated-model-u", status: 200, modelKey: model, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 400, upstreamCompletedAt: t + 500 }),
+      ]);
+      const datedHeads = await prisma.fairShareWindowHead.findMany({ where: { accountId: id, scope: "primary" } });
+      const state = JSON.parse(datedHeads.find((head) => head.bucket === "codex-gpt").stateJson);
+      assert(Math.abs(state.subjects[`card-${id}`].cumulativeCu - 0.75) < 1e-9,
+        `dated mini model used the wrong quota multiplier: CU=${state.subjects[`card-${id}`].cumulativeCu}, responses=${JSON.stringify(result.responses)}`);
+    }
+
+    // Provider symmetry and high-cost fallback: dated Claude aliases must keep
+    // their exact tier, and Fable must remain twice Opus rather than collapsing
+    // into a single family multiplier.
+    for (const [id, model, expectedCu] of [
+      [47, "claude-opus-4-8-2026-07-01", 5],
+      [50, "claude-fable-5-2026-07-01", 10],
+    ]) {
+      const t = now + id * 100_000;
+      await runScenario(`claude-model-rate-${id}`, `card-${id}`, [clock(t), claudeLease(`card-${id}`, model),
+        claudeReport({ reportId: `claude-model-rate-${id}-q0`, status: 0, modelKey: model, accountQuota: claudeQuota(id, 100, 100, t) }),
+        clock(t + 1_000),
+        claudeReport({ reportId: `claude-model-rate-${id}-u`, status: 200, modelKey: model,
+          inputTokens: 1_000_000, totalTokens: 1_000_000, requestStartedAt: t + 400, upstreamCompletedAt: t + 500 }),
+      ]);
+      const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({
+        where: { provider: "anthropic", accountId: id, bucket: "anthropic-claude", scope: "primary" },
+      })).stateJson);
+      assert(Math.abs(state.subjects[`card-${id}`].cumulativeCu - expectedCu) < 1e-9,
+        `${model} CU=${state.subjects[`card-${id}`].cumulativeCu}, want ${expectedCu}`);
+    }
+
+    // A7: exhaust only the user's 5h share while the mother account still has
+    // quota, then inspect the real controller's 429 body.
+    {
+      const id = 48, t = now + 4_800_000;
+      const result = await runScenario("chinese-429", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "chinese-429-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+        clock(t + 1_000),
+        report({ reportId: "chinese-429-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 400, upstreamCompletedAt: t + 500, accountQuota: quota(id, 80, 100, t + 600, 1, t) }),
+        { ...lease(`card-${id}`), allowStatus: 429 },
+      ]);
+      const denied = result.responses.at(-1);
+      assert(denied.status === 429 && denied.body.code === "primary_exhausted", `429 reason contract mismatch: ${JSON.stringify(denied)}`);
+      assert(typeof denied.body.error === "string" && /额度已用完/.test(denied.body.error) && !/exhausted/i.test(denied.body.error),
+        `429 message is not user-facing Chinese: ${JSON.stringify(denied.body)}`);
+    }
+
+    // A28: for an allowed request the decision metadata must point at the window
+    // that actually supplies the minimum remaining fraction.
+    {
+      const id = 49, t = now + 4_900_000;
+      await runScenario("limiting-window", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "limiting-window-q0", status: 0, accountQuota: quota(id, 10, 5, t) }),
+      ]);
+      const decision = await testControl("check", { provider: "codex", accountId: id, cardId: `card-${id}`, bucket: "codex-gpt" });
+      assert(decision.allowed === true && decision.window === "7d", `allowed decision did not select weekly limiter: ${JSON.stringify(decision)}`);
+      assert(decision.resetAt === t + 7 * 24 * 60 * 60_000, `allowed decision paired the wrong resetAt: ${JSON.stringify(decision)}`);
+    }
+
+    // A12: lease expiry is not request expiry. A long stream completed recently
+    // is accepted, while an ancient completion outside the replay horizon is not.
+    {
+      const longT = now + 5_200_000;
+      const long = await runScenario("long-stream-report", "card-52", [clock(longT), lease("card-52"),
+        clock(longT + 2 * 60 * 60_000), report({ reportId: "long-stream-report", status: 200, inputTokens: 100, totalTokens: 100,
+          requestStartedAt: longT, upstreamCompletedAt: longT + 2 * 60 * 60_000 - 100 }),
+      ]);
+      assert(long.responses.at(-1).body.ignored !== true, `recent long stream was rejected: ${JSON.stringify(long.responses.at(-1))}`);
+      // Keep the entire matrix inside the seeded five-hour cutover window while
+      // still exceeding the 35-minute replay horizon.
+      const ancientT = longT + 2 * 60 * 60_000 + 60_000;
+      const ancient = await runScenario("ancient-report", "card-53", [clock(ancientT), lease("card-53"),
+        clock(ancientT + 36 * 60_000), report({ reportId: "ancient-report", status: 200, inputTokens: 100, totalTokens: 100,
+          requestStartedAt: ancientT, upstreamCompletedAt: ancientT + 1_000 }),
+      ]);
+      assert(ancient.responses.at(-1).body.ignored === true && ancient.responses.at(-1).body.reason === "report_expired",
+        `ancient report was not rejected at ingress: ${JSON.stringify(ancient.responses.at(-1))}`);
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "ancient-report" } }) === 0, "ancient report created a receipt");
+      await useRealtimeClock();
+    }
+
+    // A4: a stale lower-revision checkpoint, including its synthetic receipt,
+    // must lose at SQLite and leave the current head/card summary untouched.
+    {
+      const id = 54, t = now + 5_400_000;
+      await runScenario("stale-checkpoint-base", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "stale-checkpoint-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+        clock(t + 1_000),
+        report({ reportId: "stale-checkpoint-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 400, upstreamCompletedAt: t + 500, accountQuota: quota(id, 80, 90, t + 600, 1, t) }),
+      ]);
+      const before = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
+      const summarizeRows = (rows) => rows.map((row) => ({
+        bucket: row.bucket,
+        cardId: row.cardId,
+        windowStart: String(row.windowStart),
+        weightedUsed: row.weightedUsed,
+        attributedShare: row.attributedShare,
+        lockedDenominator: row.lockedDenominator,
+        lastFraction: row.lastFraction,
+        isParticipant: row.isParticipant,
+        share: row.share,
+        isActive: row.isActive,
+        isExclusive: row.isExclusive,
+      }));
+      const beforeSummary = summarizeRows(await prisma.fairShareWindow.findMany({
+        where: { provider: "codex", accountId: id },
+        orderBy: [{ bucket: "asc" }, { cardId: "asc" }],
+      }));
+      await testControl("stale-checkpoint", {
+        provider: "codex", accountId: id, bucket: "codex-gpt", reportId: "stale-checkpoint-receipt",
+      }, 500);
+      const after = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
+      const afterSummary = summarizeRows(await prisma.fairShareWindow.findMany({
+        where: { provider: "codex", accountId: id },
+        orderBy: [{ bucket: "asc" }, { cardId: "asc" }],
+      }));
+      assert(JSON.stringify(after.map((row) => [String(row.revision), row.stateJson])) === JSON.stringify(before.map((row) => [String(row.revision), row.stateJson])),
+        "stale checkpoint rolled a durable head backward");
+      assert(JSON.stringify(afterSummary) === JSON.stringify(beforeSummary), "stale checkpoint changed card summary");
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-checkpoint-receipt" } }) === 0, "stale checkpoint created an orphan receipt");
+
+      // One stale key in a real coordinator micro-batch must reject only that
+      // caller; the healthy sibling's head + receipt must survive the retry.
+      // The healthy side is written directly through the production repository;
+      // it need not consume a lease or depend on a fresh account's default quota.
+      const healthyId = 999;
+      const isolated = await testControl("stale-checkpoint-batch", {
+        provider: "codex", staleAccountId: id, healthyAccountId: healthyId, bucket: "codex-gpt",
+      });
+      assert(isolated.stale?.status === "rejected" && isolated.stale?.code === "QUOTA_STALE_REVISION",
+        `stale batch key was not rejected precisely: ${JSON.stringify(isolated)}`);
+      assert(isolated.healthy?.status === "fulfilled",
+        `healthy batch sibling was rejected with stale key: ${JSON.stringify(isolated)}`);
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-batch-receipt" } }) === 0,
+        "stale batch key wrote a receipt");
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-batch-receipt" } }) === 1,
+        "healthy batch sibling did not write its receipt");
+    }
+
+    // A3: fail exactly one scheduled SQLite commit. The rejection must be caught,
+    // the Nest process must remain healthy, and the following tick must persist.
+    {
+      const status = await testControl("background-flush-failure", { provider: "codex", accountId: 54, bucket: "codex-gpt" });
+      assert(status.armed === true, "checkpoint fault was not armed");
+      const fault = await waitFor("failed revision to retry into SQLite", async () => {
+        const value = await testControl("fault-status", { provider: "codex" });
+        return value.failures === 1 && value.recovered === true ? value : null;
+      });
+      assert(fault.failures === 1 && fault.recovered === true,
+        `scheduled checkpoint was not retried durably: ${JSON.stringify(fault)}`);
+      const health = await fetch(`http://127.0.0.1:${port}/api/app/lease/codex/health`);
+      assert(health.ok, "scheduled flush rejection terminated the server");
+    }
     await useRealtimeClock();
-    // Rebound, stale snapshot, and independent forward reset.
+    // Cold-start proof for the cutover account: SIGKILL and restart, then the
+    // legacy blood bar must be identical. Clock-jumping scenarios all run at
+    // the end of the matrix, so no cross-scenario pollution can expire this
+    // window in the meantime.
+    await crashServer();
+    port = await startServer();
+    const restartedCutoverA = await runScenario("cutover-restart-a", "card-70", [lease("card-70")]);
+    const restartedCutoverQuota = restartedCutoverA.responses[0].body.fairShareQuota?.["codex-gpt"];
+    assert(restartedCutoverQuota && Math.abs(restartedCutoverQuota.fraction - 0.4) < 1e-9,
+      `cutover blood bar missing/changed after restart: ${JSON.stringify(restartedCutoverA.responses[0].body)}`);
+
+    // Rebound, an in-horizon reordered snapshot, and independent forward reset.
     await runScenario("reset-rebound", "card-6", [clock(now + 600_000), lease("card-6"),
       report({ reportId: "rr-q0", status: 0, accountQuota: quota(6, 100, 100, now + 600_000) }),
       clock(now + 602_000),
-      report({ reportId: "rr-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000, upstreamCompletedAt: now + 601_000,
+      report({ reportId: "rr-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: now + 600_500, upstreamCompletedAt: now + 601_000,
         accountQuota: quota(6, 20, 70, now + 602_000, 1, now + 600_000) }),
       clock(now + 603_000),
       report({ reportId: "rr-rebound", status: 0, accountQuota: quota(6, 80, 90, now + 603_000, 1, now + 600_000) }),
       clock(now + 604_000),
       report({ reportId: "rr-stale", status: 0, accountQuota: quota(6, 10, 10, now + 601_500, 1, now + 600_000) }),
       clock(now + 600_000 + 5 * 60 * 60_000),
+      lease("card-6"),
       report({ reportId: "rr-reset", status: 0, accountQuota: quota(6, 100, 90, now + 600_000 + 5 * 60 * 60_000, 2, now + 600_000) }),
     ]);
     const resetHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 6, bucket: "codex-gpt" } });
@@ -184,7 +740,7 @@ try {
     assert(resetPrimary.fraction === 1 && resetPrimary.assignedBurn === 0 && resetPrimary.subjects["card-6"].cumulativeCu === 0,
       `official primary reset mismatch: ${JSON.stringify({ fraction: resetPrimary.fraction, assignedBurn: resetPrimary.assignedBurn, cu: resetPrimary.subjects["card-6"].cumulativeCu, resetAt: resetPrimary.resetAt })}`);
     assert(resetWeekly.fraction === 0.9 && resetWeekly.assignedBurn > 0 && resetWeekly.subjects["card-6"].cumulativeCu === 1,
-      `official weekly reset mismatch: ${JSON.stringify({ fraction: resetWeekly.fraction, assignedBurn: resetWeekly.assignedBurn, cu: resetWeekly.subjects["card-6"].cumulativeCu, resetAt: resetWeekly.resetAt })}`);
+      `official weekly reset mismatch: ${JSON.stringify({ fraction: resetWeekly.fraction, assignedBurn: resetWeekly.assignedBurn, unattributedShare: resetWeekly.unattributedShare, cu: resetWeekly.subjects["card-6"].cumulativeCu, resetAt: resetWeekly.resetAt, revision: resetWeekly.revision, lastReason: resetWeekly.lastReason, tail: resetWeekly.reorderTail?.length })}`);
     await useRealtimeClock();
     // Cross-account snapshot must not mutate account 7.
     await runScenario("cross-account", "card-7", [lease("card-7"), report({ reportId: "cross", status: 0, accountQuota: quota(8, 0, 0, now + 700_000) })]);
@@ -277,10 +833,142 @@ try {
       assert(absoluteTotal <= motherRemaining + 1e-9, `${scope} clients oversold: ${absoluteTotal} > ${motherRemaining}`);
       assert(Math.abs(absoluteTotal - motherRemaining) < 1e-9, `${scope} public bars did not fully allocate mother remainder`);
     }
+    // A8: membership changes while the process is down. Startup must load the old
+    // window, reconcile the current key file, and durably checkpoint before ready.
+    await runScenario("restart-membership-base", "card-72", [lease("card-72"),
+      report({ reportId: "restart-membership-q0", status: 0, accountQuota: quota(72, 80, 90, now + 9_200_000) }),
+    ]);
+    await crashServer();
+    cards[71].bindings.codex = 0;
+    cards[72].bindings.codex = 72;
+    cards[72].salesSeatCapacity = { codex: 2 };
+    await persistKeys();
+    port = await startServer();
+    const membershipHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 72, bucket: "codex-gpt", scope: "primary" } });
+    assert(membershipHead, "restart did not restore the membership window");
+    const membershipState = JSON.parse(membershipHead.stateJson);
+    assert(membershipState.subjects["card-72"].active === false && membershipState.subjects["card-73"].active === true,
+      `restart membership was not reconciled: ${JSON.stringify(membershipState.subjects)}`);
     // Normal restart: state and receipt survive and old lease retry is ignored.
-    await crashServer(); port = await startServer();
     const retry = await runScenario("restart-duplicate", "card-1", [report({ leaseId: smoke.leaseId, reportId: "smoke-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000 })]);
     assert(retry.responses[0].body.ignored === true, "restart duplicate was not ignored");
+
+    // 防重复扣:确认 checkpoint 失败(客户端拿到 5xx、必然重试)后,定时 flush
+    // 必须把「窗口状态 + 回执」原子落库;崩溃重启后重试同一 reportId 不再计 CU。
+    {
+      const t = now + 9_400_000;
+      const base = await runScenario("receipt-carry-base", "card-61", [clock(t), lease("card-61"),
+        report({ reportId: "receipt-carry-q0", status: 0, accountQuota: quota(61, 100, 100, t) }),
+      ]);
+      await testControl("background-flush-failure", { provider: "codex", accountId: 61, bucket: "codex-gpt", requireReceipt: true });
+      await runScenario("receipt-carry-usage", "card-61", [clock(t + 2_000),
+        { ...report({ leaseId: base.leaseId, reportId: "receipt-carry-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000 }), allowStatus: 500 },
+      ]);
+      await waitFor("failed receipt to ride the next scheduled flush", async () =>
+        (await prisma.quotaReportReceipt.count({ where: { reportId: "receipt-carry-u1" } })) === 1 ? true : null);
+      await crashServer();
+      port = await startServer();
+      const retryAfterCrash = await runScenario("receipt-carry-retry", "card-61", [clock(t + 10_000),
+        report({ leaseId: base.leaseId, reportId: "receipt-carry-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000 }),
+      ]);
+      assert(retryAfterCrash.responses.at(-1).body.ignored === true, "receipt-carry retry was not deduped after crash");
+      const carryHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 61, bucket: "codex-gpt", scope: "primary" } });
+      const carryCu = JSON.parse(carryHead.stateJson).subjects["card-61"].cumulativeCu;
+      assert(carryCu === 1, `receipt-carry CU=${carryCu}, want exactly 1 (no double count)`);
+    }
+
+    // 长流式归因:lease 过期 + 清扫触发之后、35 分钟补报宽限之内,完成上报
+    // 仍必须归因到原账号,不能变成无主消耗。
+    {
+      const t = now + 9_500_000;
+      const stream = await runScenario("long-stream-base", "card-63", [clock(t), lease("card-63"),
+        report({ reportId: "long-stream-q0", status: 0, accountQuota: quota(63, 100, 100, t) }),
+      ]);
+      // 90 分钟后:已超过旧的 TTL 40min + 35min 清扫线;仍未完成上报就必须保留归因。
+      await testControl("time", { now: t + 90 * 60_000 });
+      await runScenario("long-stream-sweeper", "card-64", [lease("card-64")]);
+      await runScenario("long-stream-report", "card-63", [
+        report({ leaseId: stream.leaseId, reportId: "long-stream-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 1_000, upstreamCompletedAt: t + 90 * 60_000 - 100 }),
+      ]);
+      await testControl("flush");
+      const streamHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });
+      const streamCu = JSON.parse(streamHead?.stateJson || "{}").subjects?.["card-63"]?.cumulativeCu;
+      assert(streamCu === 1, `long-stream usage was not attributed after lease expiry: CU=${streamCu}, want 1`);
+    }
+
+    // A completed-but-still-live bound lease may be reused by the client. The
+    // ten-minute causal cleanup must not delete its attribution before its own
+    // forty-minute expiry.
+    {
+      const id = 66, t = now + 101 * 60_000;
+      const reused = await runScenario("live-lease-reuse-base", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "live-lease-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+        report({ reportId: "live-lease-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 100, upstreamCompletedAt: t + 200 }),
+      ]);
+      const leaseExpiresAt = Date.parse(reused.responses[1]?.body?.expiresAt || "");
+      assert(leaseExpiresAt > t + 12 * 60_000,
+        `live-lease fixture did not receive a reusable lease: expiresAt=${leaseExpiresAt}, t=${t}`);
+      await testControl("time", { now: t + 12 * 60_000 });
+      await runScenario("live-lease-reuse-sweeper", "card-67", [lease("card-67")]);
+      const second = await runScenario("live-lease-reuse-second", `card-${id}`, [
+        report({ leaseId: reused.leaseId, reportId: "live-lease-u2", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 12 * 60_000 - 100, upstreamCompletedAt: t + 12 * 60_000 }),
+      ]);
+      await testControl("flush");
+      const receipts = await prisma.quotaReportReceipt.findMany({
+        where: { reportId: { in: ["live-lease-u1", "live-lease-u2"] } },
+        orderBy: { reportId: "asc" },
+      });
+      const hourly = await prisma.cardUsageHourly.findFirst({
+        where: { accessKeyId: `card-${id}`, modelKey: "gpt-5.6-luna" },
+      });
+      const receiptSummary = receipts.map((receipt) => ({ reportId: receipt.reportId, accountId: receipt.accountId }));
+      assert(receipts.length === 2 && receipts.every((receipt) => receipt.accountId === id),
+        `reused live lease lost account attribution: receipts=${JSON.stringify(receiptSummary)}, response=${JSON.stringify(second.responses.at(-1))}`);
+      assert(hourly?.requests === 2 && hourly.totalTokens === 2_000_000,
+        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly && { requests: hourly.requests, totalTokens: hourly.totalTokens })}`);
+    }
+
+    // 启动屏障:订阅表未就绪时放租必须 503(而不是拿残缺成员表算出 429),
+    // 就绪后立即恢复正常租号。
+    {
+      await testControl("subscription-barrier", { provider: "codex" });
+      const gated = await runScenario("warming-up-lease", "card-65", [{ ...lease("card-65"), allowStatus: 503 }]);
+      assert(gated.responses[0].status === 503 && gated.responses[0].body.code === "server_warming_up",
+        `not-ready lease was not gated: ${JSON.stringify(gated.responses[0])}`);
+      await testControl("subscription-barrier", { provider: "codex", ready: true });
+      const released = await runScenario("warming-up-released", "card-65", [lease("card-65")]);
+      assert(released.responses[0].status === 200, `lease after readiness failed: ${JSON.stringify(released.responses[0])}`);
+    }
+
+    // A real forward reset clears both personal attribution and conservation
+    // scaling for primary and weekly windows. Runs LAST: it moves the shared
+    // virtual clock +7 days, which would expire every other scenario's window.
+    {
+      const id = 80, t = now + 8_000_000;
+      const resetObservedAt = t + 7 * 24 * 60 * 60_000 + 1_000;
+      await runScenario("exclusive-oversell-official-reset", "card-81", [
+        clock(resetObservedAt),
+        lease("card-81"),
+        report({ reportId: "exclusive-official-reset", status: 0,
+          accountQuota: quota(id, 100, 100, resetObservedAt, 1, resetObservedAt) }),
+      ]);
+      const resetA = await runScenario("exclusive-oversell-a-reset-read", "card-80", [lease("card-80")]);
+      const resetB = await runScenario("exclusive-oversell-b-reset-read", "card-81", [lease("card-81")]);
+      for (const body of [resetA.responses[0].body, resetB.responses[0].body]) {
+        const primary = body.fairShareQuota?.["codex-gpt"];
+        const weekly = body.weeklyFairShareQuota?.["codex-gpt"];
+        assert(primary.personalFraction === 1 && primary.fraction === 1,
+          `exclusive primary did not reset: ${JSON.stringify(primary)}`);
+        assert(weekly.personalFraction === 1 && weekly.fraction === 1,
+          `exclusive weekly did not reset: ${JSON.stringify(weekly)}`);
+      }
+      await useRealtimeClock();
+    }
     await prisma.$disconnect();
     console.log("quota-e2e full matrix: ok");
   }

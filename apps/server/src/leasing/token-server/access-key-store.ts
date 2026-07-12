@@ -164,11 +164,49 @@ export class AccessKeyStore {
   // 去影子:订阅 record 独立于文件 cache —— 不进 access-keys.json,reload 碰不到它们。
   private subscriptionById = new Map<string, AccessKeyRecord>();
   private subscriptionByBackingKey = new Map<string, AccessKeyRecord>();
+  // 启动屏障:订阅表尚未成功加载时,成员对账不得用「只有文件卡」的残缺名单覆盖
+  // 旧账本。默认 true —— 只有真正负责加载订阅的进程(TokenServerService 持有
+  // prisma 时)才拉起屏障,单测/fixture 不受影响。
+  private subscriptionsReady = true;
+  private subscriptionsReadyCallbacks: Array<() => void | Promise<void>> = [];
 
   constructor(
     private readonly filePath: string,
     private readonly billing: ProviderBilling = UNIVERSAL_BILLING,
   ) {}
+
+  // ── Subscription readiness barrier ───────────────────────────────────────
+
+  /** Arm the barrier before the first subscription load attempt. */
+  beginSubscriptionBarrier(): void {
+    this.subscriptionsReady = false;
+  }
+
+  areSubscriptionsReady(): boolean {
+    return this.subscriptionsReady;
+  }
+
+  /** Release only after every deferred membership checkpoint is durable. */
+  async markSubscriptionsReady(): Promise<void> {
+    if (this.subscriptionsReady) return;
+    while (this.subscriptionsReadyCallbacks.length > 0) {
+      const callbacks = this.subscriptionsReadyCallbacks.splice(0);
+      try {
+        await Promise.all(callbacks.map((callback) => callback()));
+      } catch (error) {
+        // Re-run idempotent reconciliation on the next subscription retry.
+        this.subscriptionsReadyCallbacks.unshift(...callbacks);
+        throw error;
+      }
+    }
+    this.subscriptionsReady = true;
+  }
+
+  /** Run now if ready, otherwise once when the barrier releases. */
+  onSubscriptionsReady(callback: () => void | Promise<void>): void {
+    if (this.subscriptionsReady) { void callback(); return; }
+    this.subscriptionsReadyCallbacks.push(callback);
+  }
 
   // ── Read / Write ─────────────────────────────────────────────────────────
 
@@ -542,6 +580,11 @@ export class AccessKeyStore {
    */
   getRecordsBoundTo(accountId: number, providerId: string): AccessKeyRecord[] {
     if (accountId <= 0) return [];
+    // Startup quota restoration can ask for membership before any lease/auth
+    // lookup has lazily populated the file-backed indexes. Always establish the
+    // authoritative key snapshot here so restart reconciliation cannot replace
+    // a persisted participant set with an accidental empty membership event.
+    this.readAll();
     const out: AccessKeyRecord[] = [];
     const seen = new Set<string>();
     for (const rec of this.byId.values()) {

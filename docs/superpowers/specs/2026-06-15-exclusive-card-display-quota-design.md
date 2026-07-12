@@ -1,5 +1,9 @@
 # Exclusive Card Display Quota Design
 
+> Superseded on 2026-07-12 by
+> `2026-07-12-exclusive-shared-oversell-display-design.md`. The newer design
+> separates personal display quota from conservation-scaled enforcement quota.
+
 Date: 2026-06-15
 Scope: `apps/bcai-wails` desktop client quota display, especially the dashboard blood bars.
 

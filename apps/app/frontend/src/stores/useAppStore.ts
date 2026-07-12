@@ -45,10 +45,12 @@ interface AppState {
   accountResetMs: Record<string, number>
   accountResetAt: Record<string, number>
   myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条·5h)
+  myPersonalFractions: Record<string, number>
   myResetMs: Record<string, number>
   myResetAt: Record<string, number>
   myShares: Record<string, number>          // e_i:我的份额占整号比例(双层血条外层几何)
   myWeeklyFractions: Record<string, number> // 我的 fair-share 份额·周(仅 codex/anthropic)
+  myPersonalWeeklyFractions: Record<string, number>
   myWeeklyResetMs: Record<string, number>
   myWeeklyResetAt: Record<string, number>
   cardWeight: number                        // Legacy fallback for seat count.
@@ -139,10 +141,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   accountResetMs: {},
   accountResetAt: {},
   myFractions: {},
+  myPersonalFractions: {},
   myResetMs: {},
   myResetAt: {},
   myShares: {},
   myWeeklyFractions: {},
+  myPersonalWeeklyFractions: {},
   myWeeklyResetMs: {},
   myWeeklyResetAt: {},
   cardWeight: 1,
@@ -206,10 +210,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         accountResetMs: data.leaser?.accountResetMs || {},
         accountResetAt: data.leaser?.accountResetAt || {},
         myFractions: data.leaser?.myFractions || {},
+        myPersonalFractions: data.leaser?.myPersonalFractions || {},
         myResetMs: data.leaser?.myResetMs || {},
         myResetAt: data.leaser?.myResetAt || {},
         myShares: data.leaser?.myShares || {},
         myWeeklyFractions: data.leaser?.myWeeklyFractions || {},
+        myPersonalWeeklyFractions: data.leaser?.myPersonalWeeklyFractions || {},
         myWeeklyResetMs: data.leaser?.myWeeklyResetMs || {},
         myWeeklyResetAt: data.leaser?.myWeeklyResetAt || {},
         cardWeight: accessKeyStatus?.weight || 1,

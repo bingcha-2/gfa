@@ -279,7 +279,7 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 	var requeue []pendingReport
 	sent := 0
 
-	for _, p := range pending {
+	for i, p := range pending {
 		// 过期的直接丢弃
 		if now.Sub(p.AddedAt) > pendingReportMaxAge {
 			continue
@@ -294,8 +294,9 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 		if err != nil {
 			// 又失败了，全部放回队列，停止重发
 			requeue = append(requeue, p)
-			// 后续的也全部放回
-			for _, remaining := range pending[sent+len(requeue):] {
+			// 后续尚未访问的也全部放回。必须按原始遍历索引切片；sent
+			// 和 requeue 都不包含过期项，混用它们会让偏移错位并重复入队。
+			for _, remaining := range pending[i+1:] {
 				if now.Sub(remaining.AddedAt) <= pendingReportMaxAge {
 					requeue = append(requeue, remaining)
 				}

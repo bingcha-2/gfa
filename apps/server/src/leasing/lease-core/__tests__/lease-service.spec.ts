@@ -81,6 +81,286 @@ describe("LeaseService (generic core)", () => {
 
   const REQ = sessionReqFor("card-1");
 
+  it("restores quota state, reconciles current membership, then checkpoints before startup completes", async () => {
+    const order: string[] = [];
+    const fairShareTracker = {
+      load: vi.fn(async () => { order.push("load"); }),
+      refreshAllParticipants: vi.fn(() => { order.push("membership"); }),
+      flush: vi.fn(async () => { order.push("checkpoint"); }),
+    };
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+    });
+
+    await service.onModuleInit();
+
+    expect(order).toEqual(["load", "membership", "checkpoint"]);
+  });
+
+  it("fails startup when persisted fair-share state cannot be restored", async () => {
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: { load: vi.fn(async () => { throw new Error("quota db unavailable"); }) } as any,
+    });
+
+    await expect(service.onModuleInit()).rejects.toThrow("quota db unavailable");
+  });
+
+  // 启动屏障:订阅表加载失败时,决不能用「只有文件卡」的残缺成员表覆盖旧账本,
+  // 否则订阅用户会被记成 inactive → 份额归 0 → 持续 429,直到下一次换绑才自愈。
+  it("defers membership reconciliation and rejects leases while subscriptions are not ready", async () => {
+    const order: string[] = [];
+    let releaseCheckpoint!: () => void;
+    const fairShareTracker = {
+      load: vi.fn(async () => { order.push("load"); }),
+      refreshAllParticipants: vi.fn(() => { order.push("membership"); }),
+      flush: vi.fn(async () => {
+        order.push("checkpoint");
+        await new Promise<void>((resolve) => { releaseCheckpoint = resolve; });
+      }),
+    };
+    refreshToken.mockResolvedValue("tok");
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+      randomId: () => "lease-fixed",
+      minClientVersion: "",
+    }));
+    (service as any).accessKeyStore.beginSubscriptionBarrier();
+
+    await service.onModuleInit();
+    expect(order).toEqual(["load"]);
+
+    await expect(service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }))
+      .rejects.toMatchObject({
+        statusCode: 503,
+        body: expect.objectContaining({ code: "server_warming_up" }),
+      });
+
+    const ready = (service as any).accessKeyStore.markSubscriptionsReady();
+    expect(order).toEqual(["load", "membership", "checkpoint"]);
+    expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(false);
+    releaseCheckpoint();
+    await ready;
+    expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(true);
+
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+  });
+
+  it("reloadAccessKeys does not emit a membership event while subscriptions are not ready", async () => {
+    const fairShareTracker = {
+      load: vi.fn(async () => {}),
+      refreshAllParticipants: vi.fn(),
+      flush: vi.fn(async () => {}),
+    };
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+    });
+    (service as any).accessKeyStore.beginSubscriptionBarrier();
+
+    await service.reloadAccessKeys();
+    expect(fairShareTracker.refreshAllParticipants).not.toHaveBeenCalled();
+
+    (service as any).accessKeyStore.markSubscriptionsReady();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await service.reloadAccessKeys();
+    expect(fairShareTracker.refreshAllParticipants).toHaveBeenCalled();
+  });
+
+  it("ignores an ancient report after the client retry horizon", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "ancient-lease", minClientVersion: "",
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    now += 3 * 24 * 60 * 60 * 1000;
+
+    await expect(service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "ancient-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: startedAt + 1_000,
+    })).resolves.toMatchObject({ ok: true, ignored: true, reason: "report_expired" });
+  });
+
+  it("accepts a long-running request that completed recently after its lease expired", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "long-stream-lease", minClientVersion: "",
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    now += 2 * 60 * 60 * 1000;
+
+    await expect(service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "long-stream-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: now - 100,
+    })).resolves.toMatchObject({ ok: true });
+  });
+
+  // 未完成上报的长流必须保留归因映射,不能拿 token lease 的到期时间猜请求
+  // 已经结束。完成上报后映射立即删除,所以不会靠多小时 TTL 堆内存。
+  it("keeps an unreported expired lease attributable and deletes it after completion", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    // 上游 token 16 分钟后到期 → 绑定 lease TTL 被压到 ~15 分钟(最短情形)。
+    const jwtPayload = Buffer.from(JSON.stringify({ exp: Math.floor((startedAt + 16 * 60 * 1000) / 1000) }))
+      .toString("base64url");
+    refreshToken.mockResolvedValue(`eyJhbGciOiJIUzI1NiJ9.${jwtPayload}.sig`);
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const fairShareTracker = {
+      checkFairShare: vi.fn(() => ({ allowed: true })),
+      isWindowCuEnabled: vi.fn(() => true),
+      recordUsageEvent: vi.fn(),
+      checkpointReport: vi.fn(async () => {}),
+      hasPersistedReport: vi.fn(async () => false),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    };
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "sweep-lease",
+      minClientVersion: "", fairShareTracker: fairShareTracker as any,
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    // T+55min 已超过旧的 expiresAt+35min 清扫线;仍未上报就必须保留。
+    now += 55 * 60 * 1000;
+    service.getStatus();
+
+    const result = await service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "sweep-survivor", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: now - 100,
+    });
+    expect(result).toMatchObject({ ok: true });
+    const attributed = fairShareTracker.recordUsageEvent.mock.calls
+      .filter((call) => call[2]?.reportId === "sweep-survivor");
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0][0]).toBeGreaterThan(0);
+    expect((service as any).leases.has(lease.leaseId)).toBe(true);
+    now += 10 * 60 * 1000 + 1;
+    service.getStatus();
+    expect((service as any).leases.has(lease.leaseId)).toBe(false);
+  });
+
+  // 绑定卡 lease 存活 40 分钟,客户端会缓存复用同一个 lease 连续上报。首次上报
+  // 后 10 分钟的因果保留清扫**不能**在 lease 仍然有效期内就删掉映射,否则同一个
+  // 缓存 lease 的下一次上报会归因失败(accountId=0),份额少记、血条变陈旧。
+  it("keeps a still-valid lease attributable across an idle gap after its first report", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    // 上游 token 2 小时后到期 → 绑定 lease TTL = 40 分钟(BOUND_LEASE_TTL_MS)。
+    const jwtPayload = Buffer.from(JSON.stringify({ exp: Math.floor((startedAt + 2 * 60 * 60 * 1000) / 1000) }))
+      .toString("base64url");
+    refreshToken.mockResolvedValue(`eyJhbGciOiJIUzI1NiJ9.${jwtPayload}.sig`);
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const fairShareTracker = {
+      checkFairShare: vi.fn(() => ({ allowed: true })),
+      isWindowCuEnabled: vi.fn(() => true),
+      recordUsageEvent: vi.fn(),
+      checkpointReport: vi.fn(async () => {}),
+      hasPersistedReport: vi.fn(async () => false),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    };
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, randomId: () => "reused-lease",
+      minClientVersion: "", fairShareTracker: fairShareTracker as any,
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    await service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "first-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: now,
+    });
+
+    // 空闲 12 分钟(> 10 分钟因果保留,但仍在 40 分钟 TTL 内 → lease 依旧有效)。
+    now += 12 * 60 * 1000;
+    service.getStatus();
+    expect((service as any).leases.has(lease.leaseId)).toBe(true);
+
+    // 复用同一个缓存 lease 的第二次上报必须仍能归因到真实账号。
+    const second = await service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "second-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 50, totalTokens: 50, rawTotalTokens: 50,
+      requestStartedAt: now - 1_000, upstreamCompletedAt: now,
+    });
+    expect(second).toMatchObject({ ok: true });
+    const attributed = fairShareTracker.recordUsageEvent.mock.calls
+      .filter((call) => call[2]?.reportId === "second-report");
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0][0]).toBeGreaterThan(0);
+  });
+
+  it("bounds abandoned expired attribution mappings without evicting active leases", () => {
+    const now = Date.parse("2030-01-01T00:00:00Z");
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      now: () => now,
+      maxRetainedLeaseRecords: 2,
+    });
+    const leases = (service as any).leases as Map<string, any>;
+    const record = (leaseId: string, createdAt: number, expiresAt: number) => ({
+      leaseId, createdAt, expiresAt: new Date(expiresAt).toISOString(), released: false,
+      accountId: 1, email: "one@example.com", projectId: "", clientId: "c", modelKey: "gpt",
+      accessKeyId: "card-1", accessKeySessionId: "", isGeneration: true, requestBodyBytes: 0,
+      successfulReportSeen: false,
+    });
+    leases.set("oldest", record("oldest", now - 4_000, now - 3_000));
+    leases.set("newer", record("newer", now - 3_000, now - 2_000));
+    leases.set("active", record("active", now - 1_000, now + 60_000));
+
+    service.getStatus();
+
+    expect([...leases.keys()]).toEqual(["newer", "active"]);
+  });
+
+  it("returns a Chinese 429 message while preserving the stable fair-share reason code", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const fairShareTracker = {
+      checkFairShare: vi.fn(() => ({
+        allowed: false, reason: "weekly_exhausted", remainingFraction: 0,
+        window: "7d", bucket: "fake-gpt", resetAt: Date.now() + 60_000, resetMs: 60_000, retryAfterMs: 60_000,
+      })),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    };
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, minClientVersion: "", fairShareTracker: fairShareTracker as any,
+    }));
+
+    let caught: any;
+    try {
+      await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ statusCode: 429, message: "周额度已用完，请等待额度恢复" });
+    expect(caught.body).toMatchObject({ error: "周额度已用完，请等待额度恢复", code: "weekly_exhausted" });
+  });
+
   it("leases a token from a projectId-less account", async () => {
     refreshToken.mockResolvedValue("access-token-1");
     const service = makeService();

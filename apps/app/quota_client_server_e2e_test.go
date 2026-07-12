@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -89,7 +92,9 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	waitQuotaE2E(t, "Codex primary and weekly blood bars", func() bool {
 		_, primary := snapshotMyFractions()["codex-gpt"]
 		_, weekly := snapshotMyWeeklyFractions()["codex-gpt"]
-		return primary && weekly
+		_, personalPrimary := snapshotMyPersonalFractions()["codex-gpt"]
+		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["codex-gpt"]
+		return primary && weekly && personalPrimary && personalWeekly
 	})
 
 	claudeCard := quotaE2ESession("card-102")
@@ -126,7 +131,73 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	waitQuotaE2E(t, "Claude primary and weekly blood bars", func() bool {
 		_, primary := snapshotMyFractions()["anthropic-claude"]
 		_, weekly := snapshotMyWeeklyFractions()["anthropic-claude"]
-		return primary && weekly
+		_, personalPrimary := snapshotMyPersonalFractions()["anthropic-claude"]
+		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["anthropic-claude"]
+		return primary && weekly && personalPrimary && personalWeekly
+	})
+
+	// Verify the Wails GetStats boundary that the React store consumes, not just
+	// the internal Go parser maps.
+	stats := (&App{}).GetStats()
+	leaserStats, ok := stats["leaser"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("GetStats leaser payload type = %T", stats["leaser"])
+	}
+	personalPrimary, ok := leaserStats["myPersonalFractions"].(map[string]float64)
+	if !ok || personalPrimary["codex-gpt"] <= 0 || personalPrimary["anthropic-claude"] <= 0 {
+		t.Fatalf("GetStats personal primary payload = %#v", leaserStats["myPersonalFractions"])
+	}
+	personalWeekly, ok := leaserStats["myPersonalWeeklyFractions"].(map[string]float64)
+	if !ok || personalWeekly["codex-gpt"] <= 0 || personalWeekly["anthropic-claude"] <= 0 {
+		t.Fatalf("GetStats personal weekly payload = %#v", leaserStats["myPersonalWeeklyFractions"])
+	}
+
+	// Exercise the actual client proxy path, not a direct stats helper: an
+	// Anthropic response with distinct 5m/1h cache creation travels through
+	// ClaudeProxy parsing, local dashboard pricing, and the live Nest reporter.
+	previousStats := globalUsageStats
+	globalUsageStats = &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+	t.Cleanup(func() { globalUsageStats = previousStats })
+	pricingUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.25")
+		w.Header().Set("Anthropic-Ratelimit-Unified-5h-Reset", fmt.Sprint(time.Now().Add(5*time.Hour).Unix()))
+		w.Header().Set("Anthropic-Ratelimit-Unified-7d-Utilization", "0.20")
+		w.Header().Set("Anthropic-Ratelimit-Unified-7d-Reset", fmt.Sprint(time.Now().Add(7*24*time.Hour).Unix()))
+		_, _ = w.Write([]byte(`{"type":"message","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":200000,"cache_creation":{"ephemeral_5m_input_tokens":100000,"ephemeral_1h_input_tokens":100000},"cache_read_input_tokens":0}}`))
+	}))
+	defer pricingUpstream.Close()
+	oldAnthropicAPIBase := ANTHROPIC_API_BASE
+	ANTHROPIC_API_BASE = pricingUpstream.URL
+	t.Cleanup(func() { ANTHROPIC_API_BASE = oldAnthropicAPIBase })
+	proxyLease := *claudeLease
+	proxyLease.ProxyURL = "http://quota-e2e-egress.invalid:8080"
+	proxy := &ClaudeProxy{
+		leaseToken: func(string, string, bool, map[string]interface{}, string) (*ClaudeTokenLease, error) {
+			return &proxyLease, nil
+		},
+		reportUsage: func(card, deviceID string, details ReportDetails, upstream string, lease *ClaudeTokenLease) {
+			claude.ReportUsage(card, deviceID, details, upstream, lease)
+		},
+		upstreamClient: func(string) *http.Client { return pricingUpstream.Client() },
+	}
+	proxyRequest := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"claude-opus-4-8","stream":false,"messages":[]}`))
+	proxyResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(proxyResponse, proxyRequest, claudeCard, "go-e2e-proxy", "")
+	if proxyResponse.Code != http.StatusOK {
+		t.Fatalf("ClaudeProxy pricing request status=%d body=%s", proxyResponse.Code, proxyResponse.Body.String())
+	}
+	pricingRow := globalUsageStats.GetTodayRecord().ByModel["claude-opus-4-8"]
+	if pricingRow == nil || pricingRow.CacheWriteTokens != 200_000 {
+		t.Fatalf("ClaudeProxy dashboard row = %+v, want 200K cache writes", pricingRow)
+	}
+	if want := 1.625; pricingRow.EstimatedCostUSD < want-1e-9 || pricingRow.EstimatedCostUSD > want+1e-9 {
+		t.Fatalf("ClaudeProxy dashboard cost=%v, want %v from 5m/1h split", pricingRow.EstimatedCostUSD, want)
+	}
+	waitQuotaE2E(t, "ClaudeProxy report round-trip", func() bool {
+		quota := claude.LatestClaudeQuota()
+		return quota != nil && quota.HourlyPercent == 75 && quota.WeeklyPercent == 80
 	})
 
 	for bucket, fraction := range snapshotMyFractions() {
@@ -145,5 +216,112 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	if got := snapshotMyWeeklyResetAts()["codex-gpt"]; got <= now.UnixMilli() {
 		t.Fatalf("Codex weekly resetAt was not consumed: %d", got)
 	}
+
+	// Simulate a live rollback to an older server payload that still carries the
+	// two fair-share bars but does not know personalFraction. The production Go
+	// parser must remove values cached from the newer server.
+	recordFairShareQuota([]byte(`{
+		"accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+		"fairShareQuota":{"codex-gpt":{"fraction":0.4,"resetAt":2000,"share":1}},
+		"weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"resetAt":3000}}
+	}`))
+	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
+		t.Fatal("old-server response left the newer primary personal bar frozen")
+	}
+	if _, ok := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; ok {
+		t.Fatal("old-server response left the newer weekly personal bar frozen")
+	}
+
+	// 会话切换清理(放在全部血条断言之后):登出/换号路径调用的 clearLocalCardState
+	// 必须把 GetStats 暴露给前端的个人血条一并清空,下一账号不能看到上一账号的
+	// 独享余量。
+	globalUsageStats.AddModelTokens("gpt", "gpt-5.6-luna", 123, 45, 0, 168, false)
+	usageBefore := globalUsageStats.GetTodayRecord()
+	usageBeforeClear := usageBefore.InputTokens + usageBefore.OutputTokens + usageBefore.CachedTokens + usageBefore.CacheWriteTokens
+	clearLocalCardState()
+	clearedStats := (&App{}).GetStats()
+	clearedLeaser := clearedStats["leaser"].(map[string]interface{})
+	if cleared, _ := clearedLeaser["myPersonalFractions"].(map[string]float64); len(cleared) != 0 {
+		t.Fatalf("personal fractions survived clearLocalCardState: %#v", cleared)
+	}
+	if cleared, _ := clearedLeaser["myPersonalWeeklyFractions"].(map[string]float64); len(cleared) != 0 {
+		t.Fatalf("personal weekly fractions survived clearLocalCardState: %#v", cleared)
+	}
+	usageAfter := globalUsageStats.GetTodayRecord()
+	if usageAfterClear := usageAfter.InputTokens + usageAfter.OutputTokens + usageAfter.CachedTokens + usageAfter.CacheWriteTokens; usageAfterClear != usageBeforeClear {
+		t.Fatalf("clearLocalCardState deleted usage history: before=%d after=%d", usageBeforeClear, usageAfterClear)
+	}
 	t.Logf("production leasers completed against %s (%s, %s)", base, fmt.Sprint(codexLease.AccountId), fmt.Sprint(claudeLease.AccountId))
+}
+
+// TestQuotaPendingQueueE2E drives the production retry queue through a real
+// HTTP transport failure and recovery. The old offset bug duplicated the failed
+// item when an expired and another-card item preceded it.
+func TestQuotaPendingQueueE2E(t *testing.T) {
+	now := time.Now()
+	var failing atomic.Bool
+	failing.Store(true)
+	var mu sync.Mutex
+	accepted := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if failing.Load() {
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack failed transport: %v", err)
+				return
+			}
+			_ = connection.Close()
+			return
+		}
+		mu.Lock()
+		accepted = append(accepted, fmt.Sprint(payload["reportId"]))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	oldBase := API_BASE
+	API_BASE = server.URL
+	t.Cleanup(func() { API_BASE = oldBase })
+
+	leaser := &Leaser{pendingReports: []pendingReport{
+		pendingReportWithID("expired", "card-a", now.Add(-pendingReportMaxAge-time.Second)),
+		pendingReportWithID("other-card", "card-b", now),
+		pendingReportWithID("failed", "card-a", now),
+		pendingReportWithID("untouched", "card-a", now),
+	}}
+	leaser.flushPendingReports("card-a", "")
+	leaser.mu.RLock()
+	queued := append([]pendingReport(nil), leaser.pendingReports...)
+	leaser.mu.RUnlock()
+	wantQueued := []string{"other-card", "failed", "untouched"}
+	if len(queued) != len(wantQueued) {
+		t.Fatalf("queue after failure=%#v, want %v", queued, wantQueued)
+	}
+	for index, report := range queued {
+		if got := fmt.Sprint(report.Payload["reportId"]); got != wantQueued[index] {
+			t.Fatalf("queue[%d]=%s, want %s", index, got, wantQueued[index])
+		}
+	}
+
+	failing.Store(false)
+	leaser.flushPendingReports("card-a", "")
+	leaser.flushPendingReports("card-b", "")
+	if leaser.pendingCount() != 0 {
+		t.Fatalf("queue not empty after recovery: %#v", leaser.pendingReports)
+	}
+	mu.Lock()
+	gotAccepted := append([]string(nil), accepted...)
+	mu.Unlock()
+	wantAccepted := []string{"failed", "untouched", "other-card"}
+	if len(gotAccepted) != len(wantAccepted) {
+		t.Fatalf("accepted reports=%v, want %v", gotAccepted, wantAccepted)
+	}
+	for index := range wantAccepted {
+		if gotAccepted[index] != wantAccepted[index] {
+			t.Fatalf("accepted reports=%v, want %v", gotAccepted, wantAccepted)
+		}
+	}
 }

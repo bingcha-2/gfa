@@ -164,11 +164,12 @@ func invalidateIDEDetectCacheForInstallPathChange(oldCfg, newCfg Config) {
 	}
 }
 
-// clearLocalCardState clears all local session-level state when the session token changes.
-// Used by both SaveConfig and UserLogout to avoid stale data on new sessions.
+// clearLocalCardState clears all local quota/session state when the session token changes.
+// Called on every auth transition — SaveConfig token change, UserLogin, UserLogout, and
+// heartbeat forced logout — so no stale blood bars or entitlements leak across sessions.
+// Usage history belongs to this installation rather than the active login, so it is preserved.
 func clearLocalCardState() {
-	Log("[app] Session token changed: clearing local stats")
-	GetUsageStats().Reset()
+	Log("[app] Session token changed: clearing local quota state")
 	GetLeaser().ResetLocalQuota()
 	GetLeaser().ClearAccessKeyStatus()
 	// 旧会话的订阅授权 + 卡密不可用 latch 不能续用,否则新登录会按旧授权路由 antigravity,
@@ -192,12 +193,14 @@ func (a *App) GetStats() map[string]interface{} {
 	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
 	leaserStatus["accountResetAt"] = snapshotAccountResetAts()
 	leaserStatus["myFractions"] = snapshotMyFractions()
+	leaserStatus["myPersonalFractions"] = snapshotMyPersonalFractions()
 	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
 	leaserStatus["myResetAt"] = snapshotMyResetAts()
 	// 我的份额占整号比例 e_i(双层血条外层几何:整号里我那一段有多宽)。
 	leaserStatus["myShares"] = snapshotMyShares()
 	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
 	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
+	leaserStatus["myPersonalWeeklyFractions"] = snapshotMyPersonalWeeklyFractions()
 	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)
 	leaserStatus["myWeeklyResetAt"] = snapshotMyWeeklyResetAts()
 	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。

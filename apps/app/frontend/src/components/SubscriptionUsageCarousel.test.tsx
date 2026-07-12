@@ -42,6 +42,8 @@ describe('SubscriptionUsageCarousel', () => {
                 weeklyResetAt: null,
                 myHourlyFraction: 0.9,
                 myWeeklyFraction: 0.7,
+                myPersonalHourlyFraction: 0.95,
+                myPersonalWeeklyFraction: 0.85,
                 myShare: 0.25,
               },
             },
@@ -93,6 +95,8 @@ describe('SubscriptionUsageCarousel', () => {
                 weeklyResetAt: null,
                 myHourlyFraction: 0.9,
                 myWeeklyFraction: 0.7,
+                myPersonalHourlyFraction: 0.95,
+                myPersonalWeeklyFraction: 0.85,
                 myShare: 1,
                 exclusive: true,
               },
@@ -104,8 +108,8 @@ describe('SubscriptionUsageCarousel', () => {
 
     // 独享 → 单层「剩余 X%」,不展示拼车双层。
     expect(screen.getAllByText(/^剩余/).length).toBe(2)
-    expect(screen.getByText('剩余 80%')).toBeInTheDocument()
-    expect(screen.getByText('剩余 60%')).toBeInTheDocument()
+    expect(screen.getByText('剩余 95%')).toBeInTheDocument()
+    expect(screen.getByText('剩余 85%')).toBeInTheDocument()
     expect(screen.queryByText(/我的总剩余/)).not.toBeInTheDocument()
     expect(screen.queryByText(/账号总剩余/)).not.toBeInTheDocument()
   })

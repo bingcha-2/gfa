@@ -70,6 +70,7 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
     label: string,
     accountPercent: number | null | undefined,
     myFraction: number | null | undefined,
+    personalFraction: number | null | undefined,
     resetIso: string | null | undefined,
   ) => {
     if (myFraction != null && quota?.myShare != null) {
@@ -78,6 +79,7 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
           <NestedShareBar
             label={label}
             myFraction={myFraction}
+            personalFraction={personalFraction ?? undefined}
             accountFraction={accountPercent != null ? accountPercent / 100 : -1}
             // myShare 已是名义份额(weight/容量,遮超卖),直接当「我那一席」几何;capacity=1。
             shareSeats={quota.myShare}
@@ -112,8 +114,8 @@ function ProductSection({ subId, product, level, quota, emailHint }: { subId: st
         )}
       </div>
       <div className="flex flex-col divide-y divide-[var(--border-light)]">
-        {renderWindow('5h', t('dashboard.acct5h'), quota?.hourlyPercent, quota?.myHourlyFraction, quota?.hourlyResetAt)}
-        {renderWindow('7d', t('dashboard.acctWeek'), quota?.weeklyPercent, quota?.myWeeklyFraction, quota?.weeklyResetAt)}
+        {renderWindow('5h', t('dashboard.acct5h'), quota?.hourlyPercent, quota?.myHourlyFraction, quota?.myPersonalHourlyFraction, quota?.hourlyResetAt)}
+        {renderWindow('7d', t('dashboard.acctWeek'), quota?.weeklyPercent, quota?.myWeeklyFraction, quota?.myPersonalWeeklyFraction, quota?.weeklyResetAt)}
       </div>
     </div>
   )

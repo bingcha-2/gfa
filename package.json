@@ -29,12 +29,14 @@
     "db:seed": "node scripts/seed.mjs",
     "lint": "pnpm db:generate && pnpm -r lint",
     "test": "pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e",
-    "test:unit": "pnpm -r --if-present run test:unit && pnpm test:go",
+    "test:unit": "pnpm -r --if-present run test:unit && pnpm test:frontend && pnpm test:pricing-sync && pnpm test:go",
     "test:integration": "pnpm -r --if-present run test:integration",
-    "test:e2e": "pnpm -r --if-present run test:e2e && node tests/quota-e2e/run.mjs",
-    "test:quota-e2e": "node tests/quota-e2e/run.mjs",
+    "test:e2e": "pnpm -r --if-present run test:e2e && pnpm --filter @gfa/shared build && node tests/quota-e2e/run.mjs",
+    "test:quota-e2e": "pnpm --filter @gfa/shared build && node tests/quota-e2e/run.mjs",
     "test:go": "cd apps/app && go test ./...",
-    "sync:pricing": "node scripts/sync-pricing.mjs"
+    "test:frontend": "pnpm --dir apps/app/frontend test",
+    "sync:pricing": "node scripts/sync-pricing.mjs",
+    "test:pricing-sync": "node scripts/sync-pricing.mjs --check"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

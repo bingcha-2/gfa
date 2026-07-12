@@ -17,8 +17,8 @@ const PRUNE_BATCH = 500;
 
 export const REQUEST_LOG_RETENTION_MS = 72 * 60 * 60 * 1000;
 
-// 体积兜底:即便在保留期内,行数暴涨也封顶。超过就删最旧的多余部分(高量时实际保留 < 5 天)。
-// ~1KB/行 → 300 万行约 3GB,SQLite 仍健康。量级变了就改这个数。
+// 体积兜底:即便在保留期内,行数暴涨也封顶。超过就删最旧的多余部分(高量时实际保留 < 72h)。
+// ~1KB/行 → 50 万行约 500MB,SQLite 仍健康。量级变了就改这个数。
 export const REQUEST_LOG_MAX_ROWS = 500_000;
 
 const SECRET_KEY = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-access-key|x-token-server-secret|access[-_]?token|refresh[-_]?token|password|secret)$/i;
@@ -118,19 +118,23 @@ export class RequestLogTracker {
       requestStartedAt: BigInt(Math.max(0, Math.trunc(Number(e.requestStartedAt || 0)))),
       upstreamCompletedAt: BigInt(Math.max(0, Math.trunc(Number(e.upstreamCompletedAt || 0)))),
       snapshotObservedAt: BigInt(Math.max(0, Math.trunc(Number(e.snapshotObservedAt || 0)))),
-      reason: String(e.reason || "").slice(0, 200),
+      reason: String(e.reason || "").slice(0, 2_000),
       primaryReason: String(e.primaryReason || "").slice(0, 100),
       weeklyReason: String(e.weeklyReason || "").slice(0, 100),
     });
   }
 
-  /** 批量落库。失败丢弃(分析数据,非关键),绝不抛。 */
+  /** 批量落库。失败时有界放回队列供下次重试,绝不抛。 */
   async flush(): Promise<void> {
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
     try {
       await this.prisma.requestLog.createMany({ data: batch });
     } catch (err) {
+      const combined = [...batch, ...this.queue];
+      const overflow = Math.max(0, combined.length - QUEUE_MAX);
+      this.queue = overflow > 0 ? combined.slice(overflow) : combined;
+      this.overflowCount += overflow;
       console.error("[request-log-tracker] flush failed:", err);
     }
   }

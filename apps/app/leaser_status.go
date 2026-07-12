@@ -227,19 +227,25 @@ func recordAccountBuckets(body []byte) {
 }
 
 // recordFairShareQuota 解析 lease 响应里的 fairShareQuota(绑定卡的均分额度剩余)。
-// 当存在时,覆盖 accountBuckets 写入的值——血条显示的是"这张卡的公平份额剩余",
-// 而不是"整个账号剩余"。这样多卡拼车时,每张卡看到自己独立的进度条。
+// accountBuckets 与 fairShareQuota 是整号/个人两个独立维度；旧服务端不下发
+// personalFraction 时，必须清掉之前由新版服务端留下的个人维度。
 func recordFairShareQuota(body []byte) {
 	var resp struct {
-		FairShareQuota map[string]struct {
+		AccountBuckets map[string]struct {
 			Fraction float64 `json:"fraction"`
 			ResetAt  int64   `json:"resetAt"`
-			Share    float64 `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
+		} `json:"accountBuckets"`
+		FairShareQuota map[string]struct {
+			Fraction         float64  `json:"fraction"`
+			PersonalFraction *float64 `json:"personalFraction"`
+			ResetAt          int64    `json:"resetAt"`
+			Share            float64  `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
 		} `json:"fairShareQuota"`
 		// 周血条:与 fairShareQuota 平行,同 bucket 键(仅 codex/anthropic 下发;旧服务端无此字段)。
 		WeeklyFairShareQuota map[string]struct {
-			Fraction float64 `json:"fraction"`
-			ResetAt  int64   `json:"resetAt"`
+			Fraction         float64  `json:"fraction"`
+			PersonalFraction *float64 `json:"personalFraction"`
+			ResetAt          int64    `json:"resetAt"`
 		} `json:"weeklyFairShareQuota"`
 	}
 	if json.Unmarshal(body, &resp) != nil {
@@ -247,9 +253,32 @@ func recordFairShareQuota(body []byte) {
 	}
 	for bucket, q := range resp.FairShareQuota {
 		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt, q.Share)
+		if q.PersonalFraction != nil {
+			recordMyPersonalBucketFraction(bucket, *q.PersonalFraction)
+		} else {
+			clearMyPersonalBucketFraction(bucket)
+		}
 	}
 	for bucket, q := range resp.WeeklyFairShareQuota {
 		recordMyWeeklyBucketFraction(bucket, q.Fraction, q.ResetAt)
+		if q.PersonalFraction != nil {
+			recordMyPersonalWeeklyBucketFraction(bucket, *q.PersonalFraction)
+		} else {
+			clearMyPersonalWeeklyBucketFraction(bucket)
+		}
+	}
+	// If an old server omits the weekly map entirely, any bucket present in the
+	// current response still proves that a previously cached weekly personal value
+	// is stale. Do not let it freeze indefinitely after a server rollback.
+	for bucket := range resp.AccountBuckets {
+		if _, ok := resp.WeeklyFairShareQuota[bucket]; !ok {
+			clearMyPersonalWeeklyBucketFraction(bucket)
+		}
+	}
+	for bucket := range resp.FairShareQuota {
+		if _, ok := resp.WeeklyFairShareQuota[bucket]; !ok {
+			clearMyPersonalWeeklyBucketFraction(bucket)
+		}
 	}
 }
 

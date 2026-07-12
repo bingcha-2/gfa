@@ -29,6 +29,7 @@ import {
   validateClientVersion,
 } from "../token-server/token-billing";
 import { bucketKey } from "./product-bucket";
+import { fairShareDenialMessage } from "./fair-share-message";
 import type { Provider } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
 
@@ -138,6 +139,8 @@ export type LeaseServiceOptions = {
   minClientVersion?: string;
   leaseTtlMs?: number;
   affinityTtlMs?: number;
+  /** Cap for credential-free lease→account attribution records. */
+  maxRetainedLeaseRecords?: number;
   tokenUsageTracker?: TokenUsageTracker;
   /** 封号事件记录器(仅 codex/anthropic 注入;antigravity 不传 → no-op)。 */
   banEventRecorder?: BanEventRecorder;
@@ -171,6 +174,7 @@ type LeaseRecord = {
   isGeneration: boolean;
   requestBodyBytes: number;
   successfulReportSeen: boolean;
+  reportedAt?: number;
 };
 
 type HttpErrorBody = {
@@ -213,7 +217,12 @@ const RATE_LIMIT_MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 // 验证挑战(需人工去验证)自动复检间隔:300 分钟。号主/管理员验证好后,一次成功即提前解封;
 // 否则到点自动复检一次。也可由后台手动恢复立即清除(reactivateAccount)。
 const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
-const REPORT_GRACE_MS = 60 * 1000;
+// Clients retry failed usage reports for at most 30 minutes. Keep a small clock/
+// scheduling margin, but do not let an ancient payload retain a live lease
+// association indefinitely after its exactly-once receipt has been pruned.
+const REPORT_REPLAY_GRACE_MS = 35 * 60 * 1000;
+const LEASE_CAUSAL_RETENTION_MS = 10 * 60 * 1000;
+const MAX_RETAINED_LEASE_RECORDS = 100_000;
 const ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
 
 function isExternalModelNotFound(status: number, reason: string): boolean {
@@ -271,6 +280,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly minClientVersion: string;
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
+  private readonly maxRetainedLeaseRecords: number;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly banEventRecorder: BanEventRecorder | null;
   private readonly requestLogRecorder: RequestLogRecorder | null;
@@ -321,6 +331,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.minClientVersion = options.minClientVersion ?? "13.4.2";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
+    this.maxRetainedLeaseRecords = Math.max(
+      1,
+      Math.trunc(Number(options.maxRetainedLeaseRecords || MAX_RETAINED_LEASE_RECORDS)),
+    );
     this.tokenUsageTracker = options.tokenUsageTracker || null;
     this.banEventRecorder = options.banEventRecorder || null;
     this.requestLogRecorder = options.requestLogRecorder || null;
@@ -514,6 +528,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async leaseToken(req: any, payload: any) {
+    // 启动屏障:订阅表还没加载成功时,公平份额只有残缺成员表,放行会误判 429/份额。
+    // 明确回 503 让客户端稍后重试,而不是用错误的成员表计算。
+    if (!this.accessKeyStore.areSubscriptionsReady()) {
+      throw this.fail(503, "服务启动中,请稍后重试", { ok: false, error: "服务启动中,请稍后重试", code: "server_warming_up" });
+    }
     const modelKey = String(payload?.modelKey || payload?.model || "").trim();
     // 每卡 token 配额(bucketLimits,按复合桶设的每模型上限)在此作为服务端兜底 enforce:
     // 客户端 localQuota 是主拦截(租号前回 429),服务端按复合桶精确再拦一道,防客户端被绕过。
@@ -627,9 +646,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const check = this.fairShareTracker.checkFairShare(hardPinnedAccountId, auth.record.id, bucket);
       if (!check.allowed) {
         const quota = this.buildLeaseQuotaPayload(auth.record, hardPinnedAccountId, modelKey);
-        throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复", {
+        const message = fairShareDenialMessage(check.reason);
+        throw this.fail(429, message, {
           ok: false,
-          error: check.reason || "公平限额已用完，请等待额度恢复",
+          error: message,
+          ...(check.reason ? { code: check.reason } : {}),
           ...(check.retryAfterMs ? { retryAfterMs: check.retryAfterMs } : {}),
           accountBuckets: quota.accountBucketsData,
           accessKeyStatus: quota.accessKeyStatus,
@@ -855,8 +876,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   private buildLeaseQuotaPayload(record: any, boundAccountId: number, modelKey: string, account?: TAccount | null): {
     accountBucketsData: Record<string, { fraction: number; resetAt: number }>;
-    fairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
-    weeklyFairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
+    fairShareQuota?: Record<string, { fraction: number; personalFraction?: number; resetAt: number; share?: number }>;
+    weeklyFairShareQuota?: Record<string, { fraction: number; personalFraction?: number; resetAt: number; share?: number }>;
     accessKeyStatus: any;
   } {
     const resolvedAccount = account || (boundAccountId > 0
@@ -1099,9 +1120,32 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const cardId = auth.record.id;
 
     const leaseId = String(payload?.leaseId || "").trim();
-    const lease = leaseId ? this.leases.get(leaseId) : undefined;
+    let lease = leaseId ? this.leases.get(leaseId) : undefined;
     if (lease && auth.record.id !== lease.accessKeyId) {
       throw this.fail(403, "Lease/access key mismatch");
+    }
+    const acknowledge = <T>(result: T): T => {
+      // Snapshot-only status=0 reports can precede the terminal usage report for
+      // the same upstream request. Keep terminal mappings for the same 10-minute
+      // causal horizon so a later snapshot still binds to the correct account.
+      if (lease && Number(payload?.status || 0) > 0) lease.reportedAt = this.now();
+      return result;
+    };
+    let staleLeaseReport = false;
+    if (lease) {
+      const now = this.now();
+      const reportedCompletedAt = Number(payload?.upstreamCompletedAt);
+      // A stream may legitimately finish hours after the short-lived token lease,
+      // so expiry alone is not a rejection signal. Its completion evidence must
+      // also be older than the client's bounded retry horizon.
+      const evidenceAt = Number.isFinite(reportedCompletedAt) && reportedCompletedAt > 0
+        ? Math.min(now, reportedCompletedAt)
+        : Date.parse(lease.expiresAt);
+      if (!Number.isFinite(evidenceAt) || now - evidenceAt > REPORT_REPLAY_GRACE_MS) {
+        this.leases.delete(leaseId);
+        lease = undefined;
+        staleLeaseReport = true;
+      }
     }
 
     const status = Number(payload?.status || 0);
@@ -1131,29 +1175,35 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       && accountId > 0;
 
     if (!reportId && success && lease?.successfulReportSeen) {
-      return {
+      return acknowledge({
         ok: true, ignored: true, reason: "already_reported",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
+      });
     }
     const usage = this.usageForBilling(payload);
     const usageDetail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
     const quotaBucket = modelKey ? bucketKey(this.provider.id, modelKey) : "";
     if (dedupId && this.accessKeyStore.hasUsageReport(cardId, dedupId)) {
-      return {
+      return acknowledge({
         ok: true, ignored: true, reason: "already_reported",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
+      });
     }
     if (
       dedupId
       && this.fairShareTracker?.isWindowCuEnabled()
       && await this.fairShareTracker.hasPersistedReport(dedupId)
     ) {
-      return {
+      return acknowledge({
         ok: true, ignored: true, reason: "already_reported",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
+      });
+    }
+    if (staleLeaseReport) {
+      return acknowledge({
+        ok: true, ignored: true, reason: "report_expired",
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
+      });
     }
     const durableQuotaReport = Boolean(
       hardBound
@@ -1169,10 +1219,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       ? true
       : this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""));
     if (!wasNew) {
-      return {
+      return acknowledge({
         ok: true, ignored: true, reason: "already_reported",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-      };
+      });
     }
 
     // Fair-share: record weighted usage FIRST (accumulate u_i), gated to hard-bound
@@ -1258,10 +1308,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""),
       );
       if (!wasNew) {
-        return {
+        return acknowledge({
           ok: true, ignored: true, reason: "already_reported",
           accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-        };
+        });
       }
     }
 
@@ -1324,6 +1374,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const quotaReasons = quotaBucket
         ? this.fairShareTracker?.getWindowReasons(accountId, quotaBucket)
         : null;
+      const quotaDiagnostic = quotaBucket
+        ? this.fairShareTracker?.getQuotaDiagnostic(accountId, cardId, quotaBucket)
+        : null;
 
       if (accountId && this.banEventRecorder) {
         this.banEventRecorder.observeRequest({
@@ -1343,7 +1396,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         requestStartedAt: Number(payload?.requestStartedAt || 0),
         upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
         snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
-        reason: String(payload?.reason || ""),
+        reason: quotaDiagnostic
+          ? JSON.stringify({ message: String(payload?.reason || ""), quota: quotaDiagnostic })
+          : String(payload?.reason || ""),
         primaryReason: quotaReasons?.primary || "",
         weeklyReason: quotaReasons?.weekly || "",
       });
@@ -1455,14 +1510,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // "账号总剩余" only refreshed on a new lease and flickered "未知" in between.
     const q = hardBound ? this.buildLeaseQuotaPayload(auth.record, accountId, modelKey) : null;
     const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
-    return {
+    return acknowledge({
       ok: true,
       accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       ...(q ? { accountBuckets: q.accountBucketsData } : {}),
       ...(q?.fairShareQuota ? { fairShareQuota: q.fairShareQuota } : {}),
       ...(q?.weeklyFairShareQuota ? { weeklyFairShareQuota: q.weeklyFairShareQuota } : {}),
       ...(servingAccount ? this.provider.leaseResponseExtras(servingAccount) : {}),
-    };
+    });
   }
 
   /**
@@ -1497,8 +1552,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   async reloadAccessKeys() {
     this.accessKeyStore.reload();
-    this.fairShareTracker?.refreshAllParticipants();
-    await this.fairShareTracker?.flush();
+    // Same barrier as onModuleInit: never emit a membership event computed from
+    // an incomplete (subscriptions-not-yet-loaded) member list.
+    if (this.accessKeyStore.areSubscriptionsReady()) {
+      this.fairShareTracker?.refreshAllParticipants();
+      await this.fairShareTracker?.flush();
+    }
     return { ok: true, reloaded: true };
   }
 
@@ -1611,7 +1670,29 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * and cross-restart "remaining" instead of defaults. */
   async onModuleInit(): Promise<void> {
     this.rehydrateAccountStatus();
-    try { await this.fairShareTracker?.load(); } catch (err) { console.error("[lease-service] fairShareTracker load failed:", err); }
+    try {
+      await this.fairShareTracker?.load();
+    } catch (err) {
+      console.error("[lease-service] fairShareTracker restore failed:", err);
+      throw err;
+    }
+    // Persisted quota state describes the pre-restart membership. Reconcile it
+    // with the authoritative subscription store before serving, and durably
+    // checkpoint that membership event before startup completes. If the
+    // subscription table has not been loaded yet (barrier armed), defer: an
+    // incomplete member list would mark every subscription card inactive and
+    // 429 those users until a rebind.
+    const reconcile = async () => {
+      try {
+        this.fairShareTracker?.refreshAllParticipants();
+        await this.fairShareTracker?.flush();
+      } catch (err) {
+        console.error("[lease-service] fairShareTracker reconcile failed:", err);
+        throw err;
+      }
+    };
+    if (this.accessKeyStore.areSubscriptionsReady()) await reconcile();
+    else this.accessKeyStore.onSubscriptionsReady(reconcile);
   }
 
   /**
@@ -2400,7 +2481,31 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private cleanupExpiredLeases() {
     const now = this.now();
     for (const [id, lease] of this.leases) {
-      if (Date.parse(lease.expiresAt) + REPORT_GRACE_MS <= now) this.leases.delete(id);
+      // A completed report keeps its mapping only for the causal-reorder window.
+      // But a client caches and REUSES a still-valid lease (bound cards live up
+      // to 40 min) across many reports, so the mapping must survive until the
+      // lease itself expires — otherwise the next report on the same cached lease
+      // resolves to accountId=0 and its usage is never attributed. Delete only
+      // once BOTH the causal window has passed AND the lease can no longer be
+      // reused (expired); the client re-leases after expiry with a fresh id.
+      const causalWindowPassed = lease.reportedAt != null && lease.reportedAt + LEASE_CAUSAL_RETENTION_MS <= now;
+      const leaseExpiry = Date.parse(lease.expiresAt);
+      const leaseExpired = !Number.isFinite(leaseExpiry) || leaseExpiry <= now;
+      if (causalWindowPassed && leaseExpired) {
+        this.leases.delete(id);
+      }
+    }
+    // Token expiry does not prove the upstream request completed. Keep the
+    // credential-free mapping until its report is acknowledged. Only an extreme
+    // abandoned-record overflow evicts the oldest expired mappings.
+    if (this.leases.size > this.maxRetainedLeaseRecords) {
+      const expired = [...this.leases.entries()]
+        .filter(([, lease]) => Date.parse(lease.expiresAt) <= now)
+        .sort((a, b) => a[1].createdAt - b[1].createdAt);
+      for (const [id] of expired) {
+        if (this.leases.size <= this.maxRetainedLeaseRecords) break;
+        this.leases.delete(id);
+      }
     }
     for (const [key, affinity] of this.clientAffinity.entries()) {
       if (affinity.expiresAt <= now) this.clientAffinity.delete(key);

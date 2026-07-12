@@ -57,6 +57,8 @@ export interface ProductQuotaWindow {
   weeklyResetAt: string | null
   myHourlyFraction?: number | null
   myWeeklyFraction?: number | null
+  myPersonalHourlyFraction?: number | null
+  myPersonalWeeklyFraction?: number | null
   // myShare = 双层血条「我那一席」的名义份额 weight/号总份数(遮超卖,超卖前口径),非真实 e_i=w/D。
   myShare?: number | null
   // 独享(营销标签):权威标志。true → 血条画单层「剩余 X%」,不走拼车双层。
@@ -128,4 +130,3 @@ export interface ParsedLog {
   message: string
   level: 'info' | 'error' | 'warn' | 'success' | 'system'
 }
-

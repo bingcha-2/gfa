@@ -1,5 +1,6 @@
 import { calculateFairShareCu, type FairShareUsageEvent } from "./fair-share-cu";
 import {
+  collapseWindowReorderTail,
   createQuotaWindows,
   createWindowState,
   getSubjectQuota,
@@ -12,6 +13,7 @@ import {
 
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
 const WEEK = 7 * 24 * 60 * 60 * 1000;
+export const REORDER_GLOBAL_MAX_BYTES = 128 * 1024 * 1024;
 
 export interface WindowCuEngineOptions {
   provider: "codex" | "anthropic";
@@ -20,21 +22,25 @@ export interface WindowCuEngineOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   getSeatCapacity: (accountId: number) => number;
   isExclusive: (cardId: string) => boolean;
+  maxReorderBytes?: number;
 }
 
 type AccountingView = Pick<FairShareWindowState,
   "scope" | "windowMs" | "primed" | "windowStart" | "resetAt" | "fraction" | "lastSnapshotAt"
-  | "assignedBurn" | "unattributedShare" | "subjects"
->;
+  | "assignedBurn" | "unattributedShare" | "subjects" | "revision" | "reorderTailBytes"
+  | "lastCompactionCount" | "compactedThroughAt"
+> & { retainedEvents: number };
 
 function view(state: FairShareWindowState): AccountingView {
   const {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects,
+    assignedBurn, unattributedShare, subjects, revision, reorderTailBytes,
+    lastCompactionCount, compactedThroughAt,
   } = state;
   return {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects,
+    assignedBurn, unattributedShare, subjects, revision, reorderTailBytes,
+    lastCompactionCount, compactedThroughAt, retainedEvents: state.reorderTail.length,
   };
 }
 
@@ -118,16 +124,21 @@ export class WindowCuFairShareEngine {
     }
   }
 
-  getCardFractions(accountId: number, quotaSubjectId: string, weekly: boolean): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardFractions(accountId: number, quotaSubjectId: string, weekly: boolean): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     const buckets = this.states.get(accountId);
     if (!buckets) return {};
-    const result: Record<string, { fraction: number; resetAt: number; share: number }> = {};
+    const result: Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> = {};
     for (const bucket of buckets.keys()) {
       const windows = this.ensure(accountId, bucket);
       const state = weekly ? windows.weekly : windows.primary;
       if (!state.primed) continue;
       const quota = getSubjectQuota(state, quotaSubjectId);
-      result[bucket] = { fraction: quota.fraction, resetAt: state.resetAt, share: quota.share };
+      result[bucket] = {
+        fraction: quota.fraction,
+        personalFraction: quota.personalFraction,
+        resetAt: state.resetAt,
+        share: quota.share,
+      };
     }
     return result;
   }
@@ -148,14 +159,27 @@ export class WindowCuFairShareEngine {
     const weekly = getSubjectQuota(windows.weekly, quotaSubjectId);
     const primaryBlocked = windows.primary.primed && primary.fraction <= 0;
     const weeklyBlocked = this.options.trackWeekly && windows.weekly.primed && weekly.fraction <= 0;
-    const selected = primaryBlocked || !weeklyBlocked ? windows.primary : windows.weekly;
+    const weeklyLimitsAllowedRequest = this.options.trackWeekly
+      && windows.weekly.primed
+      && (!windows.primary.primed || weekly.fraction < primary.fraction);
+    const selected = primaryBlocked
+      ? windows.primary
+      : weeklyBlocked || weeklyLimitsAllowedRequest ? windows.weekly : windows.primary;
     const window = selected.scope === "primary" ? "5h" : "7d";
     const fraction = primaryBlocked || weeklyBlocked
       ? 0
       : this.options.trackWeekly ? Math.min(primary.fraction, weekly.fraction) : primary.fraction;
+    const primaryRecovering = primaryBlocked
+      && windows.primary.fraction <= 0
+      && primary.personalFraction > 0;
+    const weeklyRecovering = weeklyBlocked
+      && windows.weekly.fraction <= 0
+      && weekly.personalFraction > 0;
     return {
       allowed: !primaryBlocked && !weeklyBlocked,
-      reason: primaryBlocked ? "primary_exhausted" : weeklyBlocked ? "weekly_exhausted" : undefined,
+      reason: primaryBlocked
+        ? primaryRecovering ? "account_recovering" : "primary_exhausted"
+        : weeklyBlocked ? weeklyRecovering ? "account_recovering" : "weekly_exhausted" : undefined,
       remainingFraction: fraction,
       window,
       bucket,
@@ -195,6 +219,24 @@ export class WindowCuFairShareEngine {
     if (!buckets) this.states.set(accountId, (buckets = new Map()));
     buckets.set(bucket, windows);
     this.ensure(accountId, bucket);
+    this.enforceGlobalReorderBudget();
+  }
+
+  getReorderDiagnosticsForTesting(): {
+    totalBytes: number;
+    windows: Array<{ accountId: number; bucket: string; scope: "primary" | "weekly"; bytes: number; reason: string }>;
+  } {
+    const windows = this.reorderWindows();
+    return {
+      totalBytes: windows.reduce((sum, item) => sum + Math.max(0, item.window.reorderTailBytes - 2), 0),
+      windows: windows.map((item) => ({
+        accountId: item.accountId,
+        bucket: item.bucket,
+        scope: item.scope,
+        bytes: Math.max(0, item.window.reorderTailBytes - 2),
+        reason: item.window.lastReason || "",
+      })),
+    };
   }
 
   private ensure(accountId: number, bucket: string): QuotaWindowsState {
@@ -239,6 +281,52 @@ export class WindowCuFairShareEngine {
 
   private set(accountId: number, bucket: string, state: QuotaWindowsState): void {
     this.states.get(accountId)?.set(bucket, state);
+    this.enforceGlobalReorderBudget();
+  }
+
+  private reorderWindows(): Array<{
+    accountId: number;
+    bucket: string;
+    scope: "primary" | "weekly";
+    window: FairShareWindowState;
+  }> {
+    const result: Array<{
+      accountId: number;
+      bucket: string;
+      scope: "primary" | "weekly";
+      window: FairShareWindowState;
+    }> = [];
+    for (const [accountId, buckets] of this.states) {
+      for (const [bucket, windows] of buckets) {
+        result.push({ accountId, bucket, scope: "primary", window: windows.primary });
+        result.push({ accountId, bucket, scope: "weekly", window: windows.weekly });
+      }
+    }
+    return result;
+  }
+
+  private enforceGlobalReorderBudget(): void {
+    const limit = Math.max(0, this.options.maxReorderBytes ?? REORDER_GLOBAL_MAX_BYTES);
+    const candidates = this.reorderWindows();
+    let total = candidates.reduce((sum, item) => sum + Math.max(0, item.window.reorderTailBytes - 2), 0);
+    if (total <= limit) return;
+    candidates.sort((a, b) => {
+      const aAt = a.window.reorderTail[0]?.arrivedAt ?? Number.POSITIVE_INFINITY;
+      const bAt = b.window.reorderTail[0]?.arrivedAt ?? Number.POSITIVE_INFINITY;
+      return aAt - bAt;
+    });
+    for (const candidate of candidates) {
+      if (total <= limit) break;
+      if (candidate.window.reorderTail.length === 0) continue;
+      const collapsed = collapseWindowReorderTail(candidate.window);
+      const windows = this.states.get(candidate.accountId)?.get(candidate.bucket);
+      if (!windows) continue;
+      this.states.get(candidate.accountId)?.set(candidate.bucket, {
+        ...windows,
+        [candidate.scope]: collapsed,
+      });
+      total -= Math.max(0, candidate.window.reorderTailBytes - 2);
+    }
   }
 
   private subjects(accountId: number): WindowSubjectConfig[] {

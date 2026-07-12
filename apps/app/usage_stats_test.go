@@ -50,13 +50,14 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 
 func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
-	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // Opus 真实 $5/$25:1M*5 + 0.2M*25 = 5 + 5 = 10
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 10 {
-		t.Fatalf("claude saved = %v, want 10", got)
+	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的保守最高价。
+	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 1M*10 + 0.2M*50 = 20
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 20 {
+		t.Fatalf("claude saved = %v, want 20", got)
 	}
-	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // Gemini Pro 真实 $2:+1M*2 = +2 → 12
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 12 {
-		t.Fatalf("after gemini saved = %v, want 12", got)
+	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 22
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 22 {
+		t.Fatalf("after gemini saved = %v, want 22", got)
 	}
 }
 
@@ -101,7 +102,46 @@ func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 	}
 }
 
-func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
+// Anthropic charges 1h cache creation at a different rate from 5m cache
+// creation. The local dashboard must retain that split instead of deriving one
+// undifferentiated cache-write bucket from rawTotal.
+func TestAddModelTokensWithCacheWritesPricesClaudeTTLBreakdown(t *testing.T) {
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+
+	s.AddModelTokensWithCacheWrites("claude", "claude-opus-4-8",
+		0, 0, 0, 100_000, 100_000, 200_000, false)
+
+	row := s.GetTodayRecord().ByModel["claude-opus-4-8"]
+	if row == nil {
+		t.Fatal("missing Claude model row")
+	}
+	// Opus 4.8: 100K 5m * $6.25/M + 100K 1h * $10/M = $1.625.
+	if want := 1.625; row.EstimatedCostUSD < want-1e-9 || row.EstimatedCostUSD > want+1e-9 {
+		t.Fatalf("cost = %v, want %v (5m/1h cache writes must use distinct prices)", row.EstimatedCostUSD, want)
+	}
+	if row.CacheWriteTokens != 200_000 || row.TotalTokens != 200_000 {
+		t.Fatalf("cache write aggregate = %+v", row)
+	}
+}
+
+func TestRecordClaudeUsageStatsForwardsCacheWriteTTLBreakdown(t *testing.T) {
+	prev := globalUsageStats
+	globalUsageStats = &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+	defer func() { globalUsageStats = prev }()
+
+	recordClaudeUsageStats("claude-opus-4-8", ReportDetails{
+		CacheWrite5mTokens: 100_000,
+		CacheWrite1hTokens: 100_000,
+		RawTotalTokens:     200_000,
+	})
+
+	row := globalUsageStats.GetTodayRecord().ByModel["claude-opus-4-8"]
+	if row == nil || row.EstimatedCostUSD < 1.625-1e-9 || row.EstimatedCostUSD > 1.625+1e-9 {
+		t.Fatalf("Claude proxy dashboard row = %+v, want split cache-write cost 1.625", row)
+	}
+}
+
+func TestAddModelTokensUsesAPIRegistryConservativeFallbackWhenCodexModelKeyMissing(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
 
 	s.AddModelTokens("gpt", "", 1_000_000, 0, 0, 1_000_000, false)
@@ -113,8 +153,25 @@ func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
 	if row.ModelKey != "gpt" || row.DisplayName != "GPT" || row.Family != "gpt" {
 		t.Fatalf("fallback identity = %+v", row)
 	}
-	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 1.25 || row.PricingQuality != "legacy-family" {
+	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 10 || row.PricingQuality != "conservative-fallback" {
 		t.Fatalf("fallback usage = %+v", row)
+	}
+	if row.PricingVersion != exactAPIPrices.Version {
+		t.Fatalf("fallback pricing provenance = %+v", row)
+	}
+}
+
+func TestAddModelTokensUsesAPIRegistryConservativeFallbackWhenClaudeModelKeyMissing(t *testing.T) {
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+
+	s.AddModelTokens("claude", "", 1_000_000, 0, 0, 1_000_000, false)
+
+	row := s.GetTodayRecord().ByModel["claude"]
+	if row == nil || row.PricingQuality != "conservative-fallback" {
+		t.Fatalf("Claude fallback usage = %+v", row)
+	}
+	if row.PricingVersion != exactAPIPrices.Version {
+		t.Fatalf("Claude fallback pricing provenance = %+v", row)
 	}
 }
 
@@ -192,9 +249,9 @@ func TestAddTokensBillableAndCacheWrite(t *testing.T) {
 	if rec.BillableTokens != 39660 {
 		t.Fatalf("billable = %d, want 39660", rec.BillableTokens)
 	}
-	// 真实节省(全口径,含缓存):net入100*5 + 出260*25 + 缓存读3000*0.5 + 缓存写39000*6.25
-	// = (500 + 6500 + 1500 + 243750)/1e6 = 0.25225 USD。缓存写 0.24375 是大头。
-	want := 0.25225
+	// 缺模型 id 时按 api-pricing.json 中 Anthropic 的保守最高价：
+	// net入100*10 + 出260*50 + 缓存读3000*1 + 缓存写39000*12.5 = 0.5045 USD。
+	want := 0.5045
 	if got := rec.SavedMoneyUSD; got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("saved(含缓存) = %v, want %v", got, want)
 	}

@@ -306,6 +306,11 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 
 	Log("[auth] Login OK: email=%s token=%s... plan=%s", resp.Account.Email, resp.Token[:min(8, len(resp.Token))], cfg.PlanName)
 
+	// 换会话必须清空上一账号的本地状态(血条缓存、授权、本地额度),否则新账号
+	// 首个 lease 应答前会串显旧账号的独享个人血条(「不继承旧卡血条」)。
+	// 注:走 App.SaveConfig 的换 token 路径已有同样清理,这里覆盖直接登录路径。
+	clearLocalCardState()
+
 	// Start services with the new token.
 	startServicesForUser(cfg)
 
@@ -341,6 +346,9 @@ func (a *App) UserLogout() error {
 
 	// Stop services.
 	stopServicesForUser()
+
+	// 清空会话级本地状态(血条缓存、授权、本地额度),防止下一个登录账号串显。
+	clearLocalCardState()
 
 	// Clear account-session fields from config (DeviceName is intentionally
 	// kept — it's device identity, not session state).
@@ -619,6 +627,14 @@ func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow
 			ff := f
 			w.MyWeeklyFraction = &ff
 		}
+		if f, ok := m["myPersonalHourlyFraction"].(float64); ok {
+			ff := f
+			w.MyPersonalHourlyFraction = &ff
+		}
+		if f, ok := m["myPersonalWeeklyFraction"].(float64); ok {
+			ff := f
+			w.MyPersonalWeeklyFraction = &ff
+		}
 		if f, ok := m["myShare"].(float64); ok {
 			ff := f
 			w.MyShare = &ff
@@ -678,6 +694,7 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 				// Forced local logout (no server POST — the token is already dead).
 				Log("[auth] Heartbeat fatal (%s): clearing local session", errCode)
 				stopServicesForUser()
+				clearLocalCardState()
 				clearUserSession(&cfg)
 				if saveErr := SaveConfig(cfg); saveErr != nil {
 					Log("[auth] Failed to clear session after %s: %v", errCode, saveErr)

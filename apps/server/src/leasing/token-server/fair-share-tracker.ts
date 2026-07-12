@@ -1,7 +1,12 @@
 /**
  * fair-share-tracker.ts — Fraction-share quota for bound cards (重构版,见 QUOTA-REDESIGN.md)。
  *
- * 核心模型(不再反推/学习上游 token 预算,只信上游剩余百分比 fraction):
+ * 注意:本头注释描述的是 legacy segment-v1(环境变量回退路径)。codex/anthropic 当前
+ * 默认 window-cu-v1:本类只作门面,归因、乱序重放与持久化委托给
+ * quota/fair-share-window.ts 与 quota/window-cu-fair-share-engine.ts(设计见
+ * docs/superpowers/specs/2026-07-11-model-aware-fair-share-recompute-design.md)。
+ *
+ * segment-v1 核心模型(不再反推/学习上游 token 预算,只信上游剩余百分比 fraction):
  *   - 每个绑定主人 i 的保证份额 e_i = w_i / D,D = max(N, Σw),窗口开始锁定。
  *     N = 该号保底席位数(salesSeatCapacity,默认 8);Σw = 真实卖出份额。
  *     卖 ≤ N → D=N → 保底 1/N + 预留;卖 > N(超卖)→ D=Σw → 每席切薄到 1/Σw。
@@ -15,7 +20,8 @@
  *
  * Weighted tokens(只当「同号主人间的分账比例」与账单,绝不进「账号还剩多少」判断):
  *   weightedCost = netInput × W_input + output × W_output + cache × W_cache
- *   权重派生自单一定价源 packages/shared/src/pricing.json。
+ *   segment-v1 权重派生自 packages/shared/src/pricing.json;window-cu-v1 的模型 CU
+ *   费率另见 packages/shared/src/quota-rates.json(版本化,带生效时间)。
  */
 
 import { QUOTA_WEIGHTS } from "@gfa/shared";
@@ -142,7 +148,7 @@ export interface FairShareCheck {
 }
 
 export interface FairShareTrackerOptions {
-  /** 归因算法；默认 segment-v1，灰度开启 window-cu-v1。 */
+  /** 归因算法；codex/anthropic 默认 window-cu-v1，可经环境变量显式回退 segment-v1。 */
   algorithm?: "segment-v1" | "window-cu-v1";
   /** 单卡份额权重 w_i(按会员等级;独占号给 w=N)。不再 clamp。 */
   getCardWeight: (cardId: string) => number;
@@ -150,7 +156,7 @@ export interface FairShareTrackerOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   /** 某号保底席位数 N(salesSeatCapacity,默认 8)。 */
   getSeatCapacity?: (accountId: number) => number;
-  /** 该卡是否独享(营销标签):血条只看自身用量 (e−T)/e,不随同号他人/未认领消耗缩放。 */
+  /** 该卡是否独享(营销标签):用于个人展示和唯一满份额所有者的冷启动归因回补。 */
   isExclusive?: (cardId: string) => boolean;
   /** 是否启用「周公平份额」第二层窗口。codex/anthropic=true;antigravity 仅 5h=false。 */
   trackWeekly?: boolean;
@@ -160,6 +166,8 @@ export interface FairShareTrackerOptions {
   provider?: string;
   /** 可注入时钟(默认 Date.now),保持窗口测试确定性。 */
   now?: () => number;
+  /** Persistence tick override for cross-process fault tests. Production uses 30s. */
+  flushIntervalMs?: number;
 }
 
 // ── Core class ──────────────────────────────────────────────────────────────
@@ -186,6 +194,11 @@ export class FairShareTracker {
     accountings: HourlyUsageAccounting[];
     createdAt: Date;
   }> | null;
+  // 防重复扣:已进入 reducer、但回执尚未确认落库的 reportId(及其小时账)。
+  // 任何 flush 都必须捎带,保证「窗口状态 + 回执」原子持久——否则崩溃后客户端
+  // 重试同一 reportId 会被当作新上报再计一次 CU。DB 持续故障时该表随未确认
+  // 上报增长,由既有的 dirty 重试收敛;成功落库即清。
+  private readonly pendingReceipts = new Map<string, Map<string, HourlyUsageAccounting | null>>();
 
   constructor(opts: FairShareTrackerOptions) {
     this.opts = opts;
@@ -214,12 +227,15 @@ export class FairShareTracker {
             await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
           },
           mergePayload: (current, incoming) => {
-            const currentRevision = Math.max(current.windows.primary.revision, current.windows.weekly.revision);
-            const incomingRevision = Math.max(incoming.windows.primary.revision, incoming.windows.weekly.revision);
             return {
               accountId: incoming.accountId,
               bucket: incoming.bucket,
-              windows: incomingRevision >= currentRevision ? incoming.windows : current.windows,
+              windows: {
+                primary: incoming.windows.primary.revision >= current.windows.primary.revision
+                  ? incoming.windows.primary : current.windows.primary,
+                weekly: incoming.windows.weekly.revision >= current.windows.weekly.revision
+                  ? incoming.windows.weekly : current.windows.weekly,
+              },
               reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
               accountings: [...new Map([...current.accountings, ...incoming.accountings]
                 .map((value) => [value.reportId, value])).values()],
@@ -230,8 +246,10 @@ export class FairShareTracker {
       : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
-        void this.flush();
-      }, FLUSH_INTERVAL_MS);
+        void this.flush().catch((error) => {
+          console.error("[fair-share-tracker] scheduled flush failed:", error);
+        });
+      }, Math.max(1, Number(opts.flushIntervalMs || FLUSH_INTERVAL_MS)));
       if (this.writeCoordinator) {
         this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
       }
@@ -263,13 +281,18 @@ export class FairShareTracker {
     if (!this.windowCu || !this.writeCoordinator) return;
     const entry = this.windowCu.entry(accountId, bucket);
     if (!entry) return;
+    const key = this.pendingKey(accountId, bucket);
+    if (reportId) this.registerPendingReceipt(accountId, bucket, reportId, accounting ?? null);
+    // 连同此前提交失败、仍待确认的回执一起落库(union 幂等:INSERT OR IGNORE)。
+    const pending = this.collectPendingReceipts(key);
     const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
     await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
       ...entry,
-      reportIds: reportId ? [reportId] : [],
-      accountings: accounting ? [accounting] : [],
+      reportIds: pending.reportIds,
+      accountings: pending.accountings,
       createdAt: new Date(this.nowFn()),
     }, true);
+    this.clearPendingReceipts(key, pending.reportIds);
   }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
@@ -330,7 +353,47 @@ export class FairShareTracker {
       throw new Error("recordUsageEvent requires window-cu-v1");
     }
     this.windowCu.recordUsage(accountId, bucket, event);
+    // 事件一进 reducer 就登记待送回执;checkpointReport 同一宏任务内补小时账,
+    // 中间不可能插入定时 flush,不存在「回执先落库、小时账丢失」的窗口。
+    if (event.reportId) this.registerPendingReceipt(accountId, bucket, event.reportId, null);
     this.dirty = true;
+  }
+
+  // ── Pending receipt bookkeeping(防重复扣)─────────────────────────────────
+
+  private pendingKey(accountId: number, bucket: string): string {
+    return `${accountId}\u0000${bucket}`;
+  }
+
+  private registerPendingReceipt(
+    accountId: number,
+    bucket: string,
+    reportId: string,
+    accounting: HourlyUsageAccounting | null,
+  ): void {
+    const key = this.pendingKey(accountId, bucket);
+    let entry = this.pendingReceipts.get(key);
+    if (!entry) {
+      entry = new Map();
+      this.pendingReceipts.set(key, entry);
+    }
+    entry.set(reportId, accounting ?? entry.get(reportId) ?? null);
+  }
+
+  private collectPendingReceipts(key: string): { reportIds: string[]; accountings: HourlyUsageAccounting[] } {
+    const entry = this.pendingReceipts.get(key);
+    if (!entry || entry.size === 0) return { reportIds: [], accountings: [] };
+    return {
+      reportIds: [...entry.keys()],
+      accountings: [...entry.values()].filter((value): value is HourlyUsageAccounting => value != null),
+    };
+  }
+
+  private clearPendingReceipts(key: string, reportIds: string[]): void {
+    const entry = this.pendingReceipts.get(key);
+    if (!entry) return;
+    for (const reportId of reportIds) entry.delete(reportId);
+    if (entry.size === 0) this.pendingReceipts.delete(key);
   }
 
   applyAccountQuotaSnapshotAt(
@@ -422,13 +485,13 @@ export class FairShareTracker {
   }
 
   /** 5h 每卡自份额剩余(供血条),键为基础桶名。share=e_i(我的份额占整号比例,供双层血条)。 */
-  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, false);
     return this.collectFractions(accountId, cardId, false);
   }
 
   /** 周每卡自份额剩余(供周血条);仅 trackWeekly 有数据。 */
-  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number; share: number }> {
+  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, true);
     if (!this.trackWeekly) return {};
     return this.collectFractions(accountId, cardId, true);
@@ -488,11 +551,11 @@ export class FairShareTracker {
     accountId: number,
     cardId: string,
     weekly: boolean,
-  ): Record<string, { fraction: number; resetAt: number; share: number }> {
+  ): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
     const bucketTrackers = this.trackers.get(accountId);
     if (!bucketTrackers) return {};
     const now = this.nowFn();
-    const out: Record<string, { fraction: number; resetAt: number; share: number }> = {};
+    const out: Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> = {};
     for (const [key, tracker] of bucketTrackers) {
       if (isWeeklyBucketKey(key) !== weekly) continue;
       this.ensureWindow(accountId, tracker, now);
@@ -503,6 +566,7 @@ export class FairShareTracker {
       // fraction = 我份额的剩余(血条);share = e_i 我份额占整号比例(双层血条外层几何)。
       out[baseBucketOf(key)] = {
         fraction: this.bloodBar(accountId, tracker, cardId),
+        personalFraction: this.personalBloodBar(accountId, tracker, cardId),
         resetAt,
         share: this.shareFor(accountId, tracker, cardId),
       };
@@ -537,16 +601,19 @@ export class FairShareTracker {
    * e_i≤0 → 0(空且拦)。
    */
   private bloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
+    const personal = this.personalBloodBar(accountId, tracker, cardId);
+    const e = this.shareFor(accountId, tracker, cardId);
+    if (e <= 0) return 0;
+    const sumRem = this.sumRemaining(accountId, tracker);
+    const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
+    return clamp01(personal * scale);
+  }
+
+  private personalBloodBar(accountId: number, tracker: BucketTracker, cardId: string): number {
     const e = this.shareFor(accountId, tracker, cardId);
     if (e <= 0) return 0;
     const t = tracker.attributed.get(cardId) || 0;
-    const mine = Math.max(0, e - t);
-    // 独享(营销标签):血条只反映自身用量 (e−T)/e,不被同号他人/未认领消耗缩放 —— 不用就 100%。
-    // 代价:号被他人烧爆时血条仍可显满,但实际请求会在取号闸(checkWindow)按真实余量被拦。
-    if (this.opts.isExclusive?.(cardId)) return clamp01(mine / e);
-    const sumRem = this.sumRemaining(accountId, tracker);
-    const scale = sumRem > tracker.lastFraction ? tracker.lastFraction / sumRem : 1;
-    return clamp01((mine * scale) / e);
+    return clamp01(Math.max(0, e - t) / e);
   }
 
   /** 单窗口(5h 或周)份额判定。 */
@@ -650,11 +717,11 @@ export class FairShareTracker {
       tracker.lastFraction = clamp01(fraction);
       // 真·独占号冷启动回补:号上只有这一张卡、且它占满整号(e≈1)时,冷启动前已烧的 (1−fraction)
       // 归属无歧义 —— 必是这张卡自己烧的,补进它的 T。否则周窗口会把「重启那刻的母号余量」误当满血
-      // 基线整整一周(独享血条跳过 scale 护栏,不像拼车会被 Σ 封顶自愈 → 血条虚高,见独享周窗口复现)。
+      // 基线整整一周(personalFraction 不走母号 scale,会虚高,见独享周窗口复现)。
       // 仅此一种归属无歧义的情形回补;拼车/超卖/未占满(e<1,余量可能是别人或未认领烧的)仍走原
       // 冷启动从宽(T=0)+ scale 护栏,避免把别人的账砸给单卡。
-      // 仅对独享卡回补:独享血条跳过 scale 护栏,冷启动丢历史无处自愈才会虚高;拼车/普通卡走
-      // scale 护栏(Σ 封顶=母号)已自愈,维持原冷启动从宽(T=0),不改其归因语义。
+      // 仅对独享卡回补:个人展示只看自身归因,冷启动丢历史会虚高;拼车展示仍走
+      // effective scale 护栏(Σ 封顶=母号),维持原冷启动从宽(T=0),不改其归因语义。
       const locked = this.ensureLocked(accountId, tracker);
       if (locked.participants.size === 1) {
         const only = [...locked.participants][0];
@@ -830,7 +897,7 @@ export class FairShareTracker {
           const afterRevision = restored
             ? Math.max(restored.windows.primary.revision, restored.windows.weekly.revision)
             : beforeRevision;
-          if (afterRevision > beforeRevision) this.dirty = true;
+          if (afterRevision > beforeRevision || group.result.needsCheckpoint) this.dirty = true;
         }
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
@@ -944,11 +1011,24 @@ export class FairShareTracker {
 
   /** 持久化当前内存态(整池替换,dirty 门控)。 */
   async flush(): Promise<void> {
-    if (this.windowCu && this.windowRepository) {
+    if (this.windowCu && this.windowRepository && this.writeCoordinator) {
       if (!this.dirty) return;
       this.dirty = false;
       try {
-        await this.windowRepository.checkpointBatch(this.windowCu.entries());
+        await Promise.all(this.windowCu.entries().map(async (entry) => {
+          const key = this.pendingKey(entry.accountId, entry.bucket);
+          // 状态与其未确认回执必须同批落库:只写状态会给「崩溃后重试同一
+          // reportId 被再计一次 CU」留下窗口。
+          const pending = this.collectPendingReceipts(key);
+          const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
+          await this.writeCoordinator!.enqueue(`${entry.accountId}\u0000${entry.bucket}`, revision, {
+            ...entry,
+            reportIds: pending.reportIds,
+            accountings: pending.accountings,
+            createdAt: new Date(this.nowFn()),
+          }, true);
+          this.clearPendingReceipts(key, pending.reportIds);
+        }));
       } catch (error) {
         this.dirty = true;
         throw error;
@@ -1062,6 +1142,45 @@ export class FairShareTracker {
 
   getWindowReasons(accountId: number, bucket: string) {
     return this.windowCu?.getReasons(accountId, bucket) ?? null;
+  }
+
+  getQuotaDiagnostic(accountId: number, cardId: string, bucket: string) {
+    if (!this.windowCu) return null;
+    const state = this.windowCu.getStateForTesting(accountId, bucket);
+    if (!state) return null;
+    const reasons = this.windowCu.getReasons(accountId, bucket);
+    const primaryQuota = this.windowCu.getCardFractions(accountId, cardId, false)[bucket];
+    const weeklyQuota = this.windowCu.getCardFractions(accountId, cardId, true)[bucket];
+    const describe = (
+      window: (typeof state)["primary"],
+      quota: typeof primaryQuota | undefined,
+      reason: string,
+    ) => {
+      if (!quota) return null;
+      const subject = window.subjects[cardId];
+      const attributedShare = subject
+        ? Number(subject.carriedAttributedShare || 0) + Number(subject.attributedShare || 0)
+        : 0;
+      return {
+        accountFraction: window.fraction,
+        personalFraction: quota.personalFraction,
+        effectiveFraction: quota.fraction,
+        accountScale: quota.personalFraction > 0 ? quota.fraction / quota.personalFraction : 0,
+        attributedShare,
+        unattributedShare: window.unattributedShare,
+        resetAt: window.resetAt,
+        revision: window.revision,
+        retainedEvents: window.retainedEvents,
+        retainedBytes: Math.max(0, window.reorderTailBytes - 2),
+        compactedEvents: window.lastCompactionCount || 0,
+        compactedThroughAt: window.compactedThroughAt,
+        reason,
+      };
+    };
+    return {
+      primary: describe(state.primary, primaryQuota, reasons?.primary || ""),
+      weekly: describe(state.weekly, weeklyQuota, reasons?.weekly || ""),
+    };
   }
 
   private async pruneExpiredReceipts(): Promise<void> {

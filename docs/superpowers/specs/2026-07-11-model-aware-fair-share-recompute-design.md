@@ -129,7 +129,7 @@ Anthropic 公布了模型 Token 价格。本项目用它作为绑定用户之间
 - 份额分母继续使用 `D = max(N, Σw)`。
 - 超卖订单是否允许创建、绑定账号选择、超卖后份额切薄规则不变。
 - `exclusive` 显式标记、满权重自动识别独享、客户端独享徽标不变。
-- 独享血条是否跳过拼车 scale 的现有产品语义不变。
+- 独享与拼车的后台有效额度均遵守母号守恒；独享展示改用单独的 `personalFraction`，详见 `2026-07-12-exclusive-shared-oversell-display-design.md`。
 - 中途加绑调用 `refreshParticipants()` 后即时重算 `D` 的现有语义不变。
 - 5h 和周窗口各自锁定参与者与 reset 的行为不变。
 
@@ -412,6 +412,8 @@ result revision
 
 因此，描述中的“几秒到几十秒”竞态可以确定性解决：usage report 在 10 分钟内到达时，网络到达顺序不影响最终归因。客户端正常重试必须在该期限内持续进行；超过期限或永久丢失的上报属于证据缺失，服务端只能保留 `unattributedShare`，不能在固定存储约束下无限等待或猜测某个用户。
 
+服务端 exactly-once 回执保留 72 小时，但有效补报边界按客户端契约收紧：当前客户端失败队列最多补报 30 分钟，服务端额外留 5 分钟时钟/调度余量。是否过期以可信的 `upstreamCompletedAt` 为准，不能只看短期 lease 的 token 过期时间；长时间流式请求即使完成时 lease token 已过期，只要刚完成仍允许结算。超过该补报边界的古老 payload 返回 `report_expired` 且不再修改卡统计或窗口 CU。
+
 ### 7.3 母号快照上升
 
 用户已明确要求母号上涨时用户也应上涨。因此在快照通过顺序和窗口校验后，当前模式不再等待 5 分钟低水位确认，而是立即处理：
@@ -453,10 +455,12 @@ interface QuotaSnapshot {
 
 - `accountId` 必须来自已验证 lease，不信任客户端任意填写。
 - `remainingFraction` 必须有限且在 `[0,1]`；`-1` 只代表未知，不参与重算。
-- `observedAt` 必须晚于该窗口最后接受的快照。
+- 网络到达顺序不要求 `observedAt` 单调。仍位于 10 分钟乱序尾巴内的旧
+  `observedAt` 必须按事件时间插回并重放；只有已经越过 compacted base、无法在
+  有界状态内安全重放的旧快照才拒绝。
 - `resetAt` 必须属于当前窗口，或明确推进到下一个窗口。
 - 同一窗口内 `resetAt` 的小幅漂移继续使用现有容差，不因漂移清空状态。
-- 已结束窗口或旧账号的快照不能覆盖当前状态。
+- 已结束窗口或旧账号的快照不能覆盖当前状态；同一 `snapshotId` 只能应用一次。
 
 Codex 优先使用客户端已经获取的 `fetchedAt`。Claude 服务端主动轮询时使用请求完成时间。旧客户端没有采集时间时，可暂用服务端接收时间，但标记 `timestampSource="server-received"` 以便观察。
 
@@ -551,6 +555,20 @@ reset 操作：
 - 从一个母号迁移到另一个母号：旧母号中的历史 CU/归因保留到 reset，新母号按半路加入处理，不跨母号搬运 fraction。
 
 公平分配器内部改用稳定的 `quotaSubjectId` 作为 map key，优先取订阅 id；旧数据无法取得订阅 id 时才兼容回退当前 `cardId` 并记录告警。这样凭证轮换不会重置窗口用量。
+
+### 10.6 segment-v1 一次性切换
+
+部署 `window-cu-v1` 时不执行历史表批量迁移。若账号只有旧 `FairShareWindow`
+固定摘要、尚无 `FairShareWindowHead`：
+
+1. 读取旧窗口的 `fraction`、窗口边界、成员、份额和既有 `T_i`。
+2. 旧 `T_i` 作为 `carriedAttributedShare` 原样承接，不伪造成没有可靠量纲的 CU。
+3. 无法解释的母号消耗差额进入 `unattributedShare`；异常旧数据若 `ΣT_i` 超过母号已确认消耗，保持比例缩回守恒边界。
+4. 上线后的真实请求从 `CU=0` 单独累计，新的 `assignedBurn` 只按这些新 CU 分配；新人不能继承旧 carry。
+5. 母号上涨时 carry、新归因和无主账按现有 burn 占比退款；官方 reset 清空 carry。
+6. 首次恢复完成后立即 checkpoint 为新 Head，后续重启只读取新状态；逐卡摘要和 Head 行数仍为固定基数。
+
+这样可以一次性发布新算法，同时保证切换瞬间血条不跳，不需要停机扫描或改写历史请求数据。
 
 ## 11. 血条与拦截
 
@@ -1104,7 +1122,8 @@ health 接口返回各诊断表行数、最老/最新时间、内存队列深度
 - fraction 下降但 `resetAt` 小幅后移：按现有 drift 容差继续同窗口归因。
 - `resetAt` 在容差内前后抖动，不 reset。
 - `resetAt` 明确推进超过容差，只清对应窗口。
-- 旧窗口快照晚到、`resetAt` 已过期、observedAt 更旧：全部拒绝。
+- 旧窗口快照晚到且已经越过 10 分钟 compacted base、`resetAt` 已过期或账号不匹配：拒绝；
+  仍在乱序尾巴内的较旧 `observedAt` 按事件时间重放。
 - reset 与 usage report 同时发生：按 revision/observedAt 得出唯一确定结果，不重复计费、不丢 CU。
 
 #### 用户中途加入

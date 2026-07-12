@@ -77,6 +77,38 @@ describe("FairShareTracker window-cu-v1 facade", () => {
       .not.toBe(value.getCardWeeklyQuotaFractions(1, "A")[BUCKET].fraction);
   });
 
+  it("exposes causal-tail compaction metadata in quota diagnostics", () => {
+    const now = { value: T };
+    const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }] }, now));
+    applyBaseline(value);
+
+    expect(value.getQuotaDiagnostic(1, "A", BUCKET)?.primary).toMatchObject({
+      retainedEvents: 1,
+      retainedBytes: expect.any(Number),
+      compactedEvents: 0,
+      compactedThroughAt: T,
+    });
+  });
+
+  it("pairs an allowed response with the reset metadata of the limiting window", () => {
+    const now = { value: T };
+    const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));
+    value.applyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.8, resetAt: T + FIVE_HOURS, observedAt: T, snapshotId: "p-limiting-check",
+    });
+    value.applyWeeklyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.2, resetAt: T + WEEK, observedAt: T, snapshotId: "w-limiting-check",
+    });
+
+    expect(value.checkFairShare(1, "A", BUCKET)).toMatchObject({
+      allowed: true,
+      remainingFraction: 0.2,
+      window: "7d",
+      resetAt: T + WEEK,
+      resetMs: WEEK,
+    });
+  });
+
   it("never exposes more pooled absolute quota than the mother account", () => {
     const now = { value: T };
     const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));
@@ -122,6 +154,8 @@ describe("FairShareTracker window-cu-v1 facade", () => {
     value.applyAccountQuotaSnapshotAt(1, BUCKET, { fraction: 0.1, resetAt: T + FIVE_HOURS, observedAt: T + 20, snapshotId: "p1" });
     const a = value.getCardQuotaFractions(1, "A")[BUCKET];
     const b = value.getCardQuotaFractions(1, "B")[BUCKET];
+    expect(a.personalFraction).toBe(1);
+    expect(b.personalFraction).toBe(1);
     expect(a.fraction * a.share + b.fraction * b.share).toBeCloseTo(0.1, 12);
   });
 

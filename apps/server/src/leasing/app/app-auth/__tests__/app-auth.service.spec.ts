@@ -21,6 +21,7 @@ import { AppAuthService } from "../app-auth.service";
 import { CustomerAuthService } from "../../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../../account/device/device.service";
+import { sharedFairShareRegistry } from "../../../token-server/fair-share-registry";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -448,6 +449,28 @@ describe("AppAuthService.login", () => {
 
     expect(result.subscriptions[0].levels).toEqual({ codex: "pro", anthropic: "max-20x" });
     expect(result.subscription.levels).toEqual({ codex: "pro", anthropic: "max-20x" });
+  });
+});
+
+describe("AppAuthService personal fair-share projection", () => {
+  it("keeps effective and personal 5h/weekly fractions separate", async () => {
+    const { appAuthService } = await makeAppAuthService();
+    sharedFairShareRegistry.register("codex", {
+      getCardQuotaFractions: () => ({
+        "codex-gpt": { fraction: 0.4, personalFraction: 0.8, share: 0.5, resetAt: 1 },
+      }),
+      getCardWeeklyQuotaFractions: () => ({
+        "codex-gpt": { fraction: 0.3, personalFraction: 0.7, share: 0.5, resetAt: 2 },
+      }),
+    } as any);
+
+    expect((appAuthService as any).myFairShareForProduct("codex", 1, "card-1")).toEqual({
+      hourlyFraction: 0.4,
+      hourlyPersonalFraction: 0.8,
+      weeklyFraction: 0.3,
+      weeklyPersonalFraction: 0.7,
+      share: 0.5,
+    });
   });
 });
 

@@ -471,20 +471,48 @@ func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, raw
 // fast=true(codex 快速档 service_tier=priority)时,成本按 codexFastCostMultiplier(1.5x)计,
 // 并把本次计费 token 记入「其中 fast」。
 func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output, cacheRead, rawTotal int64, fast bool) {
+	cacheWrite := rawTotal - input - output - cacheRead
+	if cacheWrite < 0 {
+		cacheWrite = 0
+	}
+	// Legacy callers do not carry Anthropic's TTL split. Preserve their prior
+	// conservative behaviour by treating the aggregate as 5m cache creation.
+	s.AddModelTokensWithCacheWrites(family, modelKey, input, output, cacheRead, cacheWrite, 0, rawTotal, fast)
+}
+
+// AddModelTokensWithCacheWrites records model usage while retaining Anthropic's
+// distinct 5m/1h cache-creation prices. rawTotal remains the compatibility
+// aggregate; if an older upstream omits part of the split, the residual is
+// conservatively assigned to the 5m bucket.
+func (s *UsageStatsStore) AddModelTokensWithCacheWrites(family, modelKey string, input, output, cacheRead, cacheWrite5m, cacheWrite1h, rawTotal int64, fast bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	family = normalizeUsageFamily(family, modelKey)
+	if cacheWrite5m < 0 {
+		cacheWrite5m = 0
+	}
+	if cacheWrite1h < 0 {
+		cacheWrite1h = 0
+	}
+	derivedCacheWrite := rawTotal - input - output - cacheRead
+	if derivedCacheWrite < 0 {
+		derivedCacheWrite = 0
+	}
+	if missing := derivedCacheWrite - cacheWrite5m - cacheWrite1h; missing > 0 {
+		cacheWrite5m += missing
+	}
+	cacheWrite := cacheWrite5m + cacheWrite1h
+	componentTotal := input + output + cacheRead + cacheWrite
+	if rawTotal < componentTotal {
+		rawTotal = componentTotal
+	}
 	billable := rawTotal
 	if cacheRead > 0 {
 		billable = rawTotal - cacheRead + discountedCachedTokens(cacheRead)
 		if billable < 0 {
 			billable = 0
 		}
-	}
-	cacheWrite := rawTotal - input - output - cacheRead
-	if cacheWrite < 0 {
-		cacheWrite = 0
 	}
 	provider := ""
 	if family == "gpt" {
@@ -498,9 +526,9 @@ func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output,
 		mode = "priority"
 	}
 	value := apiValue{USD: estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite), Quality: "legacy-family", PricingMode: mode}
-	if provider != "" && strings.TrimSpace(modelKey) != "" {
+	if provider != "" {
 		value = calculateAPIValue(provider, modelKey, mode, input+cacheRead+cacheWrite,
-			input, output, cacheRead, cacheWrite, 0, time.Now())
+			input, output, cacheRead, cacheWrite5m, cacheWrite1h, time.Now())
 	}
 	var fastTokens int64
 	if fast {
