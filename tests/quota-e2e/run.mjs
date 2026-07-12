@@ -23,6 +23,31 @@ cards[8].salesSeatCapacity = { codex: 2 };
 cards[69].salesSeatCapacity = { codex: 2 };
 cards[70].bindings.codex = 70;
 cards[70].salesSeatCapacity = { codex: 2 };
+// Two marketed-exclusive cards intentionally share one mother account. The
+// backend allocates each half of the real account while both clients retain
+// exclusive single-bar presentation.
+for (const index of [79, 80]) {
+  cards[index].bindings.codex = 80;
+  cards[index].weight = 8;
+  cards[index].exclusive = true;
+  cards[index].salesSeatCapacity = { codex: 8 };
+}
+// One exclusive plus one shared card on the same account.
+cards[81].bindings.codex = 82;
+cards[81].weight = 8;
+cards[81].exclusive = true;
+cards[81].salesSeatCapacity = { codex: 8 };
+cards[82].bindings.codex = 82;
+cards[82].weight = 1;
+cards[82].exclusive = false;
+cards[82].salesSeatCapacity = { codex: 8 };
+// Three ordinary shared cards sold into a two-seat mother account.
+for (const index of [83, 84, 85]) {
+  cards[index].bindings.codex = 84;
+  cards[index].weight = 1;
+  cards[index].exclusive = false;
+  cards[index].salesSeatCapacity = { codex: 2 };
+}
 await writeFile(accountsFile, JSON.stringify({ accounts: cards.map((_, i) => ({ id: i + 1, email: `a${i + 1}@x.test`, refreshToken: "rt", enabled: true, planType: "pro" })) }));
 await writeFile(keysFile, JSON.stringify({ keys: cards }));
 await writeFile(databasePath, "");
@@ -178,7 +203,172 @@ try {
   const claudeUsage = await prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "card-102", modelKey: "claude-opus-4-8" } });
   assert(claudeUsage?.cacheCreationTokens === 200_080, `Claude cache TTL total=${claudeUsage?.cacheCreationTokens}, want 200080`);
   assert(await prisma.requestLog.count({ where: { accessKeyId: { in: ["card-101", "card-102"] } } }) >= 2, "production Go reports missing from diagnostic trace");
-  if (only === "smoke") { await prisma.$disconnect(); console.log("quota-e2e smoke: ok"); process.exitCode = 0; }
+
+  // Exclusive oversell display contract: effective fraction remains conserved,
+  // while personalFraction only follows usage attributed to that card.
+  {
+    const id = 80, t = now + 8_000_000;
+    const a = await runScenario("exclusive-oversell-a-baseline", "card-80", [
+      clock(t), lease("card-80"),
+      report({ reportId: "exclusive-a-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    const b = await runScenario("exclusive-oversell-b-baseline", "card-81", [
+      clock(t + 1), lease("card-81"),
+      report({ reportId: "exclusive-b-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    // Unknown mother burn happens before A's request, so it cannot be falsely
+    // attributed to A when the later usage event is replayed.
+    await runScenario("exclusive-oversell-unattributed", "card-81", [
+      clock(t + 10),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: b.leaseId, reportId: "exclusive-unattributed", status: 0, modelKey: "gpt-5.6-luna",
+        accountQuota: quota(id, 80, 90, t + 10, 1, t),
+      } },
+    ]);
+    await runScenario("exclusive-oversell-a-use", "card-80", [
+      clock(t + 30),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: a.leaseId, reportId: "exclusive-a-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 20, upstreamCompletedAt: t + 25,
+        accountQuota: quota(id, 60, 80, t + 30, 1, t),
+      } },
+    ]);
+    const qa = await runScenario("exclusive-oversell-a-read", "card-80", [lease("card-80")]);
+    const qb = await runScenario("exclusive-oversell-b-read", "card-81", [lease("card-81")]);
+    const aBody = qa.responses[0].body, bBody = qb.responses[0].body;
+    const af = aBody.fairShareQuota?.["codex-gpt"], bf = bBody.fairShareQuota?.["codex-gpt"];
+    const aw = aBody.weeklyFairShareQuota?.["codex-gpt"], bw = bBody.weeklyFairShareQuota?.["codex-gpt"];
+    assert(aBody.accessKeyStatus?.exclusive === true && bBody.accessKeyStatus?.exclusive === true,
+      "oversold exclusive cards lost their exclusive display flag");
+    assert(Math.abs(af.personalFraction - 0.6) < 1e-9, `exclusive A personal=${af?.personalFraction}, want 0.6`);
+    assert(Math.abs(bf.personalFraction - 1) < 1e-9, `exclusive B personal=${bf?.personalFraction}, want 1`);
+    assert(af.fraction < af.personalFraction && bf.fraction < bf.personalFraction,
+      `effective fractions were not conservation-scaled: A=${JSON.stringify(af)} B=${JSON.stringify(bf)}`);
+    assert(af.fraction * af.share + bf.fraction * bf.share <= 0.6 + 1e-9,
+      `oversold exclusive effective total exceeded mother: A=${JSON.stringify(af)} B=${JSON.stringify(bf)}`);
+    assert(aw.personalFraction < 1 && bw.personalFraction === 1,
+      `exclusive weekly attribution leaked: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)}`);
+    assert(aw.fraction * aw.share + bw.fraction * bw.share <= 0.8 + 1e-9,
+      `oversold exclusive weekly total exceeded mother: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)}`);
+
+    const flush = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
+    assert(flush.ok, "exclusive display state did not flush before restart");
+    await stopServer();
+    port = await startServer();
+    const restartedA = await runScenario("exclusive-oversell-a-restart", "card-80", [lease("card-80")]);
+    const restartedB = await runScenario("exclusive-oversell-b-restart", "card-81", [lease("card-81")]);
+    const raf = restartedA.responses[0].body.fairShareQuota?.["codex-gpt"];
+    const rbf = restartedB.responses[0].body.fairShareQuota?.["codex-gpt"];
+    assert(Math.abs(raf.personalFraction - 0.6) < 1e-9 && Math.abs(rbf.personalFraction - 1) < 1e-9,
+      `exclusive personal fractions changed after restart: A=${JSON.stringify(raf)} B=${JSON.stringify(rbf)}`);
+
+    // A real forward reset clears both personal attribution and conservation
+    // scaling for primary and weekly windows.
+    const resetObservedAt = t + 7 * 24 * 60 * 60_000 + 1_000;
+    await runScenario("exclusive-oversell-official-reset", "card-81", [
+      clock(resetObservedAt),
+      lease("card-81"),
+      report({ reportId: "exclusive-official-reset", status: 0,
+        accountQuota: quota(id, 100, 100, resetObservedAt, 1, resetObservedAt) }),
+    ]);
+    const resetA = await runScenario("exclusive-oversell-a-reset-read", "card-80", [lease("card-80")]);
+    const resetB = await runScenario("exclusive-oversell-b-reset-read", "card-81", [lease("card-81")]);
+    for (const body of [resetA.responses[0].body, resetB.responses[0].body]) {
+      const primary = body.fairShareQuota?.["codex-gpt"];
+      const weekly = body.weeklyFairShareQuota?.["codex-gpt"];
+      assert(primary.personalFraction === 1 && primary.fraction === 1,
+        `exclusive primary did not reset: ${JSON.stringify(primary)}`);
+      assert(weekly.personalFraction === 1 && weekly.fraction === 1,
+        `exclusive weekly did not reset: ${JSON.stringify(weekly)}`);
+    }
+  }
+
+  // Mixed mother: the exclusive card keeps its single-bar flag and personal
+  // fraction, while the shared card remains a dual-bar client of the same pool.
+  {
+    const id = 82, t = now + 8_200_000;
+    const exclusive = await runScenario("mixed-exclusive-baseline", "card-82", [
+      clock(t), lease("card-82"),
+      report({ reportId: "mixed-exclusive-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    await runScenario("mixed-shared-baseline", "card-83", [
+      clock(t + 1), lease("card-83"),
+      report({ reportId: "mixed-shared-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    await runScenario("mixed-exclusive-use", "card-82", [
+      clock(t + 20),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: exclusive.leaseId, reportId: "mixed-exclusive-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10, upstreamCompletedAt: t + 15,
+        accountQuota: quota(id, 90, 95, t + 20, 1, t),
+      } },
+    ]);
+    const exRead = await runScenario("mixed-exclusive-read", "card-82", [lease("card-82")]);
+    const shRead = await runScenario("mixed-shared-read", "card-83", [lease("card-83")]);
+    const exBody = exRead.responses[0].body, shBody = shRead.responses[0].body;
+    const ex = exBody.fairShareQuota?.["codex-gpt"], sh = shBody.fairShareQuota?.["codex-gpt"];
+    const exWeekly = exBody.weeklyFairShareQuota?.["codex-gpt"], shWeekly = shBody.weeklyFairShareQuota?.["codex-gpt"];
+    assert(exBody.accessKeyStatus?.exclusive === true, "mixed mother lost exclusive card flag");
+    assert(shBody.accessKeyStatus?.exclusive === false, "mixed mother marked shared card exclusive");
+    assert(ex.personalFraction < 1 && sh.personalFraction === 1,
+      `mixed personal attribution leaked between cards: ex=${JSON.stringify(ex)} shared=${JSON.stringify(sh)}`);
+    assert(ex.fraction * ex.share + sh.fraction * sh.share <= 0.9 + 1e-9,
+      `mixed effective total exceeded mother: ex=${JSON.stringify(ex)} shared=${JSON.stringify(sh)}`);
+    assert(exWeekly.personalFraction < 1 && shWeekly.personalFraction === 1,
+      `mixed weekly attribution leaked: ex=${JSON.stringify(exWeekly)} shared=${JSON.stringify(shWeekly)}`);
+    assert(exWeekly.fraction * exWeekly.share + shWeekly.fraction * shWeekly.share <= 0.95 + 1e-9,
+      `mixed weekly total exceeded mother: ex=${JSON.stringify(exWeekly)} shared=${JSON.stringify(shWeekly)}`);
+  }
+
+  // Pure shared oversell remains a shared/dual-bar contract for every card.
+  {
+    const id = 84, t = now + 8_400_000;
+    const a = await runScenario("shared-only-a-baseline", "card-84", [
+      clock(t), lease("card-84"),
+      report({ reportId: "shared-only-a-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+    ]);
+    await runScenario("shared-only-b-baseline", "card-85", [
+      clock(t + 1), lease("card-85"),
+      report({ reportId: "shared-only-b-q0", status: 0, accountQuota: quota(id, 100, 100, t + 1, 1, t) }),
+    ]);
+    await runScenario("shared-only-c-baseline", "card-86", [
+      clock(t + 2), lease("card-86"),
+      report({ reportId: "shared-only-c-q0", status: 0, accountQuota: quota(id, 100, 100, t + 2, 1, t) }),
+    ]);
+    await runScenario("shared-only-a-use", "card-84", [
+      clock(t + 20),
+      { method: "POST", path: "/api/app/lease/codex/report-result", body: {
+        leaseId: a.leaseId, reportId: "shared-only-a-u1", status: 200, modelKey: "gpt-5.6-luna",
+        inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10, upstreamCompletedAt: t + 15,
+        accountQuota: quota(id, 80, 90, t + 20, 1, t),
+      } },
+    ]);
+    const ar = await runScenario("shared-only-a-read", "card-84", [lease("card-84")]);
+    const br = await runScenario("shared-only-b-read", "card-85", [lease("card-85")]);
+    const cr = await runScenario("shared-only-c-read", "card-86", [lease("card-86")]);
+    const ab = ar.responses[0].body, bb = br.responses[0].body, cb = cr.responses[0].body;
+    const aq = ab.fairShareQuota?.["codex-gpt"], bq = bb.fairShareQuota?.["codex-gpt"], cq = cb.fairShareQuota?.["codex-gpt"];
+    const aw = ab.weeklyFairShareQuota?.["codex-gpt"], bw = bb.weeklyFairShareQuota?.["codex-gpt"], cw = cb.weeklyFairShareQuota?.["codex-gpt"];
+    assert(ab.accessKeyStatus?.exclusive === false && bb.accessKeyStatus?.exclusive === false && cb.accessKeyStatus?.exclusive === false,
+      "pure shared mother changed display contract");
+    assert(aq.personalFraction < 1 && bq.personalFraction === 1 && cq.personalFraction === 1,
+      `pure shared attribution leaked: A=${JSON.stringify(aq)} B=${JSON.stringify(bq)} C=${JSON.stringify(cq)}`);
+    assert(aq.fraction * aq.share + bq.fraction * bq.share + cq.fraction * cq.share <= 0.8 + 1e-9,
+      `pure shared effective total exceeded mother: A=${JSON.stringify(aq)} B=${JSON.stringify(bq)} C=${JSON.stringify(cq)}`);
+    assert(aw.personalFraction < 1 && bw.personalFraction === 1 && cw.personalFraction === 1,
+      `pure shared weekly attribution leaked: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
+    assert(aw.fraction * aw.share + bw.fraction * bw.share + cw.fraction * cw.share <= 0.9 + 1e-9,
+      `pure shared weekly total exceeded mother: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
+  }
+
+  if (only === "smoke" || only === "oversell-display") {
+    await prisma.$disconnect();
+    console.log(`quota-e2e ${only}: ok`);
+    process.exitCode = 0;
+  }
   else {
     // Arrival permutations and boundary lateness, each isolated by account.
     for (const [index, late] of [1000, 30_000, 599_000, 601_000].entries()) {

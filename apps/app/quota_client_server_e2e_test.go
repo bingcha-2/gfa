@@ -92,7 +92,9 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	waitQuotaE2E(t, "Codex primary and weekly blood bars", func() bool {
 		_, primary := snapshotMyFractions()["codex-gpt"]
 		_, weekly := snapshotMyWeeklyFractions()["codex-gpt"]
-		return primary && weekly
+		_, personalPrimary := snapshotMyPersonalFractions()["codex-gpt"]
+		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["codex-gpt"]
+		return primary && weekly && personalPrimary && personalWeekly
 	})
 
 	claudeCard := quotaE2ESession("card-102")
@@ -129,8 +131,26 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	waitQuotaE2E(t, "Claude primary and weekly blood bars", func() bool {
 		_, primary := snapshotMyFractions()["anthropic-claude"]
 		_, weekly := snapshotMyWeeklyFractions()["anthropic-claude"]
-		return primary && weekly
+		_, personalPrimary := snapshotMyPersonalFractions()["anthropic-claude"]
+		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["anthropic-claude"]
+		return primary && weekly && personalPrimary && personalWeekly
 	})
+
+	// Verify the Wails GetStats boundary that the React store consumes, not just
+	// the internal Go parser maps.
+	stats := (&App{}).GetStats()
+	leaserStats, ok := stats["leaser"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("GetStats leaser payload type = %T", stats["leaser"])
+	}
+	personalPrimary, ok := leaserStats["myPersonalFractions"].(map[string]float64)
+	if !ok || personalPrimary["codex-gpt"] <= 0 || personalPrimary["anthropic-claude"] <= 0 {
+		t.Fatalf("GetStats personal primary payload = %#v", leaserStats["myPersonalFractions"])
+	}
+	personalWeekly, ok := leaserStats["myPersonalWeeklyFractions"].(map[string]float64)
+	if !ok || personalWeekly["codex-gpt"] <= 0 || personalWeekly["anthropic-claude"] <= 0 {
+		t.Fatalf("GetStats personal weekly payload = %#v", leaserStats["myPersonalWeeklyFractions"])
+	}
 
 	// Exercise the actual client proxy path, not a direct stats helper: an
 	// Anthropic response with distinct 5m/1h cache creation travels through
