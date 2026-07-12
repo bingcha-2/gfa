@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -325,11 +326,24 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) (err error) {
 	if err = os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	if dirHandle, openErr := os.Open(dir); openErr == nil {
-		err = dirHandle.Sync()
-		_ = dirHandle.Close()
+	return syncParentDirectory(dir, runtime.GOOS)
+}
+
+// syncParentDirectory makes the rename durable on platforms that support
+// syncing directory handles. Windows returns ERROR_ACCESS_DENIED for
+// os.File.Sync on directories, so the already-synced atomic file replacement
+// is the strongest portable guarantee there.
+func syncParentDirectory(dir, goos string) error {
+	if goos == "windows" {
+		return nil
 	}
-	return err
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		// Preserve the historical best-effort behavior for opening the directory.
+		return nil
+	}
+	defer func() { _ = dirHandle.Close() }()
+	return dirHandle.Sync()
 }
 
 func createBackupIfAbsent(path string, data []byte) error {

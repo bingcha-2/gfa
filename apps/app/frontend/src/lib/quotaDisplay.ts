@@ -157,7 +157,7 @@ export type NestedBarDisplay = {
  * - myFraction 已含服务端等比例缩放,用了/账号低都会让它降 → 血条等比例降。
  * - 封顶保证「我的总剩余 ≤ 账号」永不穿帮(名义 X/Y 比真实大,独占账号剩余时会顶破,故封顶)。
  * - 账号本身真实显示,不缩放(它是真池子;放大会 >100%)。
- * - 独享保持单层并只用 personalFraction；后台有效值与母号层不参与个人展示。
+ * - 独享保持单层,但 personalFraction 也必须受母号真实剩余封顶。
  */
 export function nestedBarDisplay(input: {
   myFraction: number
@@ -171,13 +171,14 @@ export function nestedBarDisplay(input: {
   const myKnown = input.myFraction >= 0
   const acctKnown = input.accountFraction >= 0
 
-  // 独享单层只展示个人归因剩余。母号守恒后的有效 fraction 仍供服务端准入,
-  // 但不能拿来污染个人血条；旧服务端缺 personalFraction 时回退 myFraction。
+  // 独享单层展示,但仍按母号真实剩余封顶;否则个人归因回升/冷启动会显示
+  // 高于账号上游剩余的血条(例如账号周剩余 44%,个人显示 80%)。
   if (exclusive) {
     const personalKnown = input.personalFraction != null && input.personalFraction >= 0
-    const own = personalKnown
+    const rawOwn = personalKnown
       ? clamp01(input.personalFraction!)
       : myKnown ? clamp01(input.myFraction) : -1
+    const own = rawOwn >= 0 && acctKnown ? Math.min(rawOwn, clamp01(input.accountFraction)) : rawOwn
     return {
       myTotalRemain: own,
       accountRemain: -1,

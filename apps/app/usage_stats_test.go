@@ -28,6 +28,16 @@ func TestAtomicWriteFileReplacesWholeFile(t *testing.T) {
 	}
 }
 
+func TestSyncParentDirectorySkipsUnsupportedWindowsDirectoryFsync(t *testing.T) {
+	// The path deliberately does not exist. Windows must not try to open/sync it:
+	// os.File.Sync on a directory returns ERROR_ACCESS_DENIED there even after the
+	// file itself was synced and atomically renamed successfully.
+	missingDir := filepath.Join(t.TempDir(), "missing")
+	if err := syncParentDirectory(missingDir, "windows"); err != nil {
+		t.Fatalf("Windows directory sync must be skipped, got %v", err)
+	}
+}
+
 func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 	row := &ModelUsageRecord{
 		ModelKey: "gpt-5.6-sol", Family: "gpt",

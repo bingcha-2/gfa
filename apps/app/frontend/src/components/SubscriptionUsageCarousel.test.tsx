@@ -106,10 +106,10 @@ describe('SubscriptionUsageCarousel', () => {
       />,
     )
 
-    // 独享 → 单层「剩余 X%」,不展示拼车双层。
+    // 独享 → 单层「剩余 X%」,不展示拼车双层;数值仍受母号当前剩余封顶。
     expect(screen.getAllByText(/^剩余/).length).toBe(2)
-    expect(screen.getByText('剩余 95%')).toBeInTheDocument()
-    expect(screen.getByText('剩余 85%')).toBeInTheDocument()
+    expect(screen.getByText('剩余 80%')).toBeInTheDocument()
+    expect(screen.getByText('剩余 60%')).toBeInTheDocument()
     expect(screen.queryByText(/我的总剩余/)).not.toBeInTheDocument()
     expect(screen.queryByText(/账号总剩余/)).not.toBeInTheDocument()
   })

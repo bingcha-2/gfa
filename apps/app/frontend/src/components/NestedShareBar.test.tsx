@@ -102,7 +102,7 @@ describe('NestedShareBar monotonic display', () => {
 })
 
 describe('独享单层血条', () => {
-  it('独享只展示「剩余 X%」,不展示账号总剩余', () => {
+  it('独享只展示「剩余 X%」,但数值受账号剩余封顶', () => {
     render(
       <NestedShareBar
         label="5h 份额"
@@ -115,7 +115,7 @@ describe('独享单层血条', () => {
       />,
     )
 
-    expect(screen.getByText(/剩余 70%/)).toBeInTheDocument()
+    expect(screen.getByText(/剩余 30%/)).toBeInTheDocument()
     expect(screen.queryByText(/账号总剩余/)).toBeNull()
   })
 
