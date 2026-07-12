@@ -214,7 +214,6 @@ const RATE_LIMIT_MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 // 验证挑战(需人工去验证)自动复检间隔:300 分钟。号主/管理员验证好后,一次成功即提前解封;
 // 否则到点自动复检一次。也可由后台手动恢复立即清除(reactivateAccount)。
 const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
-const REPORT_GRACE_MS = 60 * 1000;
 // Clients retry failed usage reports for at most 30 minutes. Keep a small clock/
 // scheduling margin, but do not let an ancient payload retain a live lease
 // association indefinitely after its exactly-once receipt has been pruned.
@@ -2464,7 +2463,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private cleanupExpiredLeases() {
     const now = this.now();
     for (const [id, lease] of this.leases) {
-      if (Date.parse(lease.expiresAt) + REPORT_GRACE_MS <= now) this.leases.delete(id);
+      // 过期 lease 保留整个补报宽限期:长流式(绑定 lease 最短 ~15 分钟,贴上游
+      // token 到期时)完成后、以及失败队列 30 分钟内的补报,都必须还能找到原
+      // lease 归因到账号,否则用量成无主消耗。过期 lease 不能再租新请求(租用
+      // 路径自查 expiresAt),这里只延长上报归因的可达期。
+      if (Date.parse(lease.expiresAt) + REPORT_REPLAY_GRACE_MS <= now) this.leases.delete(id);
     }
     for (const [key, affinity] of this.clientAffinity.entries()) {
       if (affinity.expiresAt <= now) this.clientAffinity.delete(key);
