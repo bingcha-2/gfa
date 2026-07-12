@@ -137,12 +137,12 @@ async function runScenario(name, cardId, operations) {
 }
 async function persistKeys() { await writeFile(keysFile, JSON.stringify({ keys: cards })); }
 function assert(value, message) { if (!value) throw new Error(`${message}`); }
-async function testControl(path, body = {}) {
+async function testControl(path, body = {}, expectedStatus = 200) {
   const response = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
   const parsed = await response.json().catch(() => ({}));
-  assert(response.ok, `test control ${path} failed: HTTP ${response.status} ${JSON.stringify(parsed)}`);
+  assert(response.status === expectedStatus, `test control ${path} failed: HTTP ${response.status} ${JSON.stringify(parsed)}`);
   return parsed;
 }
 async function waitFor(label, check, timeoutMs = 3_000) {
@@ -600,7 +600,9 @@ try {
         where: { provider: "codex", accountId: id },
         orderBy: [{ bucket: "asc" }, { cardId: "asc" }],
       }));
-      await testControl("stale-checkpoint", { provider: "codex", accountId: id, bucket: "codex-gpt", reportId: "stale-checkpoint-receipt" });
+      await testControl("stale-checkpoint", {
+        provider: "codex", accountId: id, bucket: "codex-gpt", reportId: "stale-checkpoint-receipt",
+      }, 500);
       const after = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
       const afterSummary = summarizeRows(await prisma.fairShareWindow.findMany({
         where: { provider: "codex", accountId: id },

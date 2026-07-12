@@ -46,6 +46,15 @@ export interface HourlyUsageAccounting {
   serviceTier: string;
 }
 
+export class QuotaStaleRevisionError extends Error {
+  readonly code = "QUOTA_STALE_REVISION";
+
+  constructor(provider: string, accountId: number, bucket: string) {
+    super(`QUOTA_STALE_REVISION ${provider}/${accountId}/${bucket}`);
+    this.name = "QuotaStaleRevisionError";
+  }
+}
+
 function storedBucket(bucket: string, scope: QuotaScope): string {
   return scope === "weekly" ? `${bucket}${WEEKLY_SUFFIX}` : bucket;
 }
@@ -189,11 +198,10 @@ export class FairShareWindowRepository {
           }));
           if (rows.length > 0) await tx.fairShareWindow.createMany({ data: rows });
         }
-        // A receipt is an acknowledgement that this exact reducer state is
-        // durable. If either scope lost the revision race, never persist the
-        // receipt/accounting alone; the client retry will checkpoint the latest
-        // in-memory pair and can then be acknowledged atomically.
-        if (!fullyAccepted && (checkpoint.reportIds?.length || checkpoint.accountings?.length)) continue;
+        // A stale scope means this process is not authoritative. Throw inside
+        // the transaction so an accepted sibling scope also rolls back and the
+        // coordinator/caller cannot acknowledge a state SQLite rejected.
+        if (!fullyAccepted) throw new QuotaStaleRevisionError(this.provider, accountId, bucket);
         const revision = BigInt(Math.max(windows.primary.revision, windows.weekly.revision));
         const accountings = new Map((checkpoint.accountings || []).map((value) => [value.reportId, value]));
         for (const reportId of new Set(checkpoint.reportIds || [])) {

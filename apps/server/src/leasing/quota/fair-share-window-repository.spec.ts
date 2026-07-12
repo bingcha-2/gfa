@@ -283,7 +283,8 @@ describe("FairShareWindowRepository with SQLite", () => {
       "codex", 7,
     );
 
-    await repository.checkpointAccount(7, "codex-gpt", older);
+    await expect(repository.checkpointAccount(7, "codex-gpt", older))
+      .rejects.toThrow("QUOTA_STALE_REVISION");
 
     await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
     await expect(prisma.$queryRawUnsafe(
@@ -299,9 +300,9 @@ describe("FairShareWindowRepository with SQLite", () => {
     const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer-state", T + 30) });
     await repository.checkpointAccount(7, "codex-gpt", newer);
 
-    await repository.checkpointBatch([{
+    await expect(repository.checkpointBatch([{
       accountId: 7, bucket: "codex-gpt", windows: older, reportIds: ["stale-report"],
-    }]);
+    }])).rejects.toThrow("QUOTA_STALE_REVISION");
 
     await expect(repository.hasReport("stale-report")).resolves.toBe(false);
     await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
