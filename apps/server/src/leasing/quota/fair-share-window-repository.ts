@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import {
+  compactWindowForCheckpoint,
   createCarriedWindowState,
   createWindowState,
   type FairShareWindowState,
@@ -73,6 +74,9 @@ function normalizeState(state: FairShareWindowState): FairShareWindowState {
   };
   normalizeSubjects(state.subjects);
   normalizeSubjects(state.base.subjects);
+  if (!Number.isFinite(state.reorderTailBytes)) {
+    state.reorderTailBytes = Buffer.byteLength(JSON.stringify(state.reorderTail), "utf8");
+  }
   return state;
 }
 
@@ -150,7 +154,7 @@ export class FairShareWindowRepository {
         const { accountId, bucket, windows } = checkpoint;
         let fullyAccepted = true;
         for (const scope of ["primary", "weekly"] as const) {
-          const state = windows[scope];
+          const state = compactWindowForCheckpoint(windows[scope]);
           const bucketKey = storedBucket(bucket, scope);
           // SQLite is the final stale-write guard.  The in-memory coordinator
           // serializes normal writes, but shutdown/retry/older binaries must not

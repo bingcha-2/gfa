@@ -1,6 +1,6 @@
 export const REORDER_HORIZON_MS = 10 * 60 * 1000;
-export const REORDER_MAX_EVENTS = 128;
-export const REORDER_MAX_BYTES = 16 * 1024;
+export const REORDER_MAX_EVENTS = 10_000;
+export const REORDER_MAX_BYTES = 1024 * 1024;
 
 export type QuotaScope = "primary" | "weekly";
 
@@ -66,7 +66,9 @@ export interface FairShareWindowState extends WindowCoreState {
   revision: number;
   base: WindowCoreState;
   reorderTail: WindowEvent[];
+  reorderTailBytes: number;
   lastReason?: string;
+  lastCompactionCount?: number;
 }
 
 export interface QuotaWindowsState {
@@ -83,6 +85,19 @@ function cloneSubjects(subjects: Record<string, WindowSubjectState>): Record<str
 
 function cloneCore(core: WindowCoreState): WindowCoreState {
   return { ...core, subjects: cloneSubjects(core.subjects) };
+}
+
+function materializedCore(state: FairShareWindowState): WindowCoreState {
+  const {
+    revision: _revision,
+    base: _base,
+    reorderTail: _reorderTail,
+    reorderTailBytes: _reorderTailBytes,
+    lastReason: _lastReason,
+    lastCompactionCount: _lastCompactionCount,
+    ...core
+  } = state;
+  return cloneCore(core);
 }
 
 function causalAt(event: WindowEvent): number {
@@ -235,24 +250,82 @@ function tailBytes(events: WindowEvent[]): number {
   return Buffer.byteLength(JSON.stringify(events), "utf8");
 }
 
-function compact(base: WindowCoreState, tail: WindowEvent[], cutoff: number): {
+function eventBytes(event: WindowEvent): number {
+  return Buffer.byteLength(JSON.stringify(event), "utf8");
+}
+
+function appendTailBytes(currentBytes: number, currentLength: number, event: WindowEvent): number {
+  return currentBytes + eventBytes(event) + (currentLength > 0 ? 1 : 0);
+}
+
+function removeFirstTailBytes(currentBytes: number, currentLength: number, event: WindowEvent): number {
+  return currentBytes - eventBytes(event) - (currentLength > 1 ? 1 : 0);
+}
+
+function compact(base: WindowCoreState, tail: WindowEvent[], currentBytes: number, cutoff: number): {
   base: WindowCoreState;
   tail: WindowEvent[];
+  tailBytes: number;
+  capacityCompacted: number;
 } {
-  const sorted = [...tail].sort(compareEvents);
-  const fold: WindowEvent[] = [];
-  const keep: WindowEvent[] = [];
-  for (const event of sorted) {
-    if (causalAt(event) < cutoff) fold.push(event);
-    else keep.push(event);
+  // reorderTail is always sorted. In the common case its first event is still
+  // inside the horizon, so avoid copying/scanning the whole retained window.
+  let foldCount = 0;
+  while (foldCount < tail.length && causalAt(tail[foldCount]) < cutoff) foldCount++;
+  const fold = foldCount > 0 ? tail.slice(0, foldCount) : [];
+  let keep = foldCount > 0 ? tail.slice(foldCount) : tail;
+  let keepBytes = currentBytes;
+  for (let index = 0; index < foldCount; index++) {
+    keepBytes = removeFirstTailBytes(keepBytes, tail.length - index, tail[index]);
   }
   let nextBase = fold.reduce(applyCoreEvent, cloneCore(base));
-  while (keep.length >= REORDER_MAX_EVENTS || tailBytes(keep) >= REORDER_MAX_BYTES) {
+  let capacityCompacted = 0;
+  if (keep === tail && (keep.length >= REORDER_MAX_EVENTS || keepBytes >= REORDER_MAX_BYTES)) {
+    keep = [...keep];
+  }
+  while (keep.length >= REORDER_MAX_EVENTS || keepBytes >= REORDER_MAX_BYTES) {
     const oldest = keep.shift();
     if (!oldest) break;
+    keepBytes = removeFirstTailBytes(keepBytes, keep.length + 1, oldest);
     nextBase = applyCoreEvent(nextBase, oldest);
+    capacityCompacted++;
   }
-  return { base: nextBase, tail: keep };
+  return { base: nextBase, tail: keep, tailBytes: keepBytes, capacityCompacted };
+}
+
+/**
+ * Persist only the current materialized accounting. The large causal tail is a
+ * process-local reorder aid; carrying it in every SQLite checkpoint would turn
+ * a bounded memory feature into multi-megabyte write amplification.
+ */
+export function compactWindowForCheckpoint(state: FairShareWindowState): FairShareWindowState {
+  const core = materializedCore(state);
+  return {
+    ...cloneCore(core),
+    revision: state.revision,
+    base: cloneCore(core),
+    reorderTail: [],
+    reorderTailBytes: 2,
+    ...(state.lastReason ? { lastReason: state.lastReason } : {}),
+    ...(state.lastCompactionCount != null ? { lastCompactionCount: state.lastCompactionCount } : {}),
+  };
+}
+
+export function collapseWindowReorderTail(
+  state: FairShareWindowState,
+  reason = "WINDOW_GLOBAL_TAIL_COMPACTED",
+): FairShareWindowState {
+  if (state.reorderTail.length === 0) return state;
+  const core = materializedCore(state);
+  return {
+    ...cloneCore(core),
+    revision: state.revision + 1,
+    base: cloneCore(core),
+    reorderTail: [],
+    reorderTailBytes: 2,
+    lastReason: reason,
+    lastCompactionCount: state.reorderTail.length,
+  };
 }
 
 export function createWindowState(config: {
@@ -281,7 +354,7 @@ export function createWindowState(config: {
     subjects,
     compactedThroughAt: 0,
   };
-  return { ...cloneCore(base), revision: 0, base, reorderTail: [] };
+  return { ...cloneCore(base), revision: 0, base, reorderTail: [], reorderTailBytes: 2 };
 }
 
 /**
@@ -329,7 +402,14 @@ export function createCarriedWindowState(config: {
   state.lastSnapshotAt = config.lastSnapshotAt ?? config.windowStart;
   state.unattributedShare = Math.max(0, confirmedBurn - totalCarried(state));
   state.compactedThroughAt = state.lastSnapshotAt;
-  const { revision: _revision, base: _base, reorderTail: _tail, lastReason: _reason, ...core } = state;
+  const {
+    revision: _revision,
+    base: _base,
+    reorderTail: _tail,
+    reorderTailBytes: _tailBytes,
+    lastReason: _reason,
+    ...core
+  } = state;
   state.base = cloneCore(core);
   return state;
 }
@@ -348,7 +428,12 @@ export function reduceWindow(state: FairShareWindowState, incoming: WindowEvent)
   }
 
   const cutoff = incoming.arrivedAt - REORDER_HORIZON_MS;
-  const compacted = compact(state.base, state.reorderTail, cutoff);
+  const compacted = compact(
+    state.base,
+    state.reorderTail,
+    Number.isFinite(state.reorderTailBytes) ? state.reorderTailBytes : tailBytes(state.reorderTail),
+    cutoff,
+  );
   // Events newer than the compacted base can still be inserted into the
   // causal tail and replayed. Once their causal position has crossed the
   // bounded horizon, accepting them would require undoing compacted history.
@@ -369,20 +454,33 @@ export function reduceWindow(state: FairShareWindowState, incoming: WindowEvent)
     lastReason = "LATE_USAGE_RECONCILED";
   }
 
-  let tail = [...compacted.tail, event].sort(compareEvents);
+  const appendsAfterTail = compacted.tail.length === 0
+    || compareEvents(compacted.tail[compacted.tail.length - 1], event) <= 0;
+  let tail = appendsAfterTail
+    ? [...compacted.tail, event]
+    : [...compacted.tail, event].sort(compareEvents);
+  let encodedTailBytes = appendTailBytes(compacted.tailBytes, compacted.tail.length, event);
   let base = compacted.base;
-  while (tail.length > REORDER_MAX_EVENTS || tailBytes(tail) > REORDER_MAX_BYTES) {
+  let capacityCompacted = compacted.capacityCompacted;
+  while (tail.length > REORDER_MAX_EVENTS || encodedTailBytes > REORDER_MAX_BYTES) {
     const oldest = tail.shift();
     if (!oldest) break;
+    encodedTailBytes = removeFirstTailBytes(encodedTailBytes, tail.length + 1, oldest);
     base = applyCoreEvent(base, oldest);
+    capacityCompacted++;
   }
-  const materialized = replay(base, tail);
+  const materialized = appendsAfterTail
+    ? applyCoreEvent(materializedCore(state), event)
+    : replay(base, tail);
+  if (!lastReason && capacityCompacted > 0) lastReason = "WINDOW_TAIL_COMPACTED";
   return {
     ...materialized,
     revision: state.revision + 1,
     base,
     reorderTail: tail,
+    reorderTailBytes: encodedTailBytes,
     lastReason,
+    ...(capacityCompacted > 0 ? { lastCompactionCount: capacityCompacted } : {}),
   };
 }
 

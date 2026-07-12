@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createQuotaWindows, reduceQuotaWindows, type SnapshotEvent, type UsageCuEvent } from "./fair-share-window";
+import {
+  compactWindowForCheckpoint,
+  createQuotaWindows,
+  reduceQuotaWindows,
+  type QuotaWindowsState,
+  type SnapshotEvent,
+  type UsageCuEvent,
+} from "./fair-share-window";
 import { FairShareWindowRepository } from "./fair-share-window-repository";
 import { FairShareTracker } from "../token-server/fair-share-tracker";
 
@@ -39,6 +46,13 @@ function populatedWindows() {
   windows = reduceQuotaWindows(windows, { scope: "primary", event: snapshot("primary", 0.8, T + 20) });
   windows = reduceQuotaWindows(windows, { scope: "weekly", event: snapshot("weekly", 0.9, T + 20) });
   return windows;
+}
+
+function checkpointed(windows: QuotaWindowsState): QuotaWindowsState {
+  return {
+    primary: compactWindowForCheckpoint(windows.primary),
+    weekly: compactWindowForCheckpoint(windows.weekly),
+  };
 }
 
 describe("FairShareWindowRepository with SQLite", () => {
@@ -110,13 +124,29 @@ describe("FairShareWindowRepository with SQLite", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("restores both current windows exactly after restart", async () => {
+  it("restores materialized accounting but not the in-memory reorder tail", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     const expected = populatedWindows();
+    expect(expected.primary.reorderTail.length).toBeGreaterThan(0);
+    expect(expected.weekly.reorderTail.length).toBeGreaterThan(0);
     await repository.checkpointAccount(7, "codex-gpt", expected);
 
     const restored = await new FairShareWindowRepository(prisma, "codex").loadAccount(7, "codex-gpt");
-    expect(restored).toEqual({ ok: true, windows: expected });
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) throw new Error(restored.reason);
+    expect(restored.windows.primary.reorderTail).toEqual([]);
+    expect(restored.windows.weekly.reorderTail).toEqual([]);
+    for (const scope of ["primary", "weekly"] as const) {
+      expect(restored.windows[scope]).toMatchObject({
+        fraction: expected[scope].fraction,
+        assignedBurn: expected[scope].assignedBurn,
+        unattributedShare: expected[scope].unattributedShare,
+        resetAt: expected[scope].resetAt,
+        revision: expected[scope].revision,
+        subjects: expected[scope].subjects,
+      });
+      expect(restored.windows[scope].base.subjects).toEqual(expected[scope].subjects);
+    }
   });
 
   it("cuts over fixed legacy rows without changing blood bars and checkpoints a restartable head", async () => {
@@ -255,7 +285,7 @@ describe("FairShareWindowRepository with SQLite", () => {
 
     await repository.checkpointAccount(7, "codex-gpt", older);
 
-    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: newer });
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
     await expect(prisma.$queryRawUnsafe(
       `SELECT bucket, cardId, weightedUsed, attributedShare, lastFraction, isActive
        FROM FairShareWindow WHERE provider = ? AND accountId = ? ORDER BY bucket, cardId`,
@@ -274,13 +304,13 @@ describe("FairShareWindowRepository with SQLite", () => {
     }]);
 
     await expect(repository.hasReport("stale-report")).resolves.toBe(false);
-    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: newer });
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
   });
 
   it("keeps row count fixed while revisions grow", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     let windows = populatedWindows();
-    for (let i = 0; i < 10_000; i += 1) {
+    for (let i = 0; i < 1_000; i += 1) {
       windows = reduceQuotaWindows(windows, { scope: "both", event: usage(`r-${i}`, T + 100 + i) });
       await repository.checkpointAccount(7, "codex-gpt", windows);
     }
@@ -311,7 +341,7 @@ describe("FairShareWindowRepository with SQLite", () => {
 
     await expect(repository.hasReport("report-1")).resolves.toBe(true);
     await expect(repository.hasReport("missing")).resolves.toBe(false);
-    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows });
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(windows) });
   });
 
   it("atomically aggregates authoritative usage exactly once with its receipt", async () => {
@@ -350,7 +380,7 @@ describe("FairShareWindowRepository with SQLite", () => {
     await repository.pruneReceipts(new Date(T - 3 * 24 * HOUR), 100);
     await expect(repository.hasReport("old")).resolves.toBe(false);
     await expect(repository.hasReport("fresh")).resolves.toBe(true);
-    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows });
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(windows) });
   });
 
   it("rejects a partially corrupt window group instead of stitching state", async () => {

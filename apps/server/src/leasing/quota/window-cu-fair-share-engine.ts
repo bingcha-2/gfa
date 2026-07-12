@@ -1,5 +1,6 @@
 import { calculateFairShareCu, type FairShareUsageEvent } from "./fair-share-cu";
 import {
+  collapseWindowReorderTail,
   createQuotaWindows,
   createWindowState,
   getSubjectQuota,
@@ -12,6 +13,7 @@ import {
 
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
 const WEEK = 7 * 24 * 60 * 60 * 1000;
+export const REORDER_GLOBAL_MAX_BYTES = 128 * 1024 * 1024;
 
 export interface WindowCuEngineOptions {
   provider: "codex" | "anthropic";
@@ -20,6 +22,7 @@ export interface WindowCuEngineOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   getSeatCapacity: (accountId: number) => number;
   isExclusive: (cardId: string) => boolean;
+  maxReorderBytes?: number;
 }
 
 type AccountingView = Pick<FairShareWindowState,
@@ -205,6 +208,24 @@ export class WindowCuFairShareEngine {
     if (!buckets) this.states.set(accountId, (buckets = new Map()));
     buckets.set(bucket, windows);
     this.ensure(accountId, bucket);
+    this.enforceGlobalReorderBudget();
+  }
+
+  getReorderDiagnosticsForTesting(): {
+    totalBytes: number;
+    windows: Array<{ accountId: number; bucket: string; scope: "primary" | "weekly"; bytes: number; reason: string }>;
+  } {
+    const windows = this.reorderWindows();
+    return {
+      totalBytes: windows.reduce((sum, item) => sum + Math.max(0, item.window.reorderTailBytes - 2), 0),
+      windows: windows.map((item) => ({
+        accountId: item.accountId,
+        bucket: item.bucket,
+        scope: item.scope,
+        bytes: Math.max(0, item.window.reorderTailBytes - 2),
+        reason: item.window.lastReason || "",
+      })),
+    };
   }
 
   private ensure(accountId: number, bucket: string): QuotaWindowsState {
@@ -249,6 +270,52 @@ export class WindowCuFairShareEngine {
 
   private set(accountId: number, bucket: string, state: QuotaWindowsState): void {
     this.states.get(accountId)?.set(bucket, state);
+    this.enforceGlobalReorderBudget();
+  }
+
+  private reorderWindows(): Array<{
+    accountId: number;
+    bucket: string;
+    scope: "primary" | "weekly";
+    window: FairShareWindowState;
+  }> {
+    const result: Array<{
+      accountId: number;
+      bucket: string;
+      scope: "primary" | "weekly";
+      window: FairShareWindowState;
+    }> = [];
+    for (const [accountId, buckets] of this.states) {
+      for (const [bucket, windows] of buckets) {
+        result.push({ accountId, bucket, scope: "primary", window: windows.primary });
+        result.push({ accountId, bucket, scope: "weekly", window: windows.weekly });
+      }
+    }
+    return result;
+  }
+
+  private enforceGlobalReorderBudget(): void {
+    const limit = Math.max(0, this.options.maxReorderBytes ?? REORDER_GLOBAL_MAX_BYTES);
+    const candidates = this.reorderWindows();
+    let total = candidates.reduce((sum, item) => sum + Math.max(0, item.window.reorderTailBytes - 2), 0);
+    if (total <= limit) return;
+    candidates.sort((a, b) => {
+      const aAt = a.window.reorderTail[0]?.arrivedAt ?? Number.POSITIVE_INFINITY;
+      const bAt = b.window.reorderTail[0]?.arrivedAt ?? Number.POSITIVE_INFINITY;
+      return aAt - bAt;
+    });
+    for (const candidate of candidates) {
+      if (total <= limit) break;
+      if (candidate.window.reorderTail.length === 0) continue;
+      const collapsed = collapseWindowReorderTail(candidate.window);
+      const windows = this.states.get(candidate.accountId)?.get(candidate.bucket);
+      if (!windows) continue;
+      this.states.get(candidate.accountId)?.set(candidate.bucket, {
+        ...windows,
+        [candidate.scope]: collapsed,
+      });
+      total -= Math.max(0, candidate.window.reorderTailBytes - 2);
+    }
   }
 
   private subjects(accountId: number): WindowSubjectConfig[] {

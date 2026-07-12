@@ -52,6 +52,11 @@ function primed() {
 }
 
 describe("causal current-window reducer", () => {
+  it("keeps the agreed 10,000-event / 1 MiB in-memory reorder budget", () => {
+    expect(REORDER_MAX_EVENTS).toBe(10_000);
+    expect(REORDER_MAX_BYTES).toBe(1024 * 1024);
+  });
+
   it("preserves legacy attribution at cutover without inventing CU", () => {
     const state = createCarriedWindowState({
       scope: "primary",
@@ -441,6 +446,17 @@ describe("causal current-window reducer", () => {
     for (let i = 0; i < 300; i += 1) state = reduceWindow(state, usage("A", T + 1 + i, T + 1 + i, 1));
     expect(state.reorderTail.length).toBeLessThanOrEqual(REORDER_MAX_EVENTS);
     expect(Buffer.byteLength(JSON.stringify(state.reorderTail), "utf8")).toBeLessThanOrEqual(REORDER_MAX_BYTES);
+  });
+
+  it("records an observable reason when capacity compacts causal evidence", () => {
+    const oversized = usage("A", T + 1, T + 1, 1);
+    oversized.reportId = `oversized-${"x".repeat(REORDER_MAX_BYTES + 1)}`;
+
+    const state = reduceWindow(primed(), oversized);
+
+    expect(state.reorderTail).toHaveLength(0);
+    expect(state.lastReason).toBe("WINDOW_TAIL_COMPACTED");
+    expect(state.lastCompactionCount).toBe(2);
   });
 
   it("maintains accounting and capacity invariants through a long deterministic sequence", () => {
