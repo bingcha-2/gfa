@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+func TestAppVersionMatchesRelease1350(t *testing.T) {
+	if AppVersion != "13.5.0" {
+		t.Fatalf("AppVersion = %q, want 13.5.0", AppVersion)
+	}
+}
+
 func TestCreateUpdaterDownloadClientHasNoGlobalTimeout(t *testing.T) {
 	client := createUpdaterDownloadClient(false)
 	if client == nil {
