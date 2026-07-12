@@ -98,6 +98,62 @@ describe("LeaseService (generic core)", () => {
     expect(order).toEqual(["load", "membership", "checkpoint"]);
   });
 
+  // 启动屏障:订阅表加载失败时,决不能用「只有文件卡」的残缺成员表覆盖旧账本,
+  // 否则订阅用户会被记成 inactive → 份额归 0 → 持续 429,直到下一次换绑才自愈。
+  it("defers membership reconciliation and rejects leases while subscriptions are not ready", async () => {
+    const order: string[] = [];
+    const fairShareTracker = {
+      load: vi.fn(async () => { order.push("load"); }),
+      refreshAllParticipants: vi.fn(() => { order.push("membership"); }),
+      flush: vi.fn(async () => { order.push("checkpoint"); }),
+    };
+    refreshToken.mockResolvedValue("tok");
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+      randomId: () => "lease-fixed",
+      minClientVersion: "",
+    }));
+    (service as any).accessKeyStore.beginSubscriptionBarrier();
+
+    await service.onModuleInit();
+    expect(order).toEqual(["load"]);
+
+    await expect(service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }))
+      .rejects.toMatchObject({
+        statusCode: 503,
+        body: expect.objectContaining({ code: "server_warming_up" }),
+      });
+
+    (service as any).accessKeyStore.markSubscriptionsReady();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(["load", "membership", "checkpoint"]);
+
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+  });
+
+  it("reloadAccessKeys does not emit a membership event while subscriptions are not ready", async () => {
+    const fairShareTracker = {
+      load: vi.fn(async () => {}),
+      refreshAllParticipants: vi.fn(),
+      flush: vi.fn(async () => {}),
+    };
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+    });
+    (service as any).accessKeyStore.beginSubscriptionBarrier();
+
+    await service.reloadAccessKeys();
+    expect(fairShareTracker.refreshAllParticipants).not.toHaveBeenCalled();
+
+    (service as any).accessKeyStore.markSubscriptionsReady();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await service.reloadAccessKeys();
+    expect(fairShareTracker.refreshAllParticipants).toHaveBeenCalled();
+  });
+
   it("ignores an ancient report after the client retry horizon", async () => {
     const startedAt = Date.parse("2030-01-01T00:00:00Z");
     let now = startedAt;

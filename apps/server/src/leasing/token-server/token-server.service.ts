@@ -85,6 +85,12 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
     );
     service = this;
     this.bootPrisma = options.prisma;
+    // 启动屏障:本进程负责加载订阅表(有 prisma)时,加载成功前不放行成员对账,
+    // 防止 DB 抖动 + 重启把订阅用户全部标成 inactive(持续 429 直到换绑)。
+    // 构造函数先于所有 onModuleInit 执行,codex/anthropic 共享同一 store,屏障全局生效。
+    if (this.bootPrisma?.subscription?.findMany) {
+      this.accessKeyStore.beginSubscriptionBarrier();
+    }
   }
 
   /**
@@ -150,9 +156,10 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
   /**
    * 去影子:把所有生效订阅(老列)转成限额 record,注册进 AccessKeyStore 的内存
    * subscriptionById。boot 跑一次;新订阅激活时由 entitlement-sync 增量注册。
-   * Best-effort:失败只是该订阅冷启动,不阻塞启动。
+   * 失败不阻塞启动,但保持启动屏障:成员对账与放租等到某次重试成功才恢复,
+   * 不允许拿「没有订阅」的残缺名单覆盖旧账本。
    */
-  private async loadActiveSubscriptions(prisma: any): Promise<void> {
+  private async loadActiveSubscriptions(prisma: any, attempt = 0): Promise<void> {
     if (!prisma?.subscription?.findMany) return;
     try {
       const now = new Date();
@@ -172,8 +179,13 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       for (const s of subs) {
         if (s.windowState) this.accessKeyStore.restoreSubscriptionWindow(s.id, s.windowState);
       }
+      this.accessKeyStore.markSubscriptionsReady();
     } catch (err: any) {
-      console.error(`[token-server] subscription load failed: ${err?.message || err}`);
+      console.error(`[token-server] subscription load failed (attempt ${attempt + 1}): ${err?.message || err}`);
+      // 屏障保持拉起,退避重试直到成功;期间放租返回 503、成员对账被推迟。
+      const delayMs = [5_000, 15_000, 60_000][attempt] ?? 60_000;
+      const timer = setTimeout(() => { void this.loadActiveSubscriptions(prisma, attempt + 1); }, delayMs);
+      (timer as any)?.unref?.();
     }
   }
 }

@@ -519,6 +519,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async leaseToken(req: any, payload: any) {
+    // 启动屏障:订阅表还没加载成功时,公平份额只有残缺成员表,放行会误判 429/份额。
+    // 明确回 503 让客户端稍后重试,而不是用错误的成员表计算。
+    if (!this.accessKeyStore.areSubscriptionsReady()) {
+      throw this.fail(503, "服务启动中,请稍后重试", { ok: false, error: "服务启动中,请稍后重试", code: "server_warming_up" });
+    }
     const modelKey = String(payload?.modelKey || payload?.model || "").trim();
     // 每卡 token 配额(bucketLimits,按复合桶设的每模型上限)在此作为服务端兜底 enforce:
     // 客户端 localQuota 是主拦截(租号前回 429),服务端按复合桶精确再拦一道,防客户端被绕过。
@@ -1531,8 +1536,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   async reloadAccessKeys() {
     this.accessKeyStore.reload();
-    this.fairShareTracker?.refreshAllParticipants();
-    await this.fairShareTracker?.flush();
+    // Same barrier as onModuleInit: never emit a membership event computed from
+    // an incomplete (subscriptions-not-yet-loaded) member list.
+    if (this.accessKeyStore.areSubscriptionsReady()) {
+      this.fairShareTracker?.refreshAllParticipants();
+      await this.fairShareTracker?.flush();
+    }
     return { ok: true, reloaded: true };
   }
 
@@ -1647,14 +1656,26 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.rehydrateAccountStatus();
     try {
       await this.fairShareTracker?.load();
-      // Persisted quota state describes the pre-restart membership. Reconcile it
-      // with the authoritative subscription store before serving, and durably
-      // checkpoint that membership event before startup completes.
-      this.fairShareTracker?.refreshAllParticipants();
-      await this.fairShareTracker?.flush();
     } catch (err) {
-      console.error("[lease-service] fairShareTracker restore/reconcile failed:", err);
+      console.error("[lease-service] fairShareTracker restore failed:", err);
+      return;
     }
+    // Persisted quota state describes the pre-restart membership. Reconcile it
+    // with the authoritative subscription store before serving, and durably
+    // checkpoint that membership event before startup completes. If the
+    // subscription table has not been loaded yet (barrier armed), defer: an
+    // incomplete member list would mark every subscription card inactive and
+    // 429 those users until a rebind.
+    const reconcile = async () => {
+      try {
+        this.fairShareTracker?.refreshAllParticipants();
+        await this.fairShareTracker?.flush();
+      } catch (err) {
+        console.error("[lease-service] fairShareTracker reconcile failed:", err);
+      }
+    };
+    if (this.accessKeyStore.areSubscriptionsReady()) await reconcile();
+    else this.accessKeyStore.onSubscriptionsReady(() => { void reconcile(); });
   }
 
   /**
