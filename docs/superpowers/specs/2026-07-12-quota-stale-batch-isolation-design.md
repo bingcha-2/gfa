@@ -28,4 +28,3 @@ After healthy siblings commit, the repository throws one `QuotaStaleRevisionErro
 - A healthy caller never receives a false failure because another key is stale.
 - The next scheduled flush is not poisoned by a stale sibling.
 - The ordinary no-stale path still performs one batch transaction.
-
