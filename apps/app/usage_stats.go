@@ -526,7 +526,7 @@ func (s *UsageStatsStore) AddModelTokensWithCacheWrites(family, modelKey string,
 		mode = "priority"
 	}
 	value := apiValue{USD: estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite), Quality: "legacy-family", PricingMode: mode}
-	if provider != "" && strings.TrimSpace(modelKey) != "" {
+	if provider != "" {
 		value = calculateAPIValue(provider, modelKey, mode, input+cacheRead+cacheWrite,
 			input, output, cacheRead, cacheWrite5m, cacheWrite1h, time.Now())
 	}
