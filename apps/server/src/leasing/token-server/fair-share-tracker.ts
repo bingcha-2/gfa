@@ -156,7 +156,7 @@ export interface FairShareTrackerOptions {
   getBoundCardWeights: (accountId: number) => Array<{ cardId: string; weight: number }>;
   /** 某号保底席位数 N(salesSeatCapacity,默认 8)。 */
   getSeatCapacity?: (accountId: number) => number;
-  /** 该卡是否独享(营销标签):血条只看自身用量 (e−T)/e,不随同号他人/未认领消耗缩放。 */
+  /** 该卡是否独享(营销标签):用于个人展示和唯一满份额所有者的冷启动归因回补。 */
   isExclusive?: (cardId: string) => boolean;
   /** 是否启用「周公平份额」第二层窗口。codex/anthropic=true;antigravity 仅 5h=false。 */
   trackWeekly?: boolean;
@@ -667,11 +667,11 @@ export class FairShareTracker {
       tracker.lastFraction = clamp01(fraction);
       // 真·独占号冷启动回补:号上只有这一张卡、且它占满整号(e≈1)时,冷启动前已烧的 (1−fraction)
       // 归属无歧义 —— 必是这张卡自己烧的,补进它的 T。否则周窗口会把「重启那刻的母号余量」误当满血
-      // 基线整整一周(独享血条跳过 scale 护栏,不像拼车会被 Σ 封顶自愈 → 血条虚高,见独享周窗口复现)。
+      // 基线整整一周(personalFraction 不走母号 scale,会虚高,见独享周窗口复现)。
       // 仅此一种归属无歧义的情形回补;拼车/超卖/未占满(e<1,余量可能是别人或未认领烧的)仍走原
       // 冷启动从宽(T=0)+ scale 护栏,避免把别人的账砸给单卡。
-      // 仅对独享卡回补:独享血条跳过 scale 护栏,冷启动丢历史无处自愈才会虚高;拼车/普通卡走
-      // scale 护栏(Σ 封顶=母号)已自愈,维持原冷启动从宽(T=0),不改其归因语义。
+      // 仅对独享卡回补:个人展示只看自身归因,冷启动丢历史会虚高;拼车展示仍走
+      // effective scale 护栏(Σ 封顶=母号),维持原冷启动从宽(T=0),不改其归因语义。
       const locked = this.ensureLocked(accountId, tracker);
       if (locked.participants.size === 1) {
         const only = [...locked.participants][0];
@@ -1087,6 +1087,41 @@ export class FairShareTracker {
 
   getWindowReasons(accountId: number, bucket: string) {
     return this.windowCu?.getReasons(accountId, bucket) ?? null;
+  }
+
+  getQuotaDiagnostic(accountId: number, cardId: string, bucket: string) {
+    if (!this.windowCu) return null;
+    const state = this.windowCu.getStateForTesting(accountId, bucket);
+    if (!state) return null;
+    const reasons = this.windowCu.getReasons(accountId, bucket);
+    const primaryQuota = this.windowCu.getCardFractions(accountId, cardId, false)[bucket];
+    const weeklyQuota = this.windowCu.getCardFractions(accountId, cardId, true)[bucket];
+    const describe = (
+      window: (typeof state)["primary"],
+      quota: typeof primaryQuota | undefined,
+      reason: string,
+    ) => {
+      if (!quota) return null;
+      const subject = window.subjects[cardId];
+      const attributedShare = subject
+        ? Number(subject.carriedAttributedShare || 0) + Number(subject.attributedShare || 0)
+        : 0;
+      return {
+        accountFraction: window.fraction,
+        personalFraction: quota.personalFraction,
+        effectiveFraction: quota.fraction,
+        accountScale: quota.personalFraction > 0 ? quota.fraction / quota.personalFraction : 0,
+        attributedShare,
+        unattributedShare: window.unattributedShare,
+        resetAt: window.resetAt,
+        revision: window.revision,
+        reason,
+      };
+    };
+    return {
+      primary: describe(state.primary, primaryQuota, reasons?.primary || ""),
+      weekly: describe(state.weekly, weeklyQuota, reasons?.weekly || ""),
+    };
   }
 
   private async pruneExpiredReceipts(): Promise<void> {

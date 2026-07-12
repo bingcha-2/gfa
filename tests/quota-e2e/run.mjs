@@ -254,6 +254,13 @@ try {
 
     const flush = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
     assert(flush.ok, "exclusive display state did not flush before restart");
+    const diagnosticRow = await prisma.requestLog.findFirst({ where: { reportId: "exclusive-a-u1" } });
+    const diagnostic = JSON.parse(diagnosticRow?.reason || "{}");
+    assert(diagnostic.quota?.primary?.personalFraction != null
+      && diagnostic.quota?.primary?.effectiveFraction != null
+      && diagnostic.quota?.primary?.accountFraction != null
+      && diagnostic.quota?.primary?.revision != null,
+    `exclusive request diagnostic missing quota state: ${diagnosticRow?.reason}`);
     await stopServer();
     port = await startServer();
     const restartedA = await runScenario("exclusive-oversell-a-restart", "card-80", [lease("card-80")]);

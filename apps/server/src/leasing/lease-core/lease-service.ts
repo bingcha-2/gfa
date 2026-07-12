@@ -1353,6 +1353,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const quotaReasons = quotaBucket
         ? this.fairShareTracker?.getWindowReasons(accountId, quotaBucket)
         : null;
+      const quotaDiagnostic = quotaBucket
+        ? this.fairShareTracker?.getQuotaDiagnostic(accountId, cardId, quotaBucket)
+        : null;
 
       if (accountId && this.banEventRecorder) {
         this.banEventRecorder.observeRequest({
@@ -1372,7 +1375,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         requestStartedAt: Number(payload?.requestStartedAt || 0),
         upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
         snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
-        reason: String(payload?.reason || ""),
+        reason: quotaDiagnostic
+          ? JSON.stringify({ message: String(payload?.reason || ""), quota: quotaDiagnostic })
+          : String(payload?.reason || ""),
         primaryReason: quotaReasons?.primary || "",
         weeklyReason: quotaReasons?.weekly || "",
       });

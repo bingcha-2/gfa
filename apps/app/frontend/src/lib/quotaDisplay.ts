@@ -157,7 +157,7 @@ export type NestedBarDisplay = {
  * - myFraction 已含服务端等比例缩放,用了/账号低都会让它降 → 血条等比例降。
  * - 封顶保证「我的总剩余 ≤ 账号」永不穿帮(名义 X/Y 比真实大,独占账号剩余时会顶破,故封顶)。
  * - 账号本身真实显示,不缩放(它是真池子;放大会 >100%)。
- * - 独享保持单层,但也取 min(myFraction,账号),避免超卖母号见底时仍显满血。
+ * - 独享保持单层并只用 personalFraction；后台有效值与母号层不参与个人展示。
  */
 export function nestedBarDisplay(input: {
   myFraction: number

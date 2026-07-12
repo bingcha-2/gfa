@@ -118,7 +118,7 @@ export class RequestLogTracker {
       requestStartedAt: BigInt(Math.max(0, Math.trunc(Number(e.requestStartedAt || 0)))),
       upstreamCompletedAt: BigInt(Math.max(0, Math.trunc(Number(e.upstreamCompletedAt || 0)))),
       snapshotObservedAt: BigInt(Math.max(0, Math.trunc(Number(e.snapshotObservedAt || 0)))),
-      reason: String(e.reason || "").slice(0, 200),
+      reason: String(e.reason || "").slice(0, 2_000),
       primaryReason: String(e.primaryReason || "").slice(0, 100),
       weeklyReason: String(e.weeklyReason || "").slice(0, 100),
     });

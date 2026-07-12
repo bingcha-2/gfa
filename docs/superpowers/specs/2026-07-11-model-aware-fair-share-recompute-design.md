@@ -129,7 +129,7 @@ Anthropic 公布了模型 Token 价格。本项目用它作为绑定用户之间
 - 份额分母继续使用 `D = max(N, Σw)`。
 - 超卖订单是否允许创建、绑定账号选择、超卖后份额切薄规则不变。
 - `exclusive` 显式标记、满权重自动识别独享、客户端独享徽标不变。
-- 独享血条是否跳过拼车 scale 的现有产品语义不变。
+- 独享与拼车的后台有效额度均遵守母号守恒；独享展示改用单独的 `personalFraction`，详见 `2026-07-12-exclusive-shared-oversell-display-design.md`。
 - 中途加绑调用 `refreshParticipants()` 后即时重算 `D` 的现有语义不变。
 - 5h 和周窗口各自锁定参与者与 reset 的行为不变。
 

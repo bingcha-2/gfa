@@ -24,17 +24,17 @@ export interface WindowCuEngineOptions {
 
 type AccountingView = Pick<FairShareWindowState,
   "scope" | "windowMs" | "primed" | "windowStart" | "resetAt" | "fraction" | "lastSnapshotAt"
-  | "assignedBurn" | "unattributedShare" | "subjects"
+  | "assignedBurn" | "unattributedShare" | "subjects" | "revision"
 >;
 
 function view(state: FairShareWindowState): AccountingView {
   const {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects,
+    assignedBurn, unattributedShare, subjects, revision,
   } = state;
   return {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects,
+    assignedBurn, unattributedShare, subjects, revision,
   };
 }
 
