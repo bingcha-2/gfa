@@ -194,6 +194,11 @@ export class FairShareTracker {
     accountings: HourlyUsageAccounting[];
     createdAt: Date;
   }> | null;
+  // 防重复扣:已进入 reducer、但回执尚未确认落库的 reportId(及其小时账)。
+  // 任何 flush 都必须捎带,保证「窗口状态 + 回执」原子持久——否则崩溃后客户端
+  // 重试同一 reportId 会被当作新上报再计一次 CU。DB 持续故障时该表随未确认
+  // 上报增长,由既有的 dirty 重试收敛;成功落库即清。
+  private readonly pendingReceipts = new Map<string, Map<string, HourlyUsageAccounting | null>>();
 
   constructor(opts: FairShareTrackerOptions) {
     this.opts = opts;
@@ -276,13 +281,18 @@ export class FairShareTracker {
     if (!this.windowCu || !this.writeCoordinator) return;
     const entry = this.windowCu.entry(accountId, bucket);
     if (!entry) return;
+    const key = this.pendingKey(accountId, bucket);
+    if (reportId) this.registerPendingReceipt(accountId, bucket, reportId, accounting ?? null);
+    // 连同此前提交失败、仍待确认的回执一起落库(union 幂等:INSERT OR IGNORE)。
+    const pending = this.collectPendingReceipts(key);
     const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
     await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
       ...entry,
-      reportIds: reportId ? [reportId] : [],
-      accountings: accounting ? [accounting] : [],
+      reportIds: pending.reportIds,
+      accountings: pending.accountings,
       createdAt: new Date(this.nowFn()),
     }, true);
+    this.clearPendingReceipts(key, pending.reportIds);
   }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
@@ -343,7 +353,47 @@ export class FairShareTracker {
       throw new Error("recordUsageEvent requires window-cu-v1");
     }
     this.windowCu.recordUsage(accountId, bucket, event);
+    // 事件一进 reducer 就登记待送回执;checkpointReport 同一宏任务内补小时账,
+    // 中间不可能插入定时 flush,不存在「回执先落库、小时账丢失」的窗口。
+    if (event.reportId) this.registerPendingReceipt(accountId, bucket, event.reportId, null);
     this.dirty = true;
+  }
+
+  // ── Pending receipt bookkeeping(防重复扣)─────────────────────────────────
+
+  private pendingKey(accountId: number, bucket: string): string {
+    return `${accountId}\u0000${bucket}`;
+  }
+
+  private registerPendingReceipt(
+    accountId: number,
+    bucket: string,
+    reportId: string,
+    accounting: HourlyUsageAccounting | null,
+  ): void {
+    const key = this.pendingKey(accountId, bucket);
+    let entry = this.pendingReceipts.get(key);
+    if (!entry) {
+      entry = new Map();
+      this.pendingReceipts.set(key, entry);
+    }
+    entry.set(reportId, accounting ?? entry.get(reportId) ?? null);
+  }
+
+  private collectPendingReceipts(key: string): { reportIds: string[]; accountings: HourlyUsageAccounting[] } {
+    const entry = this.pendingReceipts.get(key);
+    if (!entry || entry.size === 0) return { reportIds: [], accountings: [] };
+    return {
+      reportIds: [...entry.keys()],
+      accountings: [...entry.values()].filter((value): value is HourlyUsageAccounting => value != null),
+    };
+  }
+
+  private clearPendingReceipts(key: string, reportIds: string[]): void {
+    const entry = this.pendingReceipts.get(key);
+    if (!entry) return;
+    for (const reportId of reportIds) entry.delete(reportId);
+    if (entry.size === 0) this.pendingReceipts.delete(key);
   }
 
   applyAccountQuotaSnapshotAt(
@@ -965,14 +1015,19 @@ export class FairShareTracker {
       if (!this.dirty) return;
       this.dirty = false;
       try {
-        await Promise.all(this.windowCu.entries().map((entry) => {
+        await Promise.all(this.windowCu.entries().map(async (entry) => {
+          const key = this.pendingKey(entry.accountId, entry.bucket);
+          // 状态与其未确认回执必须同批落库:只写状态会给「崩溃后重试同一
+          // reportId 被再计一次 CU」留下窗口。
+          const pending = this.collectPendingReceipts(key);
           const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
-          return this.writeCoordinator!.enqueue(`${entry.accountId}\u0000${entry.bucket}`, revision, {
+          await this.writeCoordinator!.enqueue(`${entry.accountId}\u0000${entry.bucket}`, revision, {
             ...entry,
-            reportIds: [],
-            accountings: [],
+            reportIds: pending.reportIds,
+            accountings: pending.accountings,
             createdAt: new Date(this.nowFn()),
           }, true);
+          this.clearPendingReceipts(key, pending.reportIds);
         }));
       } catch (error) {
         this.dirty = true;

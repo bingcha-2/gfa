@@ -60,6 +60,60 @@ describe("QUOTA_WEIGHTS 派生自定价源", () => {
 });
 
 describe("window-cu background persistence", () => {
+  // 防重复扣:窗口状态落库了、reportId 回执没落库时,客户端重试会再计一次 CU。
+  // 任何 flush 都必须捎带尚未确认落库的回执(含小时账),让「状态 + 回执」原子持久。
+  it("carries unacknowledged receipts and accountings on the dirty-tick flush", async () => {
+    const T0 = 1_800_000_000_000;
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1",
+      provider: "codex",
+      prisma: {} as any,
+      now: () => T0,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "card-a", weight: 1 }],
+      getSeatCapacity: () => 2,
+    }));
+    const batches: any[] = [];
+    const commit = vi.fn()
+      .mockRejectedValueOnce(new Error("sqlite busy"))
+      .mockImplementation(async (batch: any[]) => { batches.push(...batch); });
+    (tracker as any).windowRepository.checkpointBatch = commit;
+
+    tracker.applyAccountQuotaSnapshotAt(1, BK, { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p0" });
+    tracker.recordUsageEvent(1, BK, {
+      reportId: "r-1", provider: "codex", accountId: 1, quotaSubjectId: "card-a", modelId: "gpt-5.4",
+      inputTokens: 1_000_000, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+      outputTokens: 0, serviceTier: "standard", requestStartedAt: T0 - 2_000,
+      upstreamCompletedAt: T0 - 1_000, arrivedAt: T0,
+    });
+    const accounting = {
+      reportId: "r-1", at: new Date(T0), accessKeyId: "card-a", accountEmail: "a@x", customerId: "",
+      modelKey: "gpt-5.4", bucket: BK, status: 200, inputTokens: 1_000_000, outputTokens: 0,
+      cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 1_000_000, totalTokens: 1_000_000,
+      reverseProxy: false, serviceTier: "",
+    };
+    // 首次 checkpoint 提交失败:客户端拿不到 ack,会重试;回执必须留在待送清单里。
+    await expect(tracker.checkpointReport(1, BK, "r-1", accounting as any)).rejects.toThrow("sqlite busy");
+
+    // 定时 flush(dirty tick)持久化状态时必须捎带该回执与小时账。
+    await tracker.flush();
+    const carried = batches.find((b) => (b.reportIds || []).includes("r-1"));
+    expect(carried).toBeTruthy();
+    expect((carried.accountings || []).map((a: any) => a.reportId)).toContain("r-1");
+
+    // 落库成功后不再重复携带。
+    batches.length = 0;
+    tracker.recordUsageEvent(1, BK, {
+      reportId: "r-2", provider: "codex", accountId: 1, quotaSubjectId: "card-a", modelId: "gpt-5.4",
+      inputTokens: 1_000, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+      outputTokens: 0, serviceTier: "standard", requestStartedAt: T0 - 500,
+      upstreamCompletedAt: T0 - 100, arrivedAt: T0,
+    });
+    await tracker.flush();
+    expect(batches.some((b) => (b.reportIds || []).includes("r-1"))).toBe(false);
+    expect(batches.some((b) => (b.reportIds || []).includes("r-2"))).toBe(true);
+  });
+
   it("handles a scheduled flush rejection instead of leaking an unhandled promise", async () => {
     vi.useFakeTimers();
     const error = new Error("sqlite busy");
