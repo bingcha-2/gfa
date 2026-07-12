@@ -74,6 +74,28 @@ func TestRecordFairShareQuota_StoresPersonalFractionsSeparately(t *testing.T) {
 	}
 }
 
+func TestRecordFairShareQuota_ClearsPersonalFractionsWhenServerOmitsThem(t *testing.T) {
+	clearBoundFractionsForTest()
+	recordFairShareQuota([]byte(`{
+        "accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+        "fairShareQuota":{"codex-gpt":{"fraction":0.4,"personalFraction":0.8,"resetAt":2000,"share":0.5}},
+        "weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"personalFraction":0.7,"resetAt":3000,"share":0.5}}
+    }`))
+
+	recordFairShareQuota([]byte(`{
+        "accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+        "fairShareQuota":{"codex-gpt":{"fraction":0.4,"resetAt":2000,"share":0.5}},
+        "weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"resetAt":3000,"share":0.5}}
+    }`))
+
+	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
+		t.Fatal("旧服务端缺 personalFraction 时不应保留上一服务端的个人 5h 血条")
+	}
+	if _, ok := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; ok {
+		t.Fatal("旧服务端缺 personalFraction 时不应保留上一服务端的个人周血条")
+	}
+}
+
 func TestResetBoundFractions(t *testing.T) {
 	clearBoundFractionsForTest()
 

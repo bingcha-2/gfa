@@ -164,12 +164,12 @@ func invalidateIDEDetectCacheForInstallPathChange(oldCfg, newCfg Config) {
 	}
 }
 
-// clearLocalCardState clears all local session-level state when the session token changes.
+// clearLocalCardState clears all local quota/session state when the session token changes.
 // Called on every auth transition — SaveConfig token change, UserLogin, UserLogout, and
 // heartbeat forced logout — so no stale blood bars or entitlements leak across sessions.
+// Usage history belongs to this installation rather than the active login, so it is preserved.
 func clearLocalCardState() {
-	Log("[app] Session token changed: clearing local stats")
-	GetUsageStats().Reset()
+	Log("[app] Session token changed: clearing local quota state")
 	GetLeaser().ResetLocalQuota()
 	GetLeaser().ClearAccessKeyStatus()
 	// 旧会话的订阅授权 + 卡密不可用 latch 不能续用,否则新登录会按旧授权路由 antigravity,

@@ -136,6 +136,19 @@ func recordMyPersonalBucketFraction(bucket string, fraction float64) {
 	boundFracMu.Unlock()
 }
 
+func clearMyPersonalBucketFraction(bucket string) {
+	if bucket == "" {
+		return
+	}
+	boundFracMu.Lock()
+	if q, ok := boundFractions[bucket]; ok {
+		q.HasMyPersonal = false
+		q.MyPersonalFraction = 0
+		boundFractions[bucket] = q
+	}
+	boundFracMu.Unlock()
+}
+
 // recordMyWeeklyBucketFraction 按复合桶 key 记录【我的份额·周】(fair-share 周窗口)剩余分数,
 // 保留已有的整号值与 5h 份额值。用于 lease 响应里的 weeklyFairShareQuota(周血条视角)。
 func recordMyWeeklyBucketFraction(bucket string, fraction float64, resetAt int64) {
@@ -160,6 +173,19 @@ func recordMyPersonalWeeklyBucketFraction(bucket string, fraction float64) {
 	q.HasMyPersonalWeekly = true
 	q.MyPersonalWeeklyFraction = fraction
 	boundFractions[bucket] = q
+	boundFracMu.Unlock()
+}
+
+func clearMyPersonalWeeklyBucketFraction(bucket string) {
+	if bucket == "" {
+		return
+	}
+	boundFracMu.Lock()
+	if q, ok := boundFractions[bucket]; ok {
+		q.HasMyPersonalWeekly = false
+		q.MyPersonalWeeklyFraction = 0
+		boundFractions[bucket] = q
+	}
 	boundFracMu.Unlock()
 }
 
