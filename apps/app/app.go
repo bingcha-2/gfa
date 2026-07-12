@@ -165,7 +165,8 @@ func invalidateIDEDetectCacheForInstallPathChange(oldCfg, newCfg Config) {
 }
 
 // clearLocalCardState clears all local session-level state when the session token changes.
-// Used by both SaveConfig and UserLogout to avoid stale data on new sessions.
+// Called on every auth transition — SaveConfig token change, UserLogin, UserLogout, and
+// heartbeat forced logout — so no stale blood bars or entitlements leak across sessions.
 func clearLocalCardState() {
 	Log("[app] Session token changed: clearing local stats")
 	GetUsageStats().Reset()

@@ -374,6 +374,88 @@ func TestUserLogout_ClearsMitmToken(t *testing.T) {
 	}
 }
 
+// ── 血条缓存与账号会话解耦 ───────────────────────────────────────────────────
+
+// TestUserLogout_ClearsBloodBars:登出必须清空血条缓存(我的份额 + 个人份额
+// 两个窗口维度),防止上一账号的独享个人血条在下一账号首个 lease 应答前串显
+// (设计场景 7「不继承旧卡血条」)。
+func TestUserLogout_ClearsBloodBars(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+
+	cfg := DefaultConfig()
+	cfg.UserToken = "" // token 为空 → 跳过 best-effort 网络登出
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	resetBoundFractions()
+	defer resetBoundFractions()
+	recordMyBucketFraction("anthropic-claude", 0.4, 0, 0.5)
+	recordMyPersonalBucketFraction("anthropic-claude", 0.9)
+	recordMyPersonalWeeklyBucketFraction("anthropic-claude", 0.8)
+
+	app := &App{}
+	if err := app.UserLogout(); err != nil {
+		t.Fatalf("UserLogout: %v", err)
+	}
+
+	if got := snapshotMyFractions(); len(got) != 0 {
+		t.Errorf("my fractions after logout = %v, want empty", got)
+	}
+	if got := snapshotMyPersonalFractions(); len(got) != 0 {
+		t.Errorf("personal fractions after logout = %v, want empty", got)
+	}
+	if got := snapshotMyPersonalWeeklyFractions(); len(got) != 0 {
+		t.Errorf("personal weekly fractions after logout = %v, want empty", got)
+	}
+}
+
+// TestUserLogin_ClearsBloodBars:登录(可能换账号)同样必须清空旧血条缓存,
+// 新账号额度由其首个 lease/heartbeat 应答重新写入。
+func TestUserLogin_ClearsBloodBars(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+
+	expiresAt := time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	loginResp := map[string]interface{}{
+		"token":          "tok-next-user",
+		"tokenExpiresAt": expiresAt,
+		"account":        map[string]interface{}{"email": "next@example.com"},
+		"subscription": map[string]interface{}{
+			"planName": "Pro", "status": "active", "expiresAt": expiresAt,
+			"deviceLimit": 3, "products": []string{"antigravity"},
+		},
+	}
+	srv := newLoginServer(t, loginResp, http.StatusOK, func(map[string]interface{}) {})
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+	t.Cleanup(func() {
+		GetLeaser().StopAutoLease()
+		GetLeaser().ResetEntitlements()
+		GetHTTPProxy().Stop()
+		GetMitmManager().StopProxy()
+		GetMitmManager().UpdateConfig("", "", "")
+	})
+
+	resetBoundFractions()
+	defer resetBoundFractions()
+	recordMyPersonalBucketFraction("anthropic-claude", 0.9)
+
+	app := &App{}
+	if _, err := app.UserLogin("next@example.com", "secret-pass"); err != nil {
+		t.Fatalf("UserLogin: %v", err)
+	}
+
+	if got := snapshotMyPersonalFractions(); len(got) != 0 {
+		t.Errorf("personal fractions after login = %v, want empty", got)
+	}
+}
+
 // ── Heartbeat: server-driven session lifecycle ───────────────────────────────
 
 // newHeartbeatServer returns a test server answering POST /app/heartbeat.
