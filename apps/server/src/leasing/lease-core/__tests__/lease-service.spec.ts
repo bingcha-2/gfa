@@ -194,10 +194,9 @@ describe("LeaseService (generic core)", () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
-  // 长流式(>16 分钟很常见)完成时 lease 决不能已被清扫:清扫过的上报只能按
-  // 无主处理(accountId=0),公平份额丢归因。绑定 lease 的 TTL 会贴上游 token
-  // 的真实到期缩短(最短 ~15 分钟),所以清扫宽限必须覆盖 35 分钟补报期。
-  it("keeps an expired lease attributable until the replay grace elapses", async () => {
+  // 未完成上报的长流必须保留归因映射,不能拿 token lease 的到期时间猜请求
+  // 已经结束。完成上报后映射立即删除,所以不会靠多小时 TTL 堆内存。
+  it("keeps an unreported expired lease attributable and deletes it after completion", async () => {
     const startedAt = Date.parse("2030-01-01T00:00:00Z");
     let now = startedAt;
     // 上游 token 16 分钟后到期 → 绑定 lease TTL 被压到 ~15 分钟(最短情形)。
@@ -223,9 +222,8 @@ describe("LeaseService (generic core)", () => {
     }));
     const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
 
-    // 20 分钟后(过期 15 分钟):生产环境里其他请求会不断触发清扫,这里用
-    // getStatus() 显式触发同一路径。
-    now += 20 * 60 * 1000;
+    // T+55min 已超过旧的 expiresAt+35min 清扫线;仍未上报就必须保留。
+    now += 55 * 60 * 1000;
     service.getStatus();
 
     const result = await service.reportResult(REQ, {
@@ -238,18 +236,33 @@ describe("LeaseService (generic core)", () => {
       .filter((call) => call[2]?.reportId === "sweep-survivor");
     expect(attributed).toHaveLength(1);
     expect(attributed[0][0]).toBeGreaterThan(0);
-
-    // 但超过「过期 + 35 分钟补报宽限」后仍要清扫(内存有界),此后的上报不再归因。
-    // 时间线:T+15min 过期 → 宽限到 T+50min;T+55min 时必须已被清扫。
-    now += 35 * 60 * 1000;
+    expect((service as any).leases.has(lease.leaseId)).toBe(true);
+    now += 10 * 60 * 1000 + 1;
     service.getStatus();
-    await expect(service.reportResult(REQ, {
-      leaseId: lease.leaseId, reportId: "swept-after-grace", status: 200, modelKey: "gpt-5-codex",
-      inputTokens: 50, totalTokens: 50, rawTotalTokens: 50,
-      requestStartedAt: startedAt, upstreamCompletedAt: now - 100,
-    })).resolves.toMatchObject({ ok: true });
-    expect(fairShareTracker.recordUsageEvent.mock.calls
-      .filter((call) => call[2]?.reportId === "swept-after-grace")).toHaveLength(0);
+    expect((service as any).leases.has(lease.leaseId)).toBe(false);
+  });
+
+  it("bounds abandoned expired attribution mappings without evicting active leases", () => {
+    const now = Date.parse("2030-01-01T00:00:00Z");
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      now: () => now,
+      maxRetainedLeaseRecords: 2,
+    });
+    const leases = (service as any).leases as Map<string, any>;
+    const record = (leaseId: string, createdAt: number, expiresAt: number) => ({
+      leaseId, createdAt, expiresAt: new Date(expiresAt).toISOString(), released: false,
+      accountId: 1, email: "one@example.com", projectId: "", clientId: "c", modelKey: "gpt",
+      accessKeyId: "card-1", accessKeySessionId: "", isGeneration: true, requestBodyBytes: 0,
+      successfulReportSeen: false,
+    });
+    leases.set("oldest", record("oldest", now - 4_000, now - 3_000));
+    leases.set("newer", record("newer", now - 3_000, now - 2_000));
+    leases.set("active", record("active", now - 1_000, now + 60_000));
+
+    service.getStatus();
+
+    expect([...leases.keys()]).toEqual(["newer", "active"]);
   });
 
   it("returns a Chinese 429 message while preserving the stable fair-share reason code", async () => {

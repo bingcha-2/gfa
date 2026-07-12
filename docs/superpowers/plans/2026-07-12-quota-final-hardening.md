@@ -49,8 +49,8 @@
 - Modify: `tests/quota-e2e/run.mjs`
 
 - [ ] Replace the current counter-test with a failing case that advances beyond `expiresAt + 35m`, triggers cleanup, then completes recently and must still attribute to the original account.
-- [ ] Add a failing test that successful processing removes the lease and that more than 100,000 abandoned expired mappings evict the oldest first without touching active leases.
-- [ ] Keep unreported expired lease mappings, delete a lease only after a successful report path completes, and enforce the count cap during cleanup.
+- [ ] Add a failing test that completed mappings survive the 10-minute reorder window then expire, and that more than 100,000 abandoned expired mappings evict the oldest first without touching active leases.
+- [ ] Keep unreported expired lease mappings, mark terminal reports complete, delete completed mappings after the 10-minute reorder window, and enforce the count cap during cleanup.
 - [ ] Extend cross-process E2E with a completion beyond the former grace threshold.
 - [ ] Run lease-service specs and quota E2E; commit `fix(lease): retain attribution until report completion`.
 

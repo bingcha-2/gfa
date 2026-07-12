@@ -137,12 +137,13 @@ async function runScenario(name, cardId, operations) {
 }
 async function persistKeys() { await writeFile(keysFile, JSON.stringify({ keys: cards })); }
 function assert(value, message) { if (!value) throw new Error(`${message}`); }
-async function testControl(path, body = {}, expectedStatus = 200) {
+async function testControl(path, body = {}, expectedStatus = null) {
   const response = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
   const parsed = await response.json().catch(() => ({}));
-  assert(response.status === expectedStatus, `test control ${path} failed: HTTP ${response.status} ${JSON.stringify(parsed)}`);
+  assert(expectedStatus == null ? response.ok : response.status === expectedStatus,
+    `test control ${path} failed: HTTP ${response.status} ${JSON.stringify(parsed)}`);
   return parsed;
 }
 async function waitFor(label, check, timeoutMs = 3_000) {
@@ -808,12 +809,12 @@ try {
       const stream = await runScenario("long-stream-base", "card-63", [clock(t), lease("card-63"),
         report({ reportId: "long-stream-q0", status: 0, accountQuota: quota(63, 100, 100, t) }),
       ]);
-      // 42 分钟后:绑定 lease(TTL 40 分钟)已过期;另一张卡租号触发生产清扫路径。
-      await testControl("time", { now: t + 42 * 60_000 });
+      // 90 分钟后:已超过旧的 TTL 40min + 35min 清扫线;仍未完成上报就必须保留归因。
+      await testControl("time", { now: t + 90 * 60_000 });
       await runScenario("long-stream-sweeper", "card-64", [lease("card-64")]);
       await runScenario("long-stream-report", "card-63", [
         report({ leaseId: stream.leaseId, reportId: "long-stream-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
-          requestStartedAt: t + 1_000, upstreamCompletedAt: t + 42 * 60_000 - 100 }),
+          requestStartedAt: t + 1_000, upstreamCompletedAt: t + 90 * 60_000 - 100 }),
       ]);
       await testControl("flush");
       const streamHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });

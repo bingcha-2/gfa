@@ -36,8 +36,9 @@ traffic, enabling WAL, or adding a per-request event table.
 - The in-memory lease record is already a credential-free mapping from lease ID
   to card and upstream account.
 - An unreported lease remains available for attribution even after token expiry.
-- A completed report deletes its lease record immediately after successful
-  processing.
+- A completed report marks the mapping complete and retains it for the same
+  10-minute causal window so a snapshot that arrives after usage can still bind
+  to the correct account; cleanup removes it after that window.
 - Abandoned records are bounded by a 100,000-entry cap; oldest expired records
   are evicted only when the cap is exceeded. There is no arbitrary multi-hour
   waiting period and no new database table.
