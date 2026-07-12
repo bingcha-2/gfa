@@ -258,6 +258,59 @@ describe("LeaseService (generic core)", () => {
     expect((service as any).leases.has(lease.leaseId)).toBe(false);
   });
 
+  // 绑定卡 lease 存活 40 分钟,客户端会缓存复用同一个 lease 连续上报。首次上报
+  // 后 10 分钟的因果保留清扫**不能**在 lease 仍然有效期内就删掉映射,否则同一个
+  // 缓存 lease 的下一次上报会归因失败(accountId=0),份额少记、血条变陈旧。
+  it("keeps a still-valid lease attributable across an idle gap after its first report", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    // 上游 token 2 小时后到期 → 绑定 lease TTL = 40 分钟(BOUND_LEASE_TTL_MS)。
+    const jwtPayload = Buffer.from(JSON.stringify({ exp: Math.floor((startedAt + 2 * 60 * 60 * 1000) / 1000) }))
+      .toString("base64url");
+    refreshToken.mockResolvedValue(`eyJhbGciOiJIUzI1NiJ9.${jwtPayload}.sig`);
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const fairShareTracker = {
+      checkFairShare: vi.fn(() => ({ allowed: true })),
+      isWindowCuEnabled: vi.fn(() => true),
+      recordUsageEvent: vi.fn(),
+      checkpointReport: vi.fn(async () => {}),
+      hasPersistedReport: vi.fn(async () => false),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    };
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, randomId: () => "reused-lease",
+      minClientVersion: "", fairShareTracker: fairShareTracker as any,
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    await service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "first-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: now,
+    });
+
+    // 空闲 12 分钟(> 10 分钟因果保留,但仍在 40 分钟 TTL 内 → lease 依旧有效)。
+    now += 12 * 60 * 1000;
+    service.getStatus();
+    expect((service as any).leases.has(lease.leaseId)).toBe(true);
+
+    // 复用同一个缓存 lease 的第二次上报必须仍能归因到真实账号。
+    const second = await service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "second-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 50, totalTokens: 50, rawTotalTokens: 50,
+      requestStartedAt: now - 1_000, upstreamCompletedAt: now,
+    });
+    expect(second).toMatchObject({ ok: true });
+    const attributed = fairShareTracker.recordUsageEvent.mock.calls
+      .filter((call) => call[2]?.reportId === "second-report");
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0][0]).toBeGreaterThan(0);
+  });
+
   it("bounds abandoned expired attribution mappings without evicting active leases", () => {
     const now = Date.parse("2030-01-01T00:00:00Z");
     const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {

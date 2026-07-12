@@ -2481,7 +2481,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private cleanupExpiredLeases() {
     const now = this.now();
     for (const [id, lease] of this.leases) {
-      if (lease.reportedAt != null && lease.reportedAt + LEASE_CAUSAL_RETENTION_MS <= now) {
+      // A completed report keeps its mapping only for the causal-reorder window.
+      // But a client caches and REUSES a still-valid lease (bound cards live up
+      // to 40 min) across many reports, so the mapping must survive until the
+      // lease itself expires — otherwise the next report on the same cached lease
+      // resolves to accountId=0 and its usage is never attributed. Delete only
+      // once BOTH the causal window has passed AND the lease can no longer be
+      // reused (expired); the client re-leases after expiry with a fresh id.
+      const causalWindowPassed = lease.reportedAt != null && lease.reportedAt + LEASE_CAUSAL_RETENTION_MS <= now;
+      const leaseExpiry = Date.parse(lease.expiresAt);
+      const leaseExpired = !Number.isFinite(leaseExpiry) || leaseExpiry <= now;
+      if (causalWindowPassed && leaseExpired) {
         this.leases.delete(id);
       }
     }

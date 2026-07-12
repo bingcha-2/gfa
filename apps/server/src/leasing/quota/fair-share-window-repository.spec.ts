@@ -308,6 +308,41 @@ describe("FairShareWindowRepository with SQLite", () => {
     await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
   });
 
+  // 一个账号 revision 过期不能连坐回滚同批次其它健康账号的 head/回执/计费。
+  // 否则灰度期间一行陈旧数据能把整批 checkpoint 拖垮,并每 30s 重试永远失败。
+  it("isolates a stale checkpoint so healthy siblings in the same batch still persist", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    // 账号 7 的持久 head 已经领先(模拟旧进程/僵尸写入)。
+    const older = populatedWindows();
+    const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer-state", T + 30) });
+    await repository.checkpointAccount(7, "codex-gpt", newer);
+    // 账号 8 是全新健康的 checkpoint,带自己的回执。
+    const healthy = populatedWindows();
+
+    await expect(repository.checkpointBatch([
+      { accountId: 7, bucket: "codex-gpt", windows: older, reportIds: ["stale-report"] },
+      {
+        accountId: 8, bucket: "codex-gpt", windows: healthy, reportIds: ["healthy-report"],
+        accountings: [{
+          reportId: "healthy-report", at: new Date(T + 1234), accessKeyId: "healthy-card",
+          accountEmail: "healthy@x.test", customerId: "healthy-customer", modelKey: "gpt-5.6-luna",
+          bucket: "codex-gpt", status: 200, inputTokens: 10, outputTokens: 2,
+          cachedInputTokens: 3, cacheCreationTokens: 0, rawTotalTokens: 15, totalTokens: 12,
+          reverseProxy: false, serviceTier: "standard",
+        }],
+      },
+    ])).rejects.toMatchObject({ code: "QUOTA_STALE_REVISION", staleKeys: [`7\u0000codex-gpt`] });
+
+    // 陈旧账号 7:head 未被回滚(仍是 newer),回执未确认。
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
+    await expect(repository.hasReport("stale-report")).resolves.toBe(false);
+    // 健康账号 8:head 与回执必须已落库,不被连坐回滚。
+    await expect(repository.loadAccount(8, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(healthy) });
+    await expect(repository.hasReport("healthy-report")).resolves.toBe(true);
+    await expect(prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "healthy-card" } }))
+      .resolves.toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+  });
+
   it("keeps row count fixed while revisions grow", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     let windows = populatedWindows();

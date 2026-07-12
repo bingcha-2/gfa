@@ -14,6 +14,14 @@ interface PendingEntry<T> extends PendingRevision<T> {
   waiters: Waiter[];
 }
 
+function staleKeysFrom(error: unknown): Set<string> | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as { code?: unknown; staleKeys?: unknown };
+  if (candidate.code !== "QUOTA_STALE_REVISION" || !Array.isArray(candidate.staleKeys)) return null;
+  if (!candidate.staleKeys.every((key) => typeof key === "string")) return null;
+  return new Set(candidate.staleKeys);
+}
+
 export class QuotaWriteCoordinator<T> {
   private readonly pending = new Map<string, PendingEntry<T>>();
   private readonly persisted = new Map<string, number>();
@@ -91,7 +99,18 @@ export class QuotaWriteCoordinator<T> {
         for (const waiter of entry.waiters) waiter.resolve(entry.revision);
       }
     } catch (error) {
-      for (const entry of entries) for (const waiter of entry.waiters) waiter.reject(error);
+      const staleKeys = staleKeysFrom(error);
+      const hasMatchingStaleKey = staleKeys != null && entries.some((entry) => staleKeys.has(entry.key));
+      for (const entry of entries) {
+        if (!hasMatchingStaleKey || staleKeys!.has(entry.key)) {
+          for (const waiter of entry.waiters) waiter.reject(error);
+          continue;
+        }
+        // The repository's stale error is a partial-success result: every key
+        // not listed in staleKeys was committed before the error was raised.
+        this.persisted.set(entry.key, Math.max(this.persisted.get(entry.key) || 0, entry.revision));
+        for (const waiter of entry.waiters) waiter.resolve(entry.revision);
+      }
     } finally {
       this.flushing = false;
       if (this.pending.size >= maxBatchSize) void this.flush();

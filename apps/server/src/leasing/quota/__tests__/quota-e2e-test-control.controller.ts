@@ -3,6 +3,8 @@ import type { PrismaClient } from "@prisma/client";
 import { RemoteCodexService } from "../../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../../remote-anthropic/service/remote-anthropic.service";
 import { RequestLogTracker } from "../../token-server/request-log-tracker";
+import { checkpointKey } from "../fair-share-window-repository";
+import { QuotaWriteCoordinator } from "../quota-write-coordinator";
 
 let dependencies: {
   prisma: PrismaClient;
@@ -97,6 +99,80 @@ export class QuotaE2ETestControlController {
       createdAt: new Date(),
     }]);
     return { ok: true, attemptedRevision: Math.max(windows.primary.revision, windows.weekly.revision) };
+  }
+
+  /** Exercise the production repository + write coordinator partial-success contract. */
+  @Post("stale-checkpoint-batch")
+  async staleCheckpointBatch(@Body() body: {
+    provider?: Provider;
+    staleAccountId?: number;
+    healthyAccountId?: number;
+    bucket?: string;
+  }) {
+    const provider = body.provider === "anthropic" ? "anthropic" : "codex";
+    const staleAccountId = Number(body.staleAccountId || 0);
+    const healthyAccountId = Number(body.healthyAccountId || 0);
+    const bucket = String(body.bucket || "");
+    const tracker = trackerFor(provider);
+    const staleCurrent = tracker.windowCu.entry(staleAccountId, bucket);
+    if (!staleCurrent) {
+      throw new Error(`missing stale-batch state ${provider}/${staleAccountId}/${healthyAccountId}/${bucket}`);
+    }
+    // Use the production coordinator against the production repository, but a
+    // fresh queue: the tracker's 50ms background E2E flush may otherwise merge
+    // this deliberately old payload with a pending current revision before it
+    // reaches SQLite, making the fault injection nondeterministic.
+    const coordinator = new QuotaWriteCoordinator<any>({
+      maxDelayMs: 1,
+      maxBatchSize: 64,
+      commit: async (batch) => tracker.windowRepository.checkpointBatch(batch.map((entry: any) => entry.payload)),
+    });
+    const staleWindows = structuredClone(staleCurrent.windows);
+    const durableHeads = await dependencies.prisma.fairShareWindowHead.findMany({
+      where: { provider, accountId: staleAccountId, bucket },
+      select: { scope: true, revision: true },
+    });
+    const durableRevision = new Map(durableHeads.map((head) => [head.scope, Number(head.revision)]));
+    for (const scope of ["primary", "weekly"] as const) {
+      const headRevision = durableRevision.get(scope);
+      if (headRevision == null || headRevision <= 0) {
+        throw new Error(`missing positive durable ${scope} revision for stale-batch test`);
+      }
+      staleWindows[scope].revision = headRevision - 1;
+    }
+    const payload = (accountId: number, windows: typeof staleWindows, reportId: string) => ({
+      accountId,
+      bucket,
+      windows,
+      reportIds: [reportId],
+      accountings: [],
+      createdAt: new Date(),
+    });
+    const staleRevision = Math.max(staleWindows.primary.revision, staleWindows.weekly.revision);
+    const healthyWindows = structuredClone(staleCurrent.windows);
+    const healthyRevision = Math.max(healthyWindows.primary.revision, healthyWindows.weekly.revision);
+    const [stale, healthy] = await Promise.allSettled([
+      coordinator.enqueue(
+        checkpointKey(staleAccountId, bucket),
+        staleRevision,
+        payload(staleAccountId, staleWindows, "stale-batch-receipt"),
+        true,
+      ),
+      coordinator.enqueue(
+        checkpointKey(healthyAccountId, bucket),
+        healthyRevision,
+        payload(healthyAccountId, healthyWindows, "healthy-batch-receipt"),
+        true,
+      ),
+    ]);
+    const staleReason = stale.status === "rejected"
+      ? stale.reason as { code?: string; staleKeys?: string[] }
+      : null;
+    return {
+      ok: true,
+      stale: { status: stale.status, code: staleReason?.code, staleKeys: staleReason?.staleKeys },
+      healthy: { status: healthy.status, revision: healthy.status === "fulfilled" ? healthy.value : null },
+    };
   }
 
   @Post("background-flush-failure")

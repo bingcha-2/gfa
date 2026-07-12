@@ -46,12 +46,21 @@ export interface HourlyUsageAccounting {
   serviceTier: string;
 }
 
+/** The `${accountId}\u0000${bucket}` coordinator key for a checkpoint. */
+export function checkpointKey(accountId: number, bucket: string): string {
+  return `${accountId}\u0000${bucket}`;
+}
+
 export class QuotaStaleRevisionError extends Error {
   readonly code = "QUOTA_STALE_REVISION";
+  /** Coordinator keys (`${accountId}\u0000${bucket}`) whose durable head is ahead. */
+  readonly staleKeys: string[];
 
-  constructor(provider: string, accountId: number, bucket: string) {
-    super(`QUOTA_STALE_REVISION ${provider}/${accountId}/${bucket}`);
+  constructor(provider: string, staleKeys: Array<{ accountId: number; bucket: string }>) {
+    const keys = staleKeys.map(({ accountId, bucket }) => checkpointKey(accountId, bucket));
+    super(`QUOTA_STALE_REVISION ${provider} ${staleKeys.map((k) => `${k.accountId}/${k.bucket}`).join(",")}`);
     this.name = "QuotaStaleRevisionError";
+    this.staleKeys = keys;
   }
 }
 
@@ -152,12 +161,51 @@ export class FairShareWindowRepository {
   /** One short SQLite transaction for up to one coordinator micro-batch. */
   async checkpointBatch(checkpoints: WindowCheckpoint[]): Promise<void> {
     const ordered = [...checkpoints].sort((a, b) => {
-      const keyA = `${a.accountId}\u0000${a.bucket}`;
-      const keyB = `${b.accountId}\u0000${b.bucket}`;
+      const keyA = checkpointKey(a.accountId, a.bucket);
+      const keyB = checkpointKey(b.accountId, b.bucket);
       if (keyA !== keyB) return keyA.localeCompare(keyB);
       return Math.max(a.windows.primary.revision, a.windows.weekly.revision)
         - Math.max(b.windows.primary.revision, b.windows.weekly.revision);
     });
+
+    // Keep the normal path as one SQLite group commit. If a stale process has
+    // one older account revision, SQLite rolls that attempt back atomically;
+    // remove only the identified key and retry the remaining healthy group.
+    // This costs extra transactions only during a real stale-writer race.
+    let remaining = ordered;
+    const stale = new Map<string, { accountId: number; bucket: string }>();
+    while (remaining.length > 0) {
+      try {
+        await this.checkpointTransaction(remaining);
+        break;
+      } catch (error) {
+        if (!(error instanceof QuotaStaleRevisionError)) throw error;
+        const rejected = new Set(error.staleKeys);
+        const survivors: WindowCheckpoint[] = [];
+        let removed = 0;
+        for (const checkpoint of remaining) {
+          const key = checkpointKey(checkpoint.accountId, checkpoint.bucket);
+          if (rejected.has(key)) {
+            stale.set(key, { accountId: checkpoint.accountId, bucket: checkpoint.bucket });
+            removed += 1;
+          } else {
+            survivors.push(checkpoint);
+          }
+        }
+        // A malformed error must never turn into an infinite retry or a false
+        // acknowledgement of records whose durable outcome is unknown.
+        if (removed === 0) throw error;
+        remaining = survivors;
+      }
+    }
+    if (stale.size > 0) {
+      // Healthy survivors are durable now. The coordinator uses staleKeys to
+      // reject only those callers while acknowledging every committed sibling.
+      throw new QuotaStaleRevisionError(this.provider, [...stale.values()]);
+    }
+  }
+
+  private async checkpointTransaction(ordered: WindowCheckpoint[]): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       for (const checkpoint of ordered) {
         const { accountId, bucket, windows } = checkpoint;
@@ -201,7 +249,9 @@ export class FairShareWindowRepository {
         // A stale scope means this process is not authoritative. Throw inside
         // the transaction so an accepted sibling scope also rolls back and the
         // coordinator/caller cannot acknowledge a state SQLite rejected.
-        if (!fullyAccepted) throw new QuotaStaleRevisionError(this.provider, accountId, bucket);
+        if (!fullyAccepted) {
+          throw new QuotaStaleRevisionError(this.provider, [{ accountId, bucket }]);
+        }
         const revision = BigInt(Math.max(windows.primary.revision, windows.weekly.revision));
         const accountings = new Map((checkpoint.accountings || []).map((value) => [value.reportId, value]));
         for (const reportId of new Set(checkpoint.reportIds || [])) {

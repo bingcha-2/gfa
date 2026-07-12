@@ -71,6 +71,50 @@ describe("QuotaWriteCoordinator", () => {
     await expect(retry).resolves.toBe(1);
   });
 
+  it("acknowledges healthy keys when a committed batch reports isolated stale keys", async () => {
+    vi.useFakeTimers();
+    const staleKey = "account-1";
+    const error = Object.assign(new Error("stale revision"), {
+      code: "QUOTA_STALE_REVISION",
+      staleKeys: [staleKey],
+    });
+    // The repository commits every healthy sibling first, then reports only the
+    // isolated stale keys so their callers retry instead of poisoning the batch.
+    const commit = vi.fn(async () => { throw error; });
+    const coordinator = new QuotaWriteCoordinator<{ value: number }>({ commit });
+    const stale = coordinator.enqueue(staleKey, 1, { value: 1 });
+    const healthy = coordinator.enqueue("account-2", 2, { value: 2 });
+    const staleRejected = expect(stale).rejects.toBe(error);
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    await staleRejected;
+    await expect(healthy).resolves.toBe(2);
+    // A later enqueue at the already-durable healthy revision must not write it
+    // again merely because another key in its original batch was stale.
+    await expect(coordinator.enqueue("account-2", 2, { value: 2 })).resolves.toBe(2);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects the whole batch when a stale error does not identify a queued key", async () => {
+    vi.useFakeTimers();
+    const error = Object.assign(new Error("malformed stale result"), {
+      code: "QUOTA_STALE_REVISION",
+      staleKeys: ["not-in-this-batch"],
+    });
+    const coordinator = new QuotaWriteCoordinator<{ value: number }>({
+      commit: async () => { throw error; },
+    });
+    const first = coordinator.enqueue("account-1", 1, { value: 1 });
+    const second = coordinator.enqueue("account-2", 1, { value: 2 });
+    const firstRejected = expect(first).rejects.toBe(error);
+    const secondRejected = expect(second).rejects.toBe(error);
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    await Promise.all([firstRejected, secondRejected]);
+  });
+
   it("can persist a new receipt even when reducer revision did not change", async () => {
     vi.useFakeTimers();
     const commit = vi.fn(async () => undefined);

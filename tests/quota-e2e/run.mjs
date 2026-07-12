@@ -673,6 +673,23 @@ try {
         "stale checkpoint rolled a durable head backward");
       assert(JSON.stringify(afterSummary) === JSON.stringify(beforeSummary), "stale checkpoint changed card summary");
       assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-checkpoint-receipt" } }) === 0, "stale checkpoint created an orphan receipt");
+
+      // One stale key in a real coordinator micro-batch must reject only that
+      // caller; the healthy sibling's head + receipt must survive the retry.
+      // The healthy side is written directly through the production repository;
+      // it need not consume a lease or depend on a fresh account's default quota.
+      const healthyId = 999;
+      const isolated = await testControl("stale-checkpoint-batch", {
+        provider: "codex", staleAccountId: id, healthyAccountId: healthyId, bucket: "codex-gpt",
+      });
+      assert(isolated.stale?.status === "rejected" && isolated.stale?.code === "QUOTA_STALE_REVISION",
+        `stale batch key was not rejected precisely: ${JSON.stringify(isolated)}`);
+      assert(isolated.healthy?.status === "fulfilled",
+        `healthy batch sibling was rejected with stale key: ${JSON.stringify(isolated)}`);
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-batch-receipt" } }) === 0,
+        "stale batch key wrote a receipt");
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-batch-receipt" } }) === 1,
+        "healthy batch sibling did not write its receipt");
     }
 
     // A3: fail exactly one scheduled SQLite commit. The rejection must be caught,
@@ -880,6 +897,40 @@ try {
       const streamHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });
       const streamCu = JSON.parse(streamHead?.stateJson || "{}").subjects?.["card-63"]?.cumulativeCu;
       assert(streamCu === 1, `long-stream usage was not attributed after lease expiry: CU=${streamCu}, want 1`);
+    }
+
+    // A completed-but-still-live bound lease may be reused by the client. The
+    // ten-minute causal cleanup must not delete its attribution before its own
+    // forty-minute expiry.
+    {
+      const id = 66, t = now + 101 * 60_000;
+      const reused = await runScenario("live-lease-reuse-base", `card-${id}`, [clock(t), lease(`card-${id}`),
+        report({ reportId: "live-lease-q0", status: 0, accountQuota: quota(id, 100, 100, t) }),
+        report({ reportId: "live-lease-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 100, upstreamCompletedAt: t + 200 }),
+      ]);
+      const leaseExpiresAt = Date.parse(reused.responses[1]?.body?.expiresAt || "");
+      assert(leaseExpiresAt > t + 12 * 60_000,
+        `live-lease fixture did not receive a reusable lease: expiresAt=${leaseExpiresAt}, t=${t}`);
+      await testControl("time", { now: t + 12 * 60_000 });
+      await runScenario("live-lease-reuse-sweeper", "card-67", [lease("card-67")]);
+      const second = await runScenario("live-lease-reuse-second", `card-${id}`, [
+        report({ leaseId: reused.leaseId, reportId: "live-lease-u2", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+          requestStartedAt: t + 12 * 60_000 - 100, upstreamCompletedAt: t + 12 * 60_000 }),
+      ]);
+      await testControl("flush");
+      const receipts = await prisma.quotaReportReceipt.findMany({
+        where: { reportId: { in: ["live-lease-u1", "live-lease-u2"] } },
+        orderBy: { reportId: "asc" },
+      });
+      const hourly = await prisma.cardUsageHourly.findFirst({
+        where: { accessKeyId: `card-${id}`, modelKey: "gpt-5.6-luna" },
+      });
+      const receiptSummary = receipts.map((receipt) => ({ reportId: receipt.reportId, accountId: receipt.accountId }));
+      assert(receipts.length === 2 && receipts.every((receipt) => receipt.accountId === id),
+        `reused live lease lost account attribution: receipts=${JSON.stringify(receiptSummary)}, response=${JSON.stringify(second.responses.at(-1))}`);
+      assert(hourly?.requests === 2 && hourly.totalTokens === 2_000_000,
+        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly && { requests: hourly.requests, totalTokens: hourly.totalTokens })}`);
     }
 
     // 启动屏障:订阅表未就绪时放租必须 503(而不是拿残缺成员表算出 429),
