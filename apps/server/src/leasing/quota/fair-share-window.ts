@@ -143,17 +143,26 @@ function recomputeAttribution(core: WindowCoreState): void {
 
 function resetCore(core: WindowCoreState, event: SnapshotEvent): WindowCoreState {
   const subjects = Object.fromEntries(Object.entries(cloneSubjects(core.subjects)).filter(([, subject]) => subject.active));
+  const fraction = clamp01(event.fraction);
   for (const subject of Object.values(subjects)) {
     subject.cumulativeCu = 0;
     subject.carriedAttributedShare = 0;
     subject.attributedShare = 0;
+  }
+  const activeSubjects = Object.values(subjects);
+  // If durable accounting is unavailable but exactly one full-seat exclusive
+  // owner exists, the mother's already-consumed share can only belong to it.
+  // Shared/multi-member accounts remain unattributed because ownership is not
+  // provable from a snapshot alone.
+  if (activeSubjects.length === 1 && activeSubjects[0].exclusive && activeSubjects[0].share >= 1) {
+    activeSubjects[0].carriedAttributedShare = 1 - fraction;
   }
   return {
     ...core,
     primed: true,
     windowStart: event.resetAt - core.windowMs,
     resetAt: event.resetAt,
-    fraction: clamp01(event.fraction),
+    fraction,
     lastSnapshotAt: event.observedAt,
     assignedBurn: 0,
     unattributedShare: 0,

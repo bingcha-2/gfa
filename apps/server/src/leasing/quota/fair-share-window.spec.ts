@@ -174,6 +174,30 @@ describe("causal current-window reducer", () => {
     expect(state.lastReason).toBe("SNAPSHOT_INVALID_RESET_AT");
   });
 
+  it("backfills a sole exclusive card from the first trusted mother snapshot", () => {
+    const initial = createWindowState({
+      scope: "primary",
+      windowMs: FIVE_HOURS,
+      subjects: [{ quotaSubjectId: "A", share: 1, exclusive: true }],
+    });
+    const state = reduceWindow(initial, snapshot(T, 0.33));
+
+    expect(state.subjects.A.carriedAttributedShare).toBeCloseTo(0.67, 12);
+    expect(state.unattributedShare).toBe(0);
+    expect(getSubjectQuota(state, "A").personalFraction).toBeCloseTo(0.33, 12);
+    expect(getSubjectQuota(state, "A").fraction).toBeCloseTo(0.33, 12);
+  });
+
+  it("does not invent personal attribution for a shared cold start", () => {
+    const state = reduceWindow(
+      createWindowState({ scope: "primary", windowMs: FIVE_HOURS, subjects }),
+      snapshot(T, 0.33),
+    );
+
+    expect(state.subjects.A.carriedAttributedShare).toBe(0);
+    expect(state.subjects.B.carriedAttributedShare).toBe(0);
+  });
+
   it("uses a zero resetAt snapshot as an observation without moving an established window", () => {
     const before = primed();
     const state = reduceWindow(before, snapshot(T + 10, 0.8, { resetAt: 0 }));

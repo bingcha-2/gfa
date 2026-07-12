@@ -121,4 +121,21 @@ describe("RequestLogTracker", () => {
     t.record({ provider: "codex" });
     await expect(t.flush()).resolves.toBeUndefined();
   });
+
+  it("flush 失败会把同一批诊断事件放回队首并在下次成功写入", async () => {
+    const prisma = makePrisma();
+    prisma.requestLog.createMany = vi.fn()
+      .mockRejectedValueOnce(new Error("db busy"))
+      .mockResolvedValueOnce({ count: 2 });
+    const t = new RequestLogTracker(prisma, { autoStart: false });
+    t.record({ provider: "codex", reportId: "r1" });
+    t.record({ provider: "codex", reportId: "r2" });
+
+    await expect(t.flush()).resolves.toBeUndefined();
+    expect(t.getQueueForTesting().map((row) => row.reportId)).toEqual(["r1", "r2"]);
+
+    await t.flush();
+    expect(prisma.requestLog.createMany).toHaveBeenCalledTimes(2);
+    expect(t.getQueueForTesting()).toHaveLength(0);
+  });
 });

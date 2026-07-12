@@ -34,4 +34,27 @@ describe("WindowCuFairShareEngine global causal budget", () => {
     expect(diagnostic.totalBytes).toBeLessThanOrEqual(1_000);
     expect(diagnostic.windows.some((window) => window.reason === "WINDOW_GLOBAL_TAIL_COMPACTED")).toBe(true);
   });
+
+  it("reports account_recovering when personal quota remains but the mother account is empty", () => {
+    const engine = new WindowCuFairShareEngine({
+      provider: "codex",
+      trackWeekly: false,
+      now: () => T,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+      getSeatCapacity: () => 1,
+      isExclusive: () => false,
+    });
+    engine.applySnapshot(1, "codex-gpt", "primary", {
+      snapshotId: "mother-empty",
+      fraction: 0,
+      observedAt: T,
+      resetAt: T + 5 * 60 * 60 * 1000,
+    });
+
+    expect(engine.check(1, "A", "codex-gpt")).toMatchObject({
+      allowed: false,
+      reason: "account_recovering",
+      remainingFraction: 0,
+    });
+  });
 });

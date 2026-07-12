@@ -5,6 +5,7 @@ describe("fair-share denial messages", () => {
   it("turns stable reason codes into user-facing Chinese messages", () => {
     expect(fairShareDenialMessage("primary_exhausted")).toBe("5 小时额度已用完，请等待额度恢复");
     expect(fairShareDenialMessage("weekly_exhausted")).toBe("周额度已用完，请等待额度恢复");
+    expect(fairShareDenialMessage("account_recovering")).toBe("上游额度恢复中，请稍后重试");
   });
 
   it("keeps a safe fallback for unknown or missing reasons", () => {

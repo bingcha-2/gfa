@@ -124,13 +124,17 @@ export class RequestLogTracker {
     });
   }
 
-  /** 批量落库。失败丢弃(分析数据,非关键),绝不抛。 */
+  /** 批量落库。失败时有界放回队列供下次重试,绝不抛。 */
   async flush(): Promise<void> {
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
     try {
       await this.prisma.requestLog.createMany({ data: batch });
     } catch (err) {
+      const combined = [...batch, ...this.queue];
+      const overflow = Math.max(0, combined.length - QUEUE_MAX);
+      this.queue = overflow > 0 ? combined.slice(overflow) : combined;
+      this.overflowCount += overflow;
       console.error("[request-log-tracker] flush failed:", err);
     }
   }

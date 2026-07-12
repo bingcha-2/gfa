@@ -27,17 +27,20 @@ export interface WindowCuEngineOptions {
 
 type AccountingView = Pick<FairShareWindowState,
   "scope" | "windowMs" | "primed" | "windowStart" | "resetAt" | "fraction" | "lastSnapshotAt"
-  | "assignedBurn" | "unattributedShare" | "subjects" | "revision"
->;
+  | "assignedBurn" | "unattributedShare" | "subjects" | "revision" | "reorderTailBytes"
+  | "lastCompactionCount" | "compactedThroughAt"
+> & { retainedEvents: number };
 
 function view(state: FairShareWindowState): AccountingView {
   const {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects, revision,
+    assignedBurn, unattributedShare, subjects, revision, reorderTailBytes,
+    lastCompactionCount, compactedThroughAt,
   } = state;
   return {
     scope, windowMs, primed, windowStart, resetAt, fraction, lastSnapshotAt,
-    assignedBurn, unattributedShare, subjects, revision,
+    assignedBurn, unattributedShare, subjects, revision, reorderTailBytes,
+    lastCompactionCount, compactedThroughAt, retainedEvents: state.reorderTail.length,
   };
 }
 
@@ -166,9 +169,17 @@ export class WindowCuFairShareEngine {
     const fraction = primaryBlocked || weeklyBlocked
       ? 0
       : this.options.trackWeekly ? Math.min(primary.fraction, weekly.fraction) : primary.fraction;
+    const primaryRecovering = primaryBlocked
+      && windows.primary.fraction <= 0
+      && primary.personalFraction > 0;
+    const weeklyRecovering = weeklyBlocked
+      && windows.weekly.fraction <= 0
+      && weekly.personalFraction > 0;
     return {
       allowed: !primaryBlocked && !weeklyBlocked,
-      reason: primaryBlocked ? "primary_exhausted" : weeklyBlocked ? "weekly_exhausted" : undefined,
+      reason: primaryBlocked
+        ? primaryRecovering ? "account_recovering" : "primary_exhausted"
+        : weeklyBlocked ? weeklyRecovering ? "account_recovering" : "weekly_exhausted" : undefined,
       remainingFraction: fraction,
       window,
       bucket,

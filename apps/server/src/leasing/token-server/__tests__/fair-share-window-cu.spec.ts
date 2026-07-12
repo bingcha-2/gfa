@@ -77,6 +77,19 @@ describe("FairShareTracker window-cu-v1 facade", () => {
       .not.toBe(value.getCardWeeklyQuotaFractions(1, "A")[BUCKET].fraction);
   });
 
+  it("exposes causal-tail compaction metadata in quota diagnostics", () => {
+    const now = { value: T };
+    const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }] }, now));
+    applyBaseline(value);
+
+    expect(value.getQuotaDiagnostic(1, "A", BUCKET)?.primary).toMatchObject({
+      retainedEvents: 1,
+      retainedBytes: expect.any(Number),
+      compactedEvents: 0,
+      compactedThroughAt: T,
+    });
+  });
+
   it("pairs an allowed response with the reset metadata of the limiting window", () => {
     const now = { value: T };
     const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));

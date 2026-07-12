@@ -1170,6 +1170,10 @@ export class FairShareTracker {
         unattributedShare: window.unattributedShare,
         resetAt: window.resetAt,
         revision: window.revision,
+        retainedEvents: window.retainedEvents,
+        retainedBytes: Math.max(0, window.reorderTailBytes - 2),
+        compactedEvents: window.lastCompactionCount || 0,
+        compactedThroughAt: window.compactedThroughAt,
         reason,
       };
     };
