@@ -607,13 +607,13 @@ describe("PortalService.getUsageStats", () => {
     expect(r.totals).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, requests: 0, savedUSD: 0 });
   });
 
-  it("savedUSD uses the client per-family pricing (claude 5/25, gemini 2/12, gpt 1.25/10), family from bucket suffix", async () => {
+  it("uses model pricing for Codex and legacy family pricing for Antigravity", async () => {
     const prisma = makePrisma({
       hourlyRecords: [
         // claude 1M in + 0.2M out → 1*5 + 0.2*25 = $10 (mirrors apps/app usage_stats_test)
         recentRow({ bucket: "antigravity-claude", inputTokens: 1_000_000, outputTokens: 200_000, totalTokens: 1_200_000 }),
-        // gpt 1M in + 0 out → 1*1.25 = $1.25
-        recentRow({ bucket: "codex-gpt", inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 }),
+        // Luna 1M input → $1
+        recentRow({ bucket: "codex-gpt", modelKey: "gpt-5.6-luna", inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 }),
         // gemini 1M in + 1M out → 1*2 + 1*12 = $14
         recentRow({ bucket: "antigravity-gemini", inputTokens: 1_000_000, outputTokens: 1_000_000, totalTokens: 2_000_000 }),
       ],
@@ -622,8 +622,7 @@ describe("PortalService.getUsageStats", () => {
 
     const r = await service.getUsageStats("cust-1", { days: 7 });
 
-    // 10 + 1.25 + 14 = 25.25
-    expect(r.totals.savedUSD).toBe(25.25);
+    expect(r.totals.savedUSD).toBe(25);
   });
 
   it("prices cache-read at the cache rate (server input is gross → netInput excludes cache_read)", async () => {
@@ -691,5 +690,18 @@ describe("PortalService.getUsageStats", () => {
 
     const r = await service.getUsageStats("cust-1", { days: 7 });
     expect(r.totals.savedUSD).toBe(2);
+  });
+
+  it("matches the client model-aware Sol golden value", async () => {
+    const prisma = makePrisma({
+      hourlyRecords: [recentRow({
+        bucket: "codex-gpt", modelKey: "gpt-5.6-sol",
+        inputTokens: 25_063_410, cachedInputTokens: 24_470_000,
+        outputTokens: 102_560, totalTokens: 25_165_970,
+      })],
+    });
+    const result = await new PortalService(prisma as any, makeStore() as any).getUsageStats("cust-1", { days: 7 });
+    expect(result.totals.savedUSD).toBe(18.2788);
+    expect(result.byModel[0].estimatedUSD).toBe(18.2788);
   });
 });

@@ -43,7 +43,15 @@ vi.mock("../browser-context", () => {
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
-      evaluate: async () => [],
+      evaluate: async (fn?: unknown) => {
+        const source = String(fn ?? "");
+        if (source.includes("document.body?.innerText ??")) {
+          return "Your family invitation was sent successfully. ".repeat(4);
+        }
+        if (source.includes("lowerTarget")) return null;
+        if (source.includes("memberCount")) return 0;
+        return [];
+      },
       screenshot: async () => Buffer.from(""),
     };
   }
@@ -341,9 +349,10 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
     expect(finalTask!.status).toBe("INVITE_SENT");
     expect(finalTask!.familyGroupId).toBe(groupC.id);
 
-    // GroupC slots: 3 → 2
+    // Worker recounts from authoritative FamilyMember rows: one pending member
+    // occupies one of the five non-manager seats.
     const finalGroup = await db.familyGroup.findUnique({ where: { id: groupC.id } });
-    expect(finalGroup!.availableSlots).toBe(2);
+    expect(finalGroup!.availableSlots).toBe(4);
   });
 
   it("Multiple customers redeem sequentially → each gets correct group and slots", async () => {
@@ -375,9 +384,9 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
       { prisma: db, adspower: mockAdspower as any, pool: mockPool as any, workerId }
     );
 
-    // After customer 1: slots 2 → 1
+    // After customer 1: one of five non-manager seats is occupied.
     const afterC1 = await db.familyGroup.findUnique({ where: { id: group.id } });
-    expect(afterC1!.availableSlots).toBe(1);
+    expect(afterC1!.availableSlots).toBe(4);
 
     mockAdspower.reset();
     mockPool.reset();
@@ -400,9 +409,9 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
       { prisma: db, adspower: mockAdspower as any, pool: mockPool as any, workerId }
     );
 
-    // After customer 2: slots 1 → 0
+    // After customer 2: two of five non-manager seats are occupied.
     const afterC2 = await db.familyGroup.findUnique({ where: { id: group.id } });
-    expect(afterC2!.availableSlots).toBe(0);
+    expect(afterC2!.availableSlots).toBe(3);
 
     // Both orders should be INVITE_SENT
     const order1 = await db.order.findUnique({ where: { id: c1.order.id } });

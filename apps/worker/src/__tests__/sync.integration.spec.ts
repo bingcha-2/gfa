@@ -136,7 +136,8 @@ describe("Sync Processor Integration", () => {
       where: { id: group.id },
     });
     expect(updatedGroup!.memberCount).toBe(0);
-    expect(updatedGroup!.availableSlots).toBe(6);
+    // Google Family has five non-manager seats; the manager is the sixth member.
+    expect(updatedGroup!.availableSlots).toBe(5);
     expect(updatedGroup!.lastSyncedAt).not.toBeNull();
 
     const updatedAccount = await db.account.findUnique({
@@ -147,7 +148,7 @@ describe("Sync Processor Integration", () => {
       },
     });
     expect(updatedAccount!.subscriptionStatus).toBe("SUSPENDED");
-    expect(updatedAccount!.subscriptionExpiresAt).toBeNull();
+    expect(updatedAccount!.subscriptionExpiresAt?.toISOString()).toBe("2027-01-01T00:00:00.000Z");
   });
 
   it("should set Task to FAILED_FINAL when Account is not found", async () => {

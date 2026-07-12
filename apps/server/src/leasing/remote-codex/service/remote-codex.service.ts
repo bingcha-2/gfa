@@ -24,6 +24,8 @@ type ServiceOptions = {
   requestLogRecorder?: RequestLogRecorder;
   /** PrismaService — persists FairShareWindow (omit in unit tests). */
   prisma?: any;
+  /** Quota attribution algorithm. Defaults to the legacy algorithm until rollout. */
+  fairShareAlgorithm?: "segment-v1" | "window-cu-v1";
 };
 
 /** HTTP error thrown by the codex lease server. Subclass so RemoteCodexController
@@ -62,6 +64,8 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,
+      algorithm: options.fairShareAlgorithm
+        ?? (process.env.BCAI_CODEX_FAIR_SHARE_ALGO === "segment-v1" ? "segment-v1" : "window-cu-v1"),
     });
     super(
       provider,
@@ -91,4 +95,3 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
     await this.refreshModels();
   }
 }
-

@@ -17,7 +17,10 @@ export interface ModelUsageStats {
   cacheWriteTokens?: number
   totalTokens?: number
   estimatedCostUSD?: number
-  fastTokens?: number // 走「快速档」(priority)请求的原始 token(与 totalTokens 同口径);成本已含 1.5x 溢价
+  fastTokens?: number // Priority 请求的原始 token；价值使用模型官方 Priority 价格
+  pricingVersion?: string
+  pricingMode?: string
+  pricingQuality?: string
 }
 
 export interface UsageOverview {
@@ -90,8 +93,22 @@ export function buildModelUsageRows(
         totalTokens,
         estimatedCostUSD,
         fastTokens: safeNumber(raw.fastTokens),
+        pricingVersion: raw.pricingVersion || '',
+        pricingMode: raw.pricingMode || 'standard',
+        pricingQuality: raw.pricingQuality || 'legacy-family',
         costShare: costBase > 0 ? estimatedCostUSD / costBase : 0,
       }
     })
     .sort((a, b) => b.estimatedCostUSD - a.estimatedCostUSD || b.totalTokens - a.totalTokens)
+}
+
+export function pricingQualityLabel(quality: string): string {
+  switch (quality) {
+    case 'exact': return '精确模型价'
+    case 'recalculated-aggregate': return '历史汇总重算'
+    case 'unsupported-context': return '未发布档位回退'
+    case 'conservative-fallback': return '未知模型保守估算'
+    case 'mixed': return '混合计价'
+    default: return '旧版家族估算'
+  }
 }

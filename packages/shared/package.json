@@ -5,12 +5,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').copyFileSync('src/pricing.json','dist/pricing.json')\"",
+    "build": "tsc -p tsconfig.json && node -e \"for (const f of ['pricing.json','quota-rates.json','api-pricing.json']) require('fs').copyFileSync('src/'+f,'dist/'+f)\"",
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.1"
   }
 }
-

@@ -13,6 +13,11 @@ function writeJson(filePath: string, value: unknown) {
 }
 
 describe("RemoteCodexService", () => {
+  it("enables the bounded replayable quota algorithm by default", () => {
+    const service = new RemoteCodexService({ accessKeysFilePath: "/tmp/missing-codex-keys.json" });
+    expect(service.fairShareTracker?.isWindowCuEnabled()).toBe(true);
+  });
+
   let tempDir: string;
   let accountsFilePath: string;
   let accessKeysFilePath: string;

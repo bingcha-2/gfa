@@ -445,6 +445,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			Log("[codex-proxy] ⚠ 2xx 生成但 usage 解析为 0(model=%s),可能计费丢失", modelKey)
 		}
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
+		details.RequestStartedAt = reqStart.UnixMilli()
+		details.UpstreamCompletedAt = time.Now().UnixMilli()
 		details.ServiceTier = effServiceTier
 		details.Surface = surfaceTag
 		details.Headers = reportHeaders
@@ -491,6 +493,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
+	details.RequestStartedAt = reqStart.UnixMilli()
+	details.UpstreamCompletedAt = time.Now().UnixMilli()
 	details.ServiceTier = effServiceTier
 	details.Surface = surfaceTag
 	details.Headers = reportHeaders

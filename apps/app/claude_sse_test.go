@@ -6,7 +6,7 @@ import (
 )
 
 const sampleClaudeSSE = "event: message_start\n" +
-	`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1000,"output_tokens":2,"cache_creation_input_tokens":50,"cache_read_input_tokens":200}}}` + "\n\n" +
+	`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1000,"output_tokens":2,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":30},"cache_read_input_tokens":200}}}` + "\n\n" +
 	"event: content_block_delta\n" +
 	`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
 	"event: message_delta\n" +
@@ -28,11 +28,27 @@ func TestClaudeSSEParserExtractsUsage(t *testing.T) {
 	if u.CacheCreationInputTokens != 50 {
 		t.Errorf("cacheCreation = %d, want 50", u.CacheCreationInputTokens)
 	}
+	if u.CacheWrite5mTokens != 20 || u.CacheWrite1hTokens != 30 {
+		t.Errorf("cache creation split = %d/%d, want 20/30", u.CacheWrite5mTokens, u.CacheWrite1hTokens)
+	}
 	if u.CacheReadInputTokens != 200 {
 		t.Errorf("cacheRead = %d, want 200", u.CacheReadInputTokens)
 	}
 	if got := u.rawTotal(); got != 1600 { // 1000 + 350 + 50 + 200
 		t.Errorf("rawTotal = %d, want 1600", got)
+	}
+}
+
+func TestClaudeCacheCreationFallsBackToFiveMinuteWhenBreakdownIsAbsent(t *testing.T) {
+	var p claudeSSEParser
+	p.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"cache_creation_input_tokens\":50}}}\n\n"))
+	u := p.Usage()
+	if u.CacheWrite5mTokens != 50 || u.CacheWrite1hTokens != 0 {
+		t.Fatalf("fallback split = %d/%d, want 50/0", u.CacheWrite5mTokens, u.CacheWrite1hTokens)
+	}
+	d := claudeReportDetailsFromUsage(200, "claude-opus-4-8", u)
+	if d.CacheWrite5mTokens != 50 || d.CacheWrite1hTokens != 0 {
+		t.Fatalf("reported split = %d/%d, want 50/0", d.CacheWrite5mTokens, d.CacheWrite1hTokens)
 	}
 }
 

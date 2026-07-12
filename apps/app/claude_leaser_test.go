@@ -191,6 +191,32 @@ func TestClaudeReportRetryQueuesThenFlushes(t *testing.T) {
 	}
 }
 
+func TestClaudeReportCarriesCacheCreationTTLBreakdown(t *testing.T) {
+	received := make(chan map[string]interface{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		received <- body
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	}))
+	defer srv.Close()
+	withClaudeAPIBase(t, srv.URL)
+
+	l := &ClaudeLeaser{}
+	l.ReportUsage("card-1", "dev-1", ReportDetails{
+		StatusCode: 200, ModelKey: "claude-opus-4-8",
+		CacheWrite5mTokens: 20, CacheWrite1hTokens: 30,
+	}, "", &ClaudeTokenLease{LeaseId: "lease-cache", AccountId: 1})
+	select {
+	case body := <-received:
+		if body["cacheWrite5mTokens"] != float64(20) || body["cacheWrite1hTokens"] != float64(30) {
+			t.Fatalf("cache TTL payload = %#v", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for report")
+	}
+}
+
 // 服务端把账号绑定的出口代理 + 出口策略随 lease 下发(accountProxyUrl/egressRequired),
 // 客户端必须解析进 lease.EgressInfo —— anthropic 恒为 required(fail-closed)。
 func TestClaudeLeaseTokenParsesEgressInfo(t *testing.T) {

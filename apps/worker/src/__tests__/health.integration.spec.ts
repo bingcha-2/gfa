@@ -89,7 +89,7 @@ describe("Health Processor Integration", () => {
     await disconnectDb();
   });
 
-  it("should clear subscription expiry when subscription becomes suspended", async () => {
+  it("should preserve a known future expiry when subscription becomes suspended", async () => {
     const account = await createTestAccount({
       adspowerProfileId: "profile-health-001",
     });
@@ -131,6 +131,6 @@ describe("Health Processor Integration", () => {
     });
     expect(updatedAccount!.status).toBe("HEALTHY");
     expect(updatedAccount!.subscriptionStatus).toBe("SUSPENDED");
-    expect(updatedAccount!.subscriptionExpiresAt).toBeNull();
+    expect(updatedAccount!.subscriptionExpiresAt?.toISOString()).toBe("2027-01-01T00:00:00.000Z");
   });
 });

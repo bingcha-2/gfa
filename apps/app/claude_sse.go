@@ -22,7 +22,19 @@ type claudeUsage struct {
 	InputTokens              int64
 	OutputTokens             int64
 	CacheCreationInputTokens int64
+	CacheWrite5mTokens       int64
+	CacheWrite1hTokens       int64
 	CacheReadInputTokens     int64
+}
+
+func (u claudeUsage) normalized() claudeUsage {
+	// Older Anthropic-compatible upstreams expose only the aggregate. Preserve
+	// compatibility conservatively as 5m creation; native responses carry the
+	// exact cache_creation breakdown and therefore retain the 1h multiplier.
+	if missing := u.CacheCreationInputTokens - u.CacheWrite5mTokens - u.CacheWrite1hTokens; missing > 0 {
+		u.CacheWrite5mTokens += missing
+	}
+	return u
 }
 
 // rawTotal 原始总量(供 ReportDetails.RawTotalTokens)。
@@ -56,14 +68,20 @@ func (p *claudeSSEParser) Usage() claudeUsage {
 		p.parseEvent(p.buf)
 		p.buf = p.buf[:0]
 	}
-	return p.u
+	return p.u.normalized()
+}
+
+type claudeCacheCreationShape struct {
+	Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
 }
 
 type claudeSSEUsageShape struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	InputTokens              int64                    `json:"input_tokens"`
+	OutputTokens             int64                    `json:"output_tokens"`
+	CacheCreationInputTokens int64                    `json:"cache_creation_input_tokens"`
+	CacheCreation            claudeCacheCreationShape `json:"cache_creation"`
+	CacheReadInputTokens     int64                    `json:"cache_read_input_tokens"`
 }
 
 type claudeSSEDataShape struct {
@@ -102,6 +120,8 @@ func (p *claudeSSEParser) parseEvent(block []byte) {
 		mu := d.Message.Usage
 		p.u.InputTokens = maxInt64(p.u.InputTokens, mu.InputTokens)
 		p.u.CacheCreationInputTokens = maxInt64(p.u.CacheCreationInputTokens, mu.CacheCreationInputTokens)
+		p.u.CacheWrite5mTokens = maxInt64(p.u.CacheWrite5mTokens, mu.CacheCreation.Ephemeral5mInputTokens)
+		p.u.CacheWrite1hTokens = maxInt64(p.u.CacheWrite1hTokens, mu.CacheCreation.Ephemeral1hInputTokens)
 		p.u.CacheReadInputTokens = maxInt64(p.u.CacheReadInputTokens, mu.CacheReadInputTokens)
 		p.u.OutputTokens = maxInt64(p.u.OutputTokens, mu.OutputTokens)
 	}
@@ -111,6 +131,8 @@ func (p *claudeSSEParser) parseEvent(block []byte) {
 		// 极少数实现也会在顶层重述 input/cache,一并取 max(不会少算)。
 		p.u.InputTokens = maxInt64(p.u.InputTokens, d.Usage.InputTokens)
 		p.u.CacheCreationInputTokens = maxInt64(p.u.CacheCreationInputTokens, d.Usage.CacheCreationInputTokens)
+		p.u.CacheWrite5mTokens = maxInt64(p.u.CacheWrite5mTokens, d.Usage.CacheCreation.Ephemeral5mInputTokens)
+		p.u.CacheWrite1hTokens = maxInt64(p.u.CacheWrite1hTokens, d.Usage.CacheCreation.Ephemeral1hInputTokens)
 		p.u.CacheReadInputTokens = maxInt64(p.u.CacheReadInputTokens, d.Usage.CacheReadInputTokens)
 	}
 }
