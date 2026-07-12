@@ -121,7 +121,7 @@ export function DashboardPage() {
   const {
     account, boundAccounts,
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, entitledProducts,
-    accountFractions, accountResetMs, accountResetAt, myFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
+    accountFractions, accountResetMs, accountResetAt, myFractions, myPersonalFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myPersonalWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
     cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
@@ -299,7 +299,10 @@ export function DashboardPage() {
                               {section.mine.map((myBar) => {
                                 const accountBar = section.serviceAccount.find((bar) => bar.window === myBar.window)
                                 const resetIdentity = typeof myBar.resetAt === 'number' && myBar.resetAt > Date.now() ? myBar.resetAt : undefined
-                                return <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5"><NestedShareBar label={myBar.label} myFraction={myBar.fraction} accountFraction={accountBar?.fraction ?? -1} shareSeats={cardShareSeats} shareCapacity={cardShareCapacity} exclusive={cardExclusive} resetMs={myBar.resetMs} displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined} /></div>
+                                const personalFraction = myBar.window === '7d'
+                                  ? myPersonalWeeklyFractions[section.bucket]
+                                  : myPersonalFractions[section.bucket]
+                                return <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5"><NestedShareBar label={myBar.label} myFraction={myBar.fraction} personalFraction={personalFraction} accountFraction={accountBar?.fraction ?? -1} shareSeats={cardShareSeats} shareCapacity={cardShareCapacity} exclusive={cardExclusive} resetMs={myBar.resetMs} displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined} /></div>
                               })}
                             </div>
                           ) : (

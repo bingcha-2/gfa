@@ -9,6 +9,8 @@ interface NestedShareBarProps {
   label: string
   /** 我这一份还剩多少比例(0..1;-1=未知)。服务端值(已含等比例缩放),决定健康色,用了/账号低都会降。 */
   myFraction: number
+  /** 独享个人归因剩余；缺省时兼容旧服务端并回退 myFraction。 */
+  personalFraction?: number
   /** 账号上游总剩余(0..1;-1=未知),真实显示不缩放。 */
   accountFraction: number
   /** 我的席位数 X(份额 X/Y 的 X)。 */
@@ -37,9 +39,9 @@ function formatReset(ms: number): string {
  * 故上层恒 ≤ 底层(我的总剩余 ≤ 账号),永不穿帮。健康色由「我那份剩比例」myFraction 决定。
  * 独享仍只画一层,但同样受账号余量封顶;账号层本身不外显。
  */
-export function NestedShareBar({ label, myFraction, accountFraction, shareSeats, shareCapacity, exclusive, resetMs, displayKey }: NestedShareBarProps) {
+export function NestedShareBar({ label, myFraction, personalFraction, accountFraction, shareSeats, shareCapacity, exclusive, resetMs, displayKey }: NestedShareBarProps) {
   const displayStateRef = useRef<Record<string, number>>({})
-  const d = nestedBarDisplay({ myFraction, accountFraction, shareSeats, shareCapacity, exclusive })
+  const d = nestedBarDisplay({ myFraction, personalFraction, accountFraction, shareSeats, shareCapacity, exclusive })
   const acctKnown = d.accountRemain >= 0
   // 传 Date.now() 启用回升确认:服务端值被修正抬升后,血条几分钟内自己回上去,不必等重启/窗口 reset。
   const now = Date.now()

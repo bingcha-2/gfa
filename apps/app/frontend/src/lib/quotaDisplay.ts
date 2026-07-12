@@ -161,6 +161,7 @@ export type NestedBarDisplay = {
  */
 export function nestedBarDisplay(input: {
   myFraction: number
+  personalFraction?: number
   accountFraction: number
   shareSeats: number
   shareCapacity: number
@@ -170,17 +171,17 @@ export function nestedBarDisplay(input: {
   const myKnown = input.myFraction >= 0
   const acctKnown = input.accountFraction >= 0
 
-  // 独享单层:保留「尊贵·独享」单条展示,但不能超过母号真实余量。
-  // accountRemain 仍设未知以隐藏第二层;条宽与健康色都用同一个封顶值,避免低余额仍显绿色。
+  // 独享单层只展示个人归因剩余。母号守恒后的有效 fraction 仍供服务端准入,
+  // 但不能拿来污染个人血条；旧服务端缺 personalFraction 时回退 myFraction。
   if (exclusive) {
-    const own = myKnown ? clamp01(input.myFraction) : -1
-    const capped = myKnown && acctKnown
-      ? Math.min(own, clamp01(input.accountFraction))
-      : own
+    const personalKnown = input.personalFraction != null && input.personalFraction >= 0
+    const own = personalKnown
+      ? clamp01(input.personalFraction!)
+      : myKnown ? clamp01(input.myFraction) : -1
     return {
-      myTotalRemain: capped,
+      myTotalRemain: own,
       accountRemain: -1,
-      seatFill: capped,
+      seatFill: own,
       nominalShare: 1,
       exclusive: true,
     }

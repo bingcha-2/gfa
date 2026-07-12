@@ -536,6 +536,8 @@ export namespace main {
 	    weeklyResetAt: string;
 	    myHourlyFraction?: number;
 	    myWeeklyFraction?: number;
+	    myPersonalHourlyFraction?: number;
+	    myPersonalWeeklyFraction?: number;
 	    myShare?: number;
 	    exclusive?: boolean;
 	
@@ -551,6 +553,8 @@ export namespace main {
 	        this.weeklyResetAt = source["weeklyResetAt"];
 	        this.myHourlyFraction = source["myHourlyFraction"];
 	        this.myWeeklyFraction = source["myWeeklyFraction"];
+	        this.myPersonalHourlyFraction = source["myPersonalHourlyFraction"];
+	        this.myPersonalWeeklyFraction = source["myPersonalWeeklyFraction"];
 	        this.myShare = source["myShare"];
 	        this.exclusive = source["exclusive"];
 	    }
@@ -1575,4 +1579,3 @@ export namespace wakeup {
 	}
 
 }
-
