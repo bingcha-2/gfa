@@ -232,14 +232,16 @@ func recordAccountBuckets(body []byte) {
 func recordFairShareQuota(body []byte) {
 	var resp struct {
 		FairShareQuota map[string]struct {
-			Fraction float64 `json:"fraction"`
-			ResetAt  int64   `json:"resetAt"`
-			Share    float64 `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
+			Fraction         float64  `json:"fraction"`
+			PersonalFraction *float64 `json:"personalFraction"`
+			ResetAt          int64    `json:"resetAt"`
+			Share            float64  `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
 		} `json:"fairShareQuota"`
 		// 周血条:与 fairShareQuota 平行,同 bucket 键(仅 codex/anthropic 下发;旧服务端无此字段)。
 		WeeklyFairShareQuota map[string]struct {
-			Fraction float64 `json:"fraction"`
-			ResetAt  int64   `json:"resetAt"`
+			Fraction         float64  `json:"fraction"`
+			PersonalFraction *float64 `json:"personalFraction"`
+			ResetAt          int64    `json:"resetAt"`
 		} `json:"weeklyFairShareQuota"`
 	}
 	if json.Unmarshal(body, &resp) != nil {
@@ -247,9 +249,15 @@ func recordFairShareQuota(body []byte) {
 	}
 	for bucket, q := range resp.FairShareQuota {
 		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt, q.Share)
+		if q.PersonalFraction != nil {
+			recordMyPersonalBucketFraction(bucket, *q.PersonalFraction)
+		}
 	}
 	for bucket, q := range resp.WeeklyFairShareQuota {
 		recordMyWeeklyBucketFraction(bucket, q.Fraction, q.ResetAt)
+		if q.PersonalFraction != nil {
+			recordMyPersonalWeeklyBucketFraction(bucket, *q.PersonalFraction)
+		}
 	}
 }
 

@@ -705,14 +705,16 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 			"products": []interface{}{"anthropic"},
 			"productQuota": map[string]interface{}{
 				"anthropic": map[string]interface{}{
-					"hourlyPercent":    95.0,
-					"weeklyPercent":    93.0,
-					"hourlyResetAt":    "2026-06-21T10:00:00Z",
-					"weeklyResetAt":    "2026-06-23T10:00:00Z",
-					"myHourlyFraction": 0.55,
-					"myWeeklyFraction": 0.77,
-					"myShare":          0.25,
-					"exclusive":        true,
+					"hourlyPercent":            95.0,
+					"weeklyPercent":            93.0,
+					"hourlyResetAt":            "2026-06-21T10:00:00Z",
+					"weeklyResetAt":            "2026-06-23T10:00:00Z",
+					"myHourlyFraction":         0.55,
+					"myWeeklyFraction":         0.77,
+					"myPersonalHourlyFraction": 0.85,
+					"myPersonalWeeklyFraction": 0.97,
+					"myShare":                  0.25,
+					"exclusive":                true,
 				},
 			},
 		}},
@@ -738,6 +740,12 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 	}
 	if q.MyWeeklyFraction == nil || *q.MyWeeklyFraction != 0.77 {
 		t.Fatalf("MyWeeklyFraction = %v, want 0.77", q.MyWeeklyFraction)
+	}
+	if q.MyPersonalHourlyFraction == nil || *q.MyPersonalHourlyFraction != 0.85 {
+		t.Fatalf("MyPersonalHourlyFraction = %v, want 0.85", q.MyPersonalHourlyFraction)
+	}
+	if q.MyPersonalWeeklyFraction == nil || *q.MyPersonalWeeklyFraction != 0.97 {
+		t.Fatalf("MyPersonalWeeklyFraction = %v, want 0.97", q.MyPersonalWeeklyFraction)
 	}
 	if q.MyShare == nil || *q.MyShare != 0.25 {
 		t.Fatalf("MyShare = %v, want 0.25", q.MyShare)

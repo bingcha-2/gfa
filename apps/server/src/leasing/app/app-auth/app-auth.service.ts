@@ -24,6 +24,8 @@ export interface ProductQuotaWindow {
   weeklyResetAt: string | null;
   myHourlyFraction?: number | null;
   myWeeklyFraction?: number | null;
+  myPersonalHourlyFraction?: number | null;
+  myPersonalWeeklyFraction?: number | null;
   // myShare = 客户端双层血条「我那一席」的【名义份额 X/Y】= weight/号总份数(遮超卖,超卖前口径)。
   // 注意:不是真实 e_i=w/D —— 真实份额会随超卖(D=max(N,Σw))被摊薄(如 1/8 变 1/12),
   // 客户端 carousel 直接拿它当 nominalShare 画条,下发真实值会让没用过的卡也显示掉血。与 Dashboard 一致。
@@ -179,6 +181,8 @@ export class AppAuthService {
         weeklyResetAt: iso(snap.weeklyResetAt),
         myHourlyFraction: my.hourlyFraction,
         myWeeklyFraction: my.weeklyFraction,
+        myPersonalHourlyFraction: my.hourlyPersonalFraction,
+        myPersonalWeeklyFraction: my.weeklyPersonalFraction,
         myShare: nominalShare,
         exclusive
       };
@@ -195,29 +199,50 @@ export class AppAuthService {
     product: string,
     accountId: number,
     cardId: string
-  ): { hourlyFraction: number | null; weeklyFraction: number | null; share: number | null } {
+  ): {
+    hourlyFraction: number | null;
+    hourlyPersonalFraction: number | null;
+    weeklyFraction: number | null;
+    weeklyPersonalFraction: number | null;
+    share: number | null;
+  } {
     const tracker = sharedFairShareRegistry.get(product);
-    if (!tracker) return { hourlyFraction: null, weeklyFraction: null, share: null };
+    const empty = {
+      hourlyFraction: null,
+      hourlyPersonalFraction: null,
+      weeklyFraction: null,
+      weeklyPersonalFraction: null,
+      share: null,
+    };
+    if (!tracker) return empty;
     const tightest = (
-      map: Record<string, { fraction: number; share: number }>
+      map: Record<string, { fraction: number; personalFraction?: number; share: number }>,
+      field: "fraction" | "personalFraction",
     ): { fraction: number; share: number } | null => {
       let best: { fraction: number; share: number } | null = null;
       for (const v of Object.values(map)) {
-        if (!Number.isFinite(v.fraction) || v.fraction < 0) continue; // -1=未知,跳过
-        if (!best || v.fraction < best.fraction) best = { fraction: v.fraction, share: v.share };
+        const fraction = v[field];
+        if (!Number.isFinite(fraction) || Number(fraction) < 0) continue;
+        if (!best || Number(fraction) < best.fraction) best = { fraction: Number(fraction), share: v.share };
       }
       return best;
     };
     try {
-      const h = tightest(tracker.getCardQuotaFractions(accountId, cardId));
-      const w = tightest(tracker.getCardWeeklyQuotaFractions(accountId, cardId));
+      const primary = tracker.getCardQuotaFractions(accountId, cardId);
+      const weekly = tracker.getCardWeeklyQuotaFractions(accountId, cardId);
+      const h = tightest(primary, "fraction");
+      const hp = tightest(primary, "personalFraction");
+      const w = tightest(weekly, "fraction");
+      const wp = tightest(weekly, "personalFraction");
       return {
         hourlyFraction: h ? h.fraction : null,
+        hourlyPersonalFraction: hp ? hp.fraction : null,
         weeklyFraction: w ? w.fraction : null,
+        weeklyPersonalFraction: wp ? wp.fraction : null,
         share: h ? h.share : w ? w.share : null
       };
     } catch {
-      return { hourlyFraction: null, weeklyFraction: null, share: null };
+      return empty;
     }
   }
 

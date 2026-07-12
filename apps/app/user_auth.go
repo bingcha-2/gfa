@@ -619,6 +619,14 @@ func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow
 			ff := f
 			w.MyWeeklyFraction = &ff
 		}
+		if f, ok := m["myPersonalHourlyFraction"].(float64); ok {
+			ff := f
+			w.MyPersonalHourlyFraction = &ff
+		}
+		if f, ok := m["myPersonalWeeklyFraction"].(float64); ok {
+			ff := f
+			w.MyPersonalWeeklyFraction = &ff
+		}
 		if f, ok := m["myShare"].(float64); ok {
 			ff := f
 			w.MyShare = &ff

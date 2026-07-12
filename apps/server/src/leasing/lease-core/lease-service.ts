@@ -862,8 +862,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   private buildLeaseQuotaPayload(record: any, boundAccountId: number, modelKey: string, account?: TAccount | null): {
     accountBucketsData: Record<string, { fraction: number; resetAt: number }>;
-    fairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
-    weeklyFairShareQuota?: Record<string, { fraction: number; resetAt: number; share?: number }>;
+    fairShareQuota?: Record<string, { fraction: number; personalFraction?: number; resetAt: number; share?: number }>;
+    weeklyFairShareQuota?: Record<string, { fraction: number; personalFraction?: number; resetAt: number; share?: number }>;
     accessKeyStatus: any;
   } {
     const resolvedAccount = account || (boundAccountId > 0
