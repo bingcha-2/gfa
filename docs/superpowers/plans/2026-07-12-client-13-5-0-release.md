@@ -63,7 +63,7 @@ var AppVersion = "13.5.0"
 
 Run the two focused commands from Step 3, then run `pnpm test`. Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit and push main**
+- [x] **Step 6: Commit and push main**
 
 ```bash
 git add apps/server/src/leasing/lease-core/__tests__/lease-service.spec.ts apps/server/src/leasing/lease-core/lease-service.ts apps/app/updater_test.go apps/app/updater.go docs/superpowers/plans/2026-07-12-client-13-5-0-release.md
@@ -76,7 +76,7 @@ git push origin main
 **Files:**
 - Workflow-generated: `apps/web/public/updates/latest-wails.json`
 
-- [ ] **Step 1: Dispatch the canonical workflow**
+- [x] **Step 1: Dispatch the canonical workflow**
 
 ```bash
 gh workflow run build-wails.yml --ref main \
@@ -85,11 +85,11 @@ gh workflow run build-wails.yml --ref main \
   -f changelog="额度显示准确性与客户端稳定性优化"
 ```
 
-- [ ] **Step 2: Identify and watch the exact run**
+- [x] **Step 2: Identify and watch the exact run**
 
 Use `gh run list --workflow build-wails.yml --branch main --event workflow_dispatch --limit 10 --json databaseId,headSha,status,conclusion,createdAt` and select the newest run whose `headSha` equals the pushed release commit. Run `gh run watch <run-id> --exit-status` and require exit 0.
 
-- [ ] **Step 3: Verify the public release**
+- [x] **Step 3: Verify the public release**
 
 Run `gh release view wails-v13.5.0 --repo bingcha-2/bcai-releases --json tagName,name,isLatest,assets,publishedAt`. Require the release to be latest and to contain:
 
@@ -104,17 +104,19 @@ Run `gh release view wails-v13.5.0 --repo bingcha-2/bcai-releases --json tagName
 **Files:**
 - Generated and committed by workflow: `apps/web/public/updates/latest-wails.json`
 
-- [ ] **Step 1: Pull the workflow manifest commit**
+- [x] **Step 1: Pull the workflow manifest commit**
 
 Run `git pull --ff-only origin main` after the workflow succeeds.
 
-- [ ] **Step 2: Validate the manifest structurally**
+- [x] **Step 2: Validate the manifest structurally**
 
 Use Node to assert `version === "13.5.0"`, `minVersion === "13.5.0"`, every Windows/macOS/Linux URL contains `wails-v13.5.0`, every SHA-256 is 64 hexadecimal characters, and every size is positive.
 
 - [ ] **Step 3: Verify public reachability and remote synchronization**
 
 Fetch `https://bcai.lol/updates/latest-wails.json`, require HTTP 200 and the same version/minVersion, verify the five GitHub release asset URLs return a successful response, then confirm local `HEAD` equals `origin/main` and the worktree is clean.
+
+Pre-deployment result: all five GitHub assets return HTTP 200 and exactly match the manifest hashes/sizes. The production `bcai.lol` manifest still reports 13.4.2 until the server pulls and restarts; repeat this assertion after the operator rollout.
 
 - [ ] **Step 4: Provide the Windows server handoff**
 

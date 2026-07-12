@@ -1,6 +1,6 @@
 # Client 13.5.0 Forced-Upgrade Release Design
 
-**Status:** approved for implementation
+**Status:** published; production rollout pending
 
 ## Release contract
 
