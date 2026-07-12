@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createCarriedWindowState,
   createQuotaWindows,
   createWindowState,
   getSubjectQuota,
@@ -51,6 +52,132 @@ function primed() {
 }
 
 describe("causal current-window reducer", () => {
+  it("preserves legacy attribution at cutover without inventing CU", () => {
+    const state = createCarriedWindowState({
+      scope: "primary",
+      windowMs: FIVE_HOURS,
+      windowStart: T,
+      fraction: 0.6,
+      subjects: [
+        { ...subjects[0], active: true, carriedAttributedShare: 0.3 },
+        { ...subjects[1], active: true, carriedAttributedShare: 0.1 },
+      ],
+    });
+
+    expect(state.subjects.A.cumulativeCu).toBe(0);
+    expect(state.subjects.A.carriedAttributedShare).toBeCloseTo(0.3, 12);
+    expect(state.subjects.A.attributedShare).toBe(0);
+    expect(state.unattributedShare).toBe(0);
+    expect(getSubjectQuota(state, "A").fraction).toBeCloseTo(0.4, 12);
+    expect(getSubjectQuota(state, "B").fraction).toBeCloseTo(0.8, 12);
+  });
+
+  it("normalizes corrupt legacy attribution to the confirmed mother burn", () => {
+    const state = createCarriedWindowState({
+      scope: "primary",
+      windowMs: FIVE_HOURS,
+      windowStart: T,
+      fraction: 0.8,
+      subjects: [
+        { ...subjects[0], active: true, carriedAttributedShare: 0.3 },
+        { ...subjects[1], active: true, carriedAttributedShare: 0.1 },
+      ],
+    });
+
+    expect(state.subjects.A.carriedAttributedShare).toBeCloseTo(0.15, 12);
+    expect(state.subjects.B.carriedAttributedShare).toBeCloseTo(0.05, 12);
+    expect(state.unattributedShare).toBe(0);
+  });
+
+  it("does not make a newcomer inherit carried attribution", () => {
+    let state = createCarriedWindowState({
+      scope: "primary",
+      windowMs: FIVE_HOURS,
+      windowStart: T,
+      fraction: 0.6,
+      subjects: [{ ...subjects[0], active: true, carriedAttributedShare: 0.4 }],
+    });
+    state = reduceWindow(state, {
+      kind: "membership",
+      membershipId: "join-B-after-cutover",
+      subjects,
+      occurredAt: T + 1,
+      arrivedAt: T + 1,
+    });
+    state = reduceWindow(state, usage("B", T + 10));
+    state = reduceWindow(state, snapshot(T + 20, 0.5));
+
+    expect(state.subjects.A.carriedAttributedShare).toBeCloseTo(0.4, 12);
+    expect(state.subjects.A.attributedShare).toBe(0);
+    expect(state.subjects.B.carriedAttributedShare).toBe(0);
+    expect(state.subjects.B.attributedShare).toBeCloseTo(0.1, 12);
+  });
+
+  it("refunds carry, post-cutover attribution, and unknown burn proportionally then clears all on reset", () => {
+    let state = createCarriedWindowState({
+      scope: "primary",
+      windowMs: FIVE_HOURS,
+      windowStart: T,
+      fraction: 0.5,
+      subjects: [
+        { ...subjects[0], active: true, carriedAttributedShare: 0.3 },
+        { ...subjects[1], active: true, carriedAttributedShare: 0.1 },
+      ],
+    });
+    expect(state.unattributedShare).toBeCloseTo(0.1, 12);
+    state = reduceWindow(state, usage("B", T + 10));
+    state = reduceWindow(state, snapshot(T + 20, 0.4));
+    state = reduceWindow(state, snapshot(T + 30, 0.7));
+
+    expect(state.subjects.A.carriedAttributedShare).toBeCloseTo(0.15, 12);
+    expect(state.subjects.B.carriedAttributedShare).toBeCloseTo(0.05, 12);
+    expect(state.assignedBurn).toBeCloseTo(0.05, 12);
+    expect(state.subjects.B.attributedShare).toBeCloseTo(0.05, 12);
+    expect(state.unattributedShare).toBeCloseTo(0.05, 12);
+    const accounted = Object.values(state.subjects).reduce(
+      (sum, value) => sum + value.carriedAttributedShare + value.attributedShare,
+      state.unattributedShare,
+    );
+    expect(accounted).toBeCloseTo(1 - state.fraction, 12);
+
+    state = reduceWindow(state, snapshot(T + FIVE_HOURS, 1, { resetAt: T + 2 * FIVE_HOURS }));
+    expect(state.subjects.A.carriedAttributedShare).toBe(0);
+    expect(state.subjects.B.carriedAttributedShare).toBe(0);
+    expect(state.assignedBurn).toBe(0);
+    expect(state.unattributedShare).toBe(0);
+  });
+
+  it.each([-1, 1.01, Number.NaN, Number.POSITIVE_INFINITY])("ignores an invalid snapshot fraction %s", (fraction) => {
+    const before = primed();
+    const state = reduceWindow(before, snapshot(T + 10, fraction, { snapshotId: `invalid-${String(fraction)}` }));
+
+    expect(state.fraction).toBe(1);
+    expect(state.assignedBurn).toBe(0);
+    expect(state.unattributedShare).toBe(0);
+    expect(state.revision).toBe(before.revision);
+    expect(state.reorderTail).toEqual(before.reorderTail);
+    expect(state.lastReason).toBe("SNAPSHOT_INVALID_FRACTION");
+  });
+
+  it("does not establish a window from a snapshot without a valid resetAt", () => {
+    const initial = createWindowState({ scope: "primary", windowMs: FIVE_HOURS, subjects });
+    const state = reduceWindow(initial, snapshot(T, 0.4, { resetAt: 0 }));
+
+    expect(state.primed).toBe(false);
+    expect(state.resetAt).toBe(0);
+    expect(state.fraction).toBe(1);
+    expect(state.lastReason).toBe("SNAPSHOT_INVALID_RESET_AT");
+  });
+
+  it("uses a zero resetAt snapshot as an observation without moving an established window", () => {
+    const before = primed();
+    const state = reduceWindow(before, snapshot(T + 10, 0.8, { resetAt: 0 }));
+
+    expect(state.fraction).toBe(0.8);
+    expect(state.resetAt).toBe(before.resetAt);
+    expect(state.windowStart).toBe(before.windowStart);
+  });
+
   it("does not apply the same report id twice while a failed checkpoint is retried", () => {
     let state = primed();
     state = reduceWindow(state, usage("A", T + 10));
@@ -133,13 +260,66 @@ describe("causal current-window reducer", () => {
     expect(getSubjectQuota(state, "A").fraction).toBeGreaterThan(0.7);
   });
 
-  it("rejects stale and duplicate snapshots", () => {
+  it("does not apply the same snapshot id twice", () => {
     let state = primed();
-    state = reduceWindow(state, snapshot(T + 30, 0.8));
+    const event = snapshot(T + 30, 0.8);
+    state = reduceWindow(state, event);
     const before = state;
-    state = reduceWindow(state, snapshot(T + 20, 0.7, { arrivedAt: T + 40 }));
+    state = reduceWindow(state, { ...event, fraction: 0.7, arrivedAt: T + 40 });
     expect(state.fraction).toBe(before.fraction);
+    expect(state.lastReason).toBe("EVENT_DUPLICATE");
+  });
+
+  it("replays two snapshots and intervening usage identically when arrivals reorder within the horizon", () => {
+    const older = snapshot(T + 10, 0.9, { snapshotId: "older" });
+    const report = usage("A", T + 15, T + 15);
+    const newer = snapshot(T + 20, 0.7, { snapshotId: "newer" });
+    const permutations = <TItem,>(items: TItem[]): TItem[][] => items.length <= 1
+      ? [items]
+      : items.flatMap((item, index) => permutations(items.filter((_, i) => i !== index)).map((tail) => [item, ...tail]));
+    const results = permutations([older, report, newer]).map((ordered) => ordered.reduce(
+      (state, event, index) => reduceWindow(state, { ...event, arrivedAt: T + 30 + index }),
+      primed(),
+    ));
+    const expected = results[0];
+
+    for (const result of results.slice(1)) {
+      expect(result.fraction).toBe(expected.fraction);
+      expect(result.assignedBurn).toBeCloseTo(expected.assignedBurn, 12);
+      expect(result.unattributedShare).toBeCloseTo(expected.unattributedShare, 12);
+      expect(result.subjects).toEqual(expected.subjects);
+    }
+    expect(expected.assignedBurn).toBeCloseTo(0.2, 12);
+    expect(expected.unattributedShare).toBeCloseTo(0.1, 12);
+  });
+
+  it("still rejects a snapshot that arrives outside the reorder horizon", () => {
+    let state = primed();
+    state = reduceWindow(state, snapshot(T + 20, 0.7, { snapshotId: "newer" }));
+    const before = state;
+    state = reduceWindow(state, snapshot(T + 10, 0.9, {
+      snapshotId: "too-late",
+      arrivedAt: T + 20 + 10 * 60_000 + 1,
+    }));
+
+    expect(state.fraction).toBe(before.fraction);
+    expect(state.assignedBurn).toBe(before.assignedBurn);
+    expect(state.unattributedShare).toBe(before.unattributedShare);
     expect(state.lastReason).toBe("SNAPSHOT_STALE_OBSERVED_AT");
+  });
+
+  it("applies a newer observation without allowing resetAt to move backward", () => {
+    let state = primed();
+    const originalResetAt = state.resetAt;
+    const originalWindowStart = state.windowStart;
+    state = reduceWindow(state, snapshot(T + 20, 0.8, {
+      snapshotId: "backward-reset",
+      resetAt: originalResetAt - 60 * 60 * 1000,
+    }));
+
+    expect(state.fraction).toBe(0.8);
+    expect(state.resetAt).toBe(originalResetAt);
+    expect(state.windowStart).toBe(originalWindowStart);
   });
 
   it("scales pool users so their absolute usable total never exceeds mother remaining", () => {

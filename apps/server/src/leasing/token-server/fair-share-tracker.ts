@@ -214,12 +214,15 @@ export class FairShareTracker {
             await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
           },
           mergePayload: (current, incoming) => {
-            const currentRevision = Math.max(current.windows.primary.revision, current.windows.weekly.revision);
-            const incomingRevision = Math.max(incoming.windows.primary.revision, incoming.windows.weekly.revision);
             return {
               accountId: incoming.accountId,
               bucket: incoming.bucket,
-              windows: incomingRevision >= currentRevision ? incoming.windows : current.windows,
+              windows: {
+                primary: incoming.windows.primary.revision >= current.windows.primary.revision
+                  ? incoming.windows.primary : current.windows.primary,
+                weekly: incoming.windows.weekly.revision >= current.windows.weekly.revision
+                  ? incoming.windows.weekly : current.windows.weekly,
+              },
               reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
               accountings: [...new Map([...current.accountings, ...incoming.accountings]
                 .map((value) => [value.reportId, value])).values()],
@@ -230,7 +233,9 @@ export class FairShareTracker {
       : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
-        void this.flush();
+        void this.flush().catch((error) => {
+          console.error("[fair-share-tracker] scheduled flush failed:", error);
+        });
       }, FLUSH_INTERVAL_MS);
       if (this.writeCoordinator) {
         this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
@@ -830,7 +835,7 @@ export class FairShareTracker {
           const afterRevision = restored
             ? Math.max(restored.windows.primary.revision, restored.windows.weekly.revision)
             : beforeRevision;
-          if (afterRevision > beforeRevision) this.dirty = true;
+          if (afterRevision > beforeRevision || group.result.needsCheckpoint) this.dirty = true;
         }
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
@@ -944,11 +949,19 @@ export class FairShareTracker {
 
   /** 持久化当前内存态(整池替换,dirty 门控)。 */
   async flush(): Promise<void> {
-    if (this.windowCu && this.windowRepository) {
+    if (this.windowCu && this.windowRepository && this.writeCoordinator) {
       if (!this.dirty) return;
       this.dirty = false;
       try {
-        await this.windowRepository.checkpointBatch(this.windowCu.entries());
+        await Promise.all(this.windowCu.entries().map((entry) => {
+          const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
+          return this.writeCoordinator!.enqueue(`${entry.accountId}\u0000${entry.bucket}`, revision, {
+            ...entry,
+            reportIds: [],
+            accountings: [],
+            createdAt: new Date(this.nowFn()),
+          }, true);
+        }));
       } catch (error) {
         this.dirty = true;
         throw error;

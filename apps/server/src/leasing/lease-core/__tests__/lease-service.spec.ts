@@ -81,6 +81,90 @@ describe("LeaseService (generic core)", () => {
 
   const REQ = sessionReqFor("card-1");
 
+  it("restores quota state, reconciles current membership, then checkpoints before startup completes", async () => {
+    const order: string[] = [];
+    const fairShareTracker = {
+      load: vi.fn(async () => { order.push("load"); }),
+      refreshAllParticipants: vi.fn(() => { order.push("membership"); }),
+      flush: vi.fn(async () => { order.push("checkpoint"); }),
+    };
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: fairShareTracker as any,
+    });
+
+    await service.onModuleInit();
+
+    expect(order).toEqual(["load", "membership", "checkpoint"]);
+  });
+
+  it("ignores an ancient report after the client retry horizon", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "ancient-lease", minClientVersion: "",
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    now += 3 * 24 * 60 * 60 * 1000;
+
+    await expect(service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "ancient-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: startedAt + 1_000,
+    })).resolves.toMatchObject({ ok: true, ignored: true, reason: "report_expired" });
+  });
+
+  it("accepts a long-running request that completed recently after its lease expired", async () => {
+    const startedAt = Date.parse("2030-01-01T00:00:00Z");
+    let now = startedAt;
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "long-stream-lease", minClientVersion: "",
+    }));
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    now += 2 * 60 * 60 * 1000;
+
+    await expect(service.reportResult(REQ, {
+      leaseId: lease.leaseId, reportId: "long-stream-report", status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, totalTokens: 100, rawTotalTokens: 100,
+      requestStartedAt: startedAt, upstreamCompletedAt: now - 100,
+    })).resolves.toMatchObject({ ok: true });
+  });
+
+  it("returns a Chinese 429 message while preserving the stable fair-share reason code", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+    });
+    const fairShareTracker = {
+      checkFairShare: vi.fn(() => ({
+        allowed: false, reason: "weekly_exhausted", remainingFraction: 0,
+        window: "7d", bucket: "fake-gpt", resetAt: Date.now() + 60_000, resetMs: 60_000, retryAfterMs: 60_000,
+      })),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    };
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, minClientVersion: "", fairShareTracker: fairShareTracker as any,
+    }));
+
+    let caught: any;
+    try {
+      await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ statusCode: 429, message: "周额度已用完，请等待额度恢复" });
+    expect(caught.body).toMatchObject({ error: "周额度已用完，请等待额度恢复", code: "weekly_exhausted" });
+  });
+
   it("leases a token from a projectId-less account", async () => {
     refreshToken.mockResolvedValue("access-token-1");
     const service = makeService();

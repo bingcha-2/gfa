@@ -77,6 +77,25 @@ describe("FairShareTracker window-cu-v1 facade", () => {
       .not.toBe(value.getCardWeeklyQuotaFractions(1, "A")[BUCKET].fraction);
   });
 
+  it("pairs an allowed response with the reset metadata of the limiting window", () => {
+    const now = { value: T };
+    const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));
+    value.applyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.8, resetAt: T + FIVE_HOURS, observedAt: T, snapshotId: "p-limiting-check",
+    });
+    value.applyWeeklyAccountQuotaSnapshotAt(1, BUCKET, {
+      fraction: 0.2, resetAt: T + WEEK, observedAt: T, snapshotId: "w-limiting-check",
+    });
+
+    expect(value.checkFairShare(1, "A", BUCKET)).toMatchObject({
+      allowed: true,
+      remainingFraction: 0.2,
+      window: "7d",
+      resetAt: T + WEEK,
+      resetMs: WEEK,
+    });
+  });
+
   it("never exposes more pooled absolute quota than the mother account", () => {
     const now = { value: T };
     const value = tracked(tracker({ 1: [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }] }, now));

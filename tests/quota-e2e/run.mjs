@@ -30,7 +30,9 @@ function exec(command, args, env = {}, cwd = root) {
   });
 }
 
-await exec("pnpm", ["prisma", "db", "push", "--skip-generate"], { DATABASE_URL: databaseUrl });
+// Exercise the production migration chain, not a schema-only db push. This
+// catches migration/schema drift before the quota fixture starts.
+await exec("pnpm", ["prisma", "migrate", "deploy"], { DATABASE_URL: databaseUrl });
 await exec("go", ["build", "-o", helperPath, "./cmd/quota-e2e-client"], {}, join(root, "apps/app"));
 let server;
 async function startServer() {
@@ -164,17 +166,19 @@ try {
       assert(actualReason === expectedReason, `Claude lateness ${late} reason=${actualReason}, want ${expectedReason}`);
     }
     await useRealtimeClock();
-    // Rebound, stale snapshot, and independent forward reset.
+    // Rebound, an in-horizon reordered snapshot, and independent forward reset.
     await runScenario("reset-rebound", "card-6", [clock(now + 600_000), lease("card-6"),
       report({ reportId: "rr-q0", status: 0, accountQuota: quota(6, 100, 100, now + 600_000) }),
       clock(now + 602_000),
-      report({ reportId: "rr-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000, upstreamCompletedAt: now + 601_000,
+      report({ reportId: "rr-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: now + 600_500, upstreamCompletedAt: now + 601_000,
         accountQuota: quota(6, 20, 70, now + 602_000, 1, now + 600_000) }),
       clock(now + 603_000),
       report({ reportId: "rr-rebound", status: 0, accountQuota: quota(6, 80, 90, now + 603_000, 1, now + 600_000) }),
       clock(now + 604_000),
       report({ reportId: "rr-stale", status: 0, accountQuota: quota(6, 10, 10, now + 601_500, 1, now + 600_000) }),
       clock(now + 600_000 + 5 * 60 * 60_000),
+      lease("card-6"),
       report({ reportId: "rr-reset", status: 0, accountQuota: quota(6, 100, 90, now + 600_000 + 5 * 60 * 60_000, 2, now + 600_000) }),
     ]);
     const resetHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 6, bucket: "codex-gpt" } });
@@ -184,7 +188,7 @@ try {
     assert(resetPrimary.fraction === 1 && resetPrimary.assignedBurn === 0 && resetPrimary.subjects["card-6"].cumulativeCu === 0,
       `official primary reset mismatch: ${JSON.stringify({ fraction: resetPrimary.fraction, assignedBurn: resetPrimary.assignedBurn, cu: resetPrimary.subjects["card-6"].cumulativeCu, resetAt: resetPrimary.resetAt })}`);
     assert(resetWeekly.fraction === 0.9 && resetWeekly.assignedBurn > 0 && resetWeekly.subjects["card-6"].cumulativeCu === 1,
-      `official weekly reset mismatch: ${JSON.stringify({ fraction: resetWeekly.fraction, assignedBurn: resetWeekly.assignedBurn, cu: resetWeekly.subjects["card-6"].cumulativeCu, resetAt: resetWeekly.resetAt })}`);
+      `official weekly reset mismatch: ${JSON.stringify({ fraction: resetWeekly.fraction, assignedBurn: resetWeekly.assignedBurn, unattributedShare: resetWeekly.unattributedShare, cu: resetWeekly.subjects["card-6"].cumulativeCu, resetAt: resetWeekly.resetAt, revision: resetWeekly.revision, lastReason: resetWeekly.lastReason, tail: resetWeekly.reorderTail?.length })}`);
     await useRealtimeClock();
     // Cross-account snapshot must not mutate account 7.
     await runScenario("cross-account", "card-7", [lease("card-7"), report({ reportId: "cross", status: 0, accountQuota: quota(8, 0, 0, now + 700_000) })]);

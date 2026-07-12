@@ -184,6 +184,23 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(reloads.tokenServer.reloadAccessKeys).toHaveBeenCalled();
   });
 
+  it("rebindProduct waits for every pool reload/checkpoint before acknowledging", async () => {
+    seed(makeSub({ id: "sub-rebind-await" }));
+    const releases: Array<() => void> = [];
+    for (const target of Object.values(reloads) as any[]) {
+      target.reloadAccessKeys.mockImplementation(() => new Promise<void>((resolve) => releases.push(resolve)));
+    }
+    let settled = false;
+    const result = service.rebindProduct("sub-rebind-await", "antigravity", 7)
+      .finally(() => { settled = true; });
+
+    await vi.waitFor(() => expect(releases).toHaveLength(3));
+    expect(settled).toBe(false);
+    releases.splice(0).forEach((release) => release());
+
+    await expect(result).resolves.toMatchObject({ ok: true });
+  });
+
   it("rebindProduct 拒绝:目标号不存在", async () => {
     seed(makeSub({ id: "sub-rebind-2" }));
     const res = await service.rebindProduct("sub-rebind-2", "antigravity", 999);

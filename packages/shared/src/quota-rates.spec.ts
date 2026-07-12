@@ -72,6 +72,32 @@ describe("quota rate registry", () => {
     })).cu).toBe(5);
   });
 
+  it("resolves dated provider model ids through the longest alias", () => {
+    expect(resolveQuotaRate("anthropic", "claude-opus-4-20250514", AT)).toMatchObject({
+      canonicalModelId: "claude-opus-4-8",
+      inputPerMillion: 5,
+      quality: "exact",
+    });
+    expect(resolveQuotaRate("anthropic", "claude-sonnet-4-20250514", AT)).toMatchObject({
+      canonicalModelId: "claude-sonnet-5",
+      inputPerMillion: 3,
+      quality: "exact",
+    });
+    expect(resolveQuotaRate("codex", "gpt-5.4-mini-2026-03-17", AT)).toMatchObject({
+      canonicalModelId: "gpt-5.4-mini",
+      inputPerMillion: 0.75,
+      quality: "exact",
+    });
+  });
+
+  it("resolves registered autocomplete suffix variants without charging the provider maximum", () => {
+    expect(resolveQuotaRate("codex", "tab_flash_lite_preview-20260711", AT)).toMatchObject({
+      canonicalModelId: "codex-autocomplete",
+      inputPerMillion: 0.1,
+      quality: "exact",
+    });
+  });
+
   it("never silently drops autocomplete or unknown non-zero usage", () => {
     expect(calculateQuotaCu(usage("tab_flash_lite_preview", { inputTokens: 1_000_000 })).cu).toBeGreaterThan(0);
 

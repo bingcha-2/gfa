@@ -29,6 +29,7 @@ import {
   validateClientVersion,
 } from "../token-server/token-billing";
 import { bucketKey } from "./product-bucket";
+import { fairShareDenialMessage } from "./fair-share-message";
 import type { Provider } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
 
@@ -214,6 +215,10 @@ const RATE_LIMIT_MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 // 否则到点自动复检一次。也可由后台手动恢复立即清除(reactivateAccount)。
 const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
 const REPORT_GRACE_MS = 60 * 1000;
+// Clients retry failed usage reports for at most 30 minutes. Keep a small clock/
+// scheduling margin, but do not let an ancient payload retain a live lease
+// association indefinitely after its exactly-once receipt has been pruned.
+const REPORT_REPLAY_GRACE_MS = 35 * 60 * 1000;
 const ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
 
 function isExternalModelNotFound(status: number, reason: string): boolean {
@@ -627,9 +632,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const check = this.fairShareTracker.checkFairShare(hardPinnedAccountId, auth.record.id, bucket);
       if (!check.allowed) {
         const quota = this.buildLeaseQuotaPayload(auth.record, hardPinnedAccountId, modelKey);
-        throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复", {
+        const message = fairShareDenialMessage(check.reason);
+        throw this.fail(429, message, {
           ok: false,
-          error: check.reason || "公平限额已用完，请等待额度恢复",
+          error: message,
+          ...(check.reason ? { code: check.reason } : {}),
           ...(check.retryAfterMs ? { retryAfterMs: check.retryAfterMs } : {}),
           accountBuckets: quota.accountBucketsData,
           accessKeyStatus: quota.accessKeyStatus,
@@ -1099,9 +1106,25 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const cardId = auth.record.id;
 
     const leaseId = String(payload?.leaseId || "").trim();
-    const lease = leaseId ? this.leases.get(leaseId) : undefined;
+    let lease = leaseId ? this.leases.get(leaseId) : undefined;
     if (lease && auth.record.id !== lease.accessKeyId) {
       throw this.fail(403, "Lease/access key mismatch");
+    }
+    let staleLeaseReport = false;
+    if (lease) {
+      const now = this.now();
+      const reportedCompletedAt = Number(payload?.upstreamCompletedAt);
+      // A stream may legitimately finish hours after the short-lived token lease,
+      // so expiry alone is not a rejection signal. Its completion evidence must
+      // also be older than the client's bounded retry horizon.
+      const evidenceAt = Number.isFinite(reportedCompletedAt) && reportedCompletedAt > 0
+        ? Math.min(now, reportedCompletedAt)
+        : Date.parse(lease.expiresAt);
+      if (!Number.isFinite(evidenceAt) || now - evidenceAt > REPORT_REPLAY_GRACE_MS) {
+        this.leases.delete(leaseId);
+        lease = undefined;
+        staleLeaseReport = true;
+      }
     }
 
     const status = Number(payload?.status || 0);
@@ -1152,6 +1175,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     ) {
       return {
         ok: true, ignored: true, reason: "already_reported",
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
+      };
+    }
+    if (staleLeaseReport) {
+      return {
+        ok: true, ignored: true, reason: "report_expired",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       };
     }
@@ -1611,7 +1640,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * and cross-restart "remaining" instead of defaults. */
   async onModuleInit(): Promise<void> {
     this.rehydrateAccountStatus();
-    try { await this.fairShareTracker?.load(); } catch (err) { console.error("[lease-service] fairShareTracker load failed:", err); }
+    try {
+      await this.fairShareTracker?.load();
+      // Persisted quota state describes the pre-restart membership. Reconcile it
+      // with the authoritative subscription store before serving, and durably
+      // checkpoint that membership event before startup completes.
+      this.fairShareTracker?.refreshAllParticipants();
+      await this.fairShareTracker?.flush();
+    } catch (err) {
+      console.error("[lease-service] fairShareTracker restore/reconcile failed:", err);
+    }
   }
 
   /**

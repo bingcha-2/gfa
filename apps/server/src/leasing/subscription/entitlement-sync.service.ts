@@ -151,7 +151,10 @@ export class EntitlementSyncService {
     // 保底份额,不必等下个窗口 reset)。registerRecord 后内存绑定已含本卡,getBoundCardWeights 可见。
     for (const product of unbound) {
       const accountId = Number(existingBindings[product]);
-      if (accountId > 0) sharedFairShareRegistry.get(product)?.refreshParticipants(accountId);
+      const tracker = accountId > 0 ? sharedFairShareRegistry.get(product) : undefined;
+      if (!tracker) continue;
+      tracker.refreshParticipants(accountId);
+      await tracker.flush();
     }
   }
 
@@ -215,12 +218,13 @@ export class EntitlementSyncService {
       });
       // 重新注册内存 record + reload 各池 → 运行时立刻按新绑定路由。
       this.registerRecord(sub, config);
-      this.tokenServer.reloadAccessKeys();
-      this.remoteCodex.reloadAccessKeys();
-      this.remoteAnthropic.reloadAccessKeys();
-      // 中途加超卖人即时生效:换绑/加绑后把该号当前在册成员升为本窗口 participant(满号超卖
-      // 当窗口即享保底,不等下个窗口 reset);reload 后 getBoundCardWeights 已含本卡。
-      sharedFairShareRegistry.get(product)?.refreshParticipants(acctId);
+      await Promise.all([
+        this.tokenServer.reloadAccessKeys(),
+        this.remoteCodex.reloadAccessKeys(),
+        this.remoteAnthropic.reloadAccessKeys(),
+      ]);
+      // reloadAccessKeys 内部已在刷新后的绑定表上执行 refreshAllParticipants + flush；
+      // 不要在 checkpoint 之后再发一次未等待持久化的重复 membership 事件。
       this.logger.log(`[rebind] sub ${subscriptionId} product ${product} → account #${acctId}${force ? " (force)" : ""}`);
       return { ok: true, product, accountId: acctId };
     });

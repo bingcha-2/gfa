@@ -148,7 +148,12 @@ export class WindowCuFairShareEngine {
     const weekly = getSubjectQuota(windows.weekly, quotaSubjectId);
     const primaryBlocked = windows.primary.primed && primary.fraction <= 0;
     const weeklyBlocked = this.options.trackWeekly && windows.weekly.primed && weekly.fraction <= 0;
-    const selected = primaryBlocked || !weeklyBlocked ? windows.primary : windows.weekly;
+    const weeklyLimitsAllowedRequest = this.options.trackWeekly
+      && windows.weekly.primed
+      && (!windows.primary.primed || weekly.fraction < primary.fraction);
+    const selected = primaryBlocked
+      ? windows.primary
+      : weeklyBlocked || weeklyLimitsAllowedRequest ? windows.weekly : windows.primary;
     const window = selected.scope === "primary" ? "5h" : "7d";
     const fraction = primaryBlocked || weeklyBlocked
       ? 0

@@ -119,6 +119,164 @@ describe("FairShareWindowRepository with SQLite", () => {
     expect(restored).toEqual({ ok: true, windows: expected });
   });
 
+  it("cuts over fixed legacy rows without changing blood bars and checkpoints a restartable head", async () => {
+    const legacyRows = [
+      { bucket: "codex-gpt", cardId: "A", windowStart: BigInt(T), attributedShare: 0.3, lastFraction: 0.6 },
+      { bucket: "codex-gpt", cardId: "B", windowStart: BigInt(T), attributedShare: 0.1, lastFraction: 0.6 },
+      { bucket: "codex-gpt::weekly", cardId: "A", windowStart: BigInt(T), attributedShare: 0.2, lastFraction: 0.7 },
+      { bucket: "codex-gpt::weekly", cardId: "B", windowStart: BigInt(T), attributedShare: 0.05, lastFraction: 0.7 },
+    ].map((row) => ({
+      provider: "codex",
+      accountId: 7,
+      weightedUsed: 999_999,
+      lockedDenominator: 2,
+      isParticipant: true,
+      share: 0.5,
+      isActive: true,
+      isExclusive: false,
+      ...row,
+    }));
+    await prisma.fairShareWindow.createMany({ data: legacyRows });
+
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const groups = await repository.loadProvider();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].result.ok).toBe(true);
+    if (!groups[0].result.ok) throw new Error(groups[0].result.reason);
+    expect(groups[0].result.needsCheckpoint).toBe(true);
+    const migrated = groups[0].result.windows;
+    expect(migrated.primary.fraction).toBe(0.6);
+    expect(migrated.primary.subjects.A.cumulativeCu).toBe(0);
+    expect(migrated.primary.subjects.A.carriedAttributedShare).toBeCloseTo(0.3, 12);
+    expect(migrated.primary.subjects.A.attributedShare).toBe(0);
+    expect(migrated.primary.unattributedShare).toBe(0);
+    expect(migrated.weekly.subjects.A.carriedAttributedShare).toBeCloseTo(0.2, 12);
+    expect(migrated.weekly.unattributedShare).toBeCloseTo(0.05, 12);
+
+    await repository.checkpointAccount(7, "codex-gpt", migrated);
+    const restarted = await new FairShareWindowRepository(prisma, "codex").loadAccount(7, "codex-gpt");
+    expect(restarted).toEqual({ ok: true, windows: migrated });
+    const heads = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>("SELECT COUNT(*) AS count FROM FairShareWindowHead");
+    const cards = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>("SELECT COUNT(*) AS count FROM FairShareWindow");
+    expect(Number(heads[0].count)).toBe(2);
+    expect(Number(cards[0].count)).toBe(4);
+  });
+
+  it("automatically checkpoints a legacy cutover during tracker flush and restores it unchanged", async () => {
+    await prisma.fairShareWindow.createMany({ data: ["codex-gpt", "codex-gpt::weekly"].flatMap((bucket) => [
+      {
+        provider: "codex", accountId: 7, bucket, cardId: "A", windowStart: BigInt(T),
+        weightedUsed: 123, attributedShare: bucket.endsWith("::weekly") ? 0.2 : 0.3,
+        lockedDenominator: 2, lastFraction: bucket.endsWith("::weekly") ? 0.7 : 0.6,
+        isParticipant: true, share: 0.5, isActive: true, isExclusive: false,
+      },
+      {
+        provider: "codex", accountId: 7, bucket, cardId: "B", windowStart: BigInt(T),
+        weightedUsed: 456, attributedShare: bucket.endsWith("::weekly") ? 0.05 : 0.1,
+        lockedDenominator: 2, lastFraction: bucket.endsWith("::weekly") ? 0.7 : 0.6,
+        isParticipant: true, share: 0.5, isActive: true, isExclusive: false,
+      },
+    ]) });
+    const options = {
+      algorithm: "window-cu-v1" as const,
+      provider: "codex",
+      trackWeekly: true,
+      prisma,
+      now: () => T + 100,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }],
+      getSeatCapacity: () => 2,
+    };
+
+    const first = new FairShareTracker(options);
+    await first.load();
+    const beforeRestart = first.getWindowStateForTesting(7, "codex-gpt");
+    expect(beforeRestart?.primary.subjects.A.carriedAttributedShare).toBeCloseTo(0.3, 12);
+    expect(beforeRestart?.primary.subjects.A.cumulativeCu).toBe(0);
+    await first.flush();
+    first.destroy();
+
+    const restarted = new FairShareTracker(options);
+    await restarted.load();
+    expect(restarted.getWindowStateForTesting(7, "codex-gpt")).toEqual(beforeRestart);
+    restarted.destroy();
+    const heads = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>("SELECT COUNT(*) AS count FROM FairShareWindowHead");
+    const cards = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>("SELECT COUNT(*) AS count FROM FairShareWindow");
+    expect(Number(heads[0].count)).toBe(2);
+    expect(Number(cards[0].count)).toBe(4);
+  });
+
+  it("reconciles a member added during downtime and persists it before serving", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    let oldWindows = createQuotaWindows({
+      subjects: [{ quotaSubjectId: "A", share: 1 }], primaryWindowMs: FIVE_HOURS, weeklyWindowMs: WEEK,
+    });
+    oldWindows = reduceQuotaWindows(oldWindows, { scope: "primary", event: snapshot("primary", 0.8, T) });
+    oldWindows = reduceQuotaWindows(oldWindows, { scope: "weekly", event: snapshot("weekly", 0.9, T) });
+    await repository.checkpointAccount(7, "codex-gpt", oldWindows);
+
+    const options = {
+      algorithm: "window-cu-v1" as const,
+      provider: "codex",
+      trackWeekly: true,
+      prisma,
+      now: () => T + 100,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }, { cardId: "B", weight: 1 }],
+      getSeatCapacity: () => 2,
+    };
+    const restored = new FairShareTracker(options);
+    await restored.load();
+    restored.refreshAllParticipants();
+    await restored.flush();
+    expect(restored.getWindowStateForTesting(7, "codex-gpt")?.primary.subjects.B).toMatchObject({
+      active: true, share: 0.5, cumulativeCu: 0, carriedAttributedShare: 0, attributedShare: 0,
+    });
+    restored.destroy();
+
+    const restarted = new FairShareTracker(options);
+    await restarted.load();
+    expect(restarted.getWindowStateForTesting(7, "codex-gpt")?.primary.subjects.B).toMatchObject({
+      active: true, share: 0.5,
+    });
+    restarted.destroy();
+  });
+
+  it("rejects an older checkpoint without rolling back heads or per-card summaries", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const older = populatedWindows();
+    const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer", T + 30) });
+    await repository.checkpointAccount(7, "codex-gpt", newer);
+    const summariesBefore = await prisma.$queryRawUnsafe(
+      `SELECT bucket, cardId, weightedUsed, attributedShare, lastFraction, isActive
+       FROM FairShareWindow WHERE provider = ? AND accountId = ? ORDER BY bucket, cardId`,
+      "codex", 7,
+    );
+
+    await repository.checkpointAccount(7, "codex-gpt", older);
+
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: newer });
+    await expect(prisma.$queryRawUnsafe(
+      `SELECT bucket, cardId, weightedUsed, attributedShare, lastFraction, isActive
+       FROM FairShareWindow WHERE provider = ? AND accountId = ? ORDER BY bucket, cardId`,
+      "codex", 7,
+    )).resolves.toEqual(summariesBefore);
+  });
+
+  it("does not acknowledge a report when either scope loses a stale revision race", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const older = populatedWindows();
+    const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer-state", T + 30) });
+    await repository.checkpointAccount(7, "codex-gpt", newer);
+
+    await repository.checkpointBatch([{
+      accountId: 7, bucket: "codex-gpt", windows: older, reportIds: ["stale-report"],
+    }]);
+
+    await expect(repository.hasReport("stale-report")).resolves.toBe(false);
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: newer });
+  });
+
   it("keeps row count fixed while revisions grow", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     let windows = populatedWindows();

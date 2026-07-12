@@ -69,10 +69,14 @@ function conservativeFallback(provider: QuotaProvider, occurredAt: number): Mode
 
 export function resolveQuotaRate(provider: QuotaProvider, modelId: string, occurredAt: number): ResolvedQuotaRate {
   const normalized = normalizeModelId(modelId);
+  const matchLength = (rate: ModelQuotaRate) => [rate.canonicalModelId, ...rate.aliases]
+    .map(normalizeModelId)
+    .filter((alias) => normalized === alias || normalized.startsWith(`${alias}-`))
+    .reduce((longest, alias) => Math.max(longest, alias.length), 0);
   const matches = registry.models
     .filter((rate) => rate.provider === provider && activeAt(rate, occurredAt))
-    .filter((rate) => rate.canonicalModelId === normalized || rate.aliases.some((alias) => normalizeModelId(alias) === normalized))
-    .sort((a, b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom));
+    .filter((rate) => matchLength(rate) > 0)
+    .sort((a, b) => matchLength(b) - matchLength(a) || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom));
   const exact = matches[0];
   return {
     ...(exact || conservativeFallback(provider, occurredAt)),

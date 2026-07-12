@@ -13,6 +13,10 @@ export interface WindowSubjectConfig {
 export interface WindowSubjectState extends WindowSubjectConfig {
   active: boolean;
   cumulativeCu: number;
+  /** Attribution imported at the segment-v1 cutover. It has no compatible CU
+   * denominator, so it is carried separately until rebound or reset. */
+  carriedAttributedShare: number;
+  /** Attribution produced from post-cutover CU only. */
   attributedShare: number;
 }
 
@@ -110,6 +114,11 @@ function totalCu(core: WindowCoreState): number {
   return Object.values(core.subjects).reduce((sum, subject) => sum + positive(subject.cumulativeCu), 0);
 }
 
+function totalCarried(core: WindowCoreState): number {
+  return Object.values(core.subjects)
+    .reduce((sum, subject) => sum + positive(subject.carriedAttributedShare), 0);
+}
+
 function recomputeAttribution(core: WindowCoreState): void {
   const sum = totalCu(core);
   for (const subject of Object.values(core.subjects)) {
@@ -121,6 +130,7 @@ function resetCore(core: WindowCoreState, event: SnapshotEvent): WindowCoreState
   const subjects = Object.fromEntries(Object.entries(cloneSubjects(core.subjects)).filter(([, subject]) => subject.active));
   for (const subject of Object.values(subjects)) {
     subject.cumulativeCu = 0;
+    subject.carriedAttributedShare = 0;
     subject.attributedShare = 0;
   }
   return {
@@ -152,20 +162,32 @@ function applyCoreEvent(input: WindowCoreState, event: WindowEvent): WindowCoreS
       const existing = core.subjects[config.quotaSubjectId];
       core.subjects[config.quotaSubjectId] = existing
         ? { ...existing, ...config, share: clamp01(config.share), active: true }
-        : { ...config, share: clamp01(config.share), active: true, cumulativeCu: 0, attributedShare: 0 };
+        : {
+            ...config,
+            share: clamp01(config.share),
+            active: true,
+            cumulativeCu: 0,
+            carriedAttributedShare: 0,
+            attributedShare: 0,
+          };
     }
     core.compactedThroughAt = Math.max(core.compactedThroughAt, causalAt(event));
     return core;
   }
 
+  if (!Number.isFinite(event.fraction) || event.fraction < 0 || event.fraction > 1) return core;
   const fraction = clamp01(event.fraction);
+  const hasValidResetAt = Number.isFinite(event.resetAt) && event.resetAt > 0;
   if (!core.primed) {
+    if (!hasValidResetAt) return core;
     core = resetCore(core, { ...event, fraction });
     core.compactedThroughAt = Math.max(core.compactedThroughAt, causalAt(event));
     return core;
   }
 
-  const forwardReset = event.resetAt > core.resetAt + 60_000 && event.observedAt >= core.resetAt;
+  const forwardReset = hasValidResetAt
+    && event.resetAt > core.resetAt + 60_000
+    && event.observedAt >= core.resetAt;
   if (forwardReset) {
     core = resetCore(core, { ...event, fraction });
     core.compactedThroughAt = Math.max(core.compactedThroughAt, causalAt(event));
@@ -179,9 +201,15 @@ function applyCoreEvent(input: WindowCoreState, event: WindowEvent): WindowCoreS
     recomputeAttribution(core);
   } else if (delta < 0) {
     const recovery = -delta;
-    const burned = core.assignedBurn + core.unattributedShare;
+    const carried = totalCarried(core);
+    const burned = carried + core.assignedBurn + core.unattributedShare;
     if (burned > 0) {
       const refund = Math.min(recovery, burned);
+      const factor = (burned - refund) / burned;
+      for (const subject of Object.values(core.subjects)) {
+        subject.carriedAttributedShare *= factor;
+        if (subject.carriedAttributedShare < 1e-15) subject.carriedAttributedShare = 0;
+      }
       core.assignedBurn -= refund * core.assignedBurn / burned;
       core.unattributedShare -= refund * core.unattributedShare / burned;
       if (core.assignedBurn < 1e-15) core.assignedBurn = 0;
@@ -190,7 +218,9 @@ function applyCoreEvent(input: WindowCoreState, event: WindowEvent): WindowCoreS
     }
   }
   core.fraction = fraction;
-  core.resetAt = event.resetAt || core.resetAt;
+  // resetAt is an upstream window boundary, not ordinary snapshot data. A
+  // missing or backward-drifting value must not shorten the current window.
+  if (hasValidResetAt && event.resetAt >= core.resetAt) core.resetAt = event.resetAt;
   core.windowStart = core.resetAt - core.windowMs;
   core.lastSnapshotAt = event.observedAt;
   core.compactedThroughAt = Math.max(core.compactedThroughAt, causalAt(event));
@@ -235,6 +265,7 @@ export function createWindowState(config: {
     share: clamp01(subject.share),
     active: true,
     cumulativeCu: 0,
+    carriedAttributedShare: 0,
     attributedShare: 0,
   }]));
   const base: WindowCoreState = {
@@ -253,16 +284,77 @@ export function createWindowState(config: {
   return { ...cloneCore(base), revision: 0, base, reorderTail: [] };
 }
 
+/**
+ * Builds a window-cu state from the fixed-size segment-v1 summary. Legacy T_i
+ * is intentionally not converted into CU: no lossless denominator exists.
+ * The unexplained part of the mother burn remains unattributed, while all
+ * post-cutover usage starts with a clean CU ledger.
+ */
+export function createCarriedWindowState(config: {
+  scope: QuotaScope;
+  windowMs: number;
+  windowStart: number;
+  fraction: number;
+  lastSnapshotAt?: number;
+  subjects: Array<WindowSubjectConfig & {
+    active: boolean;
+    carriedAttributedShare: number;
+  }>;
+}): FairShareWindowState {
+  const state = createWindowState({
+    scope: config.scope,
+    windowMs: config.windowMs,
+    subjects: config.subjects,
+  });
+  const fraction = Number.isFinite(config.fraction) ? clamp01(config.fraction) : 1;
+  for (const subject of config.subjects) {
+    const target = state.subjects[subject.quotaSubjectId];
+    target.active = subject.active;
+    target.carriedAttributedShare = positive(subject.carriedAttributedShare);
+  }
+  const confirmedBurn = 1 - fraction;
+  const carried = totalCarried(state);
+  // Legacy rows can exceed the mother burn by tiny floating-point drift (or
+  // old corrupt data). Preserve their ratios while restoring conservation.
+  if (carried > confirmedBurn && carried > 0) {
+    const factor = confirmedBurn / carried;
+    for (const subject of Object.values(state.subjects)) {
+      subject.carriedAttributedShare *= factor;
+    }
+  }
+  state.primed = true;
+  state.windowStart = config.windowStart;
+  state.resetAt = config.windowStart + config.windowMs;
+  state.fraction = fraction;
+  state.lastSnapshotAt = config.lastSnapshotAt ?? config.windowStart;
+  state.unattributedShare = Math.max(0, confirmedBurn - totalCarried(state));
+  state.compactedThroughAt = state.lastSnapshotAt;
+  const { revision: _revision, base: _base, reorderTail: _tail, lastReason: _reason, ...core } = state;
+  state.base = cloneCore(core);
+  return state;
+}
+
 export function reduceWindow(state: FairShareWindowState, incoming: WindowEvent): FairShareWindowState {
   if (state.reorderTail.some((event) => sameEventId(event, incoming))) {
     return { ...state, lastReason: "EVENT_DUPLICATE" };
   }
-  if (incoming.kind === "snapshot" && state.primed && incoming.observedAt <= state.lastSnapshotAt) {
-    return { ...state, lastReason: "SNAPSHOT_STALE_OBSERVED_AT" };
+  if (incoming.kind === "snapshot"
+    && (!Number.isFinite(incoming.fraction) || incoming.fraction < 0 || incoming.fraction > 1)) {
+    return { ...state, lastReason: "SNAPSHOT_INVALID_FRACTION" };
+  }
+  if (incoming.kind === "snapshot" && !state.primed
+    && (!Number.isFinite(incoming.resetAt) || incoming.resetAt <= 0)) {
+    return { ...state, lastReason: "SNAPSHOT_INVALID_RESET_AT" };
   }
 
   const cutoff = incoming.arrivedAt - REORDER_HORIZON_MS;
   const compacted = compact(state.base, state.reorderTail, cutoff);
+  // Events newer than the compacted base can still be inserted into the
+  // causal tail and replayed. Once their causal position has crossed the
+  // bounded horizon, accepting them would require undoing compacted history.
+  if (incoming.kind === "snapshot" && incoming.observedAt <= compacted.base.compactedThroughAt) {
+    return { ...state, lastReason: "SNAPSHOT_STALE_OBSERVED_AT" };
+  }
   let event = { ...incoming } as WindowEvent;
   let lastReason: string | undefined;
   const arrivedLateForSnapshot = incoming.kind === "usage" && incoming.upstreamCompletedAt <= state.lastSnapshotAt;
@@ -301,10 +393,14 @@ export function getSubjectQuota(state: FairShareWindowState, quotaSubjectId: str
 } {
   const subject = state.subjects[quotaSubjectId];
   if (!subject || !subject.active || subject.share <= 0) return { fraction: 0, share: subject?.share || 0, absoluteRemaining: 0 };
-  const raw = Math.max(0, subject.share - subject.attributedShare);
+  const attributed = positive(subject.carriedAttributedShare) + positive(subject.attributedShare);
+  const raw = Math.max(0, subject.share - attributed);
   const activeSubjects = Object.values(state.subjects).filter((value) => value.active);
   const rawTotal = activeSubjects
-    .reduce((sum, value) => sum + Math.max(0, value.share - value.attributedShare), 0);
+    .reduce((sum, value) => sum + Math.max(
+      0,
+      value.share - positive(value.carriedAttributedShare) - positive(value.attributedShare),
+    ), 0);
   // Exclusive changes allocation ownership, never conservation: even one sole
   // exclusive card cannot expose more absolute quota than the mother has left.
   const scale = rawTotal > state.fraction ? state.fraction / rawTotal : 1;

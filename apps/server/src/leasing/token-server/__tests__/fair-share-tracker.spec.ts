@@ -59,6 +59,28 @@ describe("QUOTA_WEIGHTS 派生自定价源", () => {
   });
 });
 
+describe("window-cu background persistence", () => {
+  it("handles a scheduled flush rejection instead of leaking an unhandled promise", async () => {
+    vi.useFakeTimers();
+    const error = new Error("sqlite busy");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1",
+      provider: "codex",
+      prisma: {} as any,
+      getCardWeight: () => 1,
+      getBoundCardWeights: () => [],
+    }));
+    vi.spyOn(tracker, "flush").mockRejectedValue(error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(logged).toHaveBeenCalledWith("[fair-share-tracker] scheduled flush failed:", error);
+    logged.mockRestore();
+    vi.useRealTimers();
+  });
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // Test harness:可变绑定表 + 注入时钟(支持窗口内加/解绑)
 // ────────────────────────────────────────────────────────────────────────────
