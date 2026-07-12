@@ -418,7 +418,14 @@ describe("FairShareWindowRepository with SQLite", () => {
 
     const restored = new FairShareTracker(options);
     await restored.load();
-    expect(restored.getWindowStateForTesting(7, "codex-gpt")).toEqual(expected);
+    const withoutProcessLocalTail = (state: typeof expected) => state && Object.fromEntries(
+      Object.entries(state).map(([scope, window]) => {
+        const { retainedEvents: _events, reorderTailBytes: _bytes, ...materialized } = window;
+        return [scope, materialized];
+      }),
+    );
+    expect(withoutProcessLocalTail(restored.getWindowStateForTesting(7, "codex-gpt")))
+      .toEqual(withoutProcessLocalTail(expected));
     restored.destroy();
   });
 });

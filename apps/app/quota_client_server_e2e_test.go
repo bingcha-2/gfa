@@ -217,9 +217,27 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		t.Fatalf("Codex weekly resetAt was not consumed: %d", got)
 	}
 
+	// Simulate a live rollback to an older server payload that still carries the
+	// two fair-share bars but does not know personalFraction. The production Go
+	// parser must remove values cached from the newer server.
+	recordFairShareQuota([]byte(`{
+		"accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
+		"fairShareQuota":{"codex-gpt":{"fraction":0.4,"resetAt":2000,"share":1}},
+		"weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"resetAt":3000}}
+	}`))
+	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
+		t.Fatal("old-server response left the newer primary personal bar frozen")
+	}
+	if _, ok := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; ok {
+		t.Fatal("old-server response left the newer weekly personal bar frozen")
+	}
+
 	// 会话切换清理(放在全部血条断言之后):登出/换号路径调用的 clearLocalCardState
 	// 必须把 GetStats 暴露给前端的个人血条一并清空,下一账号不能看到上一账号的
 	// 独享余量。
+	globalUsageStats.AddModelTokens("gpt", "gpt-5.6-luna", 123, 45, 0, 168, false)
+	usageBefore := globalUsageStats.GetTodayRecord()
+	usageBeforeClear := usageBefore.InputTokens + usageBefore.OutputTokens + usageBefore.CachedTokens + usageBefore.CacheWriteTokens
 	clearLocalCardState()
 	clearedStats := (&App{}).GetStats()
 	clearedLeaser := clearedStats["leaser"].(map[string]interface{})
@@ -228,6 +246,10 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	}
 	if cleared, _ := clearedLeaser["myPersonalWeeklyFractions"].(map[string]float64); len(cleared) != 0 {
 		t.Fatalf("personal weekly fractions survived clearLocalCardState: %#v", cleared)
+	}
+	usageAfter := globalUsageStats.GetTodayRecord()
+	if usageAfterClear := usageAfter.InputTokens + usageAfter.OutputTokens + usageAfter.CachedTokens + usageAfter.CacheWriteTokens; usageAfterClear != usageBeforeClear {
+		t.Fatalf("clearLocalCardState deleted usage history: before=%d after=%d", usageBeforeClear, usageAfterClear)
 	}
 	t.Logf("production leasers completed against %s (%s, %s)", base, fmt.Sprint(codexLease.AccountId), fmt.Sprint(claudeLease.AccountId))
 }

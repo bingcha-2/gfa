@@ -172,4 +172,32 @@ export class QuotaE2ETestControlController {
       && Number(durable.weekly || 0) >= expected.weekly);
     return { ok: true, armed: fault?.armed || 0, failures: fault?.failures || 0, expected, durable, recovered };
   }
+
+  @Post("request-log-failure")
+  async requestLogFailure(@Body() body: { reportId?: string }) {
+    const reportId = String(body.reportId || "request-log-retry-e2e");
+    // Drain unrelated scenario logs first so the queue-size assertion below is
+    // about exactly the injected incident.
+    await dependencies.requestLogs.flush();
+    const delegate = dependencies.prisma.requestLog as any;
+    const original = delegate.createMany.bind(delegate);
+    let failedOnce = false;
+    try {
+      delegate.createMany = async (...args: any[]) => {
+        if (!failedOnce) {
+          failedOnce = true;
+          throw new Error("quota-e2e injected request-log failure");
+        }
+        return original(...args);
+      };
+      dependencies.requestLogs.record({ provider: "codex", reportId, reason: "injected diagnostic retry" });
+      await dependencies.requestLogs.flush();
+      const queuedAfterFailure = dependencies.requestLogs.getQueueForTesting().length;
+      await dependencies.requestLogs.flush();
+      const persisted = await dependencies.prisma.requestLog.count({ where: { reportId } });
+      return { ok: true, failedOnce, queuedAfterFailure, persisted };
+    } finally {
+      delegate.createMany = original;
+    }
+  }
 }

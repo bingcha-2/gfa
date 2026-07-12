@@ -48,6 +48,11 @@ for (const index of [83, 84, 85]) {
   cards[index].exclusive = false;
   cards[index].salesSeatCapacity = { codex: 2 };
 }
+// A single full-seat exclusive card used to cold-start at personal=100% even
+// when the first trusted mother snapshot was already partially consumed.
+cards[86].weight = 8;
+cards[86].exclusive = true;
+cards[86].salesSeatCapacity = { codex: 8 };
 await writeFile(accountsFile, JSON.stringify({ accounts: cards.map((_, i) => ({ id: i + 1, email: `a${i + 1}@x.test`, refreshToken: "rt", enabled: true, planType: "pro" })) }));
 await writeFile(keysFile, JSON.stringify({ keys: cards }));
 await writeFile(databasePath, "");
@@ -260,7 +265,11 @@ try {
     assert(diagnostic.quota?.primary?.personalFraction != null
       && diagnostic.quota?.primary?.effectiveFraction != null
       && diagnostic.quota?.primary?.accountFraction != null
-      && diagnostic.quota?.primary?.revision != null,
+      && diagnostic.quota?.primary?.revision != null
+      && diagnostic.quota?.primary?.retainedEvents != null
+      && diagnostic.quota?.primary?.retainedBytes != null
+      && diagnostic.quota?.primary?.compactedEvents != null
+      && diagnostic.quota?.primary?.compactedThroughAt != null,
     `exclusive request diagnostic missing quota state: ${diagnosticRow?.reason}`);
     await stopServer();
     port = await startServer();
@@ -356,6 +365,57 @@ try {
       `pure shared weekly attribution leaked: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
     assert(aw.fraction * aw.share + bw.fraction * bw.share + cw.fraction * cw.share <= 0.9 + 1e-9,
       `pure shared weekly total exceeded mother: A=${JSON.stringify(aw)} B=${JSON.stringify(bw)} C=${JSON.stringify(cw)}`);
+  }
+
+  // Sole-exclusive cold start: the first partial mother snapshot must become
+  // the card's personal value too. A later attributable burn to zero exhausts
+  // that card normally rather than exposing phantom personal quota.
+  {
+    const id = 87, t = now + 8_700_000;
+    const baseline = await runScenario("exclusive-sole-cold-start", "card-87", [
+      clock(t), lease("card-87"),
+      report({ reportId: "exclusive-sole-q0", status: 0, accountQuota: quota(id, 33, 40, t) }),
+      lease("card-87"),
+    ]);
+    const primary = baseline.responses.at(-1).body.fairShareQuota?.["codex-gpt"];
+    const weekly = baseline.responses.at(-1).body.weeklyFairShareQuota?.["codex-gpt"];
+    assert(Math.abs(primary.personalFraction - 0.33) < 1e-9 && Math.abs(primary.fraction - 0.33) < 1e-9,
+      `sole exclusive primary cold start mismatch: ${JSON.stringify(primary)}`);
+    assert(Math.abs(weekly.personalFraction - 0.4) < 1e-9 && Math.abs(weekly.fraction - 0.4) < 1e-9,
+      `sole exclusive weekly cold start mismatch: ${JSON.stringify(weekly)}`);
+    const exhausted = await runScenario("exclusive-sole-exhausted", "card-87", [
+      clock(t + 20_000),
+      report({ leaseId: baseline.leaseId, reportId: "exclusive-sole-u1", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
+        requestStartedAt: t + 10_000, upstreamCompletedAt: t + 15_000,
+        accountQuota: quota(id, 0, 40, t + 20_000, 1, t) }),
+      { ...lease("card-87"), allowStatus: 429 },
+    ]);
+    assert(exhausted.responses.at(-1).body.code === "primary_exhausted",
+      `sole exclusive exhaustion reason mismatch: ${JSON.stringify(exhausted.responses.at(-1))}`);
+  }
+
+  // Shared card with untouched personal quota but a temporarily empty mother
+  // account gets the explicit recovery reason/message instead of a false claim
+  // that the user's own five-hour allowance was consumed.
+  {
+    const id = 88, t = now + 8_800_000;
+    const recovering = await runScenario("account-recovering", "card-88", [
+      clock(t), lease("card-88"),
+      report({ reportId: "account-recovering-q0", status: 0, accountQuota: quota(id, 0, 0, t) }),
+      { ...lease("card-88"), allowStatus: 429 },
+    ]);
+    const denied = recovering.responses.at(-1);
+    assert(denied.body.code === "account_recovering" && denied.body.error === "上游额度恢复中，请稍后重试",
+      `account recovery contract mismatch: ${JSON.stringify(denied)}`);
+  }
+
+  // The real bounded request-log writer must retain a failed SQLite batch and
+  // persist it on retry; diagnostics are only useful if transient DB pressure
+  // does not erase the exact incident being investigated.
+  {
+    const result = await testControl("request-log-failure", { reportId: "request-log-retry-e2e" });
+    assert(result.failedOnce === true && result.queuedAfterFailure === 1 && result.persisted === 1,
+      `request-log retry did not recover: ${JSON.stringify(result)}`);
   }
 
   if (only === "smoke" || only === "oversell-display") {
