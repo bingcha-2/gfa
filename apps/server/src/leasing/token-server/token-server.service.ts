@@ -39,6 +39,7 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
   private readonly bootPrisma: any;
   /** Periodic persister for subscription 5h/weekly window snapshots → Subscription.windowState. */
   private windowPersistTimer: ReturnType<typeof setInterval> | null = null;
+  private subscriptionRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly WINDOW_PERSIST_INTERVAL_MS = 60_000;
 
   constructor(@Optional() options: ServiceOptions = {}) {
@@ -148,6 +149,10 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       clearInterval(this.windowPersistTimer);
       this.windowPersistTimer = null;
     }
+    if (this.subscriptionRetryTimer) {
+      clearTimeout(this.subscriptionRetryTimer);
+      this.subscriptionRetryTimer = null;
+    }
     try { await this.persistSubscriptionWindows(); }
     catch (err: any) { console.error(`[token-server] window persist on shutdown failed: ${err?.message || err}`); }
     await super.onModuleDestroy();
@@ -179,13 +184,22 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       for (const s of subs) {
         if (s.windowState) this.accessKeyStore.restoreSubscriptionWindow(s.id, s.windowState);
       }
-      this.accessKeyStore.markSubscriptionsReady();
+      await this.accessKeyStore.markSubscriptionsReady();
+      if (this.subscriptionRetryTimer) {
+        clearTimeout(this.subscriptionRetryTimer);
+        this.subscriptionRetryTimer = null;
+      }
     } catch (err: any) {
       console.error(`[token-server] subscription load failed (attempt ${attempt + 1}): ${err?.message || err}`);
       // 屏障保持拉起,退避重试直到成功;期间放租返回 503、成员对账被推迟。
       const delayMs = [5_000, 15_000, 60_000][attempt] ?? 60_000;
-      const timer = setTimeout(() => { void this.loadActiveSubscriptions(prisma, attempt + 1); }, delayMs);
-      (timer as any)?.unref?.();
+      if (!this.subscriptionRetryTimer) {
+        this.subscriptionRetryTimer = setTimeout(() => {
+          this.subscriptionRetryTimer = null;
+          void this.loadActiveSubscriptions(prisma, attempt + 1);
+        }, delayMs);
+        (this.subscriptionRetryTimer as any)?.unref?.();
+      }
     }
   }
 }

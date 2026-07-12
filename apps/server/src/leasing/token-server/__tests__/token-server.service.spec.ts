@@ -100,6 +100,32 @@ describe("TokenServerService", () => {
     await service.onModuleDestroy(); // 清掉持久化定时器
   });
 
+  it("keeps leases gated until a failed startup subscription query retries successfully", async () => {
+    vi.useFakeTimers();
+    const prisma = {
+      subscription: {
+        findMany: vi.fn()
+          .mockRejectedValueOnce(new Error("sqlite busy"))
+          .mockResolvedValueOnce([]),
+        update: vi.fn(async () => ({})),
+      },
+    };
+    const service = withSessionResolver(new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "retry", minClientVersion: "", prisma,
+    }));
+    try {
+      await service.onModuleInit();
+      expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(prisma.subscription.findMany).toHaveBeenCalledTimes(2);
+      expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(true);
+    } finally {
+      await service.onModuleDestroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("persistSubscriptionWindows 把订阅窗口写回 Subscription.windowState", async () => {
     const prisma = { subscription: { findMany: vi.fn(async () => []), update: vi.fn(async () => ({})) } };
     const service = withSessionResolver(new TokenServerService({

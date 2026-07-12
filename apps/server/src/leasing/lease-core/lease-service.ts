@@ -1674,7 +1674,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       await this.fairShareTracker?.load();
     } catch (err) {
       console.error("[lease-service] fairShareTracker restore failed:", err);
-      return;
+      throw err;
     }
     // Persisted quota state describes the pre-restart membership. Reconcile it
     // with the authoritative subscription store before serving, and durably
@@ -1688,10 +1688,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         await this.fairShareTracker?.flush();
       } catch (err) {
         console.error("[lease-service] fairShareTracker reconcile failed:", err);
+        throw err;
       }
     };
     if (this.accessKeyStore.areSubscriptionsReady()) await reconcile();
-    else this.accessKeyStore.onSubscriptionsReady(() => { void reconcile(); });
+    else this.accessKeyStore.onSubscriptionsReady(reconcile);
   }
 
   /**

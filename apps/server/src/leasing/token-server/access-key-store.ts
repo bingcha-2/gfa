@@ -168,7 +168,7 @@ export class AccessKeyStore {
   // 旧账本。默认 true —— 只有真正负责加载订阅的进程(TokenServerService 持有
   // prisma 时)才拉起屏障,单测/fixture 不受影响。
   private subscriptionsReady = true;
-  private subscriptionsReadyCallbacks: Array<() => void> = [];
+  private subscriptionsReadyCallbacks: Array<() => void | Promise<void>> = [];
 
   constructor(
     private readonly filePath: string,
@@ -186,19 +186,25 @@ export class AccessKeyStore {
     return this.subscriptionsReady;
   }
 
-  /** Release the barrier after a successful subscription load; runs deferred callbacks once. */
-  markSubscriptionsReady(): void {
+  /** Release only after every deferred membership checkpoint is durable. */
+  async markSubscriptionsReady(): Promise<void> {
     if (this.subscriptionsReady) return;
-    this.subscriptionsReady = true;
-    const callbacks = this.subscriptionsReadyCallbacks.splice(0);
-    for (const callback of callbacks) {
-      try { callback(); } catch (err) { console.error("[access-key-store] ready callback failed:", err); }
+    while (this.subscriptionsReadyCallbacks.length > 0) {
+      const callbacks = this.subscriptionsReadyCallbacks.splice(0);
+      try {
+        await Promise.all(callbacks.map((callback) => callback()));
+      } catch (error) {
+        // Re-run idempotent reconciliation on the next subscription retry.
+        this.subscriptionsReadyCallbacks.unshift(...callbacks);
+        throw error;
+      }
     }
+    this.subscriptionsReady = true;
   }
 
   /** Run now if ready, otherwise once when the barrier releases. */
-  onSubscriptionsReady(callback: () => void): void {
-    if (this.subscriptionsReady) { callback(); return; }
+  onSubscriptionsReady(callback: () => void | Promise<void>): void {
+    if (this.subscriptionsReady) { void callback(); return; }
     this.subscriptionsReadyCallbacks.push(callback);
   }
 

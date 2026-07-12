@@ -98,14 +98,27 @@ describe("LeaseService (generic core)", () => {
     expect(order).toEqual(["load", "membership", "checkpoint"]);
   });
 
+  it("fails startup when persisted fair-share state cannot be restored", async () => {
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath,
+      fairShareTracker: { load: vi.fn(async () => { throw new Error("quota db unavailable"); }) } as any,
+    });
+
+    await expect(service.onModuleInit()).rejects.toThrow("quota db unavailable");
+  });
+
   // 启动屏障:订阅表加载失败时,决不能用「只有文件卡」的残缺成员表覆盖旧账本,
   // 否则订阅用户会被记成 inactive → 份额归 0 → 持续 429,直到下一次换绑才自愈。
   it("defers membership reconciliation and rejects leases while subscriptions are not ready", async () => {
     const order: string[] = [];
+    let releaseCheckpoint!: () => void;
     const fairShareTracker = {
       load: vi.fn(async () => { order.push("load"); }),
       refreshAllParticipants: vi.fn(() => { order.push("membership"); }),
-      flush: vi.fn(async () => { order.push("checkpoint"); }),
+      flush: vi.fn(async () => {
+        order.push("checkpoint");
+        await new Promise<void>((resolve) => { releaseCheckpoint = resolve; });
+      }),
     };
     refreshToken.mockResolvedValue("tok");
     const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
@@ -125,9 +138,12 @@ describe("LeaseService (generic core)", () => {
         body: expect.objectContaining({ code: "server_warming_up" }),
       });
 
-    (service as any).accessKeyStore.markSubscriptionsReady();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const ready = (service as any).accessKeyStore.markSubscriptionsReady();
     expect(order).toEqual(["load", "membership", "checkpoint"]);
+    expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(false);
+    releaseCheckpoint();
+    await ready;
+    expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(true);
 
     const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
     expect(lease.ok).toBe(true);

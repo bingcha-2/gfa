@@ -149,10 +149,10 @@ export class QuotaE2ETestControlController {
 
   /** Arm/release the production subscription-readiness barrier on the shared store. */
   @Post("subscription-barrier")
-  subscriptionBarrier(@Body() body: { provider?: Provider; ready?: boolean }) {
+  async subscriptionBarrier(@Body() body: { provider?: Provider; ready?: boolean }) {
     const provider = body.provider === "anthropic" ? "anthropic" : "codex";
     const store = (serviceFor(provider) as any).accessKeyStore;
-    if (body?.ready === true) store.markSubscriptionsReady();
+    if (body?.ready === true) await store.markSubscriptionsReady();
     else store.beginSubscriptionBarrier();
     return { ok: true, ready: store.areSubscriptionsReady() };
   }
