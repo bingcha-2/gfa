@@ -542,6 +542,11 @@ export class AccessKeyStore {
    */
   getRecordsBoundTo(accountId: number, providerId: string): AccessKeyRecord[] {
     if (accountId <= 0) return [];
+    // Startup quota restoration can ask for membership before any lease/auth
+    // lookup has lazily populated the file-backed indexes. Always establish the
+    // authoritative key snapshot here so restart reconciliation cannot replace
+    // a persisted participant set with an accidental empty membership event.
+    this.readAll();
     const out: AccessKeyRecord[] = [];
     const seen = new Set<string>();
     for (const rec of this.byId.values()) {

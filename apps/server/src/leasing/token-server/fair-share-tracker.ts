@@ -1,7 +1,12 @@
 /**
  * fair-share-tracker.ts — Fraction-share quota for bound cards (重构版,见 QUOTA-REDESIGN.md)。
  *
- * 核心模型(不再反推/学习上游 token 预算,只信上游剩余百分比 fraction):
+ * 注意:本头注释描述的是 legacy segment-v1(环境变量回退路径)。codex/anthropic 当前
+ * 默认 window-cu-v1:本类只作门面,归因、乱序重放与持久化委托给
+ * quota/fair-share-window.ts 与 quota/window-cu-fair-share-engine.ts(设计见
+ * docs/superpowers/specs/2026-07-11-model-aware-fair-share-recompute-design.md)。
+ *
+ * segment-v1 核心模型(不再反推/学习上游 token 预算,只信上游剩余百分比 fraction):
  *   - 每个绑定主人 i 的保证份额 e_i = w_i / D,D = max(N, Σw),窗口开始锁定。
  *     N = 该号保底席位数(salesSeatCapacity,默认 8);Σw = 真实卖出份额。
  *     卖 ≤ N → D=N → 保底 1/N + 预留;卖 > N(超卖)→ D=Σw → 每席切薄到 1/Σw。
@@ -15,7 +20,8 @@
  *
  * Weighted tokens(只当「同号主人间的分账比例」与账单,绝不进「账号还剩多少」判断):
  *   weightedCost = netInput × W_input + output × W_output + cache × W_cache
- *   权重派生自单一定价源 packages/shared/src/pricing.json。
+ *   segment-v1 权重派生自 packages/shared/src/pricing.json;window-cu-v1 的模型 CU
+ *   费率另见 packages/shared/src/quota-rates.json(版本化,带生效时间)。
  */
 
 import { QUOTA_WEIGHTS } from "@gfa/shared";
@@ -142,7 +148,7 @@ export interface FairShareCheck {
 }
 
 export interface FairShareTrackerOptions {
-  /** 归因算法；默认 segment-v1，灰度开启 window-cu-v1。 */
+  /** 归因算法；codex/anthropic 默认 window-cu-v1，可经环境变量显式回退 segment-v1。 */
   algorithm?: "segment-v1" | "window-cu-v1";
   /** 单卡份额权重 w_i(按会员等级;独占号给 w=N)。不再 clamp。 */
   getCardWeight: (cardId: string) => number;
@@ -160,6 +166,8 @@ export interface FairShareTrackerOptions {
   provider?: string;
   /** 可注入时钟(默认 Date.now),保持窗口测试确定性。 */
   now?: () => number;
+  /** Persistence tick override for cross-process fault tests. Production uses 30s. */
+  flushIntervalMs?: number;
 }
 
 // ── Core class ──────────────────────────────────────────────────────────────
@@ -236,7 +244,7 @@ export class FairShareTracker {
         void this.flush().catch((error) => {
           console.error("[fair-share-tracker] scheduled flush failed:", error);
         });
-      }, FLUSH_INTERVAL_MS);
+      }, Math.max(1, Number(opts.flushIntervalMs || FLUSH_INTERVAL_MS)));
       if (this.writeCoordinator) {
         this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
       }
