@@ -347,8 +347,6 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	fastWanted := p.currentFastMode()
 	incomingTier := codexRequestServiceTier(body)
 	body = applyCodexServiceTier(body, fastWanted, lease.PlanType)
-	// 注入 hosted 生图工具(远程链路内联生图的唯一可行路径;*spark/free/客户端自带 image_gen 会自动跳过)。
-	body = ensureCodexImageGenerationTool(body, modelKey, lease.PlanType)
 	audit.reqBody = body
 	effServiceTier := codexRequestServiceTier(body)
 	audit.serviceTier = effServiceTier
