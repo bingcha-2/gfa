@@ -49,6 +49,12 @@ function view(state: FairShareWindowState): AccountingView {
 export class WindowCuFairShareEngine {
   private readonly logger = new Logger(WindowCuFairShareEngine.name);
   private readonly states = new Map<number, Map<string, QuotaWindowsState>>();
+  // Keys whose in-memory window changed since the last drain, with the highest
+  // revision observed. The tracker drains this instead of scanning the pool so a
+  // 30s flush only persists what actually moved — including windows collapsed as
+  // collateral of global reorder-budget enforcement, which no single mutation
+  // call-site can see.
+  private readonly dirtyKeys = new Map<string, { accountId: number; bucket: string; revision: number }>();
   private sequence = 0;
 
   constructor(private readonly options: WindowCuEngineOptions) {}
@@ -322,9 +328,15 @@ export class WindowCuFairShareEngine {
       });
       buckets.set(bucket, state);
     }
-    state = this.expireElapsedWindows(accountId, state);
-    buckets.set(bucket, state);
-    return state;
+    const expired = this.expireElapsedWindows(accountId, state);
+    if (expired !== state) {
+      // Expiry is a revision bump reachable from pure read paths (check,
+      // getCardFractions, entry). It must be marked dirty here or the reset
+      // never becomes durable and the head keeps the exhausted pre-reset state.
+      buckets.set(bucket, expired);
+      this.markDirty(accountId, bucket);
+    }
+    return expired;
   }
 
   /**
@@ -350,9 +362,41 @@ export class WindowCuFairShareEngine {
     return primary === state.primary && weekly === state.weekly ? state : { primary, weekly };
   }
 
+  /** Cheap existence probe for hot-path guards. Unlike entry(), it never runs
+   *  ensure()/expiry/subjects() — no side effects, no per-card recomputation. */
+  has(accountId: number, bucket: string): boolean {
+    return this.states.get(accountId)?.has(bucket) === true;
+  }
+
   private set(accountId: number, bucket: string, state: QuotaWindowsState): void {
+    const previous = this.states.get(accountId)?.get(bucket);
     this.states.get(accountId)?.set(bucket, state);
+    // Rejected events (EVENT_DUPLICATE, SNAPSHOT_STALE_OBSERVED_AT, ...) return
+    // a new object with the revision unchanged. Marking those dirty would make
+    // pure-rejection traffic rewrite an identical checkpoint every flush tick.
+    if (!previous
+      || state.primary.revision !== previous.primary.revision
+      || state.weekly.revision !== previous.weekly.revision) {
+      this.markDirty(accountId, bucket);
+    }
     this.enforceGlobalReorderBudget();
+  }
+
+  /** Record that a key's window moved so the next drain persists it. Also called
+   *  by the tracker to re-mark a key whose flush failed. */
+  markDirty(accountId: number, bucket: string): void {
+    const windows = this.states.get(accountId)?.get(bucket);
+    if (!windows) return;
+    const revision = Math.max(windows.primary.revision, windows.weekly.revision);
+    this.dirtyKeys.set(`${accountId} ${bucket}`, { accountId, bucket, revision });
+  }
+
+  /** Snapshot the keys changed since the last drain and clear the set. The
+   *  returned revision is the highest seen; the caller persists final state. */
+  drainDirtyKeys(): Array<{ accountId: number; bucket: string; revision: number }> {
+    const out = [...this.dirtyKeys.values()];
+    this.dirtyKeys.clear();
+    return out;
   }
 
   private reorderWindows(): Array<{
@@ -396,6 +440,9 @@ export class WindowCuFairShareEngine {
         ...windows,
         [candidate.scope]: collapsed,
       });
+      // The collapse rewrote a window that the triggering mutation never named.
+      // Surface it so a dirty-key flush persists it instead of leaking the tail.
+      this.markDirty(candidate.accountId, candidate.bucket);
       total -= Math.max(0, candidate.window.reorderTailBytes - 2);
     }
   }

@@ -186,20 +186,35 @@ export class QuotaE2ETestControlController {
     }
     if (!fault.patched) {
       const repository = tracker.windowRepository;
-      const original = repository.checkpointBatch.bind(repository);
-      repository.checkpointBatch = async (...args: any[]) => {
+      // Production splits the old checkpointBatch into two paths: background
+      // window flushes go through checkpointWindows, and the hot-path receipt +
+      // hourly commit goes through checkpointReportAccounting. Fault each on the
+      // side its scenario targets — window flush when no receipt is required,
+      // the accounting commit when a specific receipt must fail.
+      const originalWindows = repository.checkpointWindows.bind(repository);
+      repository.checkpointWindows = async (...args: any[]) => {
+        const current = checkpointFaults.get(provider)!;
+        if (current.armed > 0 && !current.matchReceipt) {
+          current.armed--;
+          current.failures++;
+          throw new Error(`quota-e2e injected ${provider} window checkpoint failure`);
+        }
+        return originalWindows(...args);
+      };
+      const originalAccounting = repository.checkpointReportAccounting.bind(repository);
+      repository.checkpointReportAccounting = async (...args: any[]) => {
         const current = checkpointFaults.get(provider)!;
         const matcher = current.matchReceipt;
-        const matches = !matcher || (args[0] || []).some((checkpoint: any) =>
-          checkpoint.accountId === matcher.accountId
-          && checkpoint.bucket === matcher.bucket
-          && (checkpoint.reportIds || []).length > 0);
+        const matches = matcher && (args[0] || []).some((entry: any) =>
+          entry.accountId === matcher.accountId
+          && entry.bucket === matcher.bucket
+          && (entry.reportIds || []).length > 0);
         if (current.armed > 0 && matches) {
           current.armed--;
           current.failures++;
-          throw new Error(`quota-e2e injected ${provider} checkpoint failure`);
+          throw new Error(`quota-e2e injected ${provider} accounting checkpoint failure`);
         }
-        return original(...args);
+        return originalAccounting(...args);
       };
       fault.patched = true;
     }

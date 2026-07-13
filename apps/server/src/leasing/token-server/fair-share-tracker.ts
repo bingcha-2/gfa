@@ -186,9 +186,24 @@ export class FairShareTracker {
   private receiptPruneTimer: ReturnType<typeof setInterval> | null = null;
   private receiptPruneRunning = false;
   private dirty = false;
+  // Serializes flushes: each flush() runs after the previous settles, so a
+  // scheduled tick and a shutdown flush never overlap and never no-op each other.
+  private flushChain: Promise<void> = Promise.resolve();
+  // Monotonic revision for the accounting coordinator; it always force-flushes,
+  // so the value only needs to be strictly increasing per enqueue.
+  private accountingSeq = 0;
   private readonly windowCu: WindowCuFairShareEngine | null;
   private readonly windowRepository: FairShareWindowRepository | null;
+  // Window state only. Persisted by the background dirty-key flush, never by the
+  // request hot path.
   private readonly writeCoordinator: QuotaWriteCoordinator<{
+    accountId: number;
+    bucket: string;
+    windows: import("../quota/fair-share-window").QuotaWindowsState;
+  }> | null;
+  // Compact heads + receipt + hourly aggregate. This is the exactly-once write
+  // the request awaits; per-card detail remains on the background path.
+  private readonly accountingCoordinator: QuotaWriteCoordinator<{
     accountId: number;
     bucket: string;
     windows: import("../quota/fair-share-window").QuotaWindowsState;
@@ -224,26 +239,47 @@ export class FairShareTracker {
     this.writeCoordinator = this.windowRepository
       ? new QuotaWriteCoordinator({
           maxDelayMs: 10,
+          // Smaller interactive transaction: one flush commit touches few accounts
+          // so a single stale writer can't stall a large group. (Was 64.)
+          maxBatchSize: 12,
+          commit: async (batch) => {
+            await this.windowRepository!.checkpointWindows(batch.map((entry) => entry.payload));
+          },
+          mergePayload: (current, incoming) => ({
+            accountId: incoming.accountId,
+            bucket: incoming.bucket,
+            windows: {
+              primary: incoming.windows.primary.revision >= current.windows.primary.revision
+                ? incoming.windows.primary : current.windows.primary,
+              weekly: incoming.windows.weekly.revision >= current.windows.weekly.revision
+                ? incoming.windows.weekly : current.windows.weekly,
+            },
+          }),
+        })
+      : null;
+    this.accountingCoordinator = this.windowRepository
+      ? new QuotaWriteCoordinator({
+          maxDelayMs: 10,
           maxBatchSize: 64,
           commit: async (batch) => {
-            await this.windowRepository!.checkpointBatch(batch.map((entry) => entry.payload));
+            await this.windowRepository!.checkpointReportAccounting(batch.map((entry) => entry.payload));
           },
-          mergePayload: (current, incoming) => {
-            return {
-              accountId: incoming.accountId,
-              bucket: incoming.bucket,
-              windows: {
-                primary: incoming.windows.primary.revision >= current.windows.primary.revision
-                  ? incoming.windows.primary : current.windows.primary,
-                weekly: incoming.windows.weekly.revision >= current.windows.weekly.revision
-                  ? incoming.windows.weekly : current.windows.weekly,
-              },
-              reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
-              accountings: [...new Map([...current.accountings, ...incoming.accountings]
-                .map((value) => [value.reportId, value])).values()],
-              createdAt: incoming.createdAt,
-            };
-          },
+          // Union reportIds and de-dup accountings by reportId so a merged batch
+          // stays exactly-once through the receipt INSERT OR IGNORE gate.
+          mergePayload: (current, incoming) => ({
+            accountId: incoming.accountId,
+            bucket: incoming.bucket,
+            windows: {
+              primary: incoming.windows.primary.revision >= current.windows.primary.revision
+                ? incoming.windows.primary : current.windows.primary,
+              weekly: incoming.windows.weekly.revision >= current.windows.weekly.revision
+                ? incoming.windows.weekly : current.windows.weekly,
+            },
+            reportIds: [...new Set([...current.reportIds, ...incoming.reportIds])],
+            accountings: [...new Map([...current.accountings, ...incoming.accountings]
+              .map((value) => [value.reportId, value])).values()],
+            createdAt: incoming.createdAt,
+          }),
         })
       : null;
     if (this.prisma && this.providerId) {
@@ -273,28 +309,22 @@ export class FairShareTracker {
     return this.windowRepository ? this.windowRepository.hasReport(reportId) : false;
   }
 
-  /** Acknowledge only after the current state and report receipt share one SQLite commit. */
+  /** Acknowledge only after compact heads + report receipt + hourly aggregate
+   *  are durable in one transaction. Per-card detail lags on the background
+   *  dirty-key flush. */
   async checkpointReport(
     accountId: number,
     bucket: string,
     reportId: string,
     accounting?: HourlyUsageAccounting,
   ): Promise<void> {
-    if (!this.windowCu || !this.writeCoordinator) return;
-    const entry = this.windowCu.entry(accountId, bucket);
-    if (!entry) return;
-    const key = this.pendingKey(accountId, bucket);
+    if (!this.windowCu || !this.accountingCoordinator) return;
+    // has() instead of entry(): entry() runs ensure()/expiry/subjects() — per-card
+    // recomputation this guard-only call would waste on every durable report.
+    if (!this.windowCu.has(accountId, bucket)) return;
     if (reportId) this.registerPendingReceipt(accountId, bucket, reportId, accounting ?? null);
     // 连同此前提交失败、仍待确认的回执一起落库(union 幂等:INSERT OR IGNORE)。
-    const pending = this.collectPendingReceipts(key);
-    const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
-    await this.writeCoordinator.enqueue(`${accountId}\u0000${bucket}`, revision, {
-      ...entry,
-      reportIds: pending.reportIds,
-      accountings: pending.accountings,
-      createdAt: new Date(this.nowFn()),
-    }, true);
-    this.clearPendingReceipts(key, pending.reportIds);
+    await this.flushPendingAccounting(accountId, bucket);
   }
 
   /** 单次请求的加权 token 成本。modelOrBucket 优先传真实 modelKey(按 Claude 档位计价)。
@@ -399,6 +429,38 @@ export class FairShareTracker {
     if (!entry) return;
     for (const reportId of reportIds) entry.delete(reportId);
     if (entry.size === 0) this.pendingReceipts.delete(key);
+  }
+
+  /** Background safety net: re-enqueue receipts a failed hot-path checkpoint
+   *  left pending. Merges idempotently through the receipt INSERT OR IGNORE gate,
+   *  so a receipt already written on the hot path is never double-counted. */
+  private async flushResidualReceipts(): Promise<void> {
+    if (!this.accountingCoordinator) return;
+    const pendingKeys = [...this.pendingReceipts.entries()].filter(([, entry]) => entry.size > 0).map(([key]) => key);
+    await Promise.all(pendingKeys.map((key) => {
+      const sep = key.indexOf("\u0000");
+      return this.flushPendingAccounting(Number(key.slice(0, sep)), key.slice(sep + 1));
+    }));
+  }
+
+  /** Commit every pending receipt (+hourly) for one key through the accounting
+   *  coordinator and clear them only after the commit resolves. Shared by the
+   *  hot-path checkpoint and the background residual retry. */
+  private async flushPendingAccounting(accountId: number, bucket: string): Promise<void> {
+    if (!this.accountingCoordinator || !this.windowCu) return;
+    const windowEntry = this.windowCu.entry(accountId, bucket);
+    if (!windowEntry) return;
+    const key = this.pendingKey(accountId, bucket);
+    const pending = this.collectPendingReceipts(key);
+    await this.accountingCoordinator.enqueue(key, ++this.accountingSeq, {
+      accountId,
+      bucket,
+      windows: windowEntry.windows,
+      reportIds: pending.reportIds,
+      accountings: pending.accountings,
+      createdAt: new Date(this.nowFn()),
+    }, true);
+    this.clearPendingReceipts(key, pending.reportIds);
   }
 
   applyAccountQuotaSnapshotAt(
@@ -952,7 +1014,11 @@ export class FairShareTracker {
           const afterRevision = restored
             ? Math.max(restored.windows.primary.revision, restored.windows.weekly.revision)
             : beforeRevision;
-          if (afterRevision > beforeRevision || group.result.needsCheckpoint) this.dirty = true;
+          // A legacy cutover (needsCheckpoint) or a restore-time reorder collapse
+          // must be persisted by the next dirty-key flush — mark that exact key.
+          if (afterRevision > beforeRevision || group.result.needsCheckpoint) {
+            this.windowCu.markDirty(group.accountId, group.bucket);
+          }
         }
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
@@ -1064,30 +1130,51 @@ export class FairShareTracker {
     }
   }
 
-  /** 持久化当前内存态(整池替换,dirty 门控)。 */
+  /**
+   * Persist state. Flushes are serialized through a chain so a scheduled tick and
+   * a shutdown flush never overlap (true single-flight) AND a shutdown flush always
+   * runs AFTER any in-flight one — so no dirty key is stranded on exit. A skip-if-busy
+   * guard would let the shutdown flush no-op and lose the last window changes.
+   */
   async flush(): Promise<void> {
+    const next = this.flushChain.then(() => this.flushOnce(), () => this.flushOnce());
+    // Keep the chain alive even if this flush rejects; the next caller runs anyway.
+    this.flushChain = next.catch(() => undefined);
+    return next;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.windowCu && this.windowRepository && this.writeCoordinator) {
-      if (!this.dirty) return;
-      this.dirty = false;
+      // Drain and snapshot first: every usage already folded into these windows
+      // has its receipt either durable or in pendingReceipts right now (both are
+      // registered synchronously when the event enters the reducer).
+      const keys = this.windowCu.drainDirtyKeys();
+      const snapshots = keys.map(({ accountId, bucket, revision }) => ({
+        accountId, bucket, revision, entry: this.windowCu!.entry(accountId, bucket),
+      }));
+      // Compact heads commit atomically WITH receipts before the background
+      // detail checkpoint. Splitting either side reopens a crash gap: receipt-only
+      // forgives CU, while head-only can double-count a retry.
       try {
-        await Promise.all(this.windowCu.entries().map(async (entry) => {
-          const key = this.pendingKey(entry.accountId, entry.bucket);
-          // 状态与其未确认回执必须同批落库:只写状态会给「崩溃后重试同一
-          // reportId 被再计一次 CU」留下窗口。
-          const pending = this.collectPendingReceipts(key);
-          const revision = Math.max(entry.windows.primary.revision, entry.windows.weekly.revision);
-          await this.writeCoordinator!.enqueue(`${entry.accountId}\u0000${entry.bucket}`, revision, {
-            ...entry,
-            reportIds: pending.reportIds,
-            accountings: pending.accountings,
-            createdAt: new Date(this.nowFn()),
-          }, true);
-          this.clearPendingReceipts(key, pending.reportIds);
-        }));
+        await this.flushResidualReceipts();
       } catch (error) {
-        this.dirty = true;
+        for (const { accountId, bucket } of keys) this.windowCu.markDirty(accountId, bucket);
         throw error;
       }
+      // Only persist windows that actually moved since the last drain — including
+      // any collapsed as collateral of global reorder-budget enforcement.
+      await Promise.all(snapshots.map(async ({ accountId, bucket, revision, entry }) => {
+        if (!entry) return;
+        try {
+          await this.writeCoordinator!.enqueue(this.pendingKey(accountId, bucket), revision, {
+            accountId, bucket, windows: entry.windows,
+          }, true);
+        } catch (error) {
+          // Retain the key for the next tick; never drop a window change.
+          this.windowCu!.markDirty(accountId, bucket);
+          throw error;
+        }
+      }));
       return;
     }
     if (!this.prisma || !this.providerId || !this.dirty) return;
@@ -1239,10 +1326,14 @@ export class FairShareTracker {
   }
 
   private async pruneExpiredReceipts(): Promise<void> {
-    if (!this.writeCoordinator || !this.windowRepository || this.receiptPruneRunning) return;
+    // Defer to the coordinator that writes QuotaReportReceipt (the table this
+    // prunes). After the persistence split that is accountingCoordinator, not
+    // writeCoordinator — gating on the latter let the DELETE bursts contend with
+    // the awaited hot-path receipt commit they were meant to yield to.
+    if (!this.accountingCoordinator || !this.windowRepository || this.receiptPruneRunning) return;
     this.receiptPruneRunning = true;
     try {
-      await this.writeCoordinator.scheduleLowPriority(async () => {
+      await this.accountingCoordinator.scheduleLowPriority(async () => {
         const cutoff = new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000);
         for (let batch = 0; batch < 20; batch++) {
           const deleted = await this.windowRepository!.pruneReceipts(cutoff, 500);

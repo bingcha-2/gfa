@@ -398,6 +398,45 @@ describe("FairShareWindowRepository with SQLite", () => {
     expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
   });
 
+  it("atomically commits receipt + hourly with compact heads but leaves detail rows to the background flush", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const windows = populatedWindows();
+    await repository.checkpointReportAccounting([{
+      accountId: 7, bucket: "codex-gpt", windows, reportIds: ["report-min"], createdAt: new Date(T),
+      accountings: [{
+        reportId: "report-min", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
+        customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
+      }],
+    }]);
+
+    await expect(repository.hasReport("report-min")).resolves.toBe(true);
+    expect(await prisma.cardUsageHourly.count()).toBe(1);
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(windows) });
+    // The hot path writes only the two compact heads. Per-card delete/recreate
+    // remains on the coalesced background flush.
+    expect(await prisma.fairShareWindow.count()).toBe(0);
+  });
+
+  it("does not re-increment hourly usage when the same receipt is replayed", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const entry = {
+      accountId: 7, bucket: "codex-gpt", windows: populatedWindows(), reportIds: ["dup"], createdAt: new Date(T),
+      accountings: [{
+        reportId: "dup", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
+        customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
+      }],
+    };
+    await repository.checkpointReportAccounting([entry]);
+    await repository.checkpointReportAccounting([entry]);
+    const rows = await prisma.cardUsageHourly.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, totalTokens: 12 });
+  });
+
   it("prunes only receipts older than three days without touching window state", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     const windows = populatedWindows();

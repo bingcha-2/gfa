@@ -119,6 +119,66 @@ describe("WindowCuFairShareEngine global causal budget", () => {
     });
   });
 
+  it("tracks dirty keys with their latest revision and clears them on drain", () => {
+    const engine = new WindowCuFairShareEngine({
+      provider: "codex",
+      trackWeekly: false,
+      now: () => T,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+      getSeatCapacity: () => 1,
+      isExclusive: () => false,
+    });
+    engine.applySnapshot(7, "codex-gpt", "primary", {
+      snapshotId: "s1", fraction: 1, observedAt: T, resetAt: T + 5 * 60 * 60 * 1000,
+    });
+
+    const first = engine.drainDirtyKeys();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ accountId: 7, bucket: "codex-gpt" });
+    const state = engine.getStateForTesting(7, "codex-gpt");
+    expect(first[0].revision).toBe(Math.max(state!.primary.revision, state!.weekly.revision));
+
+    // Drain must clear; an unchanged pool reports nothing.
+    expect(engine.drainDirtyKeys()).toHaveLength(0);
+  });
+
+  it("surfaces a window collapsed as collateral of another account's global-budget enforcement", () => {
+    const engine = new WindowCuFairShareEngine({
+      provider: "codex",
+      trackWeekly: true,
+      now: () => T,
+      maxReorderBytes: 1_000,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+      getSeatCapacity: () => 1,
+      isExclusive: () => false,
+    });
+
+    // Build tails on account 1 first (oldest arrivedAt), then clear the dirty set.
+    engine.applySnapshot(1, "codex-gpt", "primary", {
+      snapshotId: `p-1-${"p".repeat(250)}`, fraction: 1, observedAt: T + 1, resetAt: T + 5 * 60 * 60 * 1000,
+    });
+    engine.applySnapshot(1, "codex-gpt", "weekly", {
+      snapshotId: `w-1-${"w".repeat(250)}`, fraction: 1, observedAt: T + 1, resetAt: T + 7 * 24 * 60 * 60 * 1000,
+    });
+    engine.drainDirtyKeys();
+
+    // Touch ONLY account 2. This tips the global reorder budget and collapses
+    // account 1's older tail — a key the caller never mutated in this operation.
+    engine.applySnapshot(2, "codex-gpt", "primary", {
+      snapshotId: `p-2-${"p".repeat(250)}`, fraction: 1, observedAt: T + 2, resetAt: T + 5 * 60 * 60 * 1000,
+    });
+    engine.applySnapshot(2, "codex-gpt", "weekly", {
+      snapshotId: `w-2-${"w".repeat(250)}`, fraction: 1, observedAt: T + 2, resetAt: T + 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const diagnostic = engine.getReorderDiagnosticsForTesting();
+    expect(diagnostic.windows.some((w) => w.reason === "WINDOW_GLOBAL_TAIL_COMPACTED")).toBe(true);
+
+    const keys = new Set(engine.drainDirtyKeys().map((k) => k.accountId));
+    expect(keys.has(2)).toBe(true); // mutated directly
+    expect(keys.has(1)).toBe(true); // collapsed as collateral — must still be persisted
+  });
+
   it("does not let an older absent event override a newer present observation without a percentage", () => {
     const engine = new WindowCuFairShareEngine({
       provider: "codex",
