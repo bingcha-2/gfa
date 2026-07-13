@@ -40,6 +40,19 @@ func TestBuildCodexImageTool_DefaultModel(t *testing.T) {
 	}
 }
 
+// 图像模型解析:请求带 model 用它,否则默认 gpt-image-2(日志/计量用这个,不是主持人 mini)。
+func TestCodexResolveImageModel(t *testing.T) {
+	if got := codexResolveImageModel([]byte(`{"prompt":"x"}`)); got != codexImageToolModel {
+		t.Fatalf("缺 model 应默认 %q, got %q", codexImageToolModel, got)
+	}
+	if got := codexResolveImageModel([]byte(`{"prompt":"x","model":"gpt-image-1"}`)); got != "gpt-image-1" {
+		t.Fatalf("应用请求里的 model, got %q", got)
+	}
+	if codexResolveImageModel(nil) == codexImagesMainModel {
+		t.Fatal("图像模型不应是主持人模型 gpt-5.4-mini")
+	}
+}
+
 // 从 response.completed 抽出 base64 图片。
 func TestExtractCodexImagesFromCompleted(t *testing.T) {
 	completed := `{"type":"response.completed","response":{"output":[

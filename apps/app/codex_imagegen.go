@@ -23,14 +23,19 @@ const (
 	codexImageToolModel = "gpt-image-2"
 )
 
+// codexResolveImageModel 返回真正画图的模型:请求里带的 model,否则默认 gpt-image-2。
+// 这才是生图归属/展示该用的模型(responses 的 gpt-5.4-mini 只是触发工具的"主持人")。
+func codexResolveImageModel(rawJSON []byte) string {
+	if m := strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String()); m != "" {
+		return m
+	}
+	return codexImageToolModel
+}
+
 // buildCodexImageTool 从 /v1/images/generations 的 JSON 构造 image_generation 工具。
 func buildCodexImageTool(rawJSON []byte) []byte {
 	tool := []byte(`{"type":"image_generation","action":"generate"}`)
-	model := strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String())
-	if model == "" {
-		model = codexImageToolModel
-	}
-	tool, _ = sjson.SetBytes(tool, "model", model)
+	tool, _ = sjson.SetBytes(tool, "model", codexResolveImageModel(rawJSON))
 	for _, field := range []string{"size", "quality", "background", "output_format", "moderation"} {
 		if v := strings.TrimSpace(gjson.GetBytes(rawJSON, field).String()); v != "" {
 			tool, _ = sjson.SetBytes(tool, field, v)

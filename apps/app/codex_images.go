@@ -63,7 +63,9 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	// 翻译:/v1/images/generations → codex responses body(内联生图工具 + tool_choice)。
 	respBody := buildCodexImagesResponsesBody(rawReq)
 	audit.reqBody = respBody
-	audit.model = codexImagesMainModel
+	// 日志/计量按【真正画图的模型】(gpt-image-2),而非触发工具的主持人模型 gpt-5.4-mini。
+	imageModel := codexResolveImageModel(rawReq)
+	audit.model = imageModel
 
 	leaseFunc := p.leaseToken
 	if leaseFunc == nil {
@@ -130,7 +132,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 
 	// 计量:从 completed 事件折算(含 tool_usage.image_gen 生图 token),经租约上报。
 	if len(completed) > 0 {
-		details := codexReportDetails(resp.StatusCode, codexImagesMainModel, completed)
+		details := codexReportDetails(resp.StatusCode, imageModel, completed)
 		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 		if p.reportResult != nil {
 			p.reportResult(card, deviceId, details, upstreamProxy, lease)
