@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { calculateFairShareCu, type FairShareUsageEvent } from "./fair-share-cu";
 import {
   collapseWindowReorderTail,
@@ -14,6 +15,7 @@ import {
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 export const REORDER_GLOBAL_MAX_BYTES = 128 * 1024 * 1024;
+const auditNumber = (value: number) => Math.round(value * 1e12) / 1e12;
 
 export interface WindowCuEngineOptions {
   provider: "codex" | "anthropic";
@@ -45,6 +47,7 @@ function view(state: FairShareWindowState): AccountingView {
 }
 
 export class WindowCuFairShareEngine {
+  private readonly logger = new Logger(WindowCuFairShareEngine.name);
   private readonly states = new Map<number, Map<string, QuotaWindowsState>>();
   private sequence = 0;
 
@@ -99,9 +102,42 @@ export class WindowCuFairShareEngine {
   applySnapshot(accountId: number, bucket: string, scope: "primary" | "weekly", event: Omit<SnapshotEvent, "kind" | "arrivedAt"> & { arrivedAt?: number }): void {
     if (scope === "weekly" && !this.options.trackWeekly) return;
     const state = this.ensure(accountId, bucket);
-    this.set(accountId, bucket, reduceQuotaWindows(state, {
+    const before = state[scope];
+    const snapshot = { kind: "snapshot" as const, arrivedAt: event.arrivedAt ?? this.options.now(), ...event };
+    const next = reduceQuotaWindows(state, {
       scope,
-      event: { kind: "snapshot", arrivedAt: event.arrivedAt ?? this.options.now(), ...event },
+      event: snapshot,
+    });
+    const after = next[scope];
+    this.set(accountId, bucket, next);
+
+    const auditEvent = before.primed && after.resetAt > before.resetAt + 60_000
+      ? "FORWARD_RESET"
+      : after.unattributedShare > before.unattributedShare
+        ? "UNATTRIBUTED_BURN_CREATED"
+        : "";
+    if (!auditEvent) return;
+    this.logger.log(JSON.stringify({
+      type: "FAIR_SHARE_WINDOW_AUDIT",
+      event: auditEvent,
+      provider: this.options.provider,
+      accountId,
+      bucket,
+      scope,
+      snapshotId: snapshot.snapshotId,
+      observedAt: snapshot.observedAt,
+      arrivedAt: snapshot.arrivedAt,
+      oldResetAt: before.resetAt,
+      newResetAt: after.resetAt,
+      oldFraction: auditNumber(before.fraction),
+      newFraction: auditNumber(after.fraction),
+      delta: auditNumber(before.fraction - after.fraction),
+      totalCu: Object.values(before.subjects).reduce((sum, subject) => sum + Math.max(0, subject.cumulativeCu), 0),
+      oldAssignedBurn: auditNumber(before.assignedBurn),
+      newAssignedBurn: auditNumber(after.assignedBurn),
+      oldUnattributedShare: auditNumber(before.unattributedShare),
+      newUnattributedShare: auditNumber(after.unattributedShare),
+      subjectCu: Object.fromEntries(Object.values(before.subjects).map((subject) => [subject.quotaSubjectId, subject.cumulativeCu])),
     }));
   }
 

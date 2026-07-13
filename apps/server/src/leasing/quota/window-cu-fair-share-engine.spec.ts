@@ -1,7 +1,44 @@
-import { describe, expect, it } from "vitest";
+import { Logger } from "@nestjs/common";
+import { describe, expect, it, vi } from "vitest";
 import { WindowCuFairShareEngine } from "./window-cu-fair-share-engine";
 
 const T = 1_800_000_000_000;
+
+it("logs forward resets and newly created unattributed burn", () => {
+  const log = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+  const engine = new WindowCuFairShareEngine({
+    provider: "codex",
+    trackWeekly: true,
+    now: () => T,
+    getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+    getSeatCapacity: () => 1,
+    isExclusive: () => false,
+  });
+  const resetAt = T + 7 * 24 * 60 * 60 * 1000;
+  engine.applySnapshot(25, "codex-gpt", "weekly", {
+    snapshotId: "prime", fraction: 1, observedAt: T, resetAt,
+  });
+  engine.applySnapshot(25, "codex-gpt", "weekly", {
+    snapshotId: "burn", fraction: 0.99, observedAt: T + 1, resetAt,
+  });
+  engine.applySnapshot(25, "codex-gpt", "weekly", {
+    snapshotId: "reset", fraction: 0.98, observedAt: resetAt, resetAt: resetAt + 7 * 24 * 60 * 60 * 1000,
+  });
+
+  const records = log.mock.calls.map(([message]) => JSON.parse(String(message)));
+  expect(records).toHaveLength(2);
+  expect(records[0]).toMatchObject({
+    event: "UNATTRIBUTED_BURN_CREATED", accountId: 25, bucket: "codex-gpt", scope: "weekly",
+    snapshotId: "burn", oldFraction: 1, newFraction: 0.99, totalCu: 0,
+    oldUnattributedShare: 0, newUnattributedShare: 0.01,
+  });
+  expect(records[1]).toMatchObject({
+    event: "FORWARD_RESET", accountId: 25, bucket: "codex-gpt", scope: "weekly",
+    snapshotId: "reset", oldResetAt: resetAt, newResetAt: resetAt + 7 * 24 * 60 * 60 * 1000,
+    oldUnattributedShare: 0.01, newUnattributedShare: 0,
+  });
+  log.mockRestore();
+});
 
 describe("WindowCuFairShareEngine global causal budget", () => {
   it("collapses the oldest tails instead of exceeding the process budget", () => {
