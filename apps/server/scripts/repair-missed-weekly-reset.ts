@@ -5,13 +5,13 @@ import { PrismaClient } from "@prisma/client";
 
 import { FairShareWindowRepository } from "../src/leasing/quota/fair-share-window-repository";
 import {
-  checkPersistedUsageCoverage,
-  isRepairLogInBucket,
+  buildHourlyRepairUsage,
   parsePersistedUsageEvents,
   parseExportUtc,
   parseRepairArgs,
   parseRepairExport,
   reconstructMissedWeeklyReset,
+  type RepairHourlyUsage,
   type RepairSnapshot,
 } from "../src/leasing/quota/missed-weekly-reset-repair";
 
@@ -86,63 +86,56 @@ async function main(): Promise<void> {
           console.log(`REJECT ${label} reason=SUBSCRIPTION_MISSING subjects=${missing.join(",")}`);
           continue;
         }
-        const persistedUsageEvents = subjectIds.flatMap((quotaSubjectId) => parsePersistedUsageEvents({
+        const resetHour = Math.floor(missedResetAt / 3_600_000) * 3_600_000;
+        const resetHourEvents = subjectIds.flatMap((quotaSubjectId) => parsePersistedUsageEvents({
           quotaSubjectId,
           bucket: candidate.bucket,
-          missedResetAt,
+          missedResetAt: resetHour,
           windowState: byId.get(quotaSubjectId)!.windowState,
         }));
-        const requestLogs = await prisma.requestLog.findMany({
+        const hourlyRows = await prisma.cardUsageHourly.findMany({
           where: {
-            provider: "codex",
-            accountId: candidate.accountId,
-            quotaSubjectId: { in: subjectIds },
-            at: { gte: new Date(missedResetAt - 60_000) },
+            accessKeyId: { in: subjectIds },
+            bucket: candidate.bucket,
+            hourStart: { gte: new Date(resetHour) },
+            OR: [{ accountEmail: candidate.accountEmail }, { accountEmail: "" }],
           },
-          orderBy: [{ at: "asc" }, { id: "asc" }],
+          orderBy: [{ hourStart: "asc" }, { id: "asc" }],
           select: {
-            id: true,
-            quotaSubjectId: true,
-            at: true,
-            upstreamCompletedAt: true,
+            hourStart: true,
+            accessKeyId: true,
             modelKey: true,
-            reportId: true,
+            inputTokens: true,
+            cachedInputTokens: true,
+            cacheCreationTokens: true,
+            outputTokens: true,
             totalTokens: true,
-            requestStartedAt: true,
-            snapshotObservedAt: true,
+            priorityTokens: true,
           },
         });
-        const coverage = checkPersistedUsageCoverage(
-          persistedUsageEvents,
-          requestLogs.filter((row) => isRepairLogInBucket("codex", candidate.bucket, row.modelKey)).map((row) => ({
-            id: row.id,
-            quotaSubjectId: row.quotaSubjectId,
-            at: row.at.getTime(),
-            requestStartedAt: Number(row.requestStartedAt),
-            upstreamCompletedAt: Number(row.upstreamCompletedAt),
-            modelId: row.modelKey,
-            reportId: row.reportId,
-            totalTokens: Number(row.totalTokens),
-          })),
-          missedResetAt + 60_000,
-        );
-        if (!coverage.ok) {
-          rejected++;
-          console.log(`REJECT ${label} reason=${coverage.reason} groups=${coverage.groups.length}`);
-          for (const group of coverage.groups) {
-            console.log(
-              `  COVERAGE subject=${group.quotaSubjectId} model=${group.modelId}`
-              + ` events=${group.events} logs=${group.logs}`,
-            );
-          }
-          continue;
-        }
-        const usageEvents = persistedUsageEvents;
+        const hourlyUsage: RepairHourlyUsage[] = hourlyRows.map((row) => ({
+          hourStart: row.hourStart.getTime(),
+          quotaSubjectId: row.accessKeyId,
+          modelId: row.modelKey,
+          inputTokens: Number(row.inputTokens),
+          cachedInputTokens: Number(row.cachedInputTokens),
+          cacheWrite5mTokens: Number(row.cacheCreationTokens),
+          cacheWrite1hTokens: 0,
+          outputTokens: Number(row.outputTokens),
+          totalTokens: Number(row.totalTokens),
+          priorityTokens: Number(row.priorityTokens),
+        }));
+        const rebuiltUsage = buildHourlyRepairUsage({
+          missedResetAt,
+          hourlyUsage,
+          resetHourEvents,
+        });
         const result = reconstructMissedWeeklyReset({
           candidate,
           current: loaded.windows,
           snapshots,
-          usageEvents,
+          cuUsage: rebuiltUsage.usage,
+          unknownCu: rebuiltUsage.unknownCu,
         });
         if (!result.ok) {
           if (result.reason === "ALREADY_CLEAN") {
@@ -166,7 +159,7 @@ async function main(): Promise<void> {
           + ` fraction=${result.windows.weekly.fraction.toFixed(6)}`
           + ` burn=${oldBurn.toFixed(6)}->${newBurn.toFixed(6)}`
           + ` cu=${result.stats.oldCu.toFixed(6)}->${result.stats.reconstructedCu.toFixed(6)}`
-          + ` events=${result.stats.usageEvents}`,
+          + ` unknownCu=${result.stats.unknownCu.toFixed(6)} events=${result.stats.usageEvents}`,
         );
         if (!args.apply) continue;
 

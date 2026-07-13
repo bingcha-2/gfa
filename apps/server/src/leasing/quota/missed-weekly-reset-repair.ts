@@ -65,6 +65,25 @@ export interface RepairRequestLog {
   totalTokens?: number;
 }
 
+export interface RepairHourlyUsage {
+  hourStart: number;
+  quotaSubjectId: string;
+  modelId: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  priorityTokens: number;
+}
+
+export interface RepairCuUsage {
+  quotaSubjectId: string;
+  occurredAt: number;
+  cu: number;
+}
+
 type RepairFailureReason =
   | "CURRENT_RESET_BOUNDARY_CHANGED"
   | "ALREADY_CLEAN"
@@ -78,7 +97,7 @@ export type MissedResetRepairResult =
   | {
       ok: true;
       windows: QuotaWindowsState;
-      stats: { usageEvents: number; reconstructedCu: number; oldCu: number };
+      stats: { usageEvents: number; reconstructedCu: number; unknownCu: number; oldCu: number };
     }
   | { ok: false; reason: RepairFailureReason };
 
@@ -203,6 +222,79 @@ export function checkPersistedUsageCoverage(
     : { ok: true };
 }
 
+function persistedUsageCu(usage: PersistedRepairUsage): number {
+  return calculateQuotaCu({
+    provider: "codex",
+    modelId: usage.modelId,
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheWrite5mTokens: 0,
+    cacheWrite1hTokens: 0,
+    outputTokens: usage.outputTokens,
+    serviceTier: usage.serviceTier,
+    occurredAt: usage.occurredAt,
+  }).cu;
+}
+
+function hourlyUsageCu(usage: RepairHourlyUsage): { knownCu: number; upperCu: number } {
+  const common = {
+    provider: "codex" as const,
+    modelId: usage.modelId,
+    inputTokens: Math.max(0, usage.inputTokens - usage.cachedInputTokens
+      - usage.cacheWrite5mTokens - usage.cacheWrite1hTokens),
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheWrite5mTokens: usage.cacheWrite5mTokens,
+    cacheWrite1hTokens: usage.cacheWrite1hTokens,
+    outputTokens: usage.outputTokens,
+    occurredAt: usage.hourStart,
+  };
+  const standard = calculateQuotaCu({ ...common, serviceTier: "standard" }).cu;
+  const fast = calculateQuotaCu({ ...common, serviceTier: "fast" }).cu;
+  if (usage.priorityTokens <= 0) return { knownCu: standard, upperCu: standard };
+  if (usage.totalTokens > 0 && usage.priorityTokens >= usage.totalTokens) {
+    return { knownCu: fast, upperCu: fast };
+  }
+  // Mixed standard/fast aggregates do not retain which token classes were fast.
+  // Keep the provable standard CU on the card and move the possible uplift to unknown.
+  return { knownCu: standard, upperCu: fast };
+}
+
+export function buildHourlyRepairUsage(input: {
+  missedResetAt: number;
+  hourlyUsage: RepairHourlyUsage[];
+  resetHourEvents: PersistedRepairUsage[];
+}): { usage: RepairCuUsage[]; unknownCu: number } {
+  const hourMs = 60 * 60 * 1000;
+  const resetHour = Math.floor(input.missedResetAt / hourMs) * hourMs;
+  const keyOf = (quotaSubjectId: string, modelId: string) => `${quotaSubjectId}\u0000${modelId}`;
+  const allResetHourCu = new Map<string, number>();
+  const usage: RepairCuUsage[] = [];
+  for (const event of input.resetHourEvents) {
+    if (event.occurredAt < resetHour || event.occurredAt >= resetHour + hourMs) continue;
+    const cu = persistedUsageCu(event);
+    const key = keyOf(event.quotaSubjectId, event.modelId);
+    allResetHourCu.set(key, (allResetHourCu.get(key) || 0) + cu);
+    if (event.occurredAt >= input.missedResetAt && cu > 0) {
+      usage.push({ quotaSubjectId: event.quotaSubjectId, occurredAt: event.occurredAt, cu });
+    }
+  }
+
+  let unknownCu = 0;
+  for (const row of input.hourlyUsage) {
+    const { knownCu, upperCu } = hourlyUsageCu(row);
+    if (!(upperCu > 0)) continue;
+    if (row.hourStart === resetHour) {
+      unknownCu += Math.max(0, upperCu - (allResetHourCu.get(keyOf(row.quotaSubjectId, row.modelId)) || 0));
+      continue;
+    }
+    if (row.hourStart > resetHour) {
+      if (knownCu > 0) usage.push({ quotaSubjectId: row.quotaSubjectId, occurredAt: row.hourStart, cu: knownCu });
+      unknownCu += Math.max(0, upperCu - knownCu);
+    }
+  }
+  return { usage, unknownCu };
+}
+
 export function matchPersistedUsageEventsToLogs(
   events: PersistedRepairUsage[],
   logs: RepairRequestLog[],
@@ -250,7 +342,9 @@ export function reconstructMissedWeeklyReset(input: {
   candidate: MissedResetCandidate;
   current: QuotaWindowsState;
   snapshots: RepairSnapshot[];
-  usageEvents: PersistedRepairUsage[];
+  usageEvents?: PersistedRepairUsage[];
+  cuUsage?: RepairCuUsage[];
+  unknownCu?: number;
 }): MissedResetRepairResult {
   const newResetAt = parseExportUtc(input.candidate.newResetAtUtc);
   if (!Number.isFinite(newResetAt)
@@ -292,7 +386,9 @@ export function reconstructMissedWeeklyReset(input: {
     arrivedAt: snapshot.observedAt,
   }));
   let reconstructedCu = 0;
-  input.usageEvents.forEach((usage, index) => {
+  const usageEvents = input.usageEvents || [];
+  const cuUsage = input.cuUsage || [];
+  usageEvents.forEach((usage, index) => {
     if (!weekly.subjects[usage.quotaSubjectId]) return;
     const calculated = calculateQuotaCu({
       provider: "codex",
@@ -316,7 +412,19 @@ export function reconstructMissedWeeklyReset(input: {
       arrivedAt: usage.occurredAt,
     });
   });
-  if (input.usageEvents.some((usage) => !weekly.subjects[usage.quotaSubjectId])) {
+  cuUsage.forEach((usage, index) => {
+    if (!weekly.subjects[usage.quotaSubjectId] || !Number.isFinite(usage.cu) || usage.cu < 0) return;
+    reconstructedCu += usage.cu;
+    events.push({
+      kind: "usage",
+      reportId: `repair-hourly:${usage.quotaSubjectId}:${usage.occurredAt}:${index}`,
+      quotaSubjectId: usage.quotaSubjectId,
+      cu: usage.cu,
+      upstreamCompletedAt: usage.occurredAt,
+      arrivedAt: usage.occurredAt,
+    });
+  });
+  if ([...usageEvents, ...cuUsage].some((usage) => !weekly.subjects[usage.quotaSubjectId])) {
     return { ok: false, reason: "UNKNOWN_USAGE_SUBJECT" };
   }
   if (!Number.isFinite(reconstructedCu) || reconstructedCu < 0) {
@@ -344,6 +452,15 @@ export function reconstructMissedWeeklyReset(input: {
     arrivedAt: lastAt + 1,
   });
 
+  const unknownCu = Math.max(0, Number(input.unknownCu) || 0);
+  if (unknownCu > 0 && weekly.assignedBurn > 0) {
+    const knownRatio = reconstructedCu > 0 ? reconstructedCu / (reconstructedCu + unknownCu) : 0;
+    const movedToUnknown = weekly.assignedBurn * (1 - knownRatio);
+    weekly.assignedBurn *= knownRatio;
+    weekly.unattributedShare += movedToUnknown;
+    for (const subject of Object.values(weekly.subjects)) subject.attributedShare *= knownRatio;
+  }
+
   const latestSnapshot = replaySnapshots[replaySnapshots.length - 1];
   if (Math.abs(weekly.resetAt - latestSnapshot.resetAt) > RESET_TOLERANCE_MS) {
     return { ok: false, reason: "FINAL_RESET_BOUNDARY_MISMATCH" };
@@ -358,8 +475,9 @@ export function reconstructMissedWeeklyReset(input: {
     ok: true,
     windows: { primary: input.current.primary, weekly },
     stats: {
-      usageEvents: input.usageEvents.length,
+      usageEvents: usageEvents.length + cuUsage.length,
       reconstructedCu,
+      unknownCu,
       oldCu: Object.values(input.current.weekly.subjects)
         .reduce((sum, subject) => sum + Math.max(0, subject.cumulativeCu), 0),
     },

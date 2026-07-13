@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createWindowState, type QuotaWindowsState } from "./fair-share-window";
 import {
+  buildHourlyRepairUsage,
   checkPersistedUsageCoverage,
   matchPersistedUsageEventsToLogs,
   isRepairLogInBucket,
@@ -250,6 +251,31 @@ describe("missed weekly reset repair", () => {
       .toMatchObject({ ok: false, reason: "PERSISTED_USAGE_INCOMPLETE" });
     expect(checkPersistedUsageCoverage([{ ...event, occurredAt: RESET_OBSERVED_AT + 30_000 }], [], safeAfter))
       .toMatchObject({ ok: false, reason: "PERSISTED_USAGE_NEAR_RESET" });
+  });
+
+  it("uses exact reset-hour events, full later hours, and leaves reset-hour residual unknown", () => {
+    const result = buildHourlyRepairUsage({
+      missedResetAt: RESET_OBSERVED_AT,
+      resetHourEvents: [{
+        quotaSubjectId: "card-a", occurredAt: RESET_OBSERVED_AT + 1_000, modelId: "gpt-5",
+        inputTokens: 100, cachedInputTokens: 0, outputTokens: 0, serviceTier: "standard",
+      }],
+      hourlyUsage: [
+        {
+          hourStart: Math.floor(RESET_OBSERVED_AT / 3_600_000) * 3_600_000,
+          quotaSubjectId: "card-a", modelId: "gpt-5", inputTokens: 200, cachedInputTokens: 0,
+          cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, outputTokens: 0, totalTokens: 200, priorityTokens: 0,
+        },
+        {
+          hourStart: Math.ceil(RESET_OBSERVED_AT / 3_600_000) * 3_600_000,
+          quotaSubjectId: "card-a", modelId: "gpt-5", inputTokens: 300, cachedInputTokens: 0,
+          cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, outputTokens: 0, totalTokens: 300, priorityTokens: 0,
+        },
+      ],
+    });
+
+    expect(result.usage).toHaveLength(2);
+    expect(result.unknownCu).toBeGreaterThan(0);
   });
 
   it("removes account 19 old baseline burn while preserving post-reset usage", () => {
