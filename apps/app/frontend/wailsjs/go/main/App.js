@@ -478,6 +478,10 @@ export function LocalSaveCodexSettings(arg1) {
   return window['go']['main']['App']['LocalSaveCodexSettings'](arg1);
 }
 
+export function LocalSaveGatewayImageGenMode(arg1) {
+  return window['go']['main']['App']['LocalSaveGatewayImageGenMode'](arg1);
+}
+
 export function LocalSaveGatewayTimeoutPresets(arg1) {
   return window['go']['main']['App']['LocalSaveGatewayTimeoutPresets'](arg1);
 }
@@ -488,10 +492,6 @@ export function LocalSaveGatewayTimeouts(arg1) {
 
 export function LocalSaveGatewayUpstreamProxy(arg1) {
   return window['go']['main']['App']['LocalSaveGatewayUpstreamProxy'](arg1);
-}
-
-export function LocalSaveGatewayImageGenMode(arg1) {
-  return window['go']['main']['App']['LocalSaveGatewayImageGenMode'](arg1);
 }
 
 export function LocalSaveModelProvider(arg1) {

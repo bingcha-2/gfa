@@ -426,6 +426,7 @@ export namespace gatewaycfg {
 	    timeoutPresets: TimeoutPreset[];
 	    activePresetId: string;
 	    upstreamProxyUrl: string;
+	    imageGenerationMode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new OpsConfig(source);
@@ -437,6 +438,7 @@ export namespace gatewaycfg {
 	        this.timeoutPresets = this.convertValues(source["timeoutPresets"], TimeoutPreset);
 	        this.activePresetId = source["activePresetId"];
 	        this.upstreamProxyUrl = source["upstreamProxyUrl"];
+	        this.imageGenerationMode = source["imageGenerationMode"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1579,3 +1581,4 @@ export namespace wakeup {
 	}
 
 }
+
