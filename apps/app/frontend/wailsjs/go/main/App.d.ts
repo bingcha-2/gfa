@@ -260,6 +260,8 @@ export function LocalSaveGatewayTimeouts(arg1:gatewaycfg.Timeouts):Promise<gatew
 
 export function LocalSaveGatewayUpstreamProxy(arg1:string):Promise<gatewaycfg.OpsConfig>;
 
+export function LocalSaveGatewayImageGenMode(arg1:string):Promise<gatewaycfg.OpsConfig>;
+
 export function LocalSaveModelProvider(arg1:modelprovider.Provider):Promise<modelprovider.Provider>;
 
 export function LocalSendCodexReferralInvites(arg1:string,arg2:string,arg3:Array<string>):Promise<codexbiz.ReferralInviteResponse>;

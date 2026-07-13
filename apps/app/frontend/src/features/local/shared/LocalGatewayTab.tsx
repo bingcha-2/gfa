@@ -12,7 +12,8 @@ import {
   getGatewayAccessScope, setGatewayAccessScope,
   listGatewayKeys, createGatewayKey, deleteGatewayKey, rotateGatewayKey,
   queryGatewayLogs, clearGatewayStats, gatewayConnTest,
-  getGatewayOpsConfig, saveGatewayTimeouts, saveGatewayUpstreamProxy,
+  getGatewayOpsConfig, saveGatewayTimeouts, saveGatewayUpstreamProxy, saveGatewayImageGenMode,
+  type ImageGenMode,
 } from '@/services/localApi'
 import { cn } from '@/lib/utils'
 
@@ -104,6 +105,10 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
     if (!opsCfg) return
     setOpsBusy('timeout')
     try { setOpsCfg(await saveGatewayTimeouts({ ...opsCfg.timeouts, ...patch })) } catch (e) { setErr(String(e)) } finally { setOpsBusy('') }
+  }
+  const onSaveImageGenMode = async (mode: ImageGenMode) => {
+    setOpsBusy('imagegen')
+    try { setOpsCfg(await saveGatewayImageGenMode(mode)) } catch (e) { setErr(String(e)) } finally { setOpsBusy('') }
   }
   const [copiedKeyId, setCopiedKeyId] = useState('')
   const [copiedProto, setCopiedProto] = useState('')
@@ -522,6 +527,26 @@ export function LocalGatewayTab({ api }: { api: ProviderLocalApi }) {
             />
             <button onClick={() => void onSaveProxy()} disabled={opsBusy === 'proxy'} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] border border-[var(--primary)] text-[var(--primary-strong)] hover:bg-[var(--primary-light)] disabled:opacity-50">保存</button>
           </label>
+          {/* 生图注入开关:库默认注入(on),此处可关闭或限图像端点。 */}
+          <div className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)]">
+            生图注入
+            <div className="inline-flex rounded-[7px] border border-[var(--border)] overflow-hidden" role="group" aria-label="生图注入模式">
+              {([
+                ['on', '开(全部)'],
+                ['images-only', '仅图像接口'],
+                ['off', '关'],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  onClick={() => void onSaveImageGenMode(mode)}
+                  disabled={opsBusy === 'imagegen'}
+                  aria-pressed={opsCfg.imageGenerationMode === mode}
+                  className={`text-[12px] px-2.5 h-[28px] disabled:opacity-50 ${opsCfg.imageGenerationMode === mode ? 'bg-[var(--primary)] text-white font-semibold' : 'text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]'}`}
+                >{label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="text-[11px] text-[var(--text-muted)]">生图仅通用模型(如 gpt-5.x)有效;Codex 专用模型(*-codex-spark)上游不支持生图,注入亦被自动跳过。</div>
           <div className="grid grid-cols-2 gap-2.5">
             {([
               ['流保活(秒)', 'streamKeepaliveSeconds'],

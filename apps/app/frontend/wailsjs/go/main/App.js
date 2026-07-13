@@ -490,6 +490,10 @@ export function LocalSaveGatewayUpstreamProxy(arg1) {
   return window['go']['main']['App']['LocalSaveGatewayUpstreamProxy'](arg1);
 }
 
+export function LocalSaveGatewayImageGenMode(arg1) {
+  return window['go']['main']['App']['LocalSaveGatewayImageGenMode'](arg1);
+}
+
 export function LocalSaveModelProvider(arg1) {
   return window['go']['main']['App']['LocalSaveModelProvider'](arg1);
 }

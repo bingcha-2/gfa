@@ -3,8 +3,38 @@ package hub
 import (
 	"testing"
 
+	"bcai-wails/internal/local/gatewaycfg"
 	"bcai-wails/internal/local/routingcfg"
 )
+
+func TestHub_ImageGenModeDefaultAndSave(t *testing.T) {
+	h, _ := newHub(t)
+	if got := h.GetGatewayOpsConfig().ImageGenerationMode; got != gatewaycfg.ImageGenOn {
+		t.Fatalf("default image-gen mode = %q, want %q", got, gatewaycfg.ImageGenOn)
+	}
+	cfg, err := h.SaveGatewayImageGenMode(gatewaycfg.ImageGenOff)
+	if err != nil {
+		t.Fatalf("SaveGatewayImageGenMode: %v", err)
+	}
+	if cfg.ImageGenerationMode != gatewaycfg.ImageGenOff {
+		t.Fatalf("saved mode = %q, want %q", cfg.ImageGenerationMode, gatewaycfg.ImageGenOff)
+	}
+	// 持久化:重新 Load 仍为 off。
+	if got := h.GetGatewayOpsConfig().ImageGenerationMode; got != gatewaycfg.ImageGenOff {
+		t.Fatalf("reloaded mode = %q, want %q", got, gatewaycfg.ImageGenOff)
+	}
+}
+
+func TestHub_ImageGenModeUnknownNormalizes(t *testing.T) {
+	h, _ := newHub(t)
+	cfg, err := h.SaveGatewayImageGenMode("garbage")
+	if err != nil {
+		t.Fatalf("SaveGatewayImageGenMode: %v", err)
+	}
+	if cfg.ImageGenerationMode != gatewaycfg.ImageGenOn {
+		t.Fatalf("unknown mode should normalize to %q, got %q", gatewaycfg.ImageGenOn, cfg.ImageGenerationMode)
+	}
+}
 
 func TestHub_RoutingStrategyDefaultAndSet(t *testing.T) {
 	h, _ := newHub(t)

@@ -85,19 +85,44 @@ type TimeoutPreset struct {
 	UpdatedAt int64    `json:"updatedAt"`
 }
 
-// OpsConfig 是完整的运维参数快照(持久化 + 前端读写)。
-type OpsConfig struct {
-	Timeouts         Timeouts        `json:"timeouts"`
-	TimeoutPresets   []TimeoutPreset `json:"timeoutPresets"`
-	ActivePresetID   string          `json:"activePresetId"`
-	UpstreamProxyURL string          `json:"upstreamProxyUrl"`
+// 生图模式(正向语义,避免 CLIProxyAPI disable-image-generation 的双重否定):
+//   - ImageGenOn(默认):所有 codex 请求都注入 hosted 生图工具 → 库 disable=off。
+//   - ImageGenOff:从不注入 → 库 disable=all。
+//   - ImageGenImagesOnly:仅 /v1/images/* 端点,responses 内联不注入 → 库 disable=chat。
+// 映射到 config.DisableImageGenerationMode 在 gateway 包完成(那里 import config)。
+const (
+	ImageGenOn         = "on"
+	ImageGenOff        = "off"
+	ImageGenImagesOnly = "images-only"
+)
+
+// NormalizeImageGenMode 归一生图模式;空/未知一律回落 ImageGenOn(与库默认一致)。
+func NormalizeImageGenMode(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case ImageGenOff:
+		return ImageGenOff
+	case ImageGenImagesOnly:
+		return ImageGenImagesOnly
+	default:
+		return ImageGenOn
+	}
 }
 
-// DefaultOpsConfig 返回默认运维配置(空预设、无代理)。
+// OpsConfig 是完整的运维参数快照(持久化 + 前端读写)。
+type OpsConfig struct {
+	Timeouts            Timeouts        `json:"timeouts"`
+	TimeoutPresets      []TimeoutPreset `json:"timeoutPresets"`
+	ActivePresetID      string          `json:"activePresetId"`
+	UpstreamProxyURL    string          `json:"upstreamProxyUrl"`
+	ImageGenerationMode string          `json:"imageGenerationMode"`
+}
+
+// DefaultOpsConfig 返回默认运维配置(空预设、无代理、生图默认开)。
 func DefaultOpsConfig() OpsConfig {
 	return OpsConfig{
-		Timeouts:       DefaultTimeouts(),
-		TimeoutPresets: []TimeoutPreset{},
+		Timeouts:            DefaultTimeouts(),
+		TimeoutPresets:      []TimeoutPreset{},
+		ImageGenerationMode: ImageGenOn,
 	}
 }
 
@@ -119,6 +144,7 @@ func (s *OpsStore) loadLocked() OpsConfig {
 		cfg.TimeoutPresets = []TimeoutPreset{}
 	}
 	cfg.Timeouts = cfg.Timeouts.normalize()
+	cfg.ImageGenerationMode = NormalizeImageGenMode(cfg.ImageGenerationMode)
 	return cfg
 }
 
@@ -150,6 +176,18 @@ func (s *OpsStore) SaveTimeouts(t Timeouts) (OpsConfig, error) {
 	defer s.mu.Unlock()
 	cfg := s.loadLocked()
 	cfg.Timeouts = t.normalize()
+	if err := s.saveLocked(cfg); err != nil {
+		return OpsConfig{}, err
+	}
+	return cfg, nil
+}
+
+// SaveImageGenerationMode 校验并持久化生图模式,返回归一后的配置。
+func (s *OpsStore) SaveImageGenerationMode(mode string) (OpsConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := s.loadLocked()
+	cfg.ImageGenerationMode = NormalizeImageGenMode(mode)
 	if err := s.saveLocked(cfg); err != nil {
 		return OpsConfig{}, err
 	}

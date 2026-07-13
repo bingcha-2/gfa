@@ -167,9 +167,10 @@ func New(dir string, platform Platform) (*Hub, error) {
 
 		groups: accountgroups.NewStore(dir),
 	}
-	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
+	// 把持久化的访问 key / 局域网范围 / 生图模式套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
 	_ = h.gw.SetHost(h.gwScope.Load().Host())
+	_ = h.gw.SetImageGenMode(h.gwOps.Load().ImageGenerationMode)
 	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, codexauth.LoginWithPrompt, quota.NewCodexRefresher(quota.CodexEndpoints{}))
 	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, antigravityauth.LoginWithPrompt, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
 	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。

@@ -137,11 +137,15 @@ export interface GatewayTimeouts {
 /** 一个超时预设。 */
 export interface GatewayTimeoutPreset { id: string; name: string; timeouts: GatewayTimeouts; createdAt: number; updatedAt: number }
 /** 网关运维配置(超时 / 预设 / 上游代理)。 */
+/** 生图模式:on=全部注入 / off=从不注入 / images-only=仅图像端点。 */
+export type ImageGenMode = 'on' | 'off' | 'images-only'
+
 export interface GatewayOpsConfig {
   timeouts: GatewayTimeouts
   timeoutPresets: GatewayTimeoutPreset[] | null
   activePresetId: string
   upstreamProxyUrl: string
+  imageGenerationMode: ImageGenMode
 }
 
 /** 读网关运维配置。 */
@@ -155,6 +159,10 @@ export function saveGatewayTimeouts(t: GatewayTimeouts): Promise<GatewayOpsConfi
 /** 保存出口上游代理 URL(空=直连)。 */
 export function saveGatewayUpstreamProxy(raw: string): Promise<GatewayOpsConfig> {
   return app().LocalSaveGatewayUpstreamProxy(raw) as Promise<GatewayOpsConfig>
+}
+/** 保存本地网关生图模式(on/off/images-only),即时生效。 */
+export function saveGatewayImageGenMode(mode: ImageGenMode): Promise<GatewayOpsConfig> {
+  return app().LocalSaveGatewayImageGenMode(mode) as Promise<GatewayOpsConfig>
 }
 
 /** 一个 provider 的本地账号能力(UI 组件只依赖此接口)。 */
