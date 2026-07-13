@@ -213,6 +213,8 @@ export class CodexService {
         shareCapacity: ACCOUNT_SHARE_CAPACITY,
         codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
         codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
+        codexHourlyResetTime: String(account.codexHourlyResetTime || ""),
+        codexWeeklyResetTime: String(account.codexWeeklyResetTime || ""),
         modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
         // Persisted dead-account verdict (written by lease-service) so the console
         // can surface invalid_grant / repeatedly-failing accounts as dead.
