@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createWindowState, type QuotaWindowsState } from "./fair-share-window";
 import {
+  checkPersistedUsageCoverage,
   matchPersistedUsageEventsToLogs,
   isRepairLogInBucket,
   parseRepairArgs,
@@ -231,6 +232,24 @@ describe("missed weekly reset repair", () => {
   it("filters completeness logs by the repair bucket", () => {
     expect(isRepairLogInBucket("codex", "codex-gpt", "gpt-5")).toBe(true);
     expect(isRepairLogInBucket("codex", "codex-gpt", "claude-sonnet-4-6")).toBe(false);
+  });
+
+  it("checks persisted usage completeness by subject and model counts", () => {
+    const event = {
+      quotaSubjectId: "card-a", occurredAt: RESET_OBSERVED_AT + 120_000, modelId: "gpt-5",
+      inputTokens: 100, cachedInputTokens: 0, outputTokens: 5, serviceTier: "standard" as const,
+    };
+    const log = {
+      id: "log-a", quotaSubjectId: "card-a", at: RESET_OBSERVED_AT + 121_000,
+      upstreamCompletedAt: RESET_OBSERVED_AT + 120_500, modelId: "gpt-5", reportId: "r-a", totalTokens: 105,
+    };
+    const safeAfter = RESET_OBSERVED_AT + 60_000;
+
+    expect(checkPersistedUsageCoverage([event], [log], safeAfter)).toEqual({ ok: true });
+    expect(checkPersistedUsageCoverage([event], [log, { ...log, id: "log-b" }], safeAfter))
+      .toMatchObject({ ok: false, reason: "PERSISTED_USAGE_INCOMPLETE" });
+    expect(checkPersistedUsageCoverage([{ ...event, occurredAt: RESET_OBSERVED_AT + 30_000 }], [], safeAfter))
+      .toMatchObject({ ok: false, reason: "PERSISTED_USAGE_NEAR_RESET" });
   });
 
   it("removes account 19 old baseline burn while preserving post-reset usage", () => {

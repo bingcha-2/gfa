@@ -157,6 +157,52 @@ export function isRepairLogInBucket(provider: string, bucket: string, modelId: s
   return bucketKey(provider, modelId) === bucket;
 }
 
+export function checkPersistedUsageCoverage(
+  events: PersistedRepairUsage[],
+  logs: RepairRequestLog[],
+  safeAfter: number,
+): { ok: true } | {
+  ok: false;
+  reason: "PERSISTED_USAGE_NEAR_RESET" | "PERSISTED_USAGE_INCOMPLETE";
+  groups: Array<{ quotaSubjectId: string; modelId: string; events: number; logs: number }>;
+} {
+  const nearReset = events.filter((event) => event.occurredAt < safeAfter);
+  if (nearReset.length > 0) {
+    return {
+      ok: false,
+      reason: "PERSISTED_USAGE_NEAR_RESET",
+      groups: nearReset.map((event) => ({
+        quotaSubjectId: event.quotaSubjectId,
+        modelId: event.modelId,
+        events: 1,
+        logs: 0,
+      })),
+    };
+  }
+
+  const keyOf = (quotaSubjectId: string, modelId: string) => `${quotaSubjectId}\u0000${modelId}`;
+  const eventCounts = new Map<string, number>();
+  for (const event of events) {
+    const key = keyOf(event.quotaSubjectId, event.modelId);
+    eventCounts.set(key, (eventCounts.get(key) || 0) + 1);
+  }
+  const logCounts = new Map<string, number>();
+  for (const log of logs) {
+    if (Number(log.totalTokens) <= 0 || log.at < safeAfter) continue;
+    const key = keyOf(log.quotaSubjectId, log.modelId);
+    logCounts.set(key, (logCounts.get(key) || 0) + 1);
+  }
+  const incomplete = [...logCounts.entries()].flatMap(([key, count]) => {
+    const eventsInGroup = eventCounts.get(key) || 0;
+    if (count <= eventsInGroup) return [];
+    const [quotaSubjectId, modelId] = key.split("\u0000");
+    return [{ quotaSubjectId, modelId, events: eventsInGroup, logs: count }];
+  });
+  return incomplete.length > 0
+    ? { ok: false, reason: "PERSISTED_USAGE_INCOMPLETE", groups: incomplete }
+    : { ok: true };
+}
+
 export function matchPersistedUsageEventsToLogs(
   events: PersistedRepairUsage[],
   logs: RepairRequestLog[],
