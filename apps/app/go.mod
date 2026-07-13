@@ -10,7 +10,7 @@ require (
 	github.com/klauspost/compress v1.17.4
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/refraction-networking/utls v1.8.2
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.47
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.71
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.47.0
 	modernc.org/sqlite v1.34.5
