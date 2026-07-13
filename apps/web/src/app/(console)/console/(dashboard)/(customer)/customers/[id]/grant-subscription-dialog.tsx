@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import {
+  catalogLevelsFor,
   computePurchase,
   type CatalogConfig,
   type Selection,
@@ -155,7 +156,7 @@ export function GrantSubscriptionDialog({
         delete next[product];
         return next;
       }
-      const firstLevel = catalog.levels[product]?.[0];
+      const firstLevel = catalogLevelsFor(catalog, product)[0];
       if (!firstLevel) return prev;
       return { ...prev, [product]: firstLevel };
     });
@@ -220,7 +221,7 @@ export function GrantSubscriptionDialog({
               <div className="mt-2 space-y-2">
                 {catalog.products.map((product) => {
                   const selected = product in bindLevels;
-                  const levels = catalog.levels[product] ?? [];
+                  const levels = catalogLevelsFor(catalog, product);
                   return (
                     <div
                       key={product}

@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { computePurchase, type CatalogConfig } from "@/lib/account/catalog-pricing";
+import { catalogLevelsFor, computePurchase, type CatalogConfig } from "@/lib/account/catalog-pricing";
 
 // 一份代表性的 PlanCatalog.config(对齐 spec §4.1 + 服务端 pricing.spec.ts)
 const CATALOG: CatalogConfig = {
@@ -42,6 +42,13 @@ const CATALOG: CatalogConfig = {
   durationDays: 30,
   windowMs: 18000000,
 };
+
+describe("catalogLevelsFor", () => {
+  it("falls back to pricing.bind.levelPrice when a published catalog omits levels", () => {
+    const withoutLevels = { ...CATALOG, levels: undefined } as unknown as CatalogConfig;
+    expect(catalogLevelsFor(withoutLevels, "codex")).toEqual(["plus", "pro"]);
+  });
+});
 
 describe("computePurchase — 号池线(与服务端口径一致)", () => {
   it("单产品 Claude + 小用量 + 1 设备 → ¥69,config 快照用量档", () => {

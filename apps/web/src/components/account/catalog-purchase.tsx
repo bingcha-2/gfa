@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { AccountButton } from "./account-ui";
 import { CatalogOrderDialog } from "./catalog-order-dialog";
 import {
+  catalogLevelsFor,
   computePurchase,
   type CatalogConfig,
   type Selection,
@@ -62,7 +63,7 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
         delete next[product];
         return next;
       }
-      const firstLevel = catalog.levels[product]?.[0];
+      const firstLevel = catalogLevelsFor(catalog, product)[0];
       if (!firstLevel) return prev;
       return { ...prev, [product]: firstLevel };
     });
@@ -88,7 +89,7 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
             <div className="account-bind-products">
               {catalog.products.map((product) => {
                 const selected = product in bindLevels;
-                const levels = catalog.levels[product] ?? [];
+                const levels = catalogLevelsFor(catalog, product);
                 return (
                   <div
                     key={product}

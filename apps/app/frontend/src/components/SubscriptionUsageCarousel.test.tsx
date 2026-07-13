@@ -177,6 +177,29 @@ describe('SubscriptionUsageCarousel', () => {
     expect(screen.queryByText(/我的总剩余/)).not.toBeInTheDocument()
   })
 
+  it('uses the existing usage translation key when an account window is absent', () => {
+    render(
+      <SubscriptionUsageCarousel
+        subscriptions={[
+          sub({
+            products: ['codex'],
+            productQuota: {
+              codex: {
+                hourlyPercent: null,
+                weeklyPercent: 90,
+                hourlyResetAt: null,
+                weeklyResetAt: '2030-01-01T00:00:00Z',
+              },
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('usage.statusUnknown')).toBeInTheDocument()
+    expect(screen.queryByText('dashboard.statusUnknown')).not.toBeInTheDocument()
+  })
+
   it('keeps one decimal place for account-window percentages', () => {
     render(
       <SubscriptionUsageCarousel

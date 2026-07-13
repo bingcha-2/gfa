@@ -39,7 +39,7 @@ function AccountBar({ label, percent, reset }: { label: string; percent: number 
       <div className="py-1.5">
         <div className="flex items-center justify-between">
           <span className="text-[12px] font-medium text-[var(--text-primary)]">{label}</span>
-          <span className="text-[11px] text-[var(--text-muted)]">{t('dashboard.statusUnknown')}</span>
+          <span className="text-[11px] text-[var(--text-muted)]">{t('usage.statusUnknown')}</span>
         </div>
       </div>
     )

@@ -54,6 +54,16 @@ export interface CatalogConfig {
   shareCapacity?: number;
 }
 
+/** Published legacy catalogs may omit the top-level levels map. Pricing keys
+ * remain authoritative because computePurchase validates against them. */
+export function catalogLevelsFor(
+  catalog: Omit<CatalogConfig, "levels"> & { levels?: Record<string, string[]> },
+  product: string,
+): string[] {
+  const priced = Object.keys(catalog.pricing?.bind?.levelPrice?.[product] ?? {});
+  return priced.length > 0 ? priced : catalog.levels?.[product] ?? [];
+}
+
 export interface PoolSelection {
   line: "pool";
   products: string[];
