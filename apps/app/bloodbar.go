@@ -43,7 +43,14 @@ func codexQuotaStatus(w *CodexQuotaWindow, nowMs int64) map[string]interface{} {
 	if w == nil {
 		return nil
 	}
-	return quotaWindowStatus(w.HourlyPercent, w.WeeklyPercent, w.HourlyResetTime, w.WeeklyResetTime, nowMs)
+	status := quotaWindowStatus(w.HourlyPercent, w.WeeklyPercent, w.HourlyResetTime, w.WeeklyResetTime, nowMs)
+	if w.HourlyPresent != nil {
+		status["hourlyPresent"] = *w.HourlyPresent
+	}
+	if w.WeeklyPresent != nil {
+		status["weeklyPresent"] = *w.WeeklyPresent
+	}
+	return status
 }
 
 func claudeQuotaStatus(w *ClaudeQuotaWindow, nowMs int64) map[string]interface{} {
@@ -222,6 +229,31 @@ func snapshotMyFractions() map[string]float64 {
 		}
 	}
 	return out
+}
+
+func clearMyBucketFraction(bucket string) {
+	boundFracMu.Lock()
+	defer boundFracMu.Unlock()
+	q := boundFractions[bucket]
+	q.HasMy = false
+	q.HasMyPersonal = false
+	q.MyFraction = 0
+	q.MyResetAt = 0
+	q.MyShare = 0
+	q.MyPersonalFraction = 0
+	boundFractions[bucket] = q
+}
+
+func clearMyWeeklyBucketFraction(bucket string) {
+	boundFracMu.Lock()
+	defer boundFracMu.Unlock()
+	q := boundFractions[bucket]
+	q.HasMyWeekly = false
+	q.HasMyPersonalWeekly = false
+	q.MyWeeklyFraction = 0
+	q.MyWeeklyResetAt = 0
+	q.MyPersonalWeeklyFraction = 0
+	boundFractions[bucket] = q
 }
 
 func snapshotMyPersonalFractions() map[string]float64 {

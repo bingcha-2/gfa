@@ -16,6 +16,8 @@ export interface CodexQuotaWindow {
   weeklyPercent: number;
   hourlyResetTime?: string;
   weeklyResetTime?: string;
+  hourlyPresent?: boolean;
+  weeklyPresent?: boolean;
 }
 
 export interface CodexQuotaSnapshot {
@@ -23,18 +25,74 @@ export interface CodexQuotaSnapshot {
   codexQuota: CodexQuotaWindow;
 }
 
-interface RawUsageWindow {
+export type CodexBindingWindow = "hourly" | "weekly" | null;
+
+export function codexBindingWindow(hourly: number, weekly: number): CodexBindingWindow {
+  if (hourly < 0 && weekly < 0) return null;
+  if (hourly < 0) return "weekly";
+  if (weekly < 0) return "hourly";
+  return weekly < hourly ? "weekly" : "hourly";
+}
+
+export interface RawUsageWindow {
   used_percent?: number | null;
   reset_after_seconds?: number | null;
   reset_at?: number | null;
+  limit_window_seconds?: number | null;
 }
 
-interface RawUsageResponse {
+export interface RawUsageResponse {
   plan_type?: string;
   rate_limit?: {
     primary_window?: RawUsageWindow | null;
     secondary_window?: RawUsageWindow | null;
   } | null;
+}
+
+export function normalizeCodexUsage(
+  usage: RawUsageResponse,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): CodexQuotaSnapshot | null {
+  const rl = usage?.rate_limit;
+  if (!rl) return null;
+
+  const quota: CodexQuotaWindow = { hourlyPercent: -1, weeklyPercent: -1 };
+  let ambiguous = false;
+  let classified = false;
+  const assign = (raw: RawUsageWindow, weekly: boolean) => {
+    if (weekly) {
+      quota.weeklyPercent = remainingPercent(raw.used_percent);
+      quota.weeklyResetTime = resetIso(raw, nowSec) || undefined;
+      quota.weeklyPresent = true;
+    } else {
+      quota.hourlyPercent = remainingPercent(raw.used_percent);
+      quota.hourlyResetTime = resetIso(raw, nowSec) || undefined;
+      quota.hourlyPresent = true;
+    }
+  };
+
+  ([rl.primary_window, rl.secondary_window] as const).forEach((raw, index) => {
+    if (!raw) return;
+    if (raw.limit_window_seconds == null) {
+      assign(raw, index === 1);
+      ambiguous = true;
+      return;
+    }
+    if (raw.limit_window_seconds === 5 * 60 * 60) {
+      classified = true;
+      assign(raw, false);
+    } else if (raw.limit_window_seconds === 7 * 24 * 60 * 60) {
+      classified = true;
+      assign(raw, true);
+    }
+    else ambiguous = true;
+  });
+
+  if (classified && !ambiguous) {
+    if (quota.hourlyPresent !== true) quota.hourlyPresent = false;
+    if (quota.weeklyPresent !== true) quota.weeklyPresent = false;
+  }
+  return { planType: usage.plan_type, codexQuota: quota };
 }
 
 /**
@@ -110,20 +168,5 @@ export async function fetchCodexQuotaUpstream(
   } catch {
     return null;
   }
-  const rl = usage?.rate_limit;
-  if (!rl) return null;
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  // Windows default to UNKNOWN (-1), not fabricated 100. An absent primary/secondary
-  // window stays -1 so the caller keeps its last real value instead of flapping to full.
-  const window: CodexQuotaWindow = { hourlyPercent: -1, weeklyPercent: -1 };
-  if (rl.primary_window) {
-    window.hourlyPercent = remainingPercent(rl.primary_window.used_percent);
-    window.hourlyResetTime = resetIso(rl.primary_window, nowSec);
-  }
-  if (rl.secondary_window) {
-    window.weeklyPercent = remainingPercent(rl.secondary_window.used_percent);
-    window.weeklyResetTime = resetIso(rl.secondary_window, nowSec);
-  }
-  return { planType: usage.plan_type, codexQuota: window };
+  return normalizeCodexUsage(usage);
 }

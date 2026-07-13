@@ -36,6 +36,8 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
         weeklyPercent: 30,
         hourlyResetTime: "2036-06-01T10:00:00Z",
         weeklyResetTime: "2036-06-05T00:00:00Z",
+        hourlyPresent: true,
+        weeklyPresent: true,
       },
     });
 
@@ -73,6 +75,106 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
     expect(account.codexWeeklyPercent).toBe(98);
     expect(account.codexWeeklyResetTime).toBe("2099-06-16T14:00:00Z");
     expect((account as any).modelQuotaFractions.codex).toBeCloseTo(0.94, 5);
+  });
+
+  it("clears stale hourly state when a classified snapshot reports no hourly window", () => {
+    const provider = new CodexProvider();
+    const account: any = {
+      id: 1, email: "a@b.c", refreshToken: "r", enabled: true,
+      codexHourlyPercent: 10, codexHourlyResetTime: "2099-06-10T05:00:00Z",
+      codexWeeklyPercent: 90, codexWeeklyResetTime: "2099-06-16T14:00:00Z",
+      modelQuotaFractions: { codex: 0.1 },
+      modelQuotaResetTimes: { codex: "2099-06-10T05:00:00Z" },
+    };
+
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: {
+        hourlyPercent: -1,
+        weeklyPercent: 72,
+        hourlyPresent: false,
+        weeklyPresent: true,
+        weeklyResetTime: "2099-06-16T14:00:00Z",
+      },
+    });
+
+    expect(account.codexHourlyPercent).toBeUndefined();
+    expect(account.codexHourlyResetTime).toBeUndefined();
+    expect(account.codexWeeklyPercent).toBe(72);
+    expect(account.modelQuotaFractions.codex).toBeCloseTo(0.72, 5);
+    expect(account.modelQuotaResetTimes.codex).toBe("2099-06-16T14:00:00Z");
+  });
+
+  it("preserves unknown presence across account persistence", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, {
+      fetchedAt: 100,
+      codexQuota: { hourlyPercent: 90, weeklyPercent: -1, hourlyPresent: true },
+    });
+
+    expect(provider.quotaSnapshotInputs(account)[0]).toMatchObject({
+      hourlyPresent: true,
+      weeklyPresent: undefined,
+    });
+    expect((provider.leaseResponseExtras(account).codexWindows as any).weeklyPresent).toBeUndefined();
+  });
+
+  it("ignores an older presence snapshot that arrives after a newer weekly-only snapshot", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, {
+      fetchedAt: 200,
+      codexQuota: { hourlyPercent: -1, weeklyPercent: 72, hourlyPresent: false, weeklyPresent: true },
+    });
+    provider.applyQuotaSnapshot(account, {
+      fetchedAt: 100,
+      codexQuota: { hourlyPercent: 90, weeklyPercent: 90, hourlyPresent: true, weeklyPresent: true },
+    });
+
+    expect(account.codexHourlyPercent).toBeUndefined();
+    expect(account.codexHourlyPresent).toBe(false);
+    expect(account.codexWeeklyPercent).toBe(72);
+  });
+
+  it("clears the old binding reset when the new binding has no reset", () => {
+    const provider = new CodexProvider();
+    const account: any = {
+      id: 1, email: "a@b.c", refreshToken: "r", enabled: true,
+      codexHourlyPercent: 10,
+      codexHourlyResetTime: "2099-06-10T05:00:00Z",
+      modelQuotaFractions: { codex: 0.1 },
+      modelQuotaResetTimes: { codex: "2099-06-10T05:00:00Z" },
+    };
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: { hourlyPercent: -1, weeklyPercent: 72, hourlyPresent: false, weeklyPresent: true },
+    });
+
+    expect(account.modelQuotaFractions.codex).toBeCloseTo(0.72, 5);
+    expect(account.modelQuotaResetTimes.codex).toBeUndefined();
+  });
+
+  it("keeps the reset when the same exhausted binding omits reset temporarily", () => {
+    const provider = new CodexProvider();
+    const account: any = {
+      id: 1, email: "a@b.c", refreshToken: "r", enabled: true,
+      codexHourlyPercent: 0,
+      codexHourlyPresent: true,
+      codexHourlyResetTime: "2099-06-10T05:00:00Z",
+      codexWeeklyPercent: 80,
+      codexWeeklyPresent: true,
+      modelQuotaFractions: { codex: 0 },
+      modelQuotaResetTimes: { codex: "2099-06-10T05:00:00Z" },
+    };
+
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: {
+        hourlyPercent: 0, weeklyPercent: 80,
+        hourlyPresent: true, weeklyPresent: true,
+      },
+    });
+
+    expect(account.modelQuotaFractions.codex).toBe(0);
+    expect(account.modelQuotaResetTimes.codex).toBe("2099-06-10T05:00:00Z");
   });
 
   it("honors a genuine 0 (real exhaustion is a known value, not unknown)", () => {
@@ -199,6 +301,8 @@ describe("CodexProvider.leaseResponseExtras", () => {
         weeklyPercent: 30,
         hourlyResetTime: "2036-06-01T10:00:00Z",
         weeklyResetTime: "2036-06-05T00:00:00Z",
+        hourlyPresent: true,
+        weeklyPresent: true,
       },
     });
   });

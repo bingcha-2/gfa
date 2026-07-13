@@ -59,7 +59,7 @@ interface AppState {
   cardExclusive: boolean                    // 后端权威独享标志(尊贵 badge 据此)
   cardBuckets: Record<string, { used: number; limit: number; resetMs?: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h);resetMs=该卡 5h 窗口自身的 reset
   cardWeeklyBuckets: Record<string, { used: number; limit: number; resetMs?: number; resetAt?: string }>  // 每复合桶·周(显式或派生 5h×R)
-  codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
+  codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number; hourlyPresent?: boolean; weeklyPresent?: boolean } | null
   claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   boundAccounts: BoundAccountInfo[]
   activationExpiresAt: string

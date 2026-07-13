@@ -103,9 +103,64 @@ func TestCodexFetchQuota_ParsesWindows(t *testing.T) {
 	}
 }
 
+func TestParseQuotaFromUsageClassifiesWeeklyWindowByDuration(t *testing.T) {
+	used := 20.0
+	weeklySeconds := int64(7 * 24 * 60 * 60)
+	u := &usageResponse{RateLimit: &struct {
+		PrimaryWindow   *windowInfo `json:"primary_window"`
+		SecondaryWindow *windowInfo `json:"secondary_window"`
+	}{
+		PrimaryWindow: &windowInfo{UsedPercent: &used, LimitWindowSeconds: &weeklySeconds},
+	}}
+
+	got := parseQuotaFromUsage(u)
+	if got.HourlyKnown || !got.WeeklyKnown || got.WeeklyPercent != 80 {
+		t.Fatalf("weekly-in-primary parsed incorrectly: %+v", got)
+	}
+	if got.HourlyPresent == nil || *got.HourlyPresent {
+		t.Fatalf("hourly presence = %v, want false", got.HourlyPresent)
+	}
+	if got.WeeklyPresent == nil || !*got.WeeklyPresent {
+		t.Fatalf("weekly presence = %v, want true", got.WeeklyPresent)
+	}
+}
+
+func TestParseQuotaFromUsagePresentWindowWithoutUsedPercentIsUnknown(t *testing.T) {
+	hourlySeconds := int64(5 * 60 * 60)
+	u := &usageResponse{RateLimit: &struct {
+		PrimaryWindow   *windowInfo `json:"primary_window"`
+		SecondaryWindow *windowInfo `json:"secondary_window"`
+	}{PrimaryWindow: &windowInfo{LimitWindowSeconds: &hourlySeconds}}}
+
+	got := parseQuotaFromUsage(u)
+	if got.HourlyKnown {
+		t.Fatalf("missing used_percent must stay unknown: %+v", got)
+	}
+	if got.HourlyPresent == nil || !*got.HourlyPresent {
+		t.Fatalf("window existence should still be known: %+v", got)
+	}
+}
+
+func TestCodexFetchQuotaAcceptsFractionalUsedPercent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":20.6,"limit_window_seconds":18000}}}`))
+	}))
+	defer srv.Close()
+	c := NewCodexFetcher(CodexEndpoints{UsageURL: srv.URL})
+	acc := &account.Account{AuthKind: account.AuthOAuth, AccessToken: codexAccessToken(t, "fractional", time.Now().Add(time.Hour).Unix())}
+
+	got, err := c.FetchQuota(acc)
+	if err != nil {
+		t.Fatalf("fractional used_percent should decode: %v", err)
+	}
+	if !got.HourlyKnown || got.HourlyPercent != 79 {
+		t.Fatalf("fractional remaining should round to 79, got %+v", got)
+	}
+}
+
 // TestCodexFetchQuota_MissingWindowsUnknown:缺窗口=未知(Known=false),不伪造满血。
 // 上游临时漏窗口时绝不能报 100,否则该号在 fair 路由里冒充满额抢流量
-//(memory codex-quota-window-unknown-parity 记录的已修坑)。
+// (memory codex-quota-window-unknown-parity 记录的已修坑)。
 func TestCodexFetchQuota_MissingWindowsUnknown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"plan_type": "free", "rate_limit": map[string]any{}})
@@ -122,6 +177,9 @@ func TestCodexFetchQuota_MissingWindowsUnknown(t *testing.T) {
 	}
 	if res.HourlyPercent != 0 || res.WeeklyPercent != 0 {
 		t.Fatalf("missing windows must not fabricate 100; got %d/%d", res.HourlyPercent, res.WeeklyPercent)
+	}
+	if res.HourlyPresent != nil || res.WeeklyPresent != nil {
+		t.Fatalf("empty rate_limit must keep presence unknown, got hourly=%v weekly=%v", res.HourlyPresent, res.WeeklyPresent)
 	}
 }
 

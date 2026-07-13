@@ -105,6 +105,41 @@ export class WindowCuFairShareEngine {
     }));
   }
 
+  setWindowPresent(accountId: number, bucket: string, scope: "primary" | "weekly", present: boolean, observedAt: number): boolean {
+    const state = this.ensure(accountId, bucket);
+    const current = state[scope];
+    if (observedAt < Math.max(current.lastSnapshotAt, current.lastPresenceAt)) return false;
+    if (present) {
+      const observed = {
+        ...current,
+        revision: current.revision + 1,
+        lastPresenceAt: observedAt,
+        base: { ...current.base, lastPresenceAt: observedAt },
+      };
+      this.set(accountId, bucket, scope === "primary"
+        ? { primary: observed, weekly: state.weekly }
+        : { primary: state.primary, weekly: observed });
+      return true;
+    }
+    const cleared = {
+      ...createWindowState({ scope, windowMs: current.windowMs, subjects: this.subjects(accountId) }),
+      revision: current.revision + 1,
+      lastReason: "WINDOW_NOT_PRESENT",
+    };
+    cleared.windowStart = observedAt;
+    cleared.lastSnapshotAt = observedAt;
+    cleared.lastPresenceAt = observedAt;
+    cleared.compactedThroughAt = observedAt;
+    cleared.base.windowStart = observedAt;
+    cleared.base.lastSnapshotAt = observedAt;
+    cleared.base.lastPresenceAt = observedAt;
+    cleared.base.compactedThroughAt = observedAt;
+    this.set(accountId, bucket, scope === "primary"
+      ? { primary: cleared, weekly: state.weekly }
+      : { primary: state.primary, weekly: cleared });
+    return true;
+  }
+
   refreshMembership(accountId: number): void {
     const buckets = this.states.get(accountId);
     if (!buckets) return;

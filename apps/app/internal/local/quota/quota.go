@@ -19,11 +19,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"bcai-wails/internal/codexquota"
 	"bcai-wails/internal/local/account"
 )
 
@@ -50,6 +52,8 @@ type Result struct {
 	WeeklyResetAt int64  // unix ms
 	HourlyKnown   bool   // 上游是否真给了 5h 窗口(false=未知,调用方应 keep-prior,绝不伪造满血)
 	WeeklyKnown   bool   // 上游是否真给了 周 窗口
+	HourlyPresent *bool  // nil=无法判断,false=本次可识别响应未报告5h,true=报告了5h
+	WeeklyPresent *bool  // nil=无法判断,false=本次可识别响应未报告周,true=报告了周
 	PlanType      string // 上游返回的订阅档(可空)
 	// Buckets 是多窗口/多模型族剩余额度(antigravity 4 桶:gemini/claude × 5h/周)。
 	// 非空即由调用方覆盖写入 account.Buckets;codex 留空(仍走 Hourly/Weekly)。
@@ -249,9 +253,10 @@ func (c *AntigravityFetcher) RefreshToken(refreshToken string) (AntigravityToken
 // ── 解析/JWT 辅助(照搬 cockpit codex_quota.rs / codex_account.rs) ──
 
 type windowInfo struct {
-	UsedPercent       *int   `json:"used_percent"`
-	ResetAfterSeconds *int64 `json:"reset_after_seconds"`
-	ResetAt           *int64 `json:"reset_at"`
+	UsedPercent        *float64 `json:"used_percent"`
+	ResetAfterSeconds  *int64   `json:"reset_after_seconds"`
+	ResetAt            *int64   `json:"reset_at"`
+	LimitWindowSeconds *int64   `json:"limit_window_seconds"`
 }
 
 type usageResponse struct {
@@ -268,18 +273,18 @@ type usageResponse struct {
 }
 
 // normalizeRemainingPercentage 照搬 cockpit:remaining = 100 - clamp(used,0,100)。
-func normalizeRemainingPercentage(w *windowInfo) int {
-	used := 0
-	if w.UsedPercent != nil {
-		used = *w.UsedPercent
+func normalizeRemainingPercentage(w *windowInfo) (int, bool) {
+	if w.UsedPercent == nil {
+		return 0, false
 	}
+	used := *w.UsedPercent
 	if used < 0 {
 		used = 0
 	}
 	if used > 100 {
 		used = 100
 	}
-	return 100 - used
+	return int(math.Round(100 - used)), true
 }
 
 // normalizeResetTimeMs 照搬 cockpit normalize_reset_time:优先 reset_at,
@@ -307,17 +312,49 @@ func parseQuotaFromUsage(u *usageResponse) Result {
 	if u.RateLimit == nil {
 		return res
 	}
-	if p := u.RateLimit.PrimaryWindow; p != nil {
-		res.HourlyPercent = normalizeRemainingPercentage(p)
-		res.HourlyResetAt = normalizeResetTimeMs(p)
-		res.HourlyKnown = true
+	assign := func(raw *windowInfo, weekly bool) {
+		present := true
+		remaining, known := normalizeRemainingPercentage(raw)
+		if weekly {
+			res.WeeklyPercent = remaining
+			res.WeeklyResetAt = normalizeResetTimeMs(raw)
+			res.WeeklyKnown = known
+			res.WeeklyPresent = &present
+			return
+		}
+		res.HourlyPercent = remaining
+		res.HourlyResetAt = normalizeResetTimeMs(raw)
+		res.HourlyKnown = known
+		res.HourlyPresent = &present
 	}
-	if s := u.RateLimit.SecondaryWindow; s != nil {
-		res.WeeklyPercent = normalizeRemainingPercentage(s)
-		res.WeeklyResetAt = normalizeResetTimeMs(s)
-		res.WeeklyKnown = true
+	raws := []*windowInfo{u.RateLimit.PrimaryWindow, u.RateLimit.SecondaryWindow}
+	classified := codexquota.ClassifyWindows(
+		codexquota.Slot{Exists: raws[0] != nil, LimitWindowSeconds: localWindowDuration(raws[0])},
+		codexquota.Slot{Exists: raws[1] != nil, LimitWindowSeconds: localWindowDuration(raws[1])},
+	)
+	for i, kind := range []codexquota.Kind{classified.Primary, classified.Secondary} {
+		if kind == codexquota.Hourly {
+			assign(raws[i], false)
+		} else if kind == codexquota.Weekly {
+			assign(raws[i], true)
+		}
+	}
+	if classified.Hourly == codexquota.Absent {
+		absent := false
+		res.HourlyPresent = &absent
+	}
+	if classified.Weekly == codexquota.Absent {
+		absent := false
+		res.WeeklyPresent = &absent
 	}
 	return res
+}
+
+func localWindowDuration(raw *windowInfo) *int64 {
+	if raw == nil {
+		return nil
+	}
+	return raw.LimitWindowSeconds
 }
 
 // extractChatGPTAccountID 照搬 codex_account::extract_chatgpt_account_id_from_access_token:

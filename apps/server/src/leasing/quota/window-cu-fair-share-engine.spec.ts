@@ -57,4 +57,43 @@ describe("WindowCuFairShareEngine global causal budget", () => {
       remainingFraction: 0,
     });
   });
+
+  it("does not let an older present snapshot revive a newer absent window", () => {
+    const engine = new WindowCuFairShareEngine({
+      provider: "codex",
+      trackWeekly: true,
+      now: () => T,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+      getSeatCapacity: () => 1,
+      isExclusive: () => false,
+    });
+    engine.applySnapshot(1, "codex-gpt", "primary", {
+      snapshotId: "baseline", fraction: 0.8, observedAt: T + 10, resetAt: T + 1000,
+    });
+    engine.setWindowPresent(1, "codex-gpt", "primary", false, T + 30);
+    engine.setWindowPresent(1, "codex-gpt", "primary", true, T + 20);
+    engine.applySnapshot(1, "codex-gpt", "primary", {
+      snapshotId: "older-present", fraction: 0.9, observedAt: T + 20, resetAt: T + 1000,
+    });
+
+    expect(engine.getStateForTesting(1, "codex-gpt")?.primary).toMatchObject({
+      primed: false,
+      lastSnapshotAt: T + 30,
+    });
+  });
+
+  it("does not let an older absent event override a newer present observation without a percentage", () => {
+    const engine = new WindowCuFairShareEngine({
+      provider: "codex",
+      trackWeekly: true,
+      now: () => T,
+      getBoundCardWeights: () => [{ cardId: "A", weight: 1 }],
+      getSeatCapacity: () => 1,
+      isExclusive: () => false,
+    });
+
+    expect(engine.setWindowPresent(1, "codex-gpt", "primary", false, T + 10)).toBe(true);
+    expect(engine.setWindowPresent(1, "codex-gpt", "primary", true, T + 30)).toBe(true);
+    expect(engine.setWindowPresent(1, "codex-gpt", "primary", false, T + 20)).toBe(false);
+  });
 });

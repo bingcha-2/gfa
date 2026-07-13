@@ -30,7 +30,7 @@ import {
 } from "../token-server/token-billing";
 import { bucketKey } from "./product-bucket";
 import { fairShareDenialMessage } from "./fair-share-message";
-import type { Provider } from "./provider";
+import type { Provider, ProviderQuotaSnapshotInput } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
 
 export type TokenUsageTracker = {
@@ -328,7 +328,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "13.5.1";
+    this.minClientVersion = options.minClientVersion ?? "13.5.2";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.maxRetainedLeaseRecords = Math.max(
@@ -1037,37 +1037,50 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     accountId: number,
     account: TAccount,
     meta?: { observedAt?: number; snapshotId?: string; arrivedAt?: number },
+    inputsOverride?: ProviderQuotaSnapshotInput[],
   ): void {
     if (!this.fairShareTracker) return;
     const arrivedAt = this.clampEventTime(meta?.arrivedAt, 0, this.now());
     const observedAt = this.clampEventTime(meta?.observedAt, 0, arrivedAt);
     const snapshotBase = String(meta?.snapshotId || `poll-${accountId}-${observedAt}`);
 
-    const inputs = this.provider.quotaSnapshotInputs?.(account) || [];
+    const inputs = inputsOverride ?? this.provider.quotaSnapshotInputs?.(account) ?? [];
     if (inputs.length > 0) {
       for (const inp of inputs) {
         const bucket = bucketKey(this.provider.id, inp.modelKey);
         // fraction=-1 表示未知(不归并,只继续累积 u_i);resetAt=0 表示上游未给(不喂窗口)。
         const hourlyFraction = this.quotaPercentToFraction(inp.hourlyPercent);
         const hourlyReset = inp.hourlyResetAt ? inp.hourlyResetAt.getTime() : 0;
-        if (this.fairShareTracker.isWindowCuEnabled()) {
-          this.fairShareTracker.applyAccountQuotaSnapshotAt(accountId, bucket, {
-            fraction: hourlyFraction ?? -1, resetAt: hourlyReset, observedAt, arrivedAt,
-            snapshotId: `${snapshotBase}:primary:${bucket}`,
-          });
+        if (inp.hourlyPresent === false) {
+          this.fairShareTracker.setQuotaWindowPresent(accountId, bucket, false, false, observedAt);
         } else {
-          this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, hourlyFraction ?? -1, hourlyReset);
+          const hourlyAccepted = inp.hourlyPresent !== true
+            || this.fairShareTracker.setQuotaWindowPresent(accountId, bucket, false, true, observedAt);
+          if (this.fairShareTracker.isWindowCuEnabled()) {
+            this.fairShareTracker.applyAccountQuotaSnapshotAt(accountId, bucket, {
+              fraction: hourlyFraction ?? -1, resetAt: hourlyReset, observedAt, arrivedAt,
+              snapshotId: `${snapshotBase}:primary:${bucket}`,
+            });
+          } else if (hourlyAccepted) {
+            this.fairShareTracker.applyAccountQuotaSnapshot(accountId, bucket, hourlyFraction ?? -1, hourlyReset);
+          }
         }
 
         const weeklyFraction = this.quotaPercentToFraction(inp.weeklyPercent);
         const weeklyReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
-        if (this.fairShareTracker.isWindowCuEnabled()) {
-          this.fairShareTracker.applyWeeklyAccountQuotaSnapshotAt(accountId, bucket, {
-            fraction: weeklyFraction ?? -1, resetAt: weeklyReset, observedAt, arrivedAt,
-            snapshotId: `${snapshotBase}:weekly:${bucket}`,
-          });
+        if (inp.weeklyPresent === false) {
+          this.fairShareTracker.setQuotaWindowPresent(accountId, bucket, true, false, observedAt);
         } else {
-          this.fairShareTracker.applyWeeklyAccountQuotaSnapshot(accountId, bucket, weeklyFraction ?? -1, weeklyReset);
+          const weeklyAccepted = inp.weeklyPresent !== true
+            || this.fairShareTracker.setQuotaWindowPresent(accountId, bucket, true, true, observedAt);
+          if (this.fairShareTracker.isWindowCuEnabled()) {
+            this.fairShareTracker.applyWeeklyAccountQuotaSnapshotAt(accountId, bucket, {
+              fraction: weeklyFraction ?? -1, resetAt: weeklyReset, observedAt, arrivedAt,
+              snapshotId: `${snapshotBase}:weekly:${bucket}`,
+            });
+          } else if (weeklyAccepted) {
+            this.fairShareTracker.applyWeeklyAccountQuotaSnapshot(accountId, bucket, weeklyFraction ?? -1, weeklyReset);
+          }
         }
       }
       return;
@@ -1274,11 +1287,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
       if (accepted && this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
-        if (account) this.syncFairShareQuotaSnapshot(accountId, account, {
-          observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
-          arrivedAt: this.now(),
-          snapshotId: dedupId || String(payload?.traceId || ""),
-        });
+        if (account) {
+          const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account);
+          this.syncFairShareQuotaSnapshot(accountId, account, {
+            observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
+            arrivedAt: this.now(),
+            snapshotId: dedupId || String(payload?.traceId || ""),
+          }, rawInputs);
+        }
       }
     }
 
@@ -1538,7 +1554,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (snapshotAccount && this.accountQuotaSnapshotTracker && this.provider.quotaSnapshotInputs) {
       const acc = snapshotAccount as { email?: string };
       const email = acc.email ?? null;
-      for (const inp of this.provider.quotaSnapshotInputs(snapshotAccount)) {
+      const inputs = this.provider.quotaSnapshotInputsFromReport?.(quota, snapshotAccount)
+        ?? this.provider.quotaSnapshotInputs(snapshotAccount);
+      for (const inp of inputs) {
         this.accountQuotaSnapshotTracker.record({ provider: this.provider.id, accountId, email, ...inp });
       }
     }

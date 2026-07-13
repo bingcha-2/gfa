@@ -63,9 +63,9 @@ describe("Codex 额度 E2E 场景", () => {
     });
   }
   // 上游额度 snapshot（客户端上报格式，含 accountId = 探自哪个号）。
-  const quota = (accountId: number, h: number, w: number, hReset?: string, wReset?: string) => ({
+  const quota = (accountId: number, h: number, w: number, hReset?: string, wReset?: string, presence?: { hourlyPresent?: boolean; weeklyPresent?: boolean }) => ({
     accountId, planType: "pro",
-    codexQuota: { hourlyPercent: h, weeklyPercent: w, ...(hReset ? { hourlyResetTime: hReset } : {}), ...(wReset ? { weeklyResetTime: wReset } : {}) },
+    codexQuota: { hourlyPercent: h, weeklyPercent: w, ...(hReset ? { hourlyResetTime: hReset } : {}), ...(wReset ? { weeklyResetTime: wReset } : {}), ...presence },
   });
   const fair = (svc: any, accountId: number, bucket = BK) => svc.fairShareTracker.getBucketStateForTesting(accountId, bucket);
 
@@ -157,6 +157,55 @@ describe("Codex 额度 E2E 场景", () => {
     l = await lease(svc, "card-1");
     await report(svc, "card-1", l.leaseId, { input: 10, accountQuota: quota(11, -1, -1) }); // 未知
     expect(fair(svc, 11).lastFraction).toBeCloseTo(0.46, 5); // 没被 -1 或伪造100 覆盖
+  });
+
+  it("回归·5h窗口明确消失:清掉旧主窗口闸门,只保留周窗口", async () => {
+    const svc = setup([acct(11)], [card(1, 11)]);
+    const l = await lease(svc, "card-1");
+    await report(svc, "card-1", l.leaseId, {
+      input: 10,
+      accountQuota: quota(11, 0, 80, new Date(now + 4 * HOUR).toISOString(), new Date(now + 4 * DAY).toISOString()),
+    });
+    expect(svc.fairShareTracker.getCardQuotaFractions(11, "card-1")[BK]).toBeDefined();
+
+    await report(svc, "card-1", l.leaseId, {
+      input: 0,
+      accountQuota: quota(11, -1, 72, undefined, new Date(now + 4 * DAY).toISOString(), {
+        hourlyPresent: false,
+        weeklyPresent: true,
+      }),
+    });
+
+    expect(svc.fairShareTracker.getCardQuotaFractions(11, "card-1")).toEqual({});
+    expect(svc.fairShareTracker.getCardWeeklyQuotaFractions(11, "card-1")[BK]).toBeDefined();
+    expect(svc.fairShareTracker.checkFairShare(11, "card-1", BK).allowed).toBe(true);
+    await expect(lease(svc, "card-1")).resolves.toMatchObject({ accountId: 11 });
+  });
+
+  it("回归·乱序 presence:旧双窗口快照不能复活较新的 weekly-only 状态", async () => {
+    const svc = setup([acct(11)], [card(1, 11)]);
+    const l = await lease(svc, "card-1");
+    await report(svc, "card-1", l.leaseId, {
+      accountQuota: {
+        ...quota(11, -1, 72, undefined, undefined, { hourlyPresent: false, weeklyPresent: true }),
+        fetchedAt: now - 10,
+      },
+    });
+    await report(svc, "card-1", l.leaseId, {
+      accountQuota: {
+        ...quota(11, 90, 90, undefined, undefined, { hourlyPresent: true, weeklyPresent: true }),
+        fetchedAt: now - 20,
+      },
+    });
+
+    expect(svc.fairShareTracker.getCardQuotaFractions(11, "card-1")).toEqual({});
+    expect(fair(svc, 11)).toBeNull();
+    svc.flushAccounts();
+    const stored = JSON.parse(fs.readFileSync(accountsFile, "utf8")).accounts[0];
+    expect(stored.codexHourlyPresent).toBe(false);
+    expect(stored.codexHourlyPercent).toBeUndefined();
+    const nextLease = await lease(svc, "card-1");
+    expect(nextLease.codexWindows).toMatchObject({ hourlyPresent: false, weeklyPresent: true, weeklyPercent: 72 });
   });
 
   // ── 回归②:换号接力串号被拒(本轮线上真 bug)────────────────────────────

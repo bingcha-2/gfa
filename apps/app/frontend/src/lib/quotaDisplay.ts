@@ -29,6 +29,8 @@ type SplitAccountQuota = {
   weeklyFraction: number
   hourlyResetMs?: number
   weeklyResetMs?: number
+  hourlyPresent?: boolean
+  weeklyPresent?: boolean
 }
 
 export type QuotaDisplayBar = {
@@ -354,10 +356,12 @@ function serviceAccountBars(bucket: string, input: BuildQuotaSectionsInput): Quo
   }
   const split = splitServiceQuota(bucket, input)
   if (split) {
-    return [
+    const bars: QuotaDisplayBar[] = [
       { window: '5h', label: '5h 窗口', fraction: split.hourlyFraction, resetMs: split.hourlyResetMs, used: null, limit: null, hideValues: true },
       { window: '7d', label: '周窗口', fraction: split.weeklyFraction, resetMs: split.weeklyResetMs, used: null, limit: null, hideValues: true },
     ]
+    if (bucket !== 'codex-gpt') return bars
+    return bars.filter((bar) => bar.window === '5h' ? split.hourlyPresent !== false : split.weeklyPresent !== false)
   }
   const account = barFromFraction('5h', '5h 窗口', input.accountFractions?.[bucket], input.accountResetMs?.[bucket], input.accountResetAt?.[bucket])
   return account ? [account] : [{ window: '5h', label: '5h 窗口', fraction: -1, used: null, limit: null, hideValues: true }]

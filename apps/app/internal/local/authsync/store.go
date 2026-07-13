@@ -70,9 +70,11 @@ func toAuth(a *account.Account) *coreauth.Auth {
 // 注意:HourlyPercent/WeeklyPercent 本就是「剩余%」(quota.normalizeRemainingPercentage = 100-used),
 // 故取 min;旧实现把剩余当已用又用 max,双重反掉,会把流量打到快用尽的号。
 func accountRemainingPct(a *account.Account) int {
-	rem := a.HourlyPercent
-	if a.WeeklyPercent < rem {
-		rem = a.WeeklyPercent
+	rem := -1
+	for _, value := range []int{a.HourlyPercent, a.WeeklyPercent} {
+		if value >= 0 && (rem < 0 || value < rem) {
+			rem = value
+		}
 	}
 	if rem < 0 {
 		rem = 0

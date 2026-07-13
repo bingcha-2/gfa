@@ -186,7 +186,7 @@ export interface StatsResponse {
     myPersonalWeeklyFractions?: Record<string, number>
     myWeeklyResetMs?: Record<string, number>
     myWeeklyResetAt?: Record<string, number>
-    codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
+    codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number; hourlyPresent?: boolean; weeklyPresent?: boolean }
     claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     boundAccounts?: BoundAccountInfo[]
     hasToken: boolean

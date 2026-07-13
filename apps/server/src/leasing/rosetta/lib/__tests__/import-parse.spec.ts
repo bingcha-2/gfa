@@ -66,9 +66,13 @@ describe("extractCodexImportFields", () => {
   });
 
   it("honors an explicit enabled:false and carries allowlisted extras", () => {
-    const f = extractCodexImportFields({ email: "u@x.com", enabled: false, modelQuotaFractions: { codex: 0.5 }, junk: "drop" });
+    const f = extractCodexImportFields({
+      email: "u@x.com", enabled: false,
+      modelQuotaFractions: { codex: 0.5 }, codexHourlyPresent: false, codexQuotaObservedAt: 123,
+      junk: "drop",
+    });
     expect(f.enabled).toBe(false);
-    expect(f.extra).toEqual({ modelQuotaFractions: { codex: 0.5 } });
+    expect(f.extra).toEqual({ modelQuotaFractions: { codex: 0.5 }, codexHourlyPresent: false, codexQuotaObservedAt: 123 });
     expect((f.extra as any).junk).toBeUndefined();
   });
 });

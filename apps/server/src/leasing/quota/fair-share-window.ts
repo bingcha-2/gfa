@@ -56,6 +56,7 @@ interface WindowCoreState {
   resetAt: number;
   fraction: number;
   lastSnapshotAt: number;
+  lastPresenceAt: number;
   assignedBurn: number;
   unattributedShare: number;
   subjects: Record<string, WindowSubjectState>;
@@ -358,6 +359,7 @@ export function createWindowState(config: {
     resetAt: 0,
     fraction: 1,
     lastSnapshotAt: 0,
+    lastPresenceAt: 0,
     assignedBurn: 0,
     unattributedShare: 0,
     subjects,

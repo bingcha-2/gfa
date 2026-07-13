@@ -205,7 +205,13 @@ try {
   const codexGoHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 101, bucket: "codex-gpt" } });
   const claudeGoHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "anthropic", accountId: 102, bucket: "anthropic-claude" } });
   assert(codexGoHeads.length === 2 && claudeGoHeads.length === 2, "production Go leasers did not persist both provider windows");
-  assert(JSON.parse(codexGoHeads.find((h) => h.scope === "primary").stateJson).lastReason === "LATE_USAGE_RECONCILED", "Codex production late report was not causally reconciled");
+  const codexPrimary = JSON.parse(codexGoHeads.find((h) => h.scope === "primary").stateJson);
+  const codexWeekly = JSON.parse(codexGoHeads.find((h) => h.scope === "weekly").stateJson);
+  assert(codexPrimary.primed === false,
+    `Codex absent primary window remained active: ${JSON.stringify(codexPrimary)}`);
+  assert(codexWeekly.primed === true && Math.abs(codexWeekly.fraction - 0.8) < 1e-9
+    && codexWeekly.lastReason === "LATE_USAGE_RECONCILED",
+    `Codex weekly usage was not causally retained: ${JSON.stringify(codexWeekly)}`);
   const claudeUsage = await prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "card-102", modelKey: "claude-opus-4-8" } });
   assert(claudeUsage?.cacheCreationTokens === 200_080, `Claude cache TTL total=${claudeUsage?.cacheCreationTokens}, want 200080`);
   assert(await prisma.requestLog.count({ where: { accessKeyId: { in: ["card-101", "card-102"] } } }) >= 2, "production Go reports missing from diagnostic trace");

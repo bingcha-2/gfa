@@ -63,6 +63,32 @@ func TestRefreshQuota_PersistsResult(t *testing.T) {
 	}
 }
 
+func TestRefreshQuota_ClearsExplicitlyAbsentHourlyWindow(t *testing.T) {
+	absent, present := false, true
+	r := &fakeRefresher{res: quota.Result{
+		HourlyPresent: &absent,
+		WeeklyPresent: &present,
+		WeeklyKnown:   true, WeeklyPercent: 72, WeeklyResetAt: 222,
+	}}
+	m, acc := newMgrWithRefresher(t, r)
+	a := &account.Account{
+		Provider: account.ProviderCodex, Email: "weekly-only@x", AuthKind: account.AuthOAuth,
+		PoolEnabled: true, HourlyPercent: 10, HourlyResetAt: 111, WeeklyPercent: 80, WeeklyResetAt: 200,
+	}
+	_ = acc.Add(a)
+
+	if err := m.RefreshQuota(a.ID); err != nil {
+		t.Fatalf("RefreshQuota: %v", err)
+	}
+	got, _ := acc.Get(a.ID)
+	if got.HourlyPercent != -1 || got.HourlyResetAt != 0 {
+		t.Fatalf("stale hourly window survived explicit absence: %+v", got)
+	}
+	if got.WeeklyPercent != 72 || got.WeeklyResetAt != 222 {
+		t.Fatalf("weekly window not updated: %+v", got)
+	}
+}
+
 func TestRefreshQuota_RefreshesExpiredTokenFirst(t *testing.T) {
 	r := &fakeRefresher{tokenExpired: true, res: quota.Result{HourlyPercent: 90, WeeklyPercent: 90, HourlyKnown: true, WeeklyKnown: true}}
 	m, acc := newMgrWithRefresher(t, r)

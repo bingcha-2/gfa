@@ -15,8 +15,11 @@ func TestAccountRemainingPct_MinOfRemaining(t *testing.T) {
 		{70, 20, 20}, // 周更紧 → 取 20(旧 bug:100-max(70,20)=30)
 		{20, 70, 20}, // 小时更紧 → 取 20
 		{100, 100, 100},
-		{0, 0, 0},   // 真用尽
+		{0, 0, 0}, // 真用尽
 		{80, 80, 80},
+		{-1, 72, 72}, // 小时窗口不存在,只按周窗口路由
+		{64, -1, 64}, // 周窗口不存在,只按小时窗口路由
+		{-1, -1, 0},  // 两边都未知时保持保守值
 	}
 	for _, c := range cases {
 		got := accountRemainingPct(&account.Account{HourlyPercent: c.hourly, WeeklyPercent: c.weekly})

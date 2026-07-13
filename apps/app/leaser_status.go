@@ -247,6 +247,10 @@ func recordFairShareQuota(body []byte) {
 			PersonalFraction *float64 `json:"personalFraction"`
 			ResetAt          int64    `json:"resetAt"`
 		} `json:"weeklyFairShareQuota"`
+		CodexWindows *struct {
+			HourlyPresent *bool `json:"hourlyPresent"`
+			WeeklyPresent *bool `json:"weeklyPresent"`
+		} `json:"codexWindows"`
 	}
 	if json.Unmarshal(body, &resp) != nil {
 		return
@@ -278,6 +282,14 @@ func recordFairShareQuota(body []byte) {
 	for bucket := range resp.FairShareQuota {
 		if _, ok := resp.WeeklyFairShareQuota[bucket]; !ok {
 			clearMyPersonalWeeklyBucketFraction(bucket)
+		}
+	}
+	if resp.CodexWindows != nil {
+		if resp.CodexWindows.HourlyPresent != nil && !*resp.CodexWindows.HourlyPresent {
+			clearMyBucketFraction("codex-gpt")
+		}
+		if resp.CodexWindows.WeeklyPresent != nil && !*resp.CodexWindows.WeeklyPresent {
+			clearMyWeeklyBucketFraction("codex-gpt")
 		}
 	}
 }

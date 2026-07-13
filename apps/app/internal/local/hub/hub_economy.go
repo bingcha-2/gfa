@@ -24,7 +24,7 @@ import (
 
 // economyView 把一个本地号适配成 economy 的只读视图。
 // HourlyPercent/WeeklyPercent 在 account 里已是「剩余」百分比(0..100),与 economy 约定一致。
-// 窗口存在性:用 reset_at(>0 表示上游返回了该窗口)反推;两者皆 0 时留 nil(未知,回退两窗口)。
+// 窗口存在性以已持久化的有效百分比为准;reset_at 只表示重置时间是否已知,不能代理窗口存在性。
 // Cooling:QuotaStatus cooling/exhausted 或 BlockedUntil(unix ms)未过期。
 func economyView(a *account.Account) economy.AccountView {
 	v := economy.AccountView{
@@ -36,9 +36,9 @@ func economyView(a *account.Account) economy.AccountView {
 		Cooling:       isCooling(a),
 		LastUsedAt:    a.LastUsedAt,
 	}
-	if a.HourlyResetAt > 0 || a.WeeklyResetAt > 0 {
-		hp := a.HourlyResetAt > 0
-		wp := a.WeeklyResetAt > 0
+	if a.HourlyPercent >= 0 || a.WeeklyPercent >= 0 {
+		hp := a.HourlyPercent >= 0
+		wp := a.WeeklyPercent >= 0
 		v.HourlyWindowPresent = &hp
 		v.WeeklyWindowPresent = &wp
 	}

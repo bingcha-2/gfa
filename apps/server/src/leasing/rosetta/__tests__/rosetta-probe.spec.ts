@@ -17,7 +17,8 @@ vi.mock("../google-api", async (orig) => ({
 vi.mock("../../remote-codex/auth/codex-token-provider", () => ({
   refreshCodexAccessToken: vi.fn(),
 }));
-vi.mock("../../remote-codex/auth/codex-usage", () => ({
+vi.mock("../../remote-codex/auth/codex-usage", async (orig) => ({
+  ...(await (orig as any)()),
   fetchCodexQuotaUpstream: vi.fn(),
 }));
 
@@ -130,5 +131,67 @@ describe("RosettaService — 入库探活 + 单账号刷新", () => {
     expect(acc.codexHourlyPercent).toBe(90); // 5h 更新
     expect(acc.codexWeeklyPercent).toBe(67); // weekly 保留真实值,未被 -1 覆盖
     expect(r.weeklyPercent).toBe(67); // 回带的也是保留值
+  });
+
+  it("codex 刷新:旧绑定窗口已 absent 且当前窗口未知时清除陈旧 binding", async () => {
+    vi.mocked(refreshCodexAccessToken).mockResolvedValue("access-tok");
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addCodexAccount({ email: "weekly-only@x.com", refreshToken: "rt" });
+    const seeded = readAccounts(tempDir, "codex-accounts.json")[0];
+    const file = path.join(tempDir, "codex-accounts.json");
+    fs.writeFileSync(file, JSON.stringify({ accounts: [{
+      ...seeded,
+      codexHourlyPercent: 10,
+      codexHourlyResetTime: "2099-01-01T00:00:00Z",
+      modelQuotaFractions: { codex: 0.1 },
+      modelQuotaResetTimes: { codex: "2099-01-01T00:00:00Z" },
+    }] }));
+    vi.mocked(fetchCodexQuotaUpstream).mockResolvedValue({
+      planType: "plus",
+      codexQuota: {
+        hourlyPercent: -1,
+        weeklyPercent: -1,
+        hourlyPresent: false,
+        weeklyPresent: true,
+      },
+    });
+
+    await svc.refreshCodexAccountQuota({ accountId: seeded.id });
+
+    const acc = readAccounts(tempDir, "codex-accounts.json")[0];
+    expect(acc).not.toHaveProperty("codexHourlyPercent");
+    expect(acc.modelQuotaFractions).not.toHaveProperty("codex");
+    expect(acc.modelQuotaResetTimes).not.toHaveProperty("codex");
+  });
+
+  it("codex 刷新:同一耗尽 binding 临时缺 reset 时保留真实恢复时间", async () => {
+    vi.mocked(refreshCodexAccessToken).mockResolvedValue("access-tok");
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addCodexAccount({ email: "exhausted@x.com", refreshToken: "rt" });
+    const id = readAccounts(tempDir, "codex-accounts.json")[0].id;
+
+    vi.mocked(fetchCodexQuotaUpstream).mockResolvedValueOnce({
+      planType: "plus",
+      codexQuota: {
+        hourlyPercent: 0, weeklyPercent: 80,
+        hourlyPresent: true, weeklyPresent: true,
+        hourlyResetTime: "2099-06-10T05:00:00Z",
+      },
+    });
+    await svc.refreshCodexAccountQuota({ accountId: id });
+    expect(readAccounts(tempDir, "codex-accounts.json")[0].modelQuotaResetTimes.codex).toBe("2099-06-10T05:00:00Z");
+
+    vi.mocked(fetchCodexQuotaUpstream).mockResolvedValueOnce({
+      planType: "plus",
+      codexQuota: {
+        hourlyPercent: 0, weeklyPercent: 80,
+        hourlyPresent: true, weeklyPresent: true,
+      },
+    });
+    await svc.refreshCodexAccountQuota({ accountId: id });
+
+    const acc = readAccounts(tempDir, "codex-accounts.json")[0];
+    expect(acc.modelQuotaFractions.codex).toBe(0);
+    expect(acc.modelQuotaResetTimes.codex).toBe("2099-06-10T05:00:00Z");
   });
 });

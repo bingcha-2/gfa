@@ -188,11 +188,12 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		recordBoundFractionForModel("codex", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	syncQuotaStateFromBody(GetLeaser(), body)
-	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
-	l.applyCodexWindows(leaseResp.CodexWindows)
 	l.mu.Lock()
 	l.lastLease = lease
 	l.mu.Unlock()
+	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
+	// 先记录租约账号，确保窗口缓存能识别换号并清掉上一账号的额度。
+	l.applyCodexWindows(leaseResp.CodexWindows)
 	l.setLastError("")
 	return lease, nil
 }
@@ -200,16 +201,24 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 // applyCodexWindows 用服务端下发的 5h/周窗口更新本地持久快照(供 DashboardPage 显示
 // 两条 codex 血条)。nil 表示服务端暂无该号窗口数据 → 保留现有快照,不清空。
 func (l *CodexLeaser) applyCodexWindows(w *CodexQuotaWindow) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	accountID := 0
+	if l.lastLease != nil {
+		accountID = l.lastLease.AccountId
+	}
+	if accountID > 0 && l.lastQuota != nil && l.lastQuota.AccountId != accountID {
+		l.lastQuota = nil
+	}
 	if w == nil {
 		return
 	}
-	l.mu.Lock()
 	if l.lastQuota == nil {
 		l.lastQuota = &CodexAccountQuotaSnapshot{}
 	}
 	cp := *w
+	l.lastQuota.AccountId = accountID
 	l.lastQuota.CodexQuota = &cp
-	l.mu.Unlock()
 }
 
 // RefreshQuotaUpstream 主动拉一次 codex 上游 5h/周额度 → 更新血条 + 上报服务端。

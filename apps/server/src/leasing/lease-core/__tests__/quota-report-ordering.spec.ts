@@ -148,6 +148,7 @@ describe("causal report-result integration", () => {
     await prisma.fairShareWindow.deleteMany();
     await prisma.fairShareWindowHead.deleteMany();
     await prisma.cardUsageHourly.deleteMany();
+    writeJson(accountsFile, { accounts: [{ id: 11, email: "a@x.com", refreshToken: "rt", enabled: true, planType: "pro" }] });
 
     const second = service();
     const secondLease = await lease(second);

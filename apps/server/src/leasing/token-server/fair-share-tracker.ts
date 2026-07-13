@@ -175,6 +175,8 @@ export interface FairShareTrackerOptions {
 export class FairShareTracker {
   // accountId → bucket → tracker
   private readonly trackers = new Map<number, Map<string, BucketTracker>>();
+  private readonly disabledWindows = new Set<string>();
+  private readonly presenceObservedAt = new Map<string, number>();
   private readonly opts: FairShareTrackerOptions;
   private readonly prisma: any;
   private readonly providerId: string;
@@ -338,8 +340,11 @@ export class FairShareTracker {
     const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens, costMultiplier);
     if (cost <= 0) return;
     const now = this.nowFn();
-    const keys = this.trackWeekly ? [bucket, weeklyBucketKey(bucket)] : [bucket];
-    for (const key of keys) {
+    const keys = this.trackWeekly
+      ? [{ key: bucket, weekly: false }, { key: weeklyBucketKey(bucket), weekly: true }]
+      : [{ key: bucket, weekly: false }];
+    for (const { key, weekly } of keys) {
+      if (this.isQuotaWindowDisabled(accountId, bucket, weekly)) continue;
       const tracker = this.getOrCreate(accountId, key);
       this.ensureWindow(accountId, tracker, now);
       tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
@@ -454,11 +459,46 @@ export class FairShareTracker {
     this.applySnapshot(accountId, weeklyBucketKey(bucket), fraction, resetAtMs);
   }
 
+  private quotaWindowPresenceKey(accountId: number, bucket: string, weekly: boolean): string {
+    return `${accountId}\u0000${bucket}\u0000${weekly ? "weekly" : "primary"}`;
+  }
+
+  private isQuotaWindowDisabled(accountId: number, bucket: string, weekly: boolean): boolean {
+    return this.disabledWindows.has(this.quotaWindowPresenceKey(accountId, bucket, weekly));
+  }
+
+  setQuotaWindowPresent(accountId: number, bucket: string, weekly: boolean, present: boolean, observedAt = this.nowFn()): boolean {
+    const key = this.quotaWindowPresenceKey(accountId, bucket, weekly);
+    if (this.windowCu) {
+      if (!this.windowCu.setWindowPresent(accountId, bucket, weekly ? "weekly" : "primary", present, observedAt)) return false;
+    } else {
+      const previous = this.presenceObservedAt.get(key) || 0;
+      if (observedAt < previous) return false;
+      this.presenceObservedAt.set(key, observedAt);
+    }
+    if (present) {
+      this.disabledWindows.delete(key);
+      return true;
+    }
+    this.disabledWindows.add(key);
+    if (!this.windowCu) {
+      this.trackers.get(accountId)?.delete(weekly ? weeklyBucketKey(bucket) : bucket);
+    }
+    this.dirty = true;
+    return true;
+  }
+
   /** 校验某卡是否在公平份额内(5h + 周,任一超额即拦)。 */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
     if (this.windowCu) return this.windowCu.check(accountId, cardId, bucket);
+    const shortDisabled = this.isQuotaWindowDisabled(accountId, bucket, false);
+    const weeklyDisabled = this.isQuotaWindowDisabled(accountId, bucket, true);
+    if (shortDisabled && weeklyDisabled) {
+      return { allowed: true, remainingFraction: 1, window: "5h", bucket, resetAt: 0, resetMs: 0 };
+    }
+    if (shortDisabled) return this.checkWindow(accountId, cardId, weeklyBucketKey(bucket));
+    if (weeklyDisabled || !this.trackWeekly) return this.checkWindow(accountId, cardId, bucket);
     const short = this.checkWindow(accountId, cardId, bucket);
-    if (!this.trackWeekly) return short;
     const weekly = this.checkWindow(accountId, cardId, weeklyBucketKey(bucket));
     const blocking = !short.allowed ? short : !weekly.allowed ? weekly : null;
     if (blocking) {
@@ -486,15 +526,30 @@ export class FairShareTracker {
 
   /** 5h 每卡自份额剩余(供血条),键为基础桶名。share=e_i(我的份额占整号比例,供双层血条)。 */
   getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
-    if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, false);
-    return this.collectFractions(accountId, cardId, false);
+    const result = this.windowCu
+      ? this.windowCu.getCardFractions(accountId, cardId, false)
+      : this.collectFractions(accountId, cardId, false);
+    for (const bucket of Object.keys(result)) {
+      if (this.isQuotaWindowDisabled(accountId, bucket, false)) delete result[bucket];
+    }
+    return result;
   }
 
   /** 周每卡自份额剩余(供周血条);仅 trackWeekly 有数据。 */
   getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; personalFraction: number; resetAt: number; share: number }> {
-    if (this.windowCu) return this.windowCu.getCardFractions(accountId, cardId, true);
+    if (this.windowCu) {
+      const result = this.windowCu.getCardFractions(accountId, cardId, true);
+      for (const bucket of Object.keys(result)) {
+        if (this.isQuotaWindowDisabled(accountId, bucket, true)) delete result[bucket];
+      }
+      return result;
+    }
     if (!this.trackWeekly) return {};
-    return this.collectFractions(accountId, cardId, true);
+    const result = this.collectFractions(accountId, cardId, true);
+    for (const bucket of Object.keys(result)) {
+      if (this.isQuotaWindowDisabled(accountId, bucket, true)) delete result[bucket];
+    }
+    return result;
   }
 
   /** 是否启用周窗口(codex/anthropic=true)。 */

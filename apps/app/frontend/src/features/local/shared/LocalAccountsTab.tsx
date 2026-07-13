@@ -55,6 +55,14 @@ function QuotaBar({ label, percent }: { label: string; percent: number }) {
   )
 }
 
+export function visibleDefaultQuotaWindows(provider: 'codex' | 'antigravity', hourlyPercent: number, weeklyPercent: number) {
+  const windows = [
+    { label: '5 小时', percent: hourlyPercent },
+    { label: '本周', percent: weeklyPercent },
+  ]
+  return provider === 'codex' ? windows.filter((window) => window.percent >= 0) : windows
+}
+
 /** 小开关(沿用 GatewayTab 的 switch 样式),受控。 */
 function Toggle({ on, label, disabled, onToggle }: { on: boolean; label: string; disabled?: boolean; onToggle: () => void }) {
   return (
@@ -835,8 +843,12 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2">
-                      <QuotaBar label="5 小时" percent={a.hourlyPercent} />
-                      <QuotaBar label="本周" percent={a.weeklyPercent} />
+                      {visibleDefaultQuotaWindows(provider, a.hourlyPercent, a.weeklyPercent).map((window) => (
+                        <QuotaBar key={window.label} label={window.label} percent={window.percent} />
+                      ))}
+                      {provider === 'codex' && a.hourlyPercent < 0 && a.weeklyPercent < 0 && (
+                        <span className="text-[11px] text-[var(--text-muted)]">额度未知</span>
+                      )}
                     </div>
                   )}
                   {(a.note || (a.tags && a.tags.length > 0)) && (

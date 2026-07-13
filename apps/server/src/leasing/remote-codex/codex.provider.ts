@@ -5,6 +5,7 @@ import type { Provider } from "../lease-core/provider";
 import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-billing";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provider";
+import { codexBindingWindow } from "./auth/codex-usage";
 import { CodexModelCatalog } from "./codex-model-catalog";
 import { codexPlanSupportsFast } from "./codex-service-tier";
 
@@ -13,6 +14,13 @@ function clampPercent(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
+}
+
+function storedPresence(a: Record<string, unknown>, window: "Hourly" | "Weekly"): boolean | undefined {
+  const explicit = a[`codex${window}Present`];
+  if (typeof explicit === "boolean") return explicit;
+  const percent = a[`codex${window}Percent`];
+  return typeof percent === "number" && percent >= 0 ? true : undefined;
 }
 
 /** @deprecated Cards are universal — billing is the shared UNIVERSAL_BILLING
@@ -92,12 +100,16 @@ export class CodexProvider implements Provider<CodexAccount> {
     }
     const hourly = typeof a.codexHourlyPercent === "number" ? a.codexHourlyPercent : null;
     const weekly = typeof a.codexWeeklyPercent === "number" ? a.codexWeeklyPercent : null;
-    if (hourly !== null || weekly !== null) {
+    const hourlyPresent = storedPresence(a, "Hourly");
+    const weeklyPresent = storedPresence(a, "Weekly");
+    if (hourly !== null || weekly !== null || hourlyPresent !== undefined || weeklyPresent !== undefined) {
       extras.codexWindows = {
-        hourlyPercent: hourly,
-        weeklyPercent: weekly,
+        hourlyPercent: hourly ?? -1,
+        weeklyPercent: weekly ?? -1,
         hourlyResetTime: a.codexHourlyResetTime ? String(a.codexHourlyResetTime) : "",
         weeklyResetTime: a.codexWeeklyResetTime ? String(a.codexWeeklyResetTime) : "",
+        ...(hourlyPresent !== undefined ? { hourlyPresent } : {}),
+        ...(weeklyPresent !== undefined ? { weeklyPresent } : {}),
       };
     }
     return extras;
@@ -129,16 +141,42 @@ export class CodexProvider implements Provider<CodexAccount> {
   /** 统一水位提取:codex 一个账号级 5h+周窗口,modelKey="codex"。 */
   quotaSnapshotInputs(account: CodexAccount) {
     const a = account as Record<string, unknown>;
-    if (typeof a.codexHourlyPercent !== "number" && typeof a.codexWeeklyPercent !== "number") return [];
+    const hourlyPresent = storedPresence(a, "Hourly");
+    const weeklyPresent = storedPresence(a, "Weekly");
+    if (typeof a.codexHourlyPercent !== "number" && typeof a.codexWeeklyPercent !== "number"
+      && hourlyPresent === undefined && weeklyPresent === undefined) return [];
     return [
       {
         modelKey: "codex",
         hourlyPercent: typeof a.codexHourlyPercent === "number" ? a.codexHourlyPercent : null,
         weeklyPercent: typeof a.codexWeeklyPercent === "number" ? a.codexWeeklyPercent : null,
+        hourlyPresent,
+        weeklyPresent,
         hourlyResetAt: parseSnapshotDate(a.codexHourlyResetTime),
         weeklyResetAt: parseSnapshotDate(a.codexWeeklyResetTime),
       },
     ];
+  }
+
+  quotaSnapshotInputsFromReport(quota: unknown, _account: CodexAccount) {
+    const cq = (quota as any)?.codexQuota;
+    if (!cq || typeof cq !== "object") return [];
+    const rawHourly = Number(cq.hourlyPercent);
+    const rawWeekly = Number(cq.weeklyPercent);
+    const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0 && cq.hourlyPresent !== false;
+    const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0 && cq.weeklyPresent !== false;
+    const hourlyPresent = typeof cq.hourlyPresent === "boolean" ? cq.hourlyPresent : hourlyKnown ? true : undefined;
+    const weeklyPresent = typeof cq.weeklyPresent === "boolean" ? cq.weeklyPresent : weeklyKnown ? true : undefined;
+    if (!hourlyKnown && !weeklyKnown && hourlyPresent === undefined && weeklyPresent === undefined) return [];
+    return [{
+      modelKey: "codex",
+      hourlyPercent: hourlyKnown ? clampPercent(rawHourly) : null,
+      weeklyPercent: weeklyKnown ? clampPercent(rawWeekly) : null,
+      hourlyPresent,
+      weeklyPresent,
+      hourlyResetAt: parseSnapshotDate(cq.hourlyResetTime),
+      weeklyResetAt: parseSnapshotDate(cq.weeklyResetTime),
+    }];
   }
 
   /**
@@ -165,6 +203,9 @@ export class CodexProvider implements Provider<CodexAccount> {
     }
     const cq = quota?.codexQuota;
     if (cq && typeof cq === "object") {
+      const previousHourly = Number(acc.codexHourlyPercent ?? -1);
+      const previousWeekly = Number(acc.codexWeeklyPercent ?? -1);
+      const previousBinding = codexBindingWindow(previousHourly, previousWeekly);
       const rawHourly = Number(cq.hourlyPercent);
       const rawWeekly = Number(cq.weeklyPercent);
       const hourlyReset = cq.hourlyResetTime ? String(cq.hourlyResetTime) : "";
@@ -178,17 +219,41 @@ export class CodexProvider implements Provider<CodexAccount> {
       // active card in one shot → its blood bar sticks at 0 while the account
       // recovers. So: known = a finite, non-negative percent; -1 (or an absent
       // field → NaN) is unknown and keeps the last good value. A genuine 0 is 0.
-      const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0;
-      const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0;
-      if (!hourlyKnown && !weeklyKnown) {
+      const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0 && cq.hourlyPresent !== false;
+      const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0 && cq.weeklyPresent !== false;
+      const hourlyPresence = typeof cq.hourlyPresent === "boolean" ? cq.hourlyPresent : hourlyKnown ? true : undefined;
+      const weeklyPresence = typeof cq.weeklyPresent === "boolean" ? cq.weeklyPresent : weeklyKnown ? true : undefined;
+      const presenceKnown = hourlyPresence !== undefined || weeklyPresence !== undefined;
+      if (!hourlyKnown && !weeklyKnown && !presenceKnown) {
         // Report carried no usable window — don't touch persisted quota state.
         return { account };
       }
 
-      const prevHourly = Number(acc.codexHourlyPercent ?? -1);
-      const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
-      const hourly = hourlyKnown ? clampPercent(rawHourly) : prevHourly;
-      const weekly = weeklyKnown ? clampPercent(rawWeekly) : prevWeekly;
+      const rawObservedAt = Number(quota?.observedAt ?? quota?.fetchedAt);
+      const observedAt = Number.isFinite(rawObservedAt) && rawObservedAt > 0 ? rawObservedAt : Date.now();
+      const previousObservedAt = Number(acc.codexQuotaObservedAt || 0);
+      if (previousObservedAt > observedAt) return { account };
+      acc.codexQuotaObservedAt = observedAt;
+
+      if (hourlyPresence !== undefined) acc.codexHourlyPresent = hourlyPresence;
+      if (weeklyPresence !== undefined) acc.codexWeeklyPresent = weeklyPresence;
+      if (hourlyPresence === false) {
+        delete acc.codexHourlyPercent;
+        delete acc.codexHourlyResetTime;
+      } else if (hourlyKnown) {
+        acc.codexHourlyPercent = clampPercent(rawHourly);
+        acc.codexHourlyResetTime = hourlyReset;
+      }
+      if (weeklyPresence === false) {
+        delete acc.codexWeeklyPercent;
+        delete acc.codexWeeklyResetTime;
+      } else if (weeklyKnown) {
+        acc.codexWeeklyPercent = clampPercent(rawWeekly);
+        acc.codexWeeklyResetTime = weeklyReset;
+      }
+
+      const hourly = Number(acc.codexHourlyPercent ?? -1);
+      const weekly = Number(acc.codexWeeklyPercent ?? -1);
 
       // Binding window = the more restrictive of the KNOWN windows; if one side
       // is unknown (-1), the other binds.
@@ -197,31 +262,26 @@ export class CodexProvider implements Provider<CodexAccount> {
       else if (weekly < 0) weeklyBinds = false;
       else weeklyBinds = weekly < hourly;
       const bindingPercent = weeklyBinds ? weekly : hourly;
+      const bindingWindow = codexBindingWindow(hourly, weekly);
       const bindingReset = weeklyBinds
-        ? (weeklyKnown ? weeklyReset : String(acc.codexWeeklyResetTime || ""))
-        : (hourlyKnown ? hourlyReset : String(acc.codexHourlyResetTime || ""));
+        ? String(acc.codexWeeklyResetTime || "")
+        : String(acc.codexHourlyResetTime || "");
 
       if (bindingPercent >= 0) account.modelQuotaFractions = { codex: bindingPercent / 100 };
+      else if (account.modelQuotaFractions) delete (account.modelQuotaFractions as Record<string, number>).codex;
       // Only overwrite the reset time when we have one; a window without a reset
       // must not wipe a still-valid prior reset (cooldownForExhaustion relies on
       // it to park the account until real reset).
       if (bindingReset) {
         account.modelQuotaResetTimes = { codex: bindingReset };
+      } else if ((bindingPercent < 0 || (presenceKnown && previousBinding !== null && bindingWindow !== null && previousBinding !== bindingWindow))
+        && account.modelQuotaResetTimes) {
+        delete (account.modelQuotaResetTimes as Record<string, string>).codex;
       } else if (!account.modelQuotaResetTimes) {
         account.modelQuotaResetTimes = {};
       }
       account.modelQuotaRefreshedAt = Date.now();
 
-      // Persist only the windows actually learned this report; keep prior values
-      // for unknown ones so a partial report can't corrupt the stored quota.
-      if (hourlyKnown) {
-        acc.codexHourlyPercent = clampPercent(rawHourly);
-        acc.codexHourlyResetTime = hourlyReset;
-      }
-      if (weeklyKnown) {
-        acc.codexWeeklyPercent = clampPercent(rawWeekly);
-        acc.codexWeeklyResetTime = weeklyReset;
-      }
     }
     return { account };
   }

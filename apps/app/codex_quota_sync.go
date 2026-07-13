@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"bcai-wails/internal/codexquota"
 )
 
 // ─── Codex Quota Sync ────────────────────────────────────────────────────────
@@ -28,6 +30,8 @@ type CodexQuotaWindow struct {
 	WeeklyPercent   float64 `json:"weeklyPercent"`
 	HourlyResetTime string  `json:"hourlyResetTime,omitempty"`
 	WeeklyResetTime string  `json:"weeklyResetTime,omitempty"`
+	HourlyPresent   *bool   `json:"hourlyPresent,omitempty"`
+	WeeklyPresent   *bool   `json:"weeklyPresent,omitempty"`
 }
 
 // CodexAccountQuotaSnapshot is attached to report-result as `accountQuota`.
@@ -40,9 +44,10 @@ type CodexAccountQuotaSnapshot struct {
 
 // Raw subset of the wham/usage response shape (see cockpit codex_quota.rs).
 type codexUsageWindow struct {
-	UsedPercent       *float64 `json:"used_percent"`
-	ResetAfterSeconds *int64   `json:"reset_after_seconds"`
-	ResetAt           *int64   `json:"reset_at"`
+	UsedPercent        *float64 `json:"used_percent"`
+	ResetAfterSeconds  *int64   `json:"reset_after_seconds"`
+	ResetAt            *int64   `json:"reset_at"`
+	LimitWindowSeconds *int64   `json:"limit_window_seconds"`
 }
 
 type codexUsageRateLimit struct {
@@ -189,6 +194,12 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 	if window == nil {
 		return
 	}
+	// 完全空的 rate_limit 没有任何新事实:既不覆盖本地展示,也不产生额度上报。
+	// 否则一次上游抖动会无意义推进服务端 fair-share 快照版本。
+	if window.HourlyPresent == nil && window.WeeklyPresent == nil &&
+		window.HourlyPercent < 0 && window.WeeklyPercent < 0 {
+		return
+	}
 
 	snap := &CodexAccountQuotaSnapshot{
 		AccountId:  lease.AccountId,
@@ -197,9 +208,55 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 		FetchedAt:  time.Now().UnixMilli(),
 	}
 	l.mu.Lock()
-	l.cachedQuota = snap // 一次性(给下次 report 带上)
-	l.lastQuota = snap   // 持久(给前端血条显示)
+	l.cachedQuota = snap // 一次性(给下次 report 带上);保留 -1,让服务端执行 keep-prior。
+	displayWindow := mergeCodexDisplayWindow(nil, window)
+	if l.lastQuota != nil && l.lastQuota.AccountId == lease.AccountId {
+		displayWindow = mergeCodexDisplayWindow(l.lastQuota.CodexQuota, window)
+	}
+	l.lastQuota = &CodexAccountQuotaSnapshot{
+		AccountId:  snap.AccountId,
+		PlanType:   snap.PlanType,
+		CodexQuota: displayWindow,
+		FetchedAt:  snap.FetchedAt,
+	}
 	l.mu.Unlock()
+}
+
+// mergeCodexDisplayWindow 只用于客户端展示缓存:新值未知时保留上次已知值,明确 absent 时清空。
+// 上报服务端仍使用原始 window(-1=unknown),避免把历史值伪装成本次新观测。
+func mergeCodexDisplayWindow(previous, incoming *CodexQuotaWindow) *CodexQuotaWindow {
+	if incoming == nil {
+		return previous
+	}
+	merged := *incoming
+	if previous == nil {
+		return &merged
+	}
+	if incoming.HourlyPresent == nil && incoming.HourlyPercent < 0 {
+		merged.HourlyPercent = previous.HourlyPercent
+		merged.HourlyResetTime = previous.HourlyResetTime
+		merged.HourlyPresent = previous.HourlyPresent
+	} else if incoming.HourlyPercent < 0 && incoming.HourlyPresent != nil && *incoming.HourlyPresent {
+		merged.HourlyPercent = previous.HourlyPercent
+		if merged.HourlyResetTime == "" {
+			merged.HourlyResetTime = previous.HourlyResetTime
+		}
+	} else if merged.HourlyResetTime == "" && incoming.HourlyPresent != nil && *incoming.HourlyPresent {
+		merged.HourlyResetTime = previous.HourlyResetTime
+	}
+	if incoming.WeeklyPresent == nil && incoming.WeeklyPercent < 0 {
+		merged.WeeklyPercent = previous.WeeklyPercent
+		merged.WeeklyResetTime = previous.WeeklyResetTime
+		merged.WeeklyPresent = previous.WeeklyPresent
+	} else if incoming.WeeklyPercent < 0 && incoming.WeeklyPresent != nil && *incoming.WeeklyPresent {
+		merged.WeeklyPercent = previous.WeeklyPercent
+		if merged.WeeklyResetTime == "" {
+			merged.WeeklyResetTime = previous.WeeklyResetTime
+		}
+	} else if merged.WeeklyResetTime == "" && incoming.WeeklyPresent != nil && *incoming.WeeklyPresent {
+		merged.WeeklyResetTime = previous.WeeklyResetTime
+	}
+	return &merged
 }
 
 func parseCodexUsage(u *codexUsageResponse) *CodexQuotaWindow {
@@ -211,15 +268,46 @@ func parseCodexUsage(u *codexUsageResponse) *CodexQuotaWindow {
 	// 下次真实低值回来时整段跌幅被一次性归因给在场卡 → 血条卡死 0 而母号已恢复(与 Claude 同口径,
 	// 见 claude.provider.ts applyQuotaSnapshot:服务端按 <0=未知保留上次好值)。
 	w := &CodexQuotaWindow{HourlyPercent: -1, WeeklyPercent: -1}
-	if p := u.RateLimit.PrimaryWindow; p != nil {
-		w.HourlyPercent = codexRemainingPercent(p.UsedPercent)
-		w.HourlyResetTime = codexResetIso(p, now)
+	assign := func(raw *codexUsageWindow, weekly bool) {
+		present := true
+		if weekly {
+			w.WeeklyPercent = codexRemainingPercent(raw.UsedPercent)
+			w.WeeklyResetTime = codexResetIso(raw, now)
+			w.WeeklyPresent = &present
+			return
+		}
+		w.HourlyPercent = codexRemainingPercent(raw.UsedPercent)
+		w.HourlyResetTime = codexResetIso(raw, now)
+		w.HourlyPresent = &present
 	}
-	if s := u.RateLimit.SecondaryWindow; s != nil {
-		w.WeeklyPercent = codexRemainingPercent(s.UsedPercent)
-		w.WeeklyResetTime = codexResetIso(s, now)
+	raws := []*codexUsageWindow{u.RateLimit.PrimaryWindow, u.RateLimit.SecondaryWindow}
+	classified := codexquota.ClassifyWindows(
+		codexquota.Slot{Exists: raws[0] != nil, LimitWindowSeconds: windowDuration(raws[0])},
+		codexquota.Slot{Exists: raws[1] != nil, LimitWindowSeconds: windowDuration(raws[1])},
+	)
+	for i, kind := range []codexquota.Kind{classified.Primary, classified.Secondary} {
+		if kind == codexquota.Hourly {
+			assign(raws[i], false)
+		} else if kind == codexquota.Weekly {
+			assign(raws[i], true)
+		}
+	}
+	if classified.Hourly == codexquota.Absent {
+		absent := false
+		w.HourlyPresent = &absent
+	}
+	if classified.Weekly == codexquota.Absent {
+		absent := false
+		w.WeeklyPresent = &absent
 	}
 	return w
+}
+
+func windowDuration(raw *codexUsageWindow) *int64 {
+	if raw == nil {
+		return nil
+	}
+	return raw.LimitWindowSeconds
 }
 
 // remaining% = 100 - used%. used_percent 缺失(窗口在但上游没给)= 未知 → -1,不伪造满血 100。

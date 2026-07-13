@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import * as path from "path";
 
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
-import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
+import { codexBindingWindow, fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
 import {
   consumeCodexResetCredit as consumeResetCreditUpstream,
   fetchCodexResetCredits,
@@ -503,9 +503,24 @@ export class CodexService {
       // 真实值刷成假满血,污染 fair-share 基线(见 fairshare-quota-root-cause)。
       if (snap.planType) acc.planType = snap.planType;
       const cq = snap.codexQuota;
+      const previousHourly = Number(acc.codexHourlyPercent ?? -1);
+      const previousWeekly = Number(acc.codexWeeklyPercent ?? -1);
+      const previousBinding = codexBindingWindow(previousHourly, previousWeekly);
+      if (typeof cq.hourlyPresent === "boolean") acc.codexHourlyPresent = cq.hourlyPresent;
+      if (typeof cq.weeklyPresent === "boolean") acc.codexWeeklyPresent = cq.weeklyPresent;
+      acc.codexQuotaObservedAt = Date.now();
+      if (cq.hourlyPresent === false) {
+        delete acc.codexHourlyPercent;
+        delete acc.codexHourlyResetTime;
+      }
+      if (cq.weeklyPresent === false) {
+        delete acc.codexWeeklyPercent;
+        delete acc.codexWeeklyResetTime;
+      }
       const hourlyKnown = Number.isFinite(cq.hourlyPercent) && cq.hourlyPercent >= 0;
       const weeklyKnown = Number.isFinite(cq.weeklyPercent) && cq.weeklyPercent >= 0;
-      if (hourlyKnown || weeklyKnown) {
+      const presenceKnown = cq.hourlyPresent !== undefined || cq.weeklyPresent !== undefined;
+      if (hourlyKnown || weeklyKnown || presenceKnown) {
         const prevHourly = Number(acc.codexHourlyPercent ?? -1);
         const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
         const hourly = hourlyKnown ? cq.hourlyPercent : prevHourly;
@@ -516,11 +531,15 @@ export class CodexService {
         else if (weekly < 0) weeklyBinds = false;
         else weeklyBinds = weekly < hourly;
         const bindingPercent = weeklyBinds ? weekly : hourly;
+        const bindingWindow = codexBindingWindow(hourly, weekly);
         const bindingReset = weeklyBinds
           ? (weeklyKnown ? cq.weeklyResetTime : String(acc.codexWeeklyResetTime || ""))
           : (hourlyKnown ? cq.hourlyResetTime : String(acc.codexHourlyResetTime || ""));
         if (bindingPercent >= 0) acc.modelQuotaFractions = { codex: bindingPercent / 100 };
+        else if (acc.modelQuotaFractions) delete acc.modelQuotaFractions.codex;
         if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
+        else if ((bindingPercent < 0 || (presenceKnown && previousBinding !== null && bindingWindow !== null && previousBinding !== bindingWindow))
+          && acc.modelQuotaResetTimes) delete acc.modelQuotaResetTimes.codex;
         acc.modelQuotaRefreshedAt = Date.now();
         // 只写本次学到的窗口,未知窗口保留旧值。
         if (hourlyKnown) {

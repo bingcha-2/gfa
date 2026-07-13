@@ -259,6 +259,32 @@ describe('buildQuotaSections', () => {
       { window: '7d', fraction: 0.4, resetMs: 9000 },
     ])
   })
+
+  it('omits an explicitly absent Codex 5h window without changing the weekly bar', () => {
+    const got = buildQuotaSections({
+      bucket: 'codex-gpt',
+      codexQuota: {
+        hourlyFraction: -1,
+        weeklyFraction: 0.72,
+        hourlyPresent: false,
+        weeklyPresent: true,
+        weeklyResetMs: 9000,
+      },
+    })
+
+    expect(got[0].serviceAccount).toEqual([
+      expect.objectContaining({ window: '7d', fraction: 0.72, resetMs: 9000 }),
+    ])
+  })
+
+  it('keeps both Claude bars when Codex presence metadata is introduced', () => {
+    const got = buildQuotaSections({
+      bucket: 'anthropic-claude',
+      claudeQuota: { hourlyFraction: 0.8, weeklyFraction: 0.7 },
+    })
+
+    expect(got[0].serviceAccount.map((bar) => bar.window)).toEqual(['5h', '7d'])
+  })
   it('carries fair-share resetAt identities into mine bars', () => {
     const got = buildQuotaSections({
       bucket: 'anthropic-claude',

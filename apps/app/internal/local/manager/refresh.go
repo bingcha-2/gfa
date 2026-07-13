@@ -80,11 +80,17 @@ func (m *Manager) refreshOne(a *account.Account) error {
 
 	// 3) 回填并持久化。仅当上游真给了该窗口才写,缺窗口 keep-prior——
 	// 绝不用伪造满血覆盖既有真实剩余(见 quota.parseQuotaFromUsage 注释)。
-	if res.HourlyKnown {
+	if res.HourlyPresent != nil && !*res.HourlyPresent {
+		a.HourlyPercent = -1
+		a.HourlyResetAt = 0
+	} else if res.HourlyKnown {
 		a.HourlyPercent = res.HourlyPercent
 		a.HourlyResetAt = res.HourlyResetAt
 	}
-	if res.WeeklyKnown {
+	if res.WeeklyPresent != nil && !*res.WeeklyPresent {
+		a.WeeklyPercent = -1
+		a.WeeklyResetAt = 0
+	} else if res.WeeklyKnown {
 		a.WeeklyPercent = res.WeeklyPercent
 		a.WeeklyResetAt = res.WeeklyResetAt
 	}

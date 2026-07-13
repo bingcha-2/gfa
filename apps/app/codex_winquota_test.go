@@ -1,6 +1,44 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func boolValue(v *bool) (bool, bool) {
+	if v == nil {
+		return false, false
+	}
+	return *v, true
+}
+
+func TestParseCodexUsageClassifiesWeeklyWindowByDuration(t *testing.T) {
+	used := 20.0
+	weeklySeconds := int64(7 * 24 * 60 * 60)
+	u := &codexUsageResponse{
+		RateLimit: &codexUsageRateLimit{
+			PrimaryWindow: &codexUsageWindow{
+				UsedPercent:        &used,
+				LimitWindowSeconds: &weeklySeconds,
+			},
+		},
+	}
+
+	w := parseCodexUsage(u)
+	if w == nil {
+		t.Fatal("expected quota window")
+	}
+	if w.HourlyPercent != -1 || w.WeeklyPercent != 80 {
+		t.Fatalf("weekly-in-primary parsed as hourly=%v weekly=%v, want -1/80", w.HourlyPercent, w.WeeklyPercent)
+	}
+	if present, known := boolValue(w.HourlyPresent); !known || present {
+		t.Fatalf("hourly presence = %v/%v, want known false", present, known)
+	}
+	if present, known := boolValue(w.WeeklyPresent); !known || !present {
+		t.Fatalf("weekly presence = %v/%v, want known true", present, known)
+	}
+}
 
 // 缺失的限额窗口必须报 -1(未知),不能伪装成满血 100 —— 否则服务端 fair-share 低水位被抬到
 // ~1.0,下次真实低值回来时整段跌幅一次性归因给在场卡,血条卡死 0 而母号已恢复(与 Claude 同口径)。
@@ -59,6 +97,16 @@ func TestParseCodexUsageNoRateLimitReturnsNil(t *testing.T) {
 	}
 }
 
+func TestParseCodexUsageEmptyRateLimitKeepsPresenceUnknown(t *testing.T) {
+	w := parseCodexUsage(&codexUsageResponse{RateLimit: &codexUsageRateLimit{}})
+	if w == nil {
+		t.Fatal("empty rate_limit should yield an unknown snapshot")
+	}
+	if w.HourlyPresent != nil || w.WeeklyPresent != nil {
+		t.Fatalf("empty rate_limit must keep presence unknown, got hourly=%v weekly=%v", w.HourlyPresent, w.WeeklyPresent)
+	}
+}
+
 // The codex lease response carries the bound account's 5h+weekly windows
 // (codexWindows). Applying it must make LatestCodexQuota() return those windows
 // so the dashboard renders both codex bars (5h / 周) with real percentages —
@@ -95,5 +143,84 @@ func TestApplyCodexWindowsNilKeepsExisting(t *testing.T) {
 	l.applyCodexWindows(nil)
 	if got := l.LatestCodexQuota(); got == nil || got.HourlyPercent != 50 {
 		t.Fatalf("nil windows clobbered existing quota: %+v", got)
+	}
+}
+
+func TestApplyCodexWindowsClearsPreviousAccountWhenNewAccountHasNoSnapshot(t *testing.T) {
+	l := &CodexLeaser{
+		lastLease: &CodexTokenLease{AccountId: 2},
+		lastQuota: &CodexAccountQuotaSnapshot{
+			AccountId: 1,
+			CodexQuota: &CodexQuotaWindow{HourlyPercent: 50, WeeklyPercent: 50},
+		},
+	}
+
+	l.applyCodexWindows(nil)
+
+	if got := l.LatestCodexQuota(); got != nil {
+		t.Fatalf("new account inherited previous account quota: %+v", got)
+	}
+}
+
+func TestFetchCodexQuotaEmptyRateLimitKeepsExisting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"plan_type":"pro","rate_limit":{}}`))
+	}))
+	defer srv.Close()
+	oldURL := CODEX_USAGE_URL
+	CODEX_USAGE_URL = srv.URL
+	t.Cleanup(func() { CODEX_USAGE_URL = oldURL })
+
+	l := &CodexLeaser{lastQuota: &CodexAccountQuotaSnapshot{CodexQuota: &CodexQuotaWindow{
+		HourlyPercent: 50, WeeklyPercent: 72,
+	}}}
+	l.fetchCodexQuotaAsync(&CodexTokenLease{AccessToken: "not-a-jwt"}, "")
+
+	got := l.LatestCodexQuota()
+	if got == nil || got.HourlyPercent != 50 || got.WeeklyPercent != 72 {
+		t.Fatalf("empty rate_limit clobbered existing snapshot: %+v", got)
+	}
+	if snap := l.ConsumeCodexQuotaSnapshot(); snap != nil {
+		t.Fatalf("empty rate_limit must not enqueue a quota report: %+v", snap)
+	}
+}
+
+func TestFetchCodexQuotaPartialUnknownKeepsPriorOtherWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":10}}}`))
+	}))
+	defer srv.Close()
+	oldURL := CODEX_USAGE_URL
+	CODEX_USAGE_URL = srv.URL
+	t.Cleanup(func() { CODEX_USAGE_URL = oldURL })
+
+	l := &CodexLeaser{lastQuota: &CodexAccountQuotaSnapshot{CodexQuota: &CodexQuotaWindow{
+		HourlyPercent: 50, WeeklyPercent: 72,
+	}}}
+	l.fetchCodexQuotaAsync(&CodexTokenLease{AccessToken: "not-a-jwt"}, "")
+
+	got := l.LatestCodexQuota()
+	if got == nil || got.HourlyPercent != 90 || got.WeeklyPercent != 72 {
+		t.Fatalf("partial response should update hourly and keep weekly: %+v", got)
+	}
+}
+
+func TestFetchCodexQuotaDoesNotMergeDisplayAcrossAccounts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":10}}}`))
+	}))
+	defer srv.Close()
+	oldURL := CODEX_USAGE_URL
+	CODEX_USAGE_URL = srv.URL
+	t.Cleanup(func() { CODEX_USAGE_URL = oldURL })
+
+	l := &CodexLeaser{lastQuota: &CodexAccountQuotaSnapshot{AccountId: 1, CodexQuota: &CodexQuotaWindow{
+		HourlyPercent: 50, WeeklyPercent: 72,
+	}}}
+	l.fetchCodexQuotaAsync(&CodexTokenLease{AccessToken: "not-a-jwt", AccountId: 2}, "")
+
+	got := l.LatestCodexQuota()
+	if got == nil || got.HourlyPercent != 90 || got.WeeklyPercent != -1 {
+		t.Fatalf("new account inherited previous account quota: %+v", got)
 	}
 }

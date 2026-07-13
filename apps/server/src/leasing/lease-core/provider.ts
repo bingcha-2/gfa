@@ -17,6 +17,16 @@
 import type { ProviderBilling } from "../token-server/token-billing";
 import type { ModelCatalog } from "./model-catalog";
 
+export type ProviderQuotaSnapshotInput = {
+  modelKey: string;
+  hourlyPercent?: number | null;
+  weeklyPercent?: number | null;
+  hourlyPresent?: boolean;
+  weeklyPresent?: boolean;
+  hourlyResetAt?: Date | null;
+  weeklyResetAt?: Date | null;
+};
+
 export interface Provider<TAccount> {
   /** Stable id, e.g. "antigravity" | "codex". */
   id: string;
@@ -71,13 +81,10 @@ export interface Provider<TAccount> {
    * codex/anthropic 返回 1 条(modelKey="codex"/"claude",带 5h+周);
    * antigravity 每模型 1 条(modelKey=真实模型,只有 5h)。无数据时返回 []。
    */
-  quotaSnapshotInputs?(account: TAccount): Array<{
-    modelKey: string;
-    hourlyPercent?: number | null;
-    weeklyPercent?: number | null;
-    hourlyResetAt?: Date | null;
-    weeklyResetAt?: Date | null;
-  }>;
+  quotaSnapshotInputs?(account: TAccount): ProviderQuotaSnapshotInput[];
+
+  /** 把原始上报转成因果事件；账号持久化可拒绝旧值，但 reducer 仍需看到完整乱序快照。 */
+  quotaSnapshotInputsFromReport?(quota: unknown, account: TAccount): ProviderQuotaSnapshotInput[];
 
   /** Extra fields merged into the lease-token response (antigravity: projectId). */
   leaseResponseExtras(account: TAccount): Record<string, unknown>;

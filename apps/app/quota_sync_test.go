@@ -208,6 +208,7 @@ func TestFetchAccountQuotaAsync_CASPreventsConcurrent(t *testing.T) {
 		AccountId:   1,
 		ExpiresAt:   time.Now().Add(10 * time.Minute).UnixMilli(),
 	}
+	l.cachedQuotaSnapshot = nil
 	l.mu.Unlock()
 
 	// 先设置 CAS flag = 1（模拟已在查询中）

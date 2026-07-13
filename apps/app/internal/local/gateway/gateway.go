@@ -32,6 +32,7 @@ type Gateway struct {
 	svc      *cliproxy.Service
 	mgr      *coreauth.Manager
 	cancel   context.CancelFunc
+	done     chan struct{}
 	host     string
 	port     int
 	stats    *stats.Collector
@@ -47,7 +48,7 @@ type Gateway struct {
 }
 
 // NewShared 构建反代网关:单实例、单 Service,auth Store 只喂 codex 自有号
-//(antigravity 接管走 IDE 注入,见 internal/local/antigravityinject)。
+// (antigravity 接管走 IDE 注入,见 internal/local/antigravityinject)。
 // strategy 是初始路由策略;host 默认仅本机(127.0.0.1),局域网范围经 SetHost 切换。
 func NewShared(acc *account.Store, dataDir string, strategy routingcfg.Strategy) *Gateway {
 	return &Gateway{
@@ -221,8 +222,11 @@ func (g *Gateway) Start(port int) (int, error) {
 	g.svc = svc
 	g.mgr = mgr
 	g.cancel = cancel
+	done := make(chan struct{})
+	g.done = done
 	g.port = port
 	go func() {
+		defer close(done)
 		defer func() { _ = recover() }() // 兜崩溃,不带垮主程序
 		_ = svc.Run(ctx)
 	}()
@@ -231,15 +235,21 @@ func (g *Gateway) Start(port int) (int, error) {
 
 func (g *Gateway) Stop() error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if g.svc == nil {
+		g.mu.Unlock()
 		return nil
 	}
 	g.cancel()
 	err := g.svc.Shutdown(context.Background())
+	done := g.done
 	g.svc = nil
 	g.mgr = nil
 	g.cancel = nil
+	g.done = nil
+	g.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 	return err
 }
 
@@ -255,7 +265,7 @@ func (g *Gateway) Reload() error {
 }
 
 // SetPort 改反代端口并重启网关(若在运行)。返回实际生效端口
-//(指定端口被占用时回退到下一个空闲端口)。
+// (指定端口被占用时回退到下一个空闲端口)。
 func (g *Gateway) SetPort(port int) (int, error) {
 	wasRunning := g.Running()
 	if wasRunning {

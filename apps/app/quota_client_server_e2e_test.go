@@ -54,15 +54,35 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	})
 	resetBoundFractions()
 
-	usedPercent := 0.0
+	usedPercent := 100.0
+	weeklyOnly := false
+	emptyUsage := false
 	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if emptyUsage {
+			_ = json.NewEncoder(w).Encode(map[string]any{"plan_type": "pro", "rate_limit": map[string]any{}})
+			return
+		}
 		resetPrimary := time.Now().Add(5 * time.Hour).Unix()
 		resetWeekly := time.Now().Add(7 * 24 * time.Hour).Unix()
+		primary := map[string]any{
+			"used_percent": usedPercent, "reset_at": resetPrimary,
+			"limit_window_seconds": 5 * 60 * 60,
+		}
+		var secondary any = map[string]any{
+			"used_percent": usedPercent / 2, "reset_at": resetWeekly,
+			"limit_window_seconds": 7 * 24 * 60 * 60,
+		}
+		if weeklyOnly {
+			primary = map[string]any{
+				"used_percent": usedPercent,
+				"limit_window_seconds": 7 * 24 * 60 * 60,
+			}
+			secondary = nil
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"plan_type": "pro",
 			"rate_limit": map[string]any{
-				"primary_window":   map[string]any{"used_percent": usedPercent, "reset_at": resetPrimary},
-				"secondary_window": map[string]any{"used_percent": usedPercent / 2, "reset_at": resetWeekly},
+				"primary_window": primary, "secondary_window": secondary,
 			},
 		})
 	}))
@@ -80,7 +100,12 @@ func TestQuotaClientServerE2E(t *testing.T) {
 	codex.RefreshQuotaUpstream(codexCard, "", codexLease, true)
 	_ = codex.ConsumeCodexQuotaSnapshot() // baseline was already sent quota-only
 	usedPercent = 20
+	weeklyOnly = true
 	codex.RefreshQuotaUpstream(codexCard, "", codexLease, true)
+	if quota := codex.LatestCodexQuota(); quota == nil || quota.HourlyPresent == nil || *quota.HourlyPresent ||
+		quota.WeeklyPresent == nil || !*quota.WeeklyPresent || quota.HourlyPercent != -1 || quota.WeeklyPercent != 80 {
+		t.Fatalf("weekly-only upstream was not normalized: %+v", quota)
+	}
 	_ = codex.ConsumeCodexQuotaSnapshot() // force snapshot-before-usage ordering
 	codex.ReportUsage(codexCard, "go-e2e-codex", ReportDetails{
 		StatusCode: 200, ModelKey: "gpt-5.6-sol",
@@ -89,13 +114,34 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		UpstreamCompletedAt: time.Now().Add(-time.Second).UnixMilli(),
 		ServiceTier:         "priority", Surface: "desktop",
 	}, "", codexLease)
-	waitQuotaE2E(t, "Codex primary and weekly blood bars", func() bool {
-		_, primary := snapshotMyFractions()["codex-gpt"]
+	waitQuotaE2E(t, "Codex weekly-only blood bar", func() bool {
 		_, weekly := snapshotMyWeeklyFractions()["codex-gpt"]
-		_, personalPrimary := snapshotMyPersonalFractions()["codex-gpt"]
 		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["codex-gpt"]
-		return primary && weekly && personalPrimary && personalWeekly
+		return weekly && personalWeekly
 	})
+	if _, ok := snapshotMyFractions()["codex-gpt"]; ok {
+		t.Fatal("weekly-only Codex still exposed a 5h fair-share window")
+	}
+	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
+		t.Fatal("weekly-only Codex still exposed a 5h personal window")
+	}
+	// 再租一次,强制从服务端持久状态回传窗口。若服务端仍保留旧5h,这里会重新变成 hourlyPresent=true。
+	if _, err := codex.LeaseToken(codexCard, "go-e2e-codex", true, map[string]any{
+		"modelKey": "gpt-5.6-sol",
+	}, ""); err != nil {
+		t.Fatalf("Codex weekly-only re-lease: %v", err)
+	}
+	if quota := codex.LatestCodexQuota(); quota == nil || quota.HourlyPresent == nil || *quota.HourlyPresent ||
+		quota.WeeklyPresent == nil || !*quota.WeeklyPresent || quota.HourlyPercent != -1 || quota.WeeklyPercent != 80 {
+		t.Fatalf("server did not persist/return weekly-only state: %+v", quota)
+	}
+	// 上游临时返回空 rate_limit 时必须保持刚才的 weekly-only 状态,不能清血条或复活 5h 窗口。
+	emptyUsage = true
+	codex.RefreshQuotaUpstream(codexCard, "", codexLease, true)
+	if quota := codex.LatestCodexQuota(); quota == nil || quota.HourlyPresent == nil || *quota.HourlyPresent ||
+		quota.WeeklyPresent == nil || !*quota.WeeklyPresent || quota.HourlyPercent != -1 || quota.WeeklyPercent != 80 {
+		t.Fatalf("empty usage clobbered weekly-only client state: %+v", quota)
+	}
 
 	claudeCard := quotaE2ESession("card-102")
 	claude := &ClaudeLeaser{}
@@ -144,8 +190,11 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		t.Fatalf("GetStats leaser payload type = %T", stats["leaser"])
 	}
 	personalPrimary, ok := leaserStats["myPersonalFractions"].(map[string]float64)
-	if !ok || personalPrimary["codex-gpt"] <= 0 || personalPrimary["anthropic-claude"] <= 0 {
+	if !ok || personalPrimary["anthropic-claude"] <= 0 {
 		t.Fatalf("GetStats personal primary payload = %#v", leaserStats["myPersonalFractions"])
+	}
+	if _, exists := personalPrimary["codex-gpt"]; exists {
+		t.Fatalf("GetStats retained absent Codex primary payload = %#v", personalPrimary)
 	}
 	personalWeekly, ok := leaserStats["myPersonalWeeklyFractions"].(map[string]float64)
 	if !ok || personalWeekly["codex-gpt"] <= 0 || personalWeekly["anthropic-claude"] <= 0 {

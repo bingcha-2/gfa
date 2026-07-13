@@ -92,6 +92,8 @@ function normalizeState(state: FairShareWindowState): FairShareWindowState {
   };
   normalizeSubjects(state.subjects);
   normalizeSubjects(state.base.subjects);
+  if (!Number.isFinite(state.lastPresenceAt)) state.lastPresenceAt = state.lastSnapshotAt;
+  if (!Number.isFinite(state.base.lastPresenceAt)) state.base.lastPresenceAt = state.base.lastSnapshotAt;
   if (!Number.isFinite(state.reorderTailBytes)) {
     state.reorderTailBytes = Buffer.byteLength(JSON.stringify(state.reorderTail), "utf8");
   }

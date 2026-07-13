@@ -41,8 +41,8 @@ func TestHub_EconomyViewAdapter(t *testing.T) {
 	if v.HourlyWindowPresent == nil || !*v.HourlyWindowPresent {
 		t.Fatalf("hourly window should be present")
 	}
-	if v.WeeklyWindowPresent == nil || *v.WeeklyWindowPresent {
-		t.Fatalf("weekly window should be absent (reset_at=0)")
+	if v.WeeklyWindowPresent == nil || !*v.WeeklyWindowPresent {
+		t.Fatalf("weekly window should remain present because its percentage is known")
 	}
 	if v.Cooling {
 		t.Fatalf("QuotaOK should not be cooling")
@@ -51,6 +51,31 @@ func TestHub_EconomyViewAdapter(t *testing.T) {
 	cool := &account.Account{ID: "id2", QuotaStatus: account.QuotaExhausted}
 	if !economyView(cool).Cooling {
 		t.Fatalf("exhausted should be cooling")
+	}
+}
+
+func TestHub_EconomyViewWeeklyOnlyWithoutResetDoesNotInventHourlyZero(t *testing.T) {
+	a := &account.Account{
+		ID: "weekly-only", Provider: account.ProviderCodex, QuotaStatus: account.QuotaOK,
+		HourlyPercent: -1, WeeklyPercent: 72,
+	}
+	v := economyView(a)
+	if v.HourlyWindowPresent == nil || *v.HourlyWindowPresent {
+		t.Fatalf("hourly window should be known absent: %+v", v)
+	}
+	if v.WeeklyWindowPresent == nil || !*v.WeeklyWindowPresent {
+		t.Fatalf("weekly window should be known present without requiring reset_at: %+v", v)
+	}
+}
+
+func TestHub_EconomyViewDoesNotTreatKnownWindowWithoutResetAsAbsent(t *testing.T) {
+	a := &account.Account{
+		ID: "partial-reset", Provider: account.ProviderCodex, QuotaStatus: account.QuotaOK,
+		HourlyPercent: 80, WeeklyPercent: 5, HourlyResetAt: 123, WeeklyResetAt: 0,
+	}
+	v := economyView(a)
+	if v.WeeklyWindowPresent == nil || !*v.WeeklyWindowPresent {
+		t.Fatalf("known weekly percentage must remain present without reset: %+v", v)
 	}
 }
 
