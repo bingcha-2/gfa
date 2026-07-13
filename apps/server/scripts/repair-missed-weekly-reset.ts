@@ -11,6 +11,7 @@ import {
   parseRepairArgs,
   parseRepairExport,
   reconstructMissedWeeklyReset,
+  type PersistedRepairUsage,
   type RepairSnapshot,
 } from "../src/leasing/quota/missed-weekly-reset-repair";
 
@@ -107,16 +108,53 @@ async function main(): Promise<void> {
             modelKey: true,
             reportId: true,
             totalTokens: true,
+            requestStartedAt: true,
+            snapshotObservedAt: true,
           },
         });
-        const usageEvents = matchPersistedUsageEventsToLogs(persistedUsageEvents, requestLogs.map((row) => ({
-          id: row.id,
-          quotaSubjectId: row.quotaSubjectId,
-          at: row.at.getTime(),
-          upstreamCompletedAt: Number(row.upstreamCompletedAt),
-          modelId: row.modelKey,
-          reportId: row.reportId,
-        })));
+        let usageEvents: PersistedRepairUsage[];
+        try {
+          usageEvents = matchPersistedUsageEventsToLogs(persistedUsageEvents, requestLogs.map((row) => ({
+            id: row.id,
+            quotaSubjectId: row.quotaSubjectId,
+            at: row.at.getTime(),
+            upstreamCompletedAt: Number(row.upstreamCompletedAt),
+            modelId: row.modelKey,
+            reportId: row.reportId,
+          })));
+        } catch (error) {
+          const match = error instanceof Error
+            ? /^REQUEST_LOG_MATCH_MISSING:([^:]+):(\d+)$/.exec(error.message)
+            : null;
+          if (match) {
+            const [, quotaSubjectId, rawOccurredAt] = match;
+            const occurredAt = Number(rawOccurredAt);
+            const persisted = persistedUsageEvents.find((event) =>
+              event.quotaSubjectId === quotaSubjectId && event.occurredAt === occurredAt);
+            if (persisted) {
+              console.log(
+                `  PERSISTED_EVENT subject=${quotaSubjectId} eventAt=${new Date(occurredAt).toISOString()}`
+                + ` model=${persisted.modelId} input=${persisted.inputTokens}`
+                + ` cached=${persisted.cachedInputTokens} output=${persisted.outputTokens}`,
+              );
+            }
+            const nearest = requestLogs
+              .filter((row) => row.quotaSubjectId === quotaSubjectId)
+              .sort((a, b) => Math.abs(a.at.getTime() - occurredAt) - Math.abs(b.at.getTime() - occurredAt))
+              .slice(0, 3);
+            for (const row of nearest) {
+              console.log(
+                `  NEAREST_LOG id=${row.id} subject=${row.quotaSubjectId}`
+                + ` eventAt=${new Date(occurredAt).toISOString()} logAt=${row.at.toISOString()}`
+                + ` deltaMs=${row.at.getTime() - occurredAt} startedAt=${Number(row.requestStartedAt)}`
+                + ` completedAt=${Number(row.upstreamCompletedAt)} snapshotAt=${Number(row.snapshotObservedAt)}`
+                + ` model=${row.modelKey} report=${row.reportId} totalTokens=${row.totalTokens}`,
+              );
+            }
+            if (nearest.length === 0) console.log(`  NEAREST_LOG none subject=${quotaSubjectId}`);
+          }
+          throw error;
+        }
         const matchedLogIds = new Set(usageEvents.map((event) => event.sourceLogId));
         const unmatchedBillableLogs = requestLogs.filter((row) => Number(row.totalTokens) > 0
           && Number(row.upstreamCompletedAt) >= missedResetAt
@@ -124,6 +162,14 @@ async function main(): Promise<void> {
         if (unmatchedBillableLogs.length > 0) {
           rejected++;
           console.log(`REJECT ${label} reason=PERSISTED_USAGE_INCOMPLETE logs=${unmatchedBillableLogs.length}`);
+          for (const row of unmatchedBillableLogs) {
+            console.log(
+              `  UNMATCHED_LOG id=${row.id} subject=${row.quotaSubjectId} logAt=${row.at.toISOString()}`
+              + ` startedAt=${Number(row.requestStartedAt)} completedAt=${Number(row.upstreamCompletedAt)}`
+              + ` snapshotAt=${Number(row.snapshotObservedAt)} model=${row.modelKey}`
+              + ` report=${row.reportId} totalTokens=${row.totalTokens}`,
+            );
+          }
           continue;
         }
         const result = reconstructMissedWeeklyReset({
