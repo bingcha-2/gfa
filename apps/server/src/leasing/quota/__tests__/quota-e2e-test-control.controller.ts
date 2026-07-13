@@ -108,6 +108,7 @@ export class QuotaE2ETestControlController {
     staleAccountId?: number;
     healthyAccountId?: number;
     bucket?: string;
+    via?: "batch" | "accounting";
   }) {
     const provider = body.provider === "anthropic" ? "anthropic" : "codex";
     const staleAccountId = Number(body.staleAccountId || 0);
@@ -122,10 +123,16 @@ export class QuotaE2ETestControlController {
     // fresh queue: the tracker's 50ms background E2E flush may otherwise merge
     // this deliberately old payload with a pending current revision before it
     // reaches SQLite, making the fault injection nondeterministic.
+    // via="accounting" drives the request hot path (checkpointReportAccounting);
+    // via="batch" (default) drives the background combined path (checkpointBatch).
+    // Both must isolate a stale sibling so a healthy sibling's receipt survives.
+    const commit = body.via === "accounting"
+      ? async (batch: any[]) => tracker.windowRepository.checkpointReportAccounting(batch.map((entry: any) => entry.payload))
+      : async (batch: any[]) => tracker.windowRepository.checkpointBatch(batch.map((entry: any) => entry.payload));
     const coordinator = new QuotaWriteCoordinator<any>({
       maxDelayMs: 1,
       maxBatchSize: 64,
-      commit: async (batch) => tracker.windowRepository.checkpointBatch(batch.map((entry: any) => entry.payload)),
+      commit,
     });
     const staleWindows = structuredClone(staleCurrent.windows);
     const durableHeads = await dependencies.prisma.fairShareWindowHead.findMany({
@@ -151,17 +158,20 @@ export class QuotaE2ETestControlController {
     const staleRevision = Math.max(staleWindows.primary.revision, staleWindows.weekly.revision);
     const healthyWindows = structuredClone(staleCurrent.windows);
     const healthyRevision = Math.max(healthyWindows.primary.revision, healthyWindows.weekly.revision);
+    // Distinct receipts per path so a batch run's INSERT OR IGNORE receipt can't
+    // mask whether the accounting run actually wrote its own healthy receipt.
+    const receiptSuffix = body.via === "accounting" ? "accounting" : "batch";
     const [stale, healthy] = await Promise.allSettled([
       coordinator.enqueue(
         checkpointKey(staleAccountId, bucket),
         staleRevision,
-        payload(staleAccountId, staleWindows, "stale-batch-receipt"),
+        payload(staleAccountId, staleWindows, `stale-${receiptSuffix}-receipt`),
         true,
       ),
       coordinator.enqueue(
         checkpointKey(healthyAccountId, bucket),
         healthyRevision,
-        payload(healthyAccountId, healthyWindows, "healthy-batch-receipt"),
+        payload(healthyAccountId, healthyWindows, `healthy-${receiptSuffix}-receipt`),
         true,
       ),
     ]);

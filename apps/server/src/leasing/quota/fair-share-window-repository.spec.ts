@@ -419,6 +419,41 @@ describe("FairShareWindowRepository with SQLite", () => {
     expect(await prisma.fairShareWindow.count()).toBe(0);
   });
 
+  // 热路径同批里一个陈旧 revision 不能连坐回滚兄弟 key 的 head/回执/计费。
+  // 否则协调器会把被回滚的兄弟当已提交 resolve → 回执丢失 → 重放重复计费。
+  it("isolates a stale report-accounting entry so healthy siblings still persist", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    // 账号 7 的持久 head 已经领先(模拟后台 window flush 抢先推进)。
+    const older = populatedWindows();
+    const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer-state", T + 30) });
+    await repository.checkpointAccount(7, "codex-gpt", newer);
+    // 账号 8 是全新健康的记账条目,带自己的回执。
+    const healthy = populatedWindows();
+
+    await expect(repository.checkpointReportAccounting([
+      { accountId: 7, bucket: "codex-gpt", windows: older, reportIds: ["stale-report"], createdAt: new Date(T) },
+      {
+        accountId: 8, bucket: "codex-gpt", windows: healthy, reportIds: ["healthy-report"], createdAt: new Date(T),
+        accountings: [{
+          reportId: "healthy-report", at: new Date(T + 1234), accessKeyId: "healthy-card",
+          accountEmail: "healthy@x.test", customerId: "healthy-customer", modelKey: "gpt-5.6-luna",
+          bucket: "codex-gpt", status: 200, inputTokens: 10, outputTokens: 2,
+          cachedInputTokens: 3, cacheCreationTokens: 0, rawTotalTokens: 15, totalTokens: 12,
+          reverseProxy: false, serviceTier: "standard",
+        }],
+      },
+    ])).rejects.toMatchObject({ code: "QUOTA_STALE_REVISION", staleKeys: [`7\u0000codex-gpt`] });
+
+    // 陈旧账号 7:head 未被回滚(仍是 newer),回执未确认。
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
+    await expect(repository.hasReport("stale-report")).resolves.toBe(false);
+    // 健康账号 8:head + 回执 + 计费必须已落库,不被连坐回滚。
+    await expect(repository.loadAccount(8, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(healthy) });
+    await expect(repository.hasReport("healthy-report")).resolves.toBe(true);
+    await expect(prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "healthy-card" } }))
+      .resolves.toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+  });
+
   it("does not re-increment hourly usage when the same receipt is replayed", async () => {
     const repository = new FairShareWindowRepository(prisma, "codex");
     const entry = {

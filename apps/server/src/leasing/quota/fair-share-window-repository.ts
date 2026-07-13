@@ -334,13 +334,49 @@ export class FairShareWindowRepository {
     // Receipt + hourly stay atomic PER REPORT, so splitting across transactions
     // is safe: committed chunks are absorbed by INSERT OR IGNORE on retry.
     const MAX_REPORTS_PER_TRANSACTION = 200;
+    const stale = new Map<string, { accountId: number; bucket: string }>();
     for (const group of chunkAccountingEntries(entries, MAX_REPORTS_PER_TRANSACTION)) {
-      await this.prisma.$transaction(async (tx) => {
-        for (const entry of group) {
-          const revision = await this.applyCompactHeads(tx, entry);
-          await this.applyReportAccounting(tx, entry, revision);
+      // Isolate a stale key exactly like runWithStaleRetry. SQLite rolls the
+      // whole interactive transaction back atomically, so one stale sibling must
+      // not strand healthy entries' receipt + hourly: the coordinator treats
+      // every key NOT in staleKeys as durably committed, so a silent rollback
+      // there loses billing rows and lets a replayed reportId double-count.
+      // Drop only the identified key and retry the healthy remainder.
+      let remaining = group;
+      while (remaining.length > 0) {
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            for (const entry of remaining) {
+              const revision = await this.applyCompactHeads(tx, entry);
+              await this.applyReportAccounting(tx, entry, revision);
+            }
+          });
+          break;
+        } catch (error) {
+          if (!(error instanceof QuotaStaleRevisionError)) throw error;
+          const rejected = new Set(error.staleKeys);
+          const survivors: ReportAccountingEntry[] = [];
+          let removed = 0;
+          for (const entry of remaining) {
+            const key = checkpointKey(entry.accountId, entry.bucket);
+            if (rejected.has(key)) {
+              stale.set(key, { accountId: entry.accountId, bucket: entry.bucket });
+              removed += 1;
+            } else {
+              survivors.push(entry);
+            }
+          }
+          // A malformed error must never loop forever or falsely acknowledge a
+          // record whose durable outcome is unknown.
+          if (removed === 0) throw error;
+          remaining = survivors;
         }
-      });
+      }
+    }
+    if (stale.size > 0) {
+      // Healthy survivors are durable now. The coordinator uses staleKeys to
+      // reject only those callers while acknowledging every committed sibling.
+      throw new QuotaStaleRevisionError(this.provider, [...stale.values()]);
     }
   }
 

@@ -708,6 +708,22 @@ try {
         "stale batch key wrote a receipt");
       assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-batch-receipt" } }) === 1,
         "healthy batch sibling did not write its receipt");
+
+      // Same isolation guarantee on the request HOT path (checkpointReportAccounting).
+      // Regression guard: a stale sibling there once rolled the whole transaction
+      // back, so the coordinator ack'd the healthy sibling as durable while SQLite
+      // had discarded its receipt+hourly — silent billing loss + replay double-count.
+      const isolatedHot = await testControl("stale-checkpoint-batch", {
+        provider: "codex", staleAccountId: id, healthyAccountId: 998, bucket: "codex-gpt", via: "accounting",
+      });
+      assert(isolatedHot.stale?.status === "rejected" && isolatedHot.stale?.code === "QUOTA_STALE_REVISION",
+        `stale accounting key was not rejected precisely: ${JSON.stringify(isolatedHot)}`);
+      assert(isolatedHot.healthy?.status === "fulfilled",
+        `healthy accounting sibling was rejected with stale key: ${JSON.stringify(isolatedHot)}`);
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-accounting-receipt" } }) === 0,
+        "stale accounting key wrote a receipt");
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-accounting-receipt" } }) === 1,
+        "healthy accounting sibling did not write its receipt");
     }
 
     // A3: fail exactly one scheduled SQLite commit. The rejection must be caught,
