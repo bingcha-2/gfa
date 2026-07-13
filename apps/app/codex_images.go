@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -21,19 +18,6 @@ func isOpenAIImageRequest(path string) bool {
 	}
 }
 
-// imageTargetURL 把图像请求发到 chatgpt.com 的**原样路径**:/v1/images/edits 直接透传,
-// 不加 /backend-api/codex/ 前缀(图像接口就挂在 /v1/images/* 上,不走 codex 后端命名空间)。
-func (p *CodexProxy) imageTargetURL(r *http.Request) string {
-	base := p.upstreamBase
-	if base == "" {
-		base = DefaultCodexEndpoint
-	}
-	target := strings.TrimRight(base, "/") + r.URL.Path
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	return target
-}
 
 // ServeImages 处理 OpenAI 图像接口,与 /v1/responses、/v1/models 同一套出口逻辑:
 // 租号 → 注入 OAuth 令牌 + ChatGPT 身份头 → 原样 /v1/images/* 路径 → 走账号绑定出口
@@ -49,78 +33,11 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	audit := newProxyAudit("codex", reqID, "图像", r.Method, r.URL.Path)
 	defer audit.emit()
 
-	if r.Method != http.MethodPost {
-		p.sendJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if card == "" {
-		// 与生成路径一致:绝不回 401(codex 客户端收到 401 会触发重新登录),用 503 让其稍后重试。
-		p.sendJSONError(w, http.StatusServiceUnavailable, "Codex account card is not configured")
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		audit.note = "读请求体失败:" + err.Error()
-		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
-		return
-	}
-	audit.reqBody = body
-	GetUsageStats().AddRequest()
-
-	leaseFunc := p.leaseToken
-	if leaseFunc == nil {
-		leaseFunc = GetCodexLeaser().LeaseToken
-	}
-	lease, err := leaseFunc(card, deviceId, false, map[string]interface{}{"bodyBytes": len(body)}, upstreamProxy)
-	if err != nil {
-		atomic.AddInt64(&p.totalErrors, 1)
-		audit.note = "lease 失败:" + err.Error()
-		if writeQuotaExhausted(w, err) {
-			return
-		}
-		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex token lease failed: %v", err))
-		return
-	}
-	audit.accountID = lease.AccountId
-	audit.token = lease.AccessToken
-
-	targetURL := p.imageTargetURL(r)
-	audit.target = targetURL
-	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
-	if err != nil {
-		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
-		return
-	}
-	copyCodexHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
-	req.Header.Set("Host", mustParseURL(targetURL).Host)
-	applyCodexOfficialHeaders(req.Header, r.Header)
-	if accountID := extractChatGPTAccountId(lease.AccessToken); accountID != "" {
-		req.Header.Set("ChatGPT-Account-Id", accountID)
-	} else {
-		req.Header.Del("ChatGPT-Account-Id")
-	}
-
-	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
-	if err != nil {
-		atomic.AddInt64(&p.totalErrors, 1)
-		audit.status = http.StatusBadGateway
-		audit.note = "上游请求失败:" + err.Error()
-		p.sendJSONError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	audit.status = resp.StatusCode
-
-	for key, values := range resp.Header {
-		if isHopByHopHeader(key) {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	// chatgpt.com 的 codex 后端没有 /v1/images/* REST 端点:实测(uTLS 真号)只回一坨网页
+	// HTML(HTTP 200),根本不出图。以前原样透传 → 客户端拿到 HTML 被误导为“成功”。
+	// 生图已改由 /v1/responses 内联注入 hosted image_generation 工具实现(见 codex_imagegen.go),
+	// 故这里明确回 404,不再把 HTML 当图像响应回给客户端。
+	audit.status = http.StatusNotFound
+	audit.note = "图像 REST 端点不支持(生图改走 responses 内联工具)"
+	p.sendJSONError(w, http.StatusNotFound, "image endpoint not supported; images are generated inline via /v1/responses")
 }
