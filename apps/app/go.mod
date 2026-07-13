@@ -11,6 +11,8 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/refraction-networking/utls v1.8.2
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.71
+	github.com/tidwall/gjson v1.18.0
+	github.com/tidwall/sjson v1.2.5
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.47.0
 	modernc.org/sqlite v1.34.5
@@ -61,10 +63,8 @@ require (
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tiktoken-go/tokenizer v0.7.0 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

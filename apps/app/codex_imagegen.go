@@ -1,101 +1,140 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
 	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
-// 远程租号生图:往 codex /v1/responses 请求体注入 hosted `image_generation` 工具,
-// 让模型在对话回合内联生图(对齐 cockpit ensureImageGenerationTool)。远程链路此前
-// 只透传 /v1/images/*(实测该端点在 chatgpt.com 不存在、只回 HTML),故内联工具注入
-// 是远程用户唯一可行的生图路径。
+// 远程租号生图 —— 图像接口翻译(对齐 cockpit codex_openai_images.go)。
 //
-// 三个跳过/冲突规则(与 cockpit 一致):
-//   - *spark 模型:上游拒绝生图工具(实测 400),跳过不注入。
-//   - free 套餐:免费号不支持,跳过。
-//   - 客户端已自带 image_gen 函数工具:反删 hosted 工具避冲突(否则上游报重复工具)。
+// Codex 的生图技能调的是 OpenAI **REST 图像接口** /v1/images/generations(需 API key),
+// 而 chatgpt.com 的 codex 后端**没有**这个 REST 接口(实测只回网页 HTML)。真正能出图的是
+// /backend-api/codex/responses + hosted image_generation 工具。所以正确做法不是往正常请求里
+// 注入(那会打断聊天),而是**只在图像接口这一个入口**把 REST 请求翻译成 responses 内联生图
+// 调用,拿到图再翻回图像接口 JSON。此翻译只作用于 /v1/images/*,绝不碰正常 /v1/responses。
 
-var codexImageGenToolJSON = []byte(`{"type":"image_generation","output_format":"png"}`)
-var codexImageGenToolArrayJSON = []byte(`[{"type":"image_generation","output_format":"png"}]`)
+const (
+	// 生图 responses 请求用的主模型(对齐 cockpit codexOpenAIImagesMainModel)。
+	codexImagesMainModel = "gpt-5.4-mini"
+	// 生图工具默认 model(对齐 cockpit codexDefaultImageToolModel)。
+	codexImageToolModel = "gpt-image-2"
+)
 
-func isCodexImageGenFunctionName(name string) bool {
-	return strings.EqualFold(strings.TrimSpace(name), "image_gen.imagegen")
-}
-
-// codexToolConflictsWithHostedImageGeneration 判断某工具是否与 hosted image_generation 冲突
-//(客户端自带 image_gen / image_gen.imagegen 函数)。
-func codexToolConflictsWithHostedImageGeneration(tool gjson.Result) bool {
-	if isCodexImageGenFunctionName(tool.Get("name").String()) || isCodexImageGenFunctionName(tool.Get("function.name").String()) {
-		return true
+// buildCodexImageTool 从 /v1/images/generations 的 JSON 构造 image_generation 工具。
+func buildCodexImageTool(rawJSON []byte) []byte {
+	tool := []byte(`{"type":"image_generation","action":"generate"}`)
+	model := strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String())
+	if model == "" {
+		model = codexImageToolModel
 	}
-	if !strings.EqualFold(strings.TrimSpace(tool.Get("name").String()), "image_gen") {
-		return false
-	}
-	children := tool.Get("tools")
-	if !children.IsArray() {
-		return false
-	}
-	for _, child := range children.Array() {
-		if strings.EqualFold(strings.TrimSpace(child.Get("name").String()), "imagegen") ||
-			strings.EqualFold(strings.TrimSpace(child.Get("function.name").String()), "imagegen") {
-			return true
+	tool, _ = sjson.SetBytes(tool, "model", model)
+	for _, field := range []string{"size", "quality", "background", "output_format", "moderation"} {
+		if v := strings.TrimSpace(gjson.GetBytes(rawJSON, field).String()); v != "" {
+			tool, _ = sjson.SetBytes(tool, field, v)
 		}
 	}
-	return false
+	for _, field := range []string{"output_compression", "partial_images"} {
+		if v := gjson.GetBytes(rawJSON, field); v.Exists() && v.Type == gjson.Number {
+			tool, _ = sjson.SetBytes(tool, field, v.Int())
+		}
+	}
+	return tool
 }
 
-// removeHostedImageGenerationForFunctionConflict 删掉 hosted image_generation 工具及其 tool_choice。
-func removeHostedImageGenerationForFunctionConflict(body []byte, tools gjson.Result) []byte {
-	toolItems := tools.Array()
-	for index := len(toolItems) - 1; index >= 0; index-- {
-		if toolItems[index].Get("type").String() != "image_generation" {
+// buildCodexImagesResponsesBody 把 /v1/images/generations 请求翻译成 codex responses body
+//(内联 image_generation 工具 + tool_choice 强制生图)。
+func buildCodexImagesResponsesBody(rawJSON []byte) []byte {
+	prompt := strings.TrimSpace(gjson.GetBytes(rawJSON, "prompt").String())
+	tool := buildCodexImageTool(rawJSON)
+
+	body := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"store":false,"tool_choice":{"type":"image_generation"}}`)
+	body, _ = sjson.SetBytes(body, "model", codexImagesMainModel)
+
+	input := []byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]`)
+	input, _ = sjson.SetBytes(input, "0.content.0.text", prompt)
+	body, _ = sjson.SetRawBytes(body, "input", input)
+	body, _ = sjson.SetRawBytes(body, "tools", append(append([]byte("["), tool...), ']'))
+	return body
+}
+
+// codexImageResult 是从 responses.completed 抽出的一张图。
+type codexImageResult struct {
+	B64          string
+	OutputFormat string
+	RevisedPrompt string
+}
+
+// scanCodexImageStream 扫完整条 responses SSE 流,抽出生成的图片。图片 b64 可能出现在
+// response.output_item.done(image_generation_call.result)或 response.completed 的 output 里;
+// 都拿不到时回退到最后一帧 partial_image。返回图片列表 + completed 事件原文(供计量)。
+func scanCodexImageStream(data []byte) (images []codexImageResult, completed []byte) {
+	var lastPartial string
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
-		body, _ = sjson.DeleteBytes(body, fmt.Sprintf("tools.%d", index))
+		ev := bytes.TrimSpace(line[len("data:"):])
+		if len(ev) == 0 || ev[0] != '{' {
+			continue
+		}
+		switch gjson.GetBytes(ev, "type").String() {
+		case "response.image_generation_call.partial_image":
+			if b := gjson.GetBytes(ev, "partial_image_b64").String(); b != "" {
+				lastPartial = b
+			}
+		case "response.output_item.done":
+			item := gjson.GetBytes(ev, "item")
+			if item.Get("type").String() == "image_generation_call" {
+				if res := strings.TrimSpace(item.Get("result").String()); res != "" {
+					images = append(images, codexImageResult{
+						B64:           res,
+						OutputFormat:  strings.TrimSpace(item.Get("output_format").String()),
+						RevisedPrompt: strings.TrimSpace(item.Get("revised_prompt").String()),
+					})
+				}
+			}
+		case "response.completed", "response.done":
+			completed = append([]byte(nil), ev...)
+			if got := extractCodexImagesFromCompleted(ev); len(got) > 0 {
+				images = got
+			}
+		}
 	}
-	toolChoice := gjson.GetBytes(body, "tool_choice")
-	if toolChoice.String() == "image_generation" ||
-		toolChoice.Get("type").String() == "image_generation" ||
-		(toolChoice.Get("type").String() == "tool" && toolChoice.Get("name").String() == "image_generation") {
-		body, _ = sjson.DeleteBytes(body, "tool_choice")
+	if len(images) == 0 && lastPartial != "" {
+		images = []codexImageResult{{B64: lastPartial, OutputFormat: "png"}}
 	}
-	return body
+	return images, completed
 }
 
-// ensureCodexImageGenerationTool 按需往 responses body 注入 hosted 生图工具。
-// modelKey = 最终发上游的模型(*spark 跳过);planType = 租约带回的真实号 plan(free 跳过)。
-func ensureCodexImageGenerationTool(body []byte, modelKey, planType string) []byte {
-	if strings.HasSuffix(strings.TrimSpace(modelKey), "spark") {
-		return body
+// extractCodexImagesFromCompleted 从 response.completed/response.done 事件里抽出生成的图片
+//(response.output[].image_generation_call.result 是 base64)。
+func extractCodexImagesFromCompleted(completedData []byte) []codexImageResult {
+	t := gjson.GetBytes(completedData, "type").String()
+	if t != "response.completed" && t != "response.done" {
+		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(planType), "free") {
-		return body
+	var out []codexImageResult
+	output := gjson.GetBytes(completedData, "response.output")
+	if !output.IsArray() {
+		return nil
 	}
-
-	tools := gjson.GetBytes(body, "tools")
-	if !tools.Exists() || !tools.IsArray() {
-		body, _ = sjson.SetRawBytes(body, "tools", codexImageGenToolArrayJSON)
-		return body
-	}
-	hasFunctionConflict := false
-	hasHosted := false
-	for _, t := range tools.Array() {
-		if codexToolConflictsWithHostedImageGeneration(t) {
-			hasFunctionConflict = true
+	for _, item := range output.Array() {
+		if item.Get("type").String() != "image_generation_call" {
+			continue
 		}
-		if t.Get("type").String() == "image_generation" {
-			hasHosted = true
+		res := strings.TrimSpace(item.Get("result").String())
+		if res == "" {
+			continue
 		}
+		out = append(out, codexImageResult{
+			B64:           res,
+			OutputFormat:  strings.TrimSpace(item.Get("output_format").String()),
+			RevisedPrompt: strings.TrimSpace(item.Get("revised_prompt").String()),
+		})
 	}
-	if hasFunctionConflict {
-		return removeHostedImageGenerationForFunctionConflict(body, tools)
-	}
-	if hasHosted {
-		return body
-	}
-	body, _ = sjson.SetRawBytes(body, "tools.-1", codexImageGenToolJSON)
-	return body
+	return out
 }

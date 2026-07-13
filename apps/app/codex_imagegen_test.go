@@ -1,96 +1,75 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
 )
 
-func hasHostedImageTool(body []byte) bool {
-	for _, t := range gjson.GetBytes(body, "tools").Array() {
-		if t.Get("type").String() == "image_generation" {
-			return true
-		}
-	}
-	return false
-}
+// /v1/images/generations JSON → codex responses body(内联生图工具 + tool_choice)。
+func TestBuildCodexImagesResponsesBody(t *testing.T) {
+	raw := []byte(`{"prompt":"a cute cat fishing","model":"gpt-image-1","size":"1024x1024","quality":"high"}`)
+	body := buildCodexImagesResponsesBody(raw)
 
-// 无 tools:新建 tools 数组并注入。
-func TestEnsureImageGen_NoTools(t *testing.T) {
-	out := ensureCodexImageGenerationTool([]byte(`{"model":"gpt-5.6-sol"}`), "gpt-5.6-sol", "pro")
-	if !hasHostedImageTool(out) {
-		t.Fatalf("应新建 tools 并注入生图工具:\n%s", out)
+	if got := gjson.GetBytes(body, "model").String(); got != codexImagesMainModel {
+		t.Fatalf("responses model = %q, want %q", got, codexImagesMainModel)
 	}
-	if gjson.GetBytes(out, "tools.0.output_format").String() != "png" {
-		t.Fatalf("output_format 应为 png:\n%s", out)
+	if got := gjson.GetBytes(body, "input.0.content.0.text").String(); got != "a cute cat fishing" {
+		t.Fatalf("prompt not carried: %q", got)
 	}
-}
-
-// 已有 tools:追加,不覆盖原工具。
-func TestEnsureImageGen_AppendsToExisting(t *testing.T) {
-	in := []byte(`{"model":"gpt-5.5","tools":[{"type":"function","name":"foo"}]}`)
-	out := ensureCodexImageGenerationTool(in, "gpt-5.5", "pro")
-	if !hasHostedImageTool(out) {
-		t.Fatalf("应追加生图工具:\n%s", out)
+	if got := gjson.GetBytes(body, "tool_choice.type").String(); got != "image_generation" {
+		t.Fatalf("tool_choice = %q, want image_generation", got)
 	}
-	if gjson.GetBytes(out, `tools.#(name=="foo")`).Get("name").String() != "foo" {
-		t.Fatalf("原工具应保留:\n%s", out)
+	tool := gjson.GetBytes(body, "tools.0")
+	if tool.Get("type").String() != "image_generation" || tool.Get("action").String() != "generate" {
+		t.Fatalf("tool 不对: %s", tool.Raw)
+	}
+	if tool.Get("size").String() != "1024x1024" || tool.Get("quality").String() != "high" {
+		t.Fatalf("tool 未带 size/quality: %s", tool.Raw)
+	}
+	if tool.Get("model").String() != "gpt-image-1" {
+		t.Fatalf("tool model = %q, want 请求里的 gpt-image-1", tool.Get("model").String())
 	}
 }
 
-// spark 模型:跳过不注入。
-func TestEnsureImageGen_SkipsSpark(t *testing.T) {
-	out := ensureCodexImageGenerationTool([]byte(`{"model":"gpt-5.3-codex-spark"}`), "gpt-5.3-codex-spark", "pro")
-	if hasHostedImageTool(out) {
-		t.Fatalf("spark 模型不应注入:\n%s", out)
+// 缺 model 时工具回落默认 gpt-image-2。
+func TestBuildCodexImageTool_DefaultModel(t *testing.T) {
+	tool := buildCodexImageTool([]byte(`{"prompt":"x"}`))
+	if gjson.GetBytes(tool, "model").String() != codexImageToolModel {
+		t.Fatalf("缺 model 应回落 %q, got %s", codexImageToolModel, tool)
 	}
 }
 
-// free 套餐:跳过不注入。
-func TestEnsureImageGen_SkipsFreePlan(t *testing.T) {
-	out := ensureCodexImageGenerationTool([]byte(`{"model":"gpt-5.6-sol"}`), "gpt-5.6-sol", "free")
-	if hasHostedImageTool(out) {
-		t.Fatalf("free 套餐不应注入:\n%s", out)
+// 从 response.completed 抽出 base64 图片。
+func TestExtractCodexImagesFromCompleted(t *testing.T) {
+	completed := `{"type":"response.completed","response":{"output":[
+		{"type":"reasoning","summary":[]},
+		{"type":"image_generation_call","result":"iVBORw0KGgoAAAA","output_format":"png","revised_prompt":"a cat"}
+	]}}`
+	imgs := extractCodexImagesFromCompleted([]byte(completed))
+	if len(imgs) != 1 {
+		t.Fatalf("应抽出 1 张图, got %d", len(imgs))
+	}
+	if imgs[0].B64 != "iVBORw0KGgoAAAA" || imgs[0].OutputFormat != "png" || imgs[0].RevisedPrompt != "a cat" {
+		t.Fatalf("抽出的图不对: %+v", imgs[0])
 	}
 }
 
-// 已有 hosted 工具:不重复注入(只一个)。
-func TestEnsureImageGen_NoDuplicate(t *testing.T) {
-	in := []byte(`{"model":"gpt-5.5","tools":[{"type":"image_generation","output_format":"png"}]}`)
-	out := ensureCodexImageGenerationTool(in, "gpt-5.5", "pro")
-	count := 0
-	for _, tl := range gjson.GetBytes(out, "tools").Array() {
-		if tl.Get("type").String() == "image_generation" {
-			count++
-		}
+// 非 completed 事件 / 无图 → 空。
+func TestExtractCodexImages_NoneWhenNotCompleted(t *testing.T) {
+	if imgs := extractCodexImagesFromCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi"}`)); imgs != nil {
+		t.Fatalf("非 completed 应返回 nil, got %v", imgs)
 	}
-	if count != 1 {
-		t.Fatalf("hosted 工具应恰一个,got %d:\n%s", count, out)
+	if imgs := extractCodexImagesFromCompleted([]byte(`{"type":"response.completed","response":{"output":[{"type":"message"}]}}`)); len(imgs) != 0 {
+		t.Fatalf("无生图输出应为空, got %v", imgs)
 	}
 }
 
-// 客户端自带 image_gen.imagegen 函数:反删 hosted 工具 + 清 tool_choice。
-func TestEnsureImageGen_FunctionConflictRemovesHosted(t *testing.T) {
-	in := []byte(`{"model":"gpt-5.5","tool_choice":{"type":"tool","name":"image_generation"},"tools":[{"type":"function","name":"image_gen.imagegen"},{"type":"image_generation"}]}`)
-	out := ensureCodexImageGenerationTool(in, "gpt-5.5", "pro")
-	if hasHostedImageTool(out) {
-		t.Fatalf("与客户端 image_gen 冲突时应删掉 hosted 工具:\n%s", out)
-	}
-	if gjson.GetBytes(out, "tool_choice").Exists() {
-		t.Fatalf("冲突时应清掉指向 image_generation 的 tool_choice:\n%s", out)
-	}
-	// 客户端自己的 image_gen 函数保留。
-	if !strings.Contains(string(out), "image_gen.imagegen") {
-		t.Fatalf("客户端 image_gen 函数应保留:\n%s", out)
-	}
-}
-
-// 客户端 namespace 形态 image_gen{tools:[imagegen]}:同样识别为冲突。
-func TestEnsureImageGen_NamespaceConflict(t *testing.T) {
-	in := []byte(`{"model":"gpt-5.5","tools":[{"type":"image_generation"},{"name":"image_gen","tools":[{"name":"imagegen"}]}]}`)
-	out := ensureCodexImageGenerationTool(in, "gpt-5.5", "pro")
-	if hasHostedImageTool(out) {
-		t.Fatalf("namespace 冲突应删掉 hosted 工具:\n%s", out)
+// tool_usage 计量:图像路径的用量也从 tool_usage.image_gen 折进计费(复用 codexUsageFromJSON)。
+func TestCodexImagesUsageMetering(t *testing.T) {
+	completed := `{"type":"response.completed","response":{"usage":{"input_tokens":30,"output_tokens":10,"total_tokens":40},"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":500}}}}`
+	in, out, _, tot, ok := codexUsageFromJSON([]byte(completed))
+	if !ok || in != 30 || out != 510 || tot != 540 {
+		t.Fatalf("图像用量计费不对: in=%d out=%d tot=%d ok=%v (want 30/510/540/true)", in, out, tot, ok)
 	}
 }
