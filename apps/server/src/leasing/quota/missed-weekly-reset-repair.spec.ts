@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createWindowState, type QuotaWindowsState } from "./fair-share-window";
 import {
   matchPersistedUsageEventsToLogs,
+  isRepairLogInBucket,
   parseRepairArgs,
   parseRepairExport,
   parsePersistedUsageEvents,
@@ -165,6 +166,71 @@ describe("missed weekly reset repair", () => {
     expect(matched[0].occurredAt).toBe(RESET_OBSERVED_AT - 100);
     expect(matched[0].sourceLogId).toBe("log-a");
     expect(() => matchPersistedUsageEventsToLogs(matched, [])).toThrow("REQUEST_LOG_MATCH_MISSING");
+  });
+
+  it("matches legacy logs without completion time only beyond the reset safety margin", () => {
+    const event = {
+      quotaSubjectId: "card-a",
+      occurredAt: RESET_OBSERVED_AT + 120_000,
+      modelId: "gpt-5",
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 5,
+      totalTokens: 105,
+      serviceTier: "standard" as const,
+    };
+    const log = {
+      id: "legacy-log",
+      quotaSubjectId: "card-a",
+      at: event.occurredAt + 1,
+      requestStartedAt: 0,
+      upstreamCompletedAt: 0,
+      modelId: "gpt-5",
+      reportId: "legacy-report",
+      totalTokens: 105,
+    };
+
+    expect(matchPersistedUsageEventsToLogs([event], [log], {
+      missingCompletionFallbackAfter: RESET_OBSERVED_AT + 60_000,
+    })[0]).toMatchObject({ occurredAt: event.occurredAt, sourceLogId: "legacy-log" });
+    expect(() => matchPersistedUsageEventsToLogs([
+      { ...event, occurredAt: RESET_OBSERVED_AT + 30_000 },
+    ], [{ ...log, at: RESET_OBSERVED_AT + 30_001 }], {
+      missingCompletionFallbackAfter: RESET_OBSERVED_AT + 60_000,
+    })).toThrow("REQUEST_LOG_MATCH_MISSING");
+  });
+
+  it("refuses an ambiguous legacy log match", () => {
+    const event = {
+      quotaSubjectId: "card-a",
+      occurredAt: RESET_OBSERVED_AT + 120_000,
+      modelId: "gpt-5",
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 5,
+      totalTokens: 105,
+      serviceTier: "standard" as const,
+    };
+    const log = {
+      quotaSubjectId: "card-a",
+      at: event.occurredAt + 1,
+      requestStartedAt: 0,
+      upstreamCompletedAt: 0,
+      modelId: "gpt-5",
+      reportId: "legacy-report",
+      totalTokens: 105,
+    };
+
+    expect(() => matchPersistedUsageEventsToLogs([event], [
+      { ...log, id: "log-a" },
+      { ...log, id: "log-b", at: event.occurredAt + 2 },
+    ], { missingCompletionFallbackAfter: RESET_OBSERVED_AT + 60_000 }))
+      .toThrow("REQUEST_LOG_MATCH_AMBIGUOUS");
+  });
+
+  it("filters completeness logs by the repair bucket", () => {
+    expect(isRepairLogInBucket("codex", "codex-gpt", "gpt-5")).toBe(true);
+    expect(isRepairLogInBucket("codex", "codex-gpt", "claude-sonnet-4-6")).toBe(false);
   });
 
   it("removes account 19 old baseline burn while preserving post-reset usage", () => {

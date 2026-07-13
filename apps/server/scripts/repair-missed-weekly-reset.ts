@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 
 import { FairShareWindowRepository } from "../src/leasing/quota/fair-share-window-repository";
 import {
+  isRepairLogInBucket,
   matchPersistedUsageEventsToLogs,
   parsePersistedUsageEvents,
   parseExportUtc,
@@ -118,13 +119,15 @@ async function main(): Promise<void> {
             id: row.id,
             quotaSubjectId: row.quotaSubjectId,
             at: row.at.getTime(),
+            requestStartedAt: Number(row.requestStartedAt),
             upstreamCompletedAt: Number(row.upstreamCompletedAt),
             modelId: row.modelKey,
             reportId: row.reportId,
-          })));
+            totalTokens: Number(row.totalTokens),
+          })), { missingCompletionFallbackAfter: missedResetAt + 60_000 });
         } catch (error) {
           const match = error instanceof Error
-            ? /^REQUEST_LOG_MATCH_MISSING:([^:]+):(\d+)$/.exec(error.message)
+            ? /^REQUEST_LOG_MATCH_(?:MISSING|AMBIGUOUS):([^:]+):(\d+)$/.exec(error.message)
             : null;
           if (match) {
             const [, quotaSubjectId, rawOccurredAt] = match;
@@ -157,6 +160,7 @@ async function main(): Promise<void> {
         }
         const matchedLogIds = new Set(usageEvents.map((event) => event.sourceLogId));
         const unmatchedBillableLogs = requestLogs.filter((row) => Number(row.totalTokens) > 0
+          && isRepairLogInBucket("codex", candidate.bucket, row.modelKey)
           && Number(row.upstreamCompletedAt) >= missedResetAt
           && !matchedLogIds.has(row.id));
         if (unmatchedBillableLogs.length > 0) {

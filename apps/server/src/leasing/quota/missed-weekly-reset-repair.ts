@@ -50,6 +50,7 @@ export interface PersistedRepairUsage {
   cachedInputTokens: number;
   outputTokens: number;
   serviceTier: "standard" | "fast";
+  totalTokens?: number;
   sourceLogId?: string;
 }
 
@@ -57,9 +58,11 @@ export interface RepairRequestLog {
   id: string;
   quotaSubjectId: string;
   at: number;
+  requestStartedAt?: number;
   upstreamCompletedAt: number;
   modelId: string;
   reportId: string;
+  totalTokens?: number;
 }
 
 type RepairFailureReason =
@@ -144,28 +147,45 @@ export function parsePersistedUsageEvents(input: {
       cachedInputTokens,
       outputTokens: finiteNonNegative(event.outputTokens, "output_tokens"),
       serviceTier: String(event.serviceTier || "").toLowerCase() === "priority" ? "fast" : "standard",
+      ...(event.totalTokens == null ? {} : { totalTokens: finiteNonNegative(event.totalTokens, "total_tokens") }),
     });
   }
   return events;
 }
 
+export function isRepairLogInBucket(provider: string, bucket: string, modelId: string): boolean {
+  return bucketKey(provider, modelId) === bucket;
+}
+
 export function matchPersistedUsageEventsToLogs(
   events: PersistedRepairUsage[],
   logs: RepairRequestLog[],
+  options: { missingCompletionFallbackAfter?: number } = {},
 ): PersistedRepairUsage[] {
   const orderedLogs = [...logs].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
   const used = new Set<string>();
   return [...events].sort((a, b) => a.occurredAt - b.occurredAt).map((event) => {
-    const match = orderedLogs.find((log) => !used.has(log.id)
+    const candidates = orderedLogs.filter((log) => !used.has(log.id)
       && log.quotaSubjectId === event.quotaSubjectId
       && log.modelId === event.modelId
       && log.at >= event.occurredAt
       && log.at - event.occurredAt <= 10_000
-      && Number.isFinite(log.upstreamCompletedAt)
-      && log.upstreamCompletedAt > 0);
+      && (event.totalTokens == null || log.totalTokens == null || log.totalTokens === event.totalTokens)
+      && (log.upstreamCompletedAt > 0
+        || Number(log.requestStartedAt) > 0
+        || (options.missingCompletionFallbackAfter != null
+          && event.occurredAt >= options.missingCompletionFallbackAfter)));
+    if (candidates.length > 1) {
+      throw new Error(`REQUEST_LOG_MATCH_AMBIGUOUS:${event.quotaSubjectId}:${event.occurredAt}`);
+    }
+    const match = candidates[0];
     if (!match) throw new Error(`REQUEST_LOG_MATCH_MISSING:${event.quotaSubjectId}:${event.occurredAt}`);
     used.add(match.id);
-    return { ...event, occurredAt: match.upstreamCompletedAt, sourceLogId: match.id };
+    const requestStartedAt = Number(match.requestStartedAt);
+    const occurredAt = match.upstreamCompletedAt > 0
+      ? match.upstreamCompletedAt
+      : requestStartedAt > 0 ? Math.min(event.occurredAt, requestStartedAt) : event.occurredAt;
+    return { ...event, occurredAt, sourceLogId: match.id };
   });
 }
 
