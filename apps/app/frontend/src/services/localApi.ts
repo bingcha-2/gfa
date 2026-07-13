@@ -218,9 +218,10 @@ export interface ProviderLocalApi {
   clearWakeupVerificationHistory(batchIds: string[]): Promise<number>
   /** 单账号即席保活测试(按 id,provider 无关)。 */
   wakeupTestOne(id: string): Promise<WakeupVerifyResult>
-  /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
+  /** 接管号源切换(仅部分 provider 支持,如 codex)。
+   *  codex 额外支持 `provider:<厂商id>`——用自定义模型厂商接管(见 model provider)。 */
   getSource?(): Promise<string>
-  setSource?(source: 'remote' | 'local'): Promise<void>
+  setSource?(source: 'remote' | 'local' | `provider:${string}`): Promise<void>
 }
 
 type GoApp = Record<string, (...args: unknown[]) => Promise<unknown>>

@@ -40,6 +40,23 @@ func (localPlatform) CodexRestoreAccount() error {
 	return codexinject.RestoreHome(codexHomeDir())
 }
 
+// CodexInjectProvider 把 codex config.toml 指向自定义模型厂商(第三种接管源)。
+// 红线:与远程重定向、自有号注入互斥——InjectCodexProvider 内部 ensureCodexBackup + 清旧残留;
+// hub 在调用前已 CodexRestoreAccount 撤掉自有号注入。
+func (localPlatform) CodexInjectProvider(p hub.CodexProvider) error {
+	return InjectCodexProvider(codexProviderSpec{
+		Name:    p.Name,
+		BaseURL: p.BaseURL,
+		APIKey:  p.APIKey,
+		WireAPI: p.WireAPI,
+	})
+}
+
+// CodexRestoreProvider 清掉自定义厂商在 config.toml 的重定向(还原到接管前状态)。
+func (localPlatform) CodexRestoreProvider() error {
+	return RestoreCodexSettings()
+}
+
 // AntigravityInjectAccount 把一份自有号 token 注入 Antigravity IDE 的 state.vscdb(默认变体)。
 func (localPlatform) AntigravityInjectAccount(tok hub.AntigravityToken) error {
 	return localPlatform{}.AntigravityInjectAccountTo("ide", tok)

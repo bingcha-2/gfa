@@ -196,9 +196,10 @@ func RestoreCodexSettings() error {
 	}
 
 	content = removeProviderTable(content, codexProviderID)
+	content = removeProviderTable(content, codexLocalProviderID) // 自定义厂商接管的表
 	content = stripLegacyLocalCodexBaseURL(content)
 	prevProvider := prevProviderFromBackup()
-	if prevProvider != "" && prevProvider != codexProviderID {
+	if prevProvider != "" && prevProvider != codexProviderID && prevProvider != codexLocalProviderID {
 		// 用户原本有自定义 provider:恢复它。
 		content = setTopLevelString(content, codexModelProvider, prevProvider)
 	} else {

@@ -10,6 +10,7 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/economy"
+	"bcai-wails/internal/local/modelprovider"
 	"bcai-wails/internal/local/takeover"
 )
 
@@ -323,5 +324,63 @@ func TestLocal_AccountGroupAssignEndToEnd(t *testing.T) {
 	}
 	if resolved2[a2.ID] != g2.ID {
 		t.Errorf("a2 改组后应属「团队 B」(%s,独占),实际 %q", g2.ID, resolved2[a2.ID])
+	}
+}
+
+// TestLocal_CodexProviderActivationEndToEnd 端到端跑「模型厂商激活」:
+// LocalSaveModelProvider 存一个厂商 → LocalSetCodexSource("provider:<id>") → 真读
+// $CODEX_HOME/config.toml 断言 provider 表 + model_provider 落地、用户内容保留;
+// 再切 remote 断言表被干净移除。
+func TestLocal_CodexProviderActivationEndToEnd(t *testing.T) {
+	codexHome := localTestEnv(t)
+	app := NewApp()
+
+	// 预置带用户内容的 config.toml,验证激活不破坏它。
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(codexHome, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("# user\nmodel = 'gpt-5.5'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	saved, err := app.LocalSaveModelProvider(modelprovider.Provider{
+		Name: "Vend", BaseURL: "https://api.vend.com/v1", APIKey: "sk-e2e",
+	})
+	if err != nil {
+		t.Fatalf("LocalSaveModelProvider: %v", err)
+	}
+
+	if err := app.LocalSetCodexSource("provider:" + saved.ID); err != nil {
+		t.Fatalf("LocalSetCodexSource(provider): %v", err)
+	}
+	got, _ := os.ReadFile(cfgPath)
+	for _, must := range []string{
+		`model_provider = "gfa_local_provider"`,
+		`[model_providers.gfa_local_provider]`,
+		`base_url = "https://api.vend.com/v1"`,
+		`experimental_bearer_token = "sk-e2e"`,
+		"model = 'gpt-5.5'",
+	} {
+		if !strings.Contains(string(got), must) {
+			t.Fatalf("激活后缺 %q:\n%s", must, got)
+		}
+	}
+
+	// 号源持久化为 provider。
+	if src := app.LocalGetCodexSource(); src != string(takeover.SourceProvider) {
+		t.Fatalf("LocalGetCodexSource = %q, want provider", src)
+	}
+
+	// 切远程 → 厂商表清掉,用户内容保留。
+	if err := app.LocalSetCodexSource("remote"); err != nil {
+		t.Fatalf("LocalSetCodexSource(remote): %v", err)
+	}
+	got2, _ := os.ReadFile(cfgPath)
+	if strings.Contains(string(got2), "gfa_local_provider") {
+		t.Fatalf("切远程后厂商表未清:\n%s", got2)
+	}
+	if !strings.Contains(string(got2), "model = 'gpt-5.5'") {
+		t.Fatalf("用户内容丢失:\n%s", got2)
 	}
 }

@@ -67,6 +67,7 @@ const { codexApi, antigravityApi, agLocalMocks } = vi.hoisted(() => {
     agLocalMocks: {
       antigravityLocalInjected: vi.fn().mockResolvedValue(false),
       setAntigravityLocalInjected: vi.fn().mockResolvedValue(undefined),
+      listModelProviders: vi.fn().mockResolvedValue([]),
     },
   }
 })
@@ -75,6 +76,7 @@ vi.mock('@/services/localApi', () => ({
   antigravityLocalApi: antigravityApi,
   antigravityLocalInjected: agLocalMocks.antigravityLocalInjected,
   setAntigravityLocalInjected: agLocalMocks.setAntigravityLocalInjected,
+  listModelProviders: agLocalMocks.listModelProviders,
 }))
 
 const { store } = vi.hoisted(() => ({
@@ -111,6 +113,7 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     antigravityApi.getSource.mockResolvedValue('remote')
     agLocalMocks.antigravityLocalInjected.mockResolvedValue(false)
     agLocalMocks.setAntigravityLocalInjected.mockResolvedValue(undefined)
+    agLocalMocks.listModelProviders.mockResolvedValue([])
     store.state.ideProducts = [
       { id: 'claude_code', name: 'Claude Code (CLI + VSCode)', detected: true, injected: false },
       { id: 'claude_desktop', name: 'Claude Desktop (Code/Cowork)', detected: true, injected: false },
@@ -226,6 +229,42 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     await waitFor(() => {
       expect(codexApi.setSource).toHaveBeenCalledWith('remote')
     })
+  })
+
+  // ── 模型厂商接管(接管中心选厂商) ──
+  it('Codex 卡:本地段选自定义厂商并接管 → 调 setSource(provider:<id>)', async () => {
+    setPlatform('MacIntel')
+    agLocalMocks.listModelProviders.mockResolvedValue([
+      { id: 'p1', name: 'MyVend', baseURL: 'https://api.vend.com/v1', apiKey: 'k', wireApi: 'responses', modelCatalog: [], createdAt: 0 },
+    ])
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+    // 号源下拉出现,选中厂商 p1
+    const select = await within(codex).findByRole('combobox', { name: 'codex 本地接管号源' })
+    fireEvent.change(select, { target: { value: 'p1' } })
+    // 接管
+    fireEvent.click(await within(codex).findByRole('button', { name: '接管' }))
+    await waitFor(() => {
+      expect(codexApi.setSource).toHaveBeenCalledWith('provider:p1')
+    })
+  })
+
+  it('Codex 已用厂商接管:回填选中厂商 + 状态显示厂商名', async () => {
+    setPlatform('MacIntel')
+    codexApi.getSource.mockResolvedValue('provider:p1')
+    agLocalMocks.listModelProviders.mockResolvedValue([
+      { id: 'p1', name: 'MyVend', baseURL: 'https://api.vend.com/v1', apiKey: 'k', wireApi: 'responses', modelCatalog: [], createdAt: 0 },
+    ])
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    // provider 号源被视为本地接管 → 显示「停止」
+    const stop = await within(codex).findByRole('button', { name: '停止' })
+    expect(within(codex).getByText(/已接管 · 厂商 MyVend/)).toBeInTheDocument()
+    const select = within(codex).getByRole('combobox', { name: 'codex 本地接管号源' }) as HTMLSelectElement
+    expect(select.value).toBe('p1')
+    fireEvent.click(stop)
+    await waitFor(() => expect(codexApi.setSource).toHaveBeenCalledWith('remote'))
   })
 
   // ── 本地语义文案:codex 与 antigravity 都是注入式接管(直连官方),反代是另一回事 ──
