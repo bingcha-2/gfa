@@ -1,0 +1,2012 @@
+[
+  {
+    "bjTime": "2026-07-13 09:09:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 85,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:09:33",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 85,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:18:17",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 85,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:24:40",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 96,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:26:53",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 85,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:26:55",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 96,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:32:59",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 95,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:36:07",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 94,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:36:14",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 95,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:36:27",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 94,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:37:14",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 93,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 09:51:46",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 92,
+    "weeklyPercent": 84,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:26:39",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:29:25",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:29:32",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:29:32",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:29:37",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:30:06",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:31:00",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:31:04",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:32:21",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 89,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:32:34",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:32:37",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 89,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:32:57",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:33:02",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 89,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:35:43",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 88,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:35:49",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 89,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:35:57",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 88,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:36:36",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:36:38",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 88,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:36:40",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 89,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:36:43",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 87,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:40:00",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 88,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:40:03",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 86,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:40:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 88,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:40:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 86,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:43:41",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 87,
+    "weeklyPercent": 83,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:43:46",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 85,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:43:49",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 84,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:44:02",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 85,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:44:04",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 84,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:44:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 86,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:44:14",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 84,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:46:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 83,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:50:22",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:50:22",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 83,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:50:26",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:20",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 84,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:26",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:36",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:37",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:41",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:45",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:49",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:50",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:51",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:52",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:51:53",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:52:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 81,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:52:13",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:52:23",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 82,
+    "weeklyPercent": 82,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:52:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:53:08",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:53:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:53:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:53:13",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:53:17",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:03",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 80,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:09",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:14",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:17",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:18",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:19",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:54:29",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:16",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:22",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 79,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:31",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:52",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:55:58",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:01",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:35",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:36",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:51",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:54",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:56:55",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:00",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:31",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 78,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:32",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:38",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:40",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:45",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:55",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:57",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:58",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:57:59",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:01",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:03",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:08",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:08",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:22",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 77,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:23",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:24",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 81,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:58:25",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:59:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 75,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:59:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 76,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 10:59:14",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 75,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:01:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:01:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 75,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:01:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:01:15",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 75,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:01:15",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:02:44",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:02:57",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:02:59",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:03:01",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:03:05",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:03:06",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 74,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:03:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:09",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:15",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:21",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:25",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:25",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:26",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:04:27",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:08",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:17",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:17",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:27",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 73,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:05:28",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 72,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:06:58",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 71,
+    "weeklyPercent": 80,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:08:01",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 71,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:18:27",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 70,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:23:53",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 69,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:38:54",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 68,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 11:59:55",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 67,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:25:56",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65.99999999999999,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:26:41",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 67,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:27:24",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65.99999999999999,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:27:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65.99999999999999,
+    "weeklyPercent": 79,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:27:43",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65.99999999999999,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:56:50",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65.99999999999999,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 12:56:58",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 65,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 13:09:33",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 64,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 13:15:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 63,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 14:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:04:37",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:04:38",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:04:49",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:04:50",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:04:56",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:05:31",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:05:31",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:05:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:05:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:05:54",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:00",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:05",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:05",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:23",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:29",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:36",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:06:54",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:07:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:10:02",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:10:02",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:10:02",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:13:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:13:37",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:13:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:13:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:13:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:12",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:18",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:19",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 100,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 99,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:14:48",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:15:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:15:11",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:15:23",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:15:23",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:15:36",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 78,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:18:10",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 98,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:20:51",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 97,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:21:53",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 96,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:25:42",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 95,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:30:30",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 94,
+    "weeklyPercent": 77,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:33:15",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 93,
+    "weeklyPercent": 76,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:37:44",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 92,
+    "weeklyPercent": 76,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:43:34",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 91,
+    "weeklyPercent": 76,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  },
+  {
+    "bjTime": "2026-07-13 14:47:24",
+    "accountId": 45,
+    "upstreamEmail": "genevieve_solutakfu@minister.com",
+    "modelKey": "claude",
+    "hourlyPercent": 90,
+    "weeklyPercent": 76,
+    "hourlyResetBj": "2026-07-13 19:00:00",
+    "weeklyResetBj": "2026-07-17 17:00:00"
+  }
+]

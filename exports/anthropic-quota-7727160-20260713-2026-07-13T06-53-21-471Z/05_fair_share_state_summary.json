@@ -1,0 +1,42 @@
+[
+  {
+    "accountId": 45,
+    "bucket": "anthropic-claude",
+    "scope": "primary",
+    "algorithm": "window-cu-v1",
+    "revision": "2752",
+    "updatedBj": "2026-07-13 14:53:38",
+    "subscriptionId": "cmre9143o26f9s15spzp0pw7s",
+    "primed": "1",
+    "accountFraction": "0.9",
+    "assignedBurn": "0.08",
+    "unattributedShare": "0",
+    "resetAt": "1783940400000",
+    "lastReason": null,
+    "myShare": "0.2",
+    "myCumulativeCu": "25.9930261",
+    "myAttributedShare": "0.0577911791869987",
+    "myCarriedShare": "0",
+    "reorderTailCount": "0"
+  },
+  {
+    "accountId": 45,
+    "bucket": "anthropic-claude",
+    "scope": "weekly",
+    "algorithm": "window-cu-v1",
+    "revision": "2748",
+    "updatedBj": "2026-07-13 14:53:38",
+    "subscriptionId": "cmre9143o26f9s15spzp0pw7s",
+    "primed": "1",
+    "accountFraction": "0.76",
+    "assignedBurn": "0.1758081328125",
+    "unattributedShare": "0",
+    "resetAt": "1784278814119",
+    "lastReason": null,
+    "myShare": "0.2",
+    "myCumulativeCu": "153.7650734",
+    "myAttributedShare": "0.092357972506876",
+    "myCarriedShare": "0.0086925475626644",
+    "reorderTailCount": "0"
+  }
+]

@@ -1,0 +1,7 @@
+﻿request-log-tracker] flush failed: 23
+account-quota-snapshot-tracker] flush failed: 30
+fair-share-tracker] scheduled flush failed: 72
+Socket timeout: 813
+Unable to start a transaction in the given time: 18
+Transaction already closed: 98
+SQL error or missing database: 4

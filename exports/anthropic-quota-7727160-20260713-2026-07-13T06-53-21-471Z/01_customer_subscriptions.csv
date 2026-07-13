@@ -1,0 +1,3 @@
+customerId,email,subscriptionId,status,weight,bindings,startsAt,expiresAt,updatedAt
+cmqgr1cu6008is1qgjblugskd,7727160@qq.com,cmre9143o26f9s15spzp0pw7s,ACTIVE,2,"{""anthropic"":45}",2026-07-10T01:20:28.161Z,2026-08-09T01:20:28.161Z,2026-07-13T06:58:38.430Z
+cmqgr1cu6008is1qgjblugskd,7727160@qq.com,card_mqg95xg5_904158c9,CANCELLED,2,"{""anthropic"":7}",2026-06-16T14:41:14.972Z,2026-07-16T06:20:35.626Z,2026-07-10T02:17:39.313Z

@@ -1,0 +1,537 @@
+﻿5:[2026-07-13 00:08:10] [33m[Nest] 14116  - [39m2026/07/13 08:08:10 [33m   WARN[39m [38;5;3m[EntitlementSyncService] [39m[33m[rebind] sub cmr4fmi090i0ds17codp7lqqu product anthropic ? account #45 ??(oversell):???? 0 < ?? 2(??,??? D=max(N,?w) ????,? ?7/??7)[39m
+6:[2026-07-13 00:08:11] [32m[Nest] 14116  - [39m2026/07/13 08:08:11 [32m    LOG[39m [38;5;3m[EntitlementSyncService] [39m[32m[rebind] sub cmr4fmi090i0ds17codp7lqqu product anthropic ? account #45[39m
+53:[2026-07-13 03:10:44] [fair-share-tracker] scheduled flush failed: PrismaClientUnknownRequestError: Error in connector: Error querying the database: Error code 1: SQL error or missing database
+56:[2026-07-13 03:10:44]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:152:9)
+57:[2026-07-13 03:10:44]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:119:17)
+58:[2026-07-13 03:10:44]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:132:21)
+59:[2026-07-13 03:10:44]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+111:[2026-07-13 03:10:55] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+114:[2026-07-13 03:10:55]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:152:9)
+115:[2026-07-13 03:10:55]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:119:17)
+116:[2026-07-13 03:10:55]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:132:21)
+117:[2026-07-13 03:10:55]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+377:[2026-07-13 03:11:27] [fair-share-tracker] scheduled flush failed: PrismaClientUnknownRequestError: Error in connector: Error querying the database: Error code 1: SQL error or missing database
+380:[2026-07-13 03:11:27]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:152:9)
+381:[2026-07-13 03:11:27]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:119:17)
+382:[2026-07-13 03:11:27]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:132:21)
+383:[2026-07-13 03:11:27]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+386:[2026-07-13 03:11:27] [fair-share-tracker] scheduled flush failed: PrismaClientUnknownRequestError: Error in connector: Error querying the database: Error code 1: SQL error or missing database
+389:[2026-07-13 03:11:27]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:152:9)
+390:[2026-07-13 03:11:27]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:119:17)
+391:[2026-07-13 03:11:27]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:132:21)
+392:[2026-07-13 03:11:27]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+2174:[2026-07-13 03:18:14] [32m[Nest] 12092  - [39m2026/07/13 11:18:14 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mRemoteAnthropicModule dependencies initialized[39m[38;5;3m +0ms[39m
+2621:[2026-07-13 04:50:55] [32m[Nest] 2748  - [39m2026/07/13 12:50:55 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mRemoteAnthropicModule dependencies initialized[39m[38;5;3m +0ms[39m
+3029:[2026-07-13 05:59:32] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+3032:[2026-07-13 05:59:32]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+3033:[2026-07-13 05:59:32]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+3034:[2026-07-13 05:59:32]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+3035:[2026-07-13 05:59:32]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+3278:[2026-07-13 05:59:43] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+3285:[2026-07-13 05:59:43]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+3287:[2026-07-13 05:59:43]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+3288:[2026-07-13 05:59:43]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+3289:[2026-07-13 05:59:43]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+3290:[2026-07-13 05:59:43]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+3790:[2026-07-13 06:00:06] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+3791:[2026-07-13 06:00:06] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+3797:[2026-07-13 06:00:06]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+3800:[2026-07-13 06:00:06]     modelName: 'AccountQuotaSnapshot',
+3808:[2026-07-13 06:00:06] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+3815:[2026-07-13 06:00:06]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+3817:[2026-07-13 06:00:06]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+3818:[2026-07-13 06:00:06]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+3819:[2026-07-13 06:00:06]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+3820:[2026-07-13 06:00:06]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+3844:[2026-07-13 06:00:07] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+3847:[2026-07-13 06:00:07]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+3848:[2026-07-13 06:00:07]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+3849:[2026-07-13 06:00:07]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+3850:[2026-07-13 06:00:07]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+3993:[2026-07-13 06:00:17] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+3994:[2026-07-13 06:00:17] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+4000:[2026-07-13 06:00:17]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+4003:[2026-07-13 06:00:17]     modelName: 'AccountQuotaSnapshot',
+4310:[2026-07-13 06:00:34] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+4311:[2026-07-13 06:00:34] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+4317:[2026-07-13 06:00:34]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+4320:[2026-07-13 06:00:34]     modelName: 'AccountQuotaSnapshot',
+4325:[2026-07-13 06:00:35] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+4332:[2026-07-13 06:00:35]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+4334:[2026-07-13 06:00:35]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+4335:[2026-07-13 06:00:35]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+4336:[2026-07-13 06:00:35]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+4337:[2026-07-13 06:00:35]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+4447:[2026-07-13 06:00:40] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+4454:[2026-07-13 06:00:40]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+4456:[2026-07-13 06:00:40]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+4457:[2026-07-13 06:00:40]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+4458:[2026-07-13 06:00:40]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+4459:[2026-07-13 06:00:40]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+4994:[2026-07-13 06:01:09] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+4995:[2026-07-13 06:01:09] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+5001:[2026-07-13 06:01:09]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+5004:[2026-07-13 06:01:09]     modelName: 'AccountQuotaSnapshot',
+5128:[2026-07-13 06:01:15] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+5129:[2026-07-13 06:01:15] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+5135:[2026-07-13 06:01:15]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+5138:[2026-07-13 06:01:15]     modelName: 'AccountQuotaSnapshot',
+5143:[2026-07-13 06:01:15] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+5146:[2026-07-13 06:01:15]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+5147:[2026-07-13 06:01:15]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+5148:[2026-07-13 06:01:15]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+5149:[2026-07-13 06:01:15]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+5241:[2026-07-13 06:01:26] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+5242:[2026-07-13 06:01:26] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+5248:[2026-07-13 06:01:26]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+5251:[2026-07-13 06:01:26]     modelName: 'AccountQuotaSnapshot',
+5477:[2026-07-13 06:01:37] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+5484:[2026-07-13 06:01:37]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+5486:[2026-07-13 06:01:37]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+5487:[2026-07-13 06:01:37]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+5488:[2026-07-13 06:01:37]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+5489:[2026-07-13 06:01:37]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+5547:[2026-07-13 06:01:38] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+5554:[2026-07-13 06:01:38]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+5556:[2026-07-13 06:01:38]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+5557:[2026-07-13 06:01:38]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+5558:[2026-07-13 06:01:38]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+5559:[2026-07-13 06:01:38]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+5737:[2026-07-13 06:01:49] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+5744:[2026-07-13 06:01:49]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+5746:[2026-07-13 06:01:49]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+5747:[2026-07-13 06:01:49]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+5748:[2026-07-13 06:01:49]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+5749:[2026-07-13 06:01:49]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+6162:[2026-07-13 06:02:18] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+6163:[2026-07-13 06:02:18] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+6169:[2026-07-13 06:02:18]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+6172:[2026-07-13 06:02:18]     modelName: 'AccountQuotaSnapshot',
+6177:[2026-07-13 06:02:18] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+6178:[2026-07-13 06:02:18] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+6184:[2026-07-13 06:02:18]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+6187:[2026-07-13 06:02:18]     modelName: 'AccountQuotaSnapshot',
+6294:[2026-07-13 06:02:23] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+6297:[2026-07-13 06:02:23]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+6298:[2026-07-13 06:02:23]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+6299:[2026-07-13 06:02:23]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+6300:[2026-07-13 06:02:23]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+6358:[2026-07-13 06:02:24] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+6365:[2026-07-13 06:02:24]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+6367:[2026-07-13 06:02:24]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+6368:[2026-07-13 06:02:24]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+6369:[2026-07-13 06:02:24]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+6370:[2026-07-13 06:02:24]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+6512:[2026-07-13 06:02:35] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+6513:[2026-07-13 06:02:35] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+6519:[2026-07-13 06:02:35]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+6522:[2026-07-13 06:02:35]     modelName: 'AccountQuotaSnapshot',
+6627:[2026-07-13 06:02:41] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+6630:[2026-07-13 06:02:41]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+6631:[2026-07-13 06:02:41]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+6632:[2026-07-13 06:02:41]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+6633:[2026-07-13 06:02:41]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+6655:[2026-07-13 06:02:41] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+6662:[2026-07-13 06:02:41]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+6664:[2026-07-13 06:02:41]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+6665:[2026-07-13 06:02:41]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+6666:[2026-07-13 06:02:41]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+6667:[2026-07-13 06:02:41]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+6742:[2026-07-13 06:02:47] [fair-share-tracker] receipt prune failed: PrismaClientKnownRequestError: 
+6749:[2026-07-13 06:02:47]     at async D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:1108:37
+6750:[2026-07-13 06:02:47]     at async FairShareTracker.pruneExpiredReceipts (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:1105:13) {
+6991:[2026-07-13 06:03:05] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+6994:[2026-07-13 06:03:05]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+6995:[2026-07-13 06:03:05]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+6996:[2026-07-13 06:03:05]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+6997:[2026-07-13 06:03:05]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7038:[2026-07-13 06:03:05] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+7045:[2026-07-13 06:03:05]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+7047:[2026-07-13 06:03:05]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+7048:[2026-07-13 06:03:05]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+7049:[2026-07-13 06:03:05]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+7050:[2026-07-13 06:03:05]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7346:[2026-07-13 06:03:33] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+7347:[2026-07-13 06:03:33] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+7353:[2026-07-13 06:03:33]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+7356:[2026-07-13 06:03:33]     modelName: 'AccountQuotaSnapshot',
+7361:[2026-07-13 06:03:34] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+7368:[2026-07-13 06:03:34]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+7370:[2026-07-13 06:03:34]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+7371:[2026-07-13 06:03:34]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+7372:[2026-07-13 06:03:34]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+7373:[2026-07-13 06:03:34]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7499:[2026-07-13 06:03:45] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+7500:[2026-07-13 06:03:45] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+7506:[2026-07-13 06:03:45]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+7509:[2026-07-13 06:03:45]     modelName: 'AccountQuotaSnapshot',
+7514:[2026-07-13 06:03:45] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+7521:[2026-07-13 06:03:45]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+7523:[2026-07-13 06:03:45]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+7524:[2026-07-13 06:03:45]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+7525:[2026-07-13 06:03:45]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+7526:[2026-07-13 06:03:45]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7653:[2026-07-13 06:04:03] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+7660:[2026-07-13 06:04:03]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+7662:[2026-07-13 06:04:03]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+7663:[2026-07-13 06:04:03]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+7664:[2026-07-13 06:04:03]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+7665:[2026-07-13 06:04:03]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7673:[2026-07-13 06:04:08] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+7680:[2026-07-13 06:04:08]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+7682:[2026-07-13 06:04:08]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+7683:[2026-07-13 06:04:08]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+7684:[2026-07-13 06:04:08]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+7685:[2026-07-13 06:04:08]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+7794:[2026-07-13 06:04:14] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+7795:[2026-07-13 06:04:14] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+7801:[2026-07-13 06:04:14]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+7804:[2026-07-13 06:04:14]     modelName: 'AccountQuotaSnapshot',
+8368:[2026-07-13 06:04:49] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+8375:[2026-07-13 06:04:49]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+8377:[2026-07-13 06:04:49]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8378:[2026-07-13 06:04:49]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8379:[2026-07-13 06:04:49]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8380:[2026-07-13 06:04:49]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+8387:[2026-07-13 06:04:49] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+8394:[2026-07-13 06:04:49]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+8396:[2026-07-13 06:04:49]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8397:[2026-07-13 06:04:49]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8398:[2026-07-13 06:04:49]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8399:[2026-07-13 06:04:49]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+8423:[2026-07-13 06:05:01] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+8426:[2026-07-13 06:05:01]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8427:[2026-07-13 06:05:01]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8428:[2026-07-13 06:05:01]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8429:[2026-07-13 06:05:01]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+8470:[2026-07-13 06:05:07] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+8477:[2026-07-13 06:05:07]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+8479:[2026-07-13 06:05:07]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8480:[2026-07-13 06:05:07]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8481:[2026-07-13 06:05:07]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8482:[2026-07-13 06:05:07]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+8793:[2026-07-13 06:05:43] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+8796:[2026-07-13 06:05:43]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8797:[2026-07-13 06:05:43]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8798:[2026-07-13 06:05:43]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8799:[2026-07-13 06:05:43]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+8823:[2026-07-13 06:05:48] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+8830:[2026-07-13 06:05:48]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+8832:[2026-07-13 06:05:48]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+8833:[2026-07-13 06:05:48]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+8834:[2026-07-13 06:05:48]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+8835:[2026-07-13 06:05:48]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9098:[2026-07-13 06:06:12] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+9101:[2026-07-13 06:06:12]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9102:[2026-07-13 06:06:12]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9103:[2026-07-13 06:06:12]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9104:[2026-07-13 06:06:12]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9111:[2026-07-13 06:06:12] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+9118:[2026-07-13 06:06:12]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+9120:[2026-07-13 06:06:12]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9121:[2026-07-13 06:06:12]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9122:[2026-07-13 06:06:12]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9123:[2026-07-13 06:06:12]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9301:[2026-07-13 06:06:35] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+9304:[2026-07-13 06:06:35]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9305:[2026-07-13 06:06:35]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9306:[2026-07-13 06:06:35]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9307:[2026-07-13 06:06:35]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9346:[2026-07-13 06:06:36] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+9353:[2026-07-13 06:06:36]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+9355:[2026-07-13 06:06:36]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9356:[2026-07-13 06:06:36]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9357:[2026-07-13 06:06:36]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9358:[2026-07-13 06:06:36]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9722:[2026-07-13 06:07:05] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+9729:[2026-07-13 06:07:05]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+9731:[2026-07-13 06:07:05]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9732:[2026-07-13 06:07:05]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9733:[2026-07-13 06:07:05]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9734:[2026-07-13 06:07:05]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+9894:[2026-07-13 06:07:17] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+9901:[2026-07-13 06:07:17]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+9903:[2026-07-13 06:07:17]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+9904:[2026-07-13 06:07:17]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+9905:[2026-07-13 06:07:17]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+9906:[2026-07-13 06:07:17]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10202:[2026-07-13 06:07:46] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+10209:[2026-07-13 06:07:46]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+10211:[2026-07-13 06:07:46]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+10212:[2026-07-13 06:07:46]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+10213:[2026-07-13 06:07:46]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+10214:[2026-07-13 06:07:46]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10222:[2026-07-13 06:07:46] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+10229:[2026-07-13 06:07:46]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+10231:[2026-07-13 06:07:46]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+10232:[2026-07-13 06:07:46]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+10233:[2026-07-13 06:07:46]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+10234:[2026-07-13 06:07:46]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10343:[2026-07-13 06:07:58] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+10344:[2026-07-13 06:07:58] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+10350:[2026-07-13 06:07:58]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+10353:[2026-07-13 06:07:58]     modelName: 'AccountQuotaSnapshot',
+10358:[2026-07-13 06:08:04] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+10365:[2026-07-13 06:08:04]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+10367:[2026-07-13 06:08:04]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+10368:[2026-07-13 06:08:04]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+10369:[2026-07-13 06:08:04]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+10370:[2026-07-13 06:08:04]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10497:[2026-07-13 06:08:16] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+10504:[2026-07-13 06:08:16]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+10506:[2026-07-13 06:08:16]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+10507:[2026-07-13 06:08:16]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+10508:[2026-07-13 06:08:16]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+10509:[2026-07-13 06:08:16]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10534:[2026-07-13 06:08:16] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+10535:[2026-07-13 06:08:16] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+10541:[2026-07-13 06:08:16]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+10544:[2026-07-13 06:08:16]     modelName: 'AccountQuotaSnapshot',
+10700:[2026-07-13 06:08:40] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+10707:[2026-07-13 06:08:40]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+10709:[2026-07-13 06:08:40]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+10710:[2026-07-13 06:08:40]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+10711:[2026-07-13 06:08:40]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+10712:[2026-07-13 06:08:40]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+10770:[2026-07-13 06:08:50] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+10771:[2026-07-13 06:08:50] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+10777:[2026-07-13 06:08:50]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+10780:[2026-07-13 06:08:50]     modelName: 'AccountQuotaSnapshot',
+11023:[2026-07-13 06:09:02] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+11024:[2026-07-13 06:09:02] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+11030:[2026-07-13 06:09:02]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+11033:[2026-07-13 06:09:02]     modelName: 'AccountQuotaSnapshot',
+11055:[2026-07-13 06:09:08] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11062:[2026-07-13 06:09:08]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+11064:[2026-07-13 06:09:08]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11065:[2026-07-13 06:09:08]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11066:[2026-07-13 06:09:08]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11067:[2026-07-13 06:09:08]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11126:[2026-07-13 06:09:20] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11133:[2026-07-13 06:09:20]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+11135:[2026-07-13 06:09:20]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11136:[2026-07-13 06:09:20]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11137:[2026-07-13 06:09:20]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11138:[2026-07-13 06:09:20]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11177:[2026-07-13 06:09:20] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11184:[2026-07-13 06:09:20]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+11186:[2026-07-13 06:09:20]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11187:[2026-07-13 06:09:20]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11188:[2026-07-13 06:09:20]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11189:[2026-07-13 06:09:20]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11332:[2026-07-13 06:09:32] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11339:[2026-07-13 06:09:32]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+11341:[2026-07-13 06:09:32]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11342:[2026-07-13 06:09:32]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11343:[2026-07-13 06:09:32]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11344:[2026-07-13 06:09:32]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11367:[2026-07-13 06:09:38] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+11368:[2026-07-13 06:09:38] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+11374:[2026-07-13 06:09:38]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+11377:[2026-07-13 06:09:38]     modelName: 'AccountQuotaSnapshot',
+11518:[2026-07-13 06:09:50] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11525:[2026-07-13 06:09:50]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+11527:[2026-07-13 06:09:50]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11528:[2026-07-13 06:09:50]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11529:[2026-07-13 06:09:50]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11530:[2026-07-13 06:09:50]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11691:[2026-07-13 06:10:02] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+11694:[2026-07-13 06:10:02]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11695:[2026-07-13 06:10:02]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11696:[2026-07-13 06:10:02]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11697:[2026-07-13 06:10:02]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11719:[2026-07-13 06:10:02] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+11726:[2026-07-13 06:10:02]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+11728:[2026-07-13 06:10:02]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+11729:[2026-07-13 06:10:02]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+11730:[2026-07-13 06:10:02]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+11731:[2026-07-13 06:10:02]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+11738:[2026-07-13 06:10:08] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+11739:[2026-07-13 06:10:08] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+11745:[2026-07-13 06:10:08]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+11748:[2026-07-13 06:10:08]     modelName: 'AccountQuotaSnapshot',
+12021:[2026-07-13 06:10:38] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+12022:[2026-07-13 06:10:38] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+12028:[2026-07-13 06:10:38]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+12031:[2026-07-13 06:10:38]     modelName: 'AccountQuotaSnapshot',
+12053:[2026-07-13 06:10:38] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+12060:[2026-07-13 06:10:38]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+12062:[2026-07-13 06:10:38]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+12063:[2026-07-13 06:10:38]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+12064:[2026-07-13 06:10:38]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+12065:[2026-07-13 06:10:38]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+12259:[2026-07-13 06:10:50] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+12266:[2026-07-13 06:10:50]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+12268:[2026-07-13 06:10:50]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+12269:[2026-07-13 06:10:50]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+12270:[2026-07-13 06:10:50]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+12271:[2026-07-13 06:10:50]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+12499:[2026-07-13 06:11:07] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+12500:[2026-07-13 06:11:07] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+12506:[2026-07-13 06:11:07]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+12509:[2026-07-13 06:11:07]     modelName: 'AccountQuotaSnapshot',
+12633:[2026-07-13 06:11:14] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+12640:[2026-07-13 06:11:14]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+12642:[2026-07-13 06:11:14]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+12643:[2026-07-13 06:11:14]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+12644:[2026-07-13 06:11:14]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+12645:[2026-07-13 06:11:14]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+12653:[2026-07-13 06:11:20] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+12660:[2026-07-13 06:11:20]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+12662:[2026-07-13 06:11:20]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+12663:[2026-07-13 06:11:20]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+12664:[2026-07-13 06:11:20]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+12665:[2026-07-13 06:11:20]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+12772:[2026-07-13 06:11:38] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+12775:[2026-07-13 06:11:38]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+12776:[2026-07-13 06:11:38]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+12777:[2026-07-13 06:11:38]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+12778:[2026-07-13 06:11:38]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+12851:[2026-07-13 06:11:49] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+12852:[2026-07-13 06:11:49] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+12858:[2026-07-13 06:11:49]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+12861:[2026-07-13 06:11:49]     modelName: 'AccountQuotaSnapshot',
+13017:[2026-07-13 06:12:00] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+13024:[2026-07-13 06:12:00]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+13026:[2026-07-13 06:12:00]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13027:[2026-07-13 06:12:00]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13028:[2026-07-13 06:12:00]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13029:[2026-07-13 06:12:00]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13053:[2026-07-13 06:12:06] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13054:[2026-07-13 06:12:06] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13060:[2026-07-13 06:12:06]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13063:[2026-07-13 06:12:06]     modelName: 'AccountQuotaSnapshot',
+13068:[2026-07-13 06:12:06] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Socket timeout (the database failed to respond to a query within the configured timeout? see https://pris.ly/d/sqlite-connector for more details).
+13071:[2026-07-13 06:12:06]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13072:[2026-07-13 06:12:06]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13073:[2026-07-13 06:12:06]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13074:[2026-07-13 06:12:06]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13115:[2026-07-13 06:12:07] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+13122:[2026-07-13 06:12:07]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+13124:[2026-07-13 06:12:07]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13125:[2026-07-13 06:12:07]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13126:[2026-07-13 06:12:07]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13127:[2026-07-13 06:12:07]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13353:[2026-07-13 06:12:25] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13354:[2026-07-13 06:12:25] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13360:[2026-07-13 06:12:25]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13363:[2026-07-13 06:12:25]     modelName: 'AccountQuotaSnapshot',
+13434:[2026-07-13 06:12:37] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13435:[2026-07-13 06:12:37] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13441:[2026-07-13 06:12:37]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13444:[2026-07-13 06:12:37]     modelName: 'AccountQuotaSnapshot',
+13483:[2026-07-13 06:12:37] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+13490:[2026-07-13 06:12:37]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+13492:[2026-07-13 06:12:37]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13493:[2026-07-13 06:12:37]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13494:[2026-07-13 06:12:37]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13495:[2026-07-13 06:12:37]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13534:[2026-07-13 06:12:43] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+13541:[2026-07-13 06:12:43]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+13543:[2026-07-13 06:12:43]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13544:[2026-07-13 06:12:43]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13545:[2026-07-13 06:12:43]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13546:[2026-07-13 06:12:43]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13571:[2026-07-13 06:12:55] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13572:[2026-07-13 06:12:55] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13578:[2026-07-13 06:12:55]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13581:[2026-07-13 06:12:55]     modelName: 'AccountQuotaSnapshot',
+13705:[2026-07-13 06:13:06] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13706:[2026-07-13 06:13:06] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13712:[2026-07-13 06:13:06]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13715:[2026-07-13 06:13:06]     modelName: 'AccountQuotaSnapshot',
+13720:[2026-07-13 06:13:06] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+13723:[2026-07-13 06:13:06]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13724:[2026-07-13 06:13:06]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13725:[2026-07-13 06:13:06]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13726:[2026-07-13 06:13:06]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13782:[2026-07-13 06:13:18] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+13785:[2026-07-13 06:13:18]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13786:[2026-07-13 06:13:18]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13787:[2026-07-13 06:13:18]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13788:[2026-07-13 06:13:18]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13827:[2026-07-13 06:13:24] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13828:[2026-07-13 06:13:24] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13834:[2026-07-13 06:13:24]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13837:[2026-07-13 06:13:24]     modelName: 'AccountQuotaSnapshot',
+13927:[2026-07-13 06:13:36] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+13928:[2026-07-13 06:13:36] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+13934:[2026-07-13 06:13:36]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+13937:[2026-07-13 06:13:36]     modelName: 'AccountQuotaSnapshot',
+13942:[2026-07-13 06:13:36] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+13945:[2026-07-13 06:13:36]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13946:[2026-07-13 06:13:36]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13947:[2026-07-13 06:13:36]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13948:[2026-07-13 06:13:36]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+13953:[2026-07-13 06:13:37] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+13960:[2026-07-13 06:13:37]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+13962:[2026-07-13 06:13:37]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+13963:[2026-07-13 06:13:37]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+13964:[2026-07-13 06:13:37]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+13965:[2026-07-13 06:13:37]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14295:[2026-07-13 06:14:12] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+14302:[2026-07-13 06:14:12]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+14304:[2026-07-13 06:14:12]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14305:[2026-07-13 06:14:12]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14306:[2026-07-13 06:14:12]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14307:[2026-07-13 06:14:12]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14366:[2026-07-13 06:14:19] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+14373:[2026-07-13 06:14:19]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+14375:[2026-07-13 06:14:19]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14376:[2026-07-13 06:14:19]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14377:[2026-07-13 06:14:19]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14378:[2026-07-13 06:14:19]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14453:[2026-07-13 06:14:36] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+14456:[2026-07-13 06:14:36]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14457:[2026-07-13 06:14:36]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14458:[2026-07-13 06:14:36]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14459:[2026-07-13 06:14:36]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14464:[2026-07-13 06:14:36] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+14471:[2026-07-13 06:14:36]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+14473:[2026-07-13 06:14:36]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14474:[2026-07-13 06:14:36]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14475:[2026-07-13 06:14:36]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14476:[2026-07-13 06:14:36]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14619:[2026-07-13 06:14:48] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+14620:[2026-07-13 06:14:48] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+14626:[2026-07-13 06:14:48]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+14629:[2026-07-13 06:14:48]     modelName: 'AccountQuotaSnapshot',
+14906:[2026-07-13 06:15:17] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+14909:[2026-07-13 06:15:17]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14910:[2026-07-13 06:15:17]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14911:[2026-07-13 06:15:17]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14912:[2026-07-13 06:15:17]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+14934:[2026-07-13 06:15:17] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+14941:[2026-07-13 06:15:17]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:179:21
+14943:[2026-07-13 06:15:17]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+14944:[2026-07-13 06:15:17]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+14945:[2026-07-13 06:15:17]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+14946:[2026-07-13 06:15:17]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+15056:[2026-07-13 06:15:41] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+15063:[2026-07-13 06:15:41]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+15065:[2026-07-13 06:15:41]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+15066:[2026-07-13 06:15:41]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+15067:[2026-07-13 06:15:41]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+15068:[2026-07-13 06:15:41]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+15211:[2026-07-13 06:15:53] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+15218:[2026-07-13 06:15:53]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:166:38
+15220:[2026-07-13 06:15:53]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+15221:[2026-07-13 06:15:53]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+15222:[2026-07-13 06:15:53]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+15223:[2026-07-13 06:15:53]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+15315:[2026-07-13 06:16:05] [account-quota-snapshot-tracker] flush failed: PrismaClientKnownRequestError: 
+15316:[2026-07-13 06:16:05] Invalid `prisma.accountQuotaSnapshot.createMany()` invocation:
+15322:[2026-07-13 06:16:05]     at async AccountQuotaSnapshotTracker.flush (D:\GFA-per\apps\server\dist\leasing\token-server\account-quota-snapshot-tracker.js:85:13) {
+15325:[2026-07-13 06:16:05]     modelName: 'AccountQuotaSnapshot',
+15534:[2026-07-13 06:16:16] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: Transaction API error: Unable to start a transaction in the given time.
+15537:[2026-07-13 06:16:16]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+15538:[2026-07-13 06:16:16]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+15539:[2026-07-13 06:16:16]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+15540:[2026-07-13 06:16:16]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+15545:[2026-07-13 06:16:17] [fair-share-tracker] scheduled flush failed: PrismaClientKnownRequestError: 
+15552:[2026-07-13 06:16:17]     at async D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:191:25
+15554:[2026-07-13 06:16:17]     at async FairShareWindowRepository.checkpointTransaction (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:156:9)
+15555:[2026-07-13 06:16:17]     at async FairShareWindowRepository.checkpointBatch (D:\GFA-per\apps\server\dist\leasing\quota\fair-share-window-repository.js:123:17)
+15556:[2026-07-13 06:16:17]     at async Object.commit (D:\GFA-per\apps\server\dist\leasing\token-server\fair-share-tracker.js:134:21)
+15557:[2026-07-13 06:16:17]     at async QuotaWriteCoordinator.flush (D:\GFA-per\apps\server\dist\leasing\quota\quota-write-coordinator.js:86:13) {
+15605:[2026-07-13 06:17:32] [32m[Nest] 11584  - [39m2026/07/13 14:17:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mRemoteAnthropicModule dependencies initialized[39m[38;5;3m +0ms[39m
