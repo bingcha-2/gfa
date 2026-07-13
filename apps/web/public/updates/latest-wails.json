@@ -1,30 +1,30 @@
 {
-  "version": "13.5.1",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.1/BingchaAI-13.5.1.exe",
-  "sha256": "16E432660647E948F8B8E708CAF5DBE4CBA66E057026C370E6D598AC6384395A",
-  "size": 54374912,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.1/BingchaAI-13.5.1-setup.exe",
-  "installerSha256": "F7BCC6E5F09AFAB149E141868C8A5B9059F527C0B7B134B40F9E7DC9D05A111C",
-  "installerSize": 21025307,
-  "changelog": "额度显示准确性与客户端稳定性优化",
-  "minVersion": "13.5.1",
+  "version": "13.5.2",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.2/BingchaAI-13.5.2.exe",
+  "sha256": "AD3C6E9874C4DA14114986129614856CA29F644625AA654C97EF00FDFA419421",
+  "size": 54384640,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.2/BingchaAI-13.5.2-setup.exe",
+  "installerSha256": "88FE0727CABDAD61E0C89B97FF65DE2F310B55B10E091852CA7B0C36A3F06293",
+  "installerSize": 21030517,
+  "changelog": "-修复 Codex 5 小时与周额度窗口识别。\\n-修复乱序额度状态与换号显示问题。",
+  "minVersion": "13.5.2",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.1/BingchaAI-13.5.1-arm64.dmg",
-      "sha256": "0A8D9CE38C1292622C7F5C4480DB347E3104F78334364C48214C9BCD0019DBC8",
-      "size": 20705874
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.2/BingchaAI-13.5.2-arm64.dmg",
+      "sha256": "6CAEC9253B4BCD1AF54D451157637E9A9D5FEA0D93E903CB11355B9F332D5B6F",
+      "size": 21002780
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.1/BingchaAI-13.5.1-amd64.dmg",
-      "sha256": "BC9586428D2810BBEF74FE29767B9BE6DEB1028996A91AAF8FF9B16D6DFD146F",
-      "size": 22865431
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.2/BingchaAI-13.5.2-amd64.dmg",
+      "sha256": "10B42BFE49BB8E5D5446DC09799B2DF67B6ACC5C38BF3CA1F57194DD64D3F3E1",
+      "size": 22881127
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.1/BingchaAI-13.5.1-linux-amd64.tar.gz",
-      "sha256": "7188F6F7D2343CDB450972C262CE2FAF7159337594C67BF39A6034D675EF2D79",
-      "size": 18435523
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.2/BingchaAI-13.5.2-linux-amd64.tar.gz",
+      "sha256": "0D2C2B150E4D735D34C61405B50C6F30050489212071ECD8CA81DF3A7DFB8BFD",
+      "size": 18441771
     }
   }
 }
