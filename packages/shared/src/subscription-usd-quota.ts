@@ -32,3 +32,23 @@ export const API_USD_DEFAULT_LEVELS: Record<string, string> = {
   codex: "pro",
   anthropic: "max-20x",
 };
+
+/**
+ * Cheapest sellable level for a product (lowest weekly, then 5h). Use this as
+ * the SAFE fallback when a subscription carries no recorded level and the
+ * catalog offers no default: under-grant to the cheapest tier rather than
+ * silently gifting the top tier (a level-less anthropic row must not default to
+ * max-20x). Returns "" if the product has no defaults.
+ */
+export function cheapestApiUsdLevel(product: string): string {
+  const levels = API_USD_QUOTA_PER_SEAT_DEFAULTS[product];
+  if (!levels) return "";
+  let best = "";
+  let bestRank = Number.POSITIVE_INFINITY;
+  for (const [level, quota] of Object.entries(levels)) {
+    // Rank by weekly (the dominant cap) first, then 5h as a tiebreak.
+    const rank = (Number(quota.weekly) || 0) * 1e6 + (Number(quota.fiveHour) || 0);
+    if (rank < bestRank) { bestRank = rank; best = level; }
+  }
+  return best;
+}

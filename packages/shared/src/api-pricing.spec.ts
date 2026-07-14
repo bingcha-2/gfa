@@ -67,10 +67,29 @@ describe("API-equivalent pricing", () => {
       contextTokens: 300_000,
       inputTokens: 1_000_000,
     }))).toMatchObject({
-      usd: 12.5,
+      // Flagship (gpt-5.6-sol) Priority rate, not another model's higher rate.
+      usd: 10,
       contextTier: "unknown",
       quality: "unsupported-context",
     });
+  });
+
+  it("prices an unknown model at the flagship rate, not the highest active legacy rate", () => {
+    // Unknown Anthropic id → flagship opus-4-8 ($5 in / $25 out), NOT the still-
+    // active legacy opus-4-1 ($15/$75) that the old max-across-active fallback used.
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-9-preview",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 5, quality: "conservative-fallback" });
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-9-preview",
+      outputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 25, quality: "conservative-fallback" });
+    // Unknown Codex id → flagship gpt-5.6-sol short ($5 in / $30 out).
+    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", inputTokens: 1_000_000 })).usd).toBe(5);
+    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", outputTokens: 1_000_000 })).usd).toBe(30);
   });
 
   it("marks an unpublished model/mode pairing as conservative", () => {

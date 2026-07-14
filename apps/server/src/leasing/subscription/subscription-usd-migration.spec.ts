@@ -21,6 +21,18 @@ describe("migrateBindSubscriptionToUsd", () => {
     });
   });
 
+  it("defaults a level-less legacy row to the CHEAPEST tier, not the top tier", () => {
+    const result = migrateBindSubscriptionToUsd({
+      line: "bind",
+      products: ["anthropic"],
+      shareSeats: 1,
+      shareCapacity: 4,
+    });
+    // No recorded level and no catalog → anthropic 'pro' ($1.5 / $15.83 per seat),
+    // NOT the top-tier max-20x ($30 / $158.33) the old fallback gifted.
+    expect(result.config.usdQuotaByProduct).toEqual({ anthropic: { fiveHour: 1.5, weekly: 15.833333 } });
+  });
+
   it("upgrades version-3 aggregate limits to product defaults once", () => {
     const input = {
       line: "bind",

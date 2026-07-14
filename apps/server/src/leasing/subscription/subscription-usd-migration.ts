@@ -1,4 +1,4 @@
-import { API_USD_DEFAULT_LEVELS, API_USD_QUOTA_PER_SEAT_DEFAULTS } from "@gfa/shared";
+import { API_USD_QUOTA_PER_SEAT_DEFAULTS, cheapestApiUsdLevel } from "@gfa/shared";
 
 import type { CatalogConfig } from "../plan-catalog/pricing";
 import { accountCapacity, oversellCeiling } from "../plan-catalog/unified-entitlement";
@@ -46,7 +46,9 @@ function defaultLevel(product: string, config: Record<string, any>, catalog?: Pa
   const explicit = String(config.levels?.[product] || "").trim();
   if (explicit) return explicit;
   const fromPolicy = String(catalog?.supplyPolicies?.[product]?.defaultLevel || "").trim();
-  return fromPolicy || API_USD_DEFAULT_LEVELS[product] || "";
+  // No recorded level and no catalog default → fall back to the CHEAPEST tier,
+  // never the top tier. A level-less legacy row must not be gifted max-20x/pro.
+  return fromPolicy || cheapestApiUsdLevel(product);
 }
 
 function perSeatQuota(
@@ -72,7 +74,7 @@ function perSeatQuota(
   // An explicitly published zero is intentional, so the fallback is selected
   // by the absence of the level entry rather than by positive-value checks.
   const quota = API_USD_QUOTA_PER_SEAT_DEFAULTS[product]?.[level]
-    ?? API_USD_QUOTA_PER_SEAT_DEFAULTS[product]?.[API_USD_DEFAULT_LEVELS[product]];
+    ?? API_USD_QUOTA_PER_SEAT_DEFAULTS[product]?.[cheapestApiUsdLevel(product)];
   return {
     fiveHour: finiteNonNegative(quota?.fiveHour),
     weekly: finiteNonNegative(quota?.weekly),

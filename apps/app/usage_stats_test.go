@@ -103,14 +103,15 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 
 func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
-	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的保守最高价。
-	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 当前仍可用 Opus 4.1:1M*15 + 0.2M*75 = 30
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 30 {
-		t.Fatalf("claude saved = %v, want 30", got)
+	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的主力模型价
+	// (不是全部在用型号里最贵的那个,避免临期旧型号把回退价顶得虚高)。
+	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 主力 Opus 4.8:1M*5 + 0.2M*25 = 10
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 10 {
+		t.Fatalf("claude saved = %v, want 10", got)
 	}
-	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 32
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 32 {
-		t.Fatalf("after gemini saved = %v, want 32", got)
+	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 12
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 12 {
+		t.Fatalf("after gemini saved = %v, want 12", got)
 	}
 }
 
@@ -239,11 +240,12 @@ func TestAddModelTokensFastUsesOfficialPriorityAndTracksFastTokens(t *testing.T)
 		t.Fatalf("标准档 row = %+v, want long-context cost=10 fastTokens=0", std)
 	}
 
-	// Priority 暂未发布 long 档,明确回退其 short 官方价 $12.5/M,累计 $22.5。
+	// Priority 暂未发布 long 档,明确回退主力模型(gpt-5.6-sol)的 short 官方价
+	// $10/M(而非取全部在用型号里最贵的 $12.5/M),累计 $20。
 	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, true)
 	row := s.GetTodayRecord().ByModel["gpt-5.5"]
-	if got := row.EstimatedCostUSD; got < 22.5-1e-9 || got > 22.5+1e-9 {
-		t.Fatalf("fast 后成本 = %v, want 22.5", got)
+	if got := row.EstimatedCostUSD; got < 20-1e-9 || got > 20+1e-9 {
+		t.Fatalf("fast 后成本 = %v, want 20", got)
 	}
 	if row.FastTokens != 1_000_000 {
 		t.Fatalf("FastTokens = %d, want 1000000", row.FastTokens)
@@ -302,10 +304,10 @@ func TestAddTokensBillableAndCacheWrite(t *testing.T) {
 	if rec.BillableTokens != 39660 {
 		t.Fatalf("billable = %d, want 39660", rec.BillableTokens)
 	}
-	// 缺模型 id 时按 api-pricing.json 中 Anthropic 的保守最高价：
-	// 当前保守最高价是仍可用的 Opus 4.1：
-	// net入100*15 + 出260*75 + 缓存读3000*1.5 + 缓存写39000*18.75 = 0.75675 USD。
-	want := 0.75675
+	// 缺模型 id 时按 api-pricing.json 中 Anthropic 的主力模型价(Opus 4.8,
+	// 不是全部在用型号里最贵的旧 Opus 4.1)：
+	// net入100*5 + 出260*25 + 缓存读3000*0.5 + 缓存写39000*6.25 = 0.25225 USD。
+	want := 0.25225
 	if got := rec.SavedMoneyUSD; got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("saved(含缓存) = %v, want %v", got, want)
 	}

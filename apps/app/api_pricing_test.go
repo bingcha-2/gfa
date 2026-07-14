@@ -46,7 +46,8 @@ func TestAPIValuePriorityAndClaudeCacheTTL(t *testing.T) {
 	}
 	unsupported := calculateAPIValue("codex", "gpt-5.6-sol", "priority", 300_000,
 		1_000_000, 0, 0, 0, 0, at)
-	if unsupported.USD != 12.5 || unsupported.Quality != "unsupported-context" {
+	// Flagship (gpt-5.6-sol) priority short rate, not another model's higher rate.
+	if unsupported.USD != 10 || unsupported.Quality != "unsupported-context" {
 		t.Fatalf("priority long fallback = %+v", unsupported)
 	}
 	missingMode := calculateAPIValue("codex", "gpt-5.3-codex", "priority", 100_000,
@@ -66,5 +67,33 @@ func TestAPIValueUnknownModelIsExplicitlyConservative(t *testing.T) {
 		1_000_000, 0, 0, 0, 0, time.Now())
 	if v.USD < 5 || v.Quality != "conservative-fallback" {
 		t.Fatalf("unknown fallback = %+v", v)
+	}
+}
+
+func TestAPIValueUnknownModelUsesFlagshipNotHighestLegacyRate(t *testing.T) {
+	at := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	// Unknown Anthropic id -> flagship opus-4-8 ($5 in / $25 out), NOT the
+	// still-active legacy opus-4-1 ($15/$75, effectiveUntil 2026-08-05) that
+	// the old max-across-active fallback used.
+	inUsd := calculateAPIValue("anthropic", "claude-opus-9-preview", "standard", 0,
+		1_000_000, 0, 0, 0, 0, at)
+	if inUsd.USD != 5 || inUsd.Quality != "conservative-fallback" {
+		t.Fatalf("unknown anthropic input fallback = %+v, want $5 conservative-fallback", inUsd)
+	}
+	outUsd := calculateAPIValue("anthropic", "claude-opus-9-preview", "standard", 0,
+		0, 1_000_000, 0, 0, 0, at)
+	if outUsd.USD != 25 {
+		t.Fatalf("unknown anthropic output fallback = %+v, want $25", outUsd)
+	}
+	// Unknown Codex id -> flagship gpt-5.6-sol short ($5 in / $30 out).
+	codexIn := calculateAPIValue("codex", "gpt-6-codex", "standard", 0,
+		1_000_000, 0, 0, 0, 0, at)
+	if codexIn.USD != 5 {
+		t.Fatalf("unknown codex input fallback = %+v, want $5", codexIn)
+	}
+	codexOut := calculateAPIValue("codex", "gpt-6-codex", "standard", 0,
+		0, 1_000_000, 0, 0, 0, at)
+	if codexOut.USD != 30 {
+		t.Fatalf("unknown codex output fallback = %+v, want $30", codexOut)
 	}
 }
