@@ -294,6 +294,15 @@ export type ConsoleSubscription = {
   createdAt: string;
   /** 线路:绑定模式(绑定到具体上游号)或号池模式(卖用量,不占座位)。后端 rowToConfig 推断。 */
   line?: "bind" | "pool";
+  /** Number of purchased carpool shares applied to every selected product. */
+  shareSeats?: number;
+  /** Product-scoped total API-equivalent USD caps. */
+  usdQuotaByProduct?: Record<string, { fiveHour: number; weekly: number }>;
+  /** Live enforcement windows. Amounts are visible only in the admin console. */
+  usdQuotaUsageByProduct?: Record<string, {
+    fiveHour: { used: number; limit: number; resetAt: string } | null;
+    weekly: { used: number; limit: number; resetAt: string } | null;
+  }>;
   config: string | null;
   bindings: string | null;
   levels: string | null;

@@ -87,12 +87,11 @@ export const SITE_URLS = {
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
 import type { main } from '../../wailsjs/go/models'
-import type { Config, IDEStatus, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
+import type { Config, IDEStatus, UpdateStatus, AccountState } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
-  // GetConfig 返回 wails 生成的 main.Config(其 SubscriptionSnapshot.remainFraction 标为
-  // optional number);手写 Config 用 number|null。两者是同一数据的镜像,断言对齐(与 saveConfig 对称)。
+  // GetConfig 返回 Wails 生成模型；手写 Config 是同一 JSON 数据的前端镜像。
   return GetConfig() as unknown as Config
 }
 
@@ -173,22 +172,6 @@ export interface StatsResponse {
     autoLeaseRunning: boolean
     cardUnusable?: boolean
     boundResetMs?: number
-    accountFractions?: Record<string, number>
-    accountResetMs?: Record<string, number>
-    accountResetAt?: Record<string, number>
-    myFractions?: Record<string, number>
-    myPersonalFractions?: Record<string, number>
-    myResetMs?: Record<string, number>
-    myResetAt?: Record<string, number>
-    myShares?: Record<string, number>
-    // 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)
-    myWeeklyFractions?: Record<string, number>
-    myPersonalWeeklyFractions?: Record<string, number>
-    myWeeklyResetMs?: Record<string, number>
-    myWeeklyResetAt?: Record<string, number>
-    codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number; hourlyPresent?: boolean; weeklyPresent?: boolean }
-    claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
-    boundAccounts?: BoundAccountInfo[]
     hasToken: boolean
     lastError: string
     activationExpiresAt: string
@@ -201,17 +184,6 @@ export interface StatsResponse {
       geminiTokenLimit?: number
       tokenWindowResetMs?: number
       tokenWindowResetAt?: string
-      weight?: number          // 本卡 fair-share 份额权重(份额 X/Y 的 X)
-      shareCapacity?: number   // 号总份数(份额 X/Y 的 Y)
-      exclusive?: boolean      // 后端权威独享标志(尊贵 badge 据此)
-      buckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h)
-      weeklyBuckets?: {
-        bucket: string
-        used: number
-        limit: number
-        weeklyWindowResetMs?: number
-        weeklyWindowResetAt?: string
-      }[]  // 每复合桶·周(显式或派生 5h×R)
     }
     localQuota?: {
       opusTokensUsed?: number
@@ -241,6 +213,12 @@ export interface StatsResponse {
   hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; byModel?: Record<string, ModelUsageStats> }[]
   chartMode: string
   cumulativeSaving: number
+  usageSource?: string
+  localUsage?: {
+    today?: { inputTokens?: number; outputTokens?: number; cachedTokens?: number; cacheWriteTokens?: number; savedMoneyUSD?: number }
+    cumulativeSaving?: number
+    namespaceUserId?: string
+  }
   appVersion: string
   updateStatus: UpdateStatus
   proxyStartedAt: string

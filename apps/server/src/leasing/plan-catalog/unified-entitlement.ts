@@ -1,10 +1,9 @@
-// Supply policies describe per-account sales capacity.
-// Codex/Anthropic bind quotas stay fair-share governed.
-// Antigravity bind quotas can additionally publish fixed token buckets.
+// Supply policies only describe product defaults and optional fixed token
+// buckets. Sales capacity has one source of truth: accountCapacity ×
+// oversellFactor.
 
 export interface SupplyPolicy {
   defaultLevel: string;
-  salesSeatsPerAccount: Record<string, number>;
   buckets?: Record<string, unknown>;
 }
 
@@ -59,11 +58,10 @@ export function oversellCeiling(catalog: SupplyPolicyCatalog, fallback: number):
 
 export function defaultSupplyPolicies(): Record<string, SupplyPolicy> {
   return {
-    anthropic: { defaultLevel: "max-20x", salesSeatsPerAccount: { "max-20x": 10 } },
-    codex: { defaultLevel: "pro", salesSeatsPerAccount: { pro: 10 } },
+    anthropic: { defaultLevel: "max-20x" },
+    codex: { defaultLevel: "pro" },
     antigravity: {
       defaultLevel: "ultra",
-      salesSeatsPerAccount: { ultra: 10 },
       buckets: {
         "antigravity-gemini": { source: "fixed", window5h: 100_000_000, weekly: 400_000_000 },
         "antigravity-claude": { source: "fixed", window5h: 12_000_000, weekly: 40_000_000 },
@@ -83,10 +81,6 @@ export function mergeSupplyPolicies(catalog: SupplyPolicyCatalog): Record<string
     const override = overrides[product] ?? {};
     merged[product] = {
       defaultLevel: override.defaultLevel ?? base?.defaultLevel ?? "",
-      salesSeatsPerAccount: {
-        ...(base?.salesSeatsPerAccount ?? {}),
-        ...(override.salesSeatsPerAccount ?? {}),
-      },
       buckets: mergeBucketSources(base?.buckets, override.buckets),
     };
   }
@@ -130,22 +124,6 @@ export function writePositive(target: Record<string, number>, key: string, value
   if (key && Number.isFinite(normalized) && normalized > 0) {
     target[key] = normalized;
   }
-}
-
-export function salesSeatCapacityFor(
-  catalog: SupplyPolicyCatalog,
-  product: string,
-  level: string,
-  fallback: number,
-): number {
-  const policies = mergeSupplyPolicies(catalog);
-  const policy = policies[product];
-  const capacity = positiveInteger(policy?.salesSeatsPerAccount?.[level]);
-  if (capacity) return capacity;
-  const defaultCapacity = positiveInteger(policy?.salesSeatsPerAccount?.[policy.defaultLevel]);
-  if (defaultCapacity) return defaultCapacity;
-  const fallbackCapacity = Math.floor(Number(fallback));
-  return Number.isFinite(fallbackCapacity) && fallbackCapacity > 0 ? fallbackCapacity : 8;
 }
 
 function positiveInteger(value: unknown): number | null {

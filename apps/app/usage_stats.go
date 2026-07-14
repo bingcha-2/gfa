@@ -28,7 +28,8 @@ type ModelUsageRecord struct {
 	PricingMode      string  `json:"pricingMode,omitempty"`
 	PricingQuality   string  `json:"pricingQuality,omitempty"`
 	// FastTokens:走「快速档」(codex service_tier=priority)请求的**原始** token(与 TotalTokens
-	// 同口径,含缓存),供看板「其中 fast」列直接对比占比。成本溢价 1.5x 在 EstimatedCostUSD 里。
+	// 同口径,含缓存),供看板「其中 fast」列直接对比占比。EstimatedCostUSD 使用对应模型
+	// 在请求发生时的 priority 官方价格。
 	FastTokens int64 `json:"fastTokens"`
 }
 
@@ -58,12 +59,24 @@ type HourlyRecord struct {
 	CacheWriteTokens int64                        `json:"cacheWriteTokens"` // 缓存写 cache_creation
 }
 
+// ServerUsageSummary is the authenticated customer's authoritative dashboard
+// aggregate returned with login/heartbeat. Local usage remains separate.
+type ServerUsageSummary struct {
+	Today            DailyRecord    `json:"today"`
+	DailyHistory     []DailyRecord  `json:"dailyHistory"`
+	HourlyHistory    []HourlyRecord `json:"hourlyHistory"`
+	ChartMode        string         `json:"chartMode"`
+	CumulativeSaving float64        `json:"cumulativeSaving"`
+	Source           string         `json:"source"`
+}
+
 // UsageStatsStore 用量统计持久化
 type UsageStatsStore struct {
 	mu            sync.Mutex
 	Records       map[string]*DailyRecord  `json:"records"`       // key = "2026-05-22"
 	HourlyRecords map[string]*HourlyRecord `json:"hourlyRecords"` // key = "2026-05-22T15"
 	dirty         bool
+	namespace     string
 }
 
 var globalUsageStats = &UsageStatsStore{
@@ -73,6 +86,56 @@ var globalUsageStats = &UsageStatsStore{
 
 func GetUsageStats() *UsageStatsStore {
 	return globalUsageStats
+}
+
+func (s *UsageStatsStore) Namespace() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.namespace
+}
+
+func usageNamespaceFile(userID string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(userID) {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return filepath.Join(getAppDataDir(), "usage_stats."+b.String()+".json")
+}
+
+// SwitchNamespace makes local telemetry follow the authenticated server user.
+// The legacy global file is claimed once by the first signed-in user after
+// upgrade, preserving history without exposing it to later accounts.
+func (s *UsageStatsStore) SwitchNamespace(userID string) {
+	s.mu.Lock()
+	// Save the old namespace and load the new one under one lock. Otherwise a
+	// proxy request can land between Save/clear/Load and either be lost from the
+	// old user or be overwritten after it was recorded for the new user.
+	s.saveLocked()
+	oldNamespace := s.namespace
+	s.namespace = strings.TrimSpace(userID)
+	newNamespace := s.namespace
+	s.Records = make(map[string]*DailyRecord)
+	s.HourlyRecords = make(map[string]*HourlyRecord)
+	s.dirty = false
+	path := usageNamespaceFile(s.namespace)
+	if path != "" {
+		legacy := filepath.Join(getAppDataDir(), "usage_stats.json")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if _, legacyErr := os.Stat(legacy); legacyErr == nil {
+				if renameErr := os.Rename(legacy, path); renameErr != nil {
+					Log("[stats] legacy namespace migration failed: %v", renameErr)
+				}
+			}
+		}
+	}
+	s.loadLocked()
+	s.mu.Unlock()
+	switchPendingReportNamespace(oldNamespace, newNamespace)
 }
 
 func todayKey() string {
@@ -378,8 +441,14 @@ func createBackupIfAbsent(path string, data []byte) error {
 func (s *UsageStatsStore) Load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loadLocked()
+}
 
-	path := filepath.Join(getAppDataDir(), "usage_stats.json")
+func (s *UsageStatsStore) loadLocked() {
+	path := usageNamespaceFile(s.namespace)
+	if path == "" {
+		return
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -430,13 +499,18 @@ func (s *UsageStatsStore) Load() {
 func (s *UsageStatsStore) Save() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.saveLocked()
+}
 
+func (s *UsageStatsStore) saveLocked() {
 	if !s.dirty {
 		return
 	}
 
-	dir := getAppDataDir()
-	path := filepath.Join(dir, "usage_stats.json")
+	path := usageNamespaceFile(s.namespace)
+	if path == "" {
+		return
+	}
 
 	payload := struct {
 		Records       map[string]*DailyRecord  `json:"records"`
@@ -447,7 +521,7 @@ func (s *UsageStatsStore) Save() {
 	if err != nil {
 		return
 	}
-	if err := atomicWriteFile(path, data, 0644); err != nil {
+	if err := atomicWriteFile(path, data, 0600); err != nil {
 		Log("[stats] save failed: %v", err)
 		return
 	}
@@ -482,7 +556,7 @@ func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, raw
 }
 
 // AddModelTokens adds token usage and records the model-level API value estimate.
-// fast=true(codex 快速档 service_tier=priority)时,成本按 codexFastCostMultiplier(1.5x)计,
+// fast=true(codex 快速档 service_tier=priority)时使用对应模型的 priority 官方价格,
 // 并把本次计费 token 记入「其中 fast」。
 func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output, cacheRead, rawTotal int64, fast bool) {
 	cacheWrite := rawTotal - input - output - cacheRead
@@ -693,9 +767,10 @@ func (s *UsageStatsStore) Reset() {
 	s.HourlyRecords = make(map[string]*HourlyRecord)
 	s.dirty = false
 	// 删除磁盘文件
-	path := filepath.Join(getAppDataDir(), "usage_stats.json")
-	_ = os.Remove(path)
-	Log("[stats] Usage stats reset (card changed)")
+	if path := usageNamespaceFile(s.namespace); path != "" {
+		_ = os.Remove(path)
+	}
+	Log("[stats] local usage stats reset for namespace")
 }
 
 // StartAutoSave 定期保存

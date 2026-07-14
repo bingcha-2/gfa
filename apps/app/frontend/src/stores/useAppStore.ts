@@ -5,9 +5,8 @@
 
 import { create } from 'zustand'
 import type { ModelUsageStats } from '@/lib/usageSummary'
-import { isExclusiveCard } from '@/lib/quotaDisplay'
 import * as api from '@/services/wails'
-import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
+import type { Config, IDEProduct, UpdateStatus, AccountState } from '@/types'
 
 /** Fallback rate-limit window when the server hasn't reported one yet (5h). */
 const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
@@ -40,28 +39,6 @@ interface AppState {
   cardUnusable: boolean
   cardProducts: string[]
   entitledProducts: string[]  // 订阅授权产品并集(跨所有生效订阅);空=冷启动未知→回退 cardProducts
-  quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
-  accountFractions: Record<string, number>  // 整号上游余量(号余量条)
-  accountResetMs: Record<string, number>
-  accountResetAt: Record<string, number>
-  myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条·5h)
-  myPersonalFractions: Record<string, number>
-  myResetMs: Record<string, number>
-  myResetAt: Record<string, number>
-  myShares: Record<string, number>          // e_i:我的份额占整号比例(双层血条外层几何)
-  myWeeklyFractions: Record<string, number> // 我的 fair-share 份额·周(仅 codex/anthropic)
-  myPersonalWeeklyFractions: Record<string, number>
-  myWeeklyResetMs: Record<string, number>
-  myWeeklyResetAt: Record<string, number>
-  cardWeight: number                        // Legacy fallback for seat count.
-  cardShareSeats: number                    // 我的席位 X/Y 的 X
-  cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
-  cardExclusive: boolean                    // 后端权威独享标志(尊贵 badge 据此)
-  cardBuckets: Record<string, { used: number; limit: number; resetMs?: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h);resetMs=该卡 5h 窗口自身的 reset
-  cardWeeklyBuckets: Record<string, { used: number; limit: number; resetMs?: number; resetAt?: string }>  // 每复合桶·周(显式或派生 5h×R)
-  codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number; hourlyPresent?: boolean; weeklyPresent?: boolean } | null
-  claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
-  boundAccounts: BoundAccountInfo[]
   activationExpiresAt: string
   notifications: AppNotification[]
 
@@ -76,6 +53,8 @@ interface AppState {
   cumulativeSaving: number
   todayApiValueUSD: number
   todayByModel: Record<string, ModelUsageStats>
+  localTodayTokens: number
+  localTodayApiValueUSD: number
 
   // Usage trend (history)
   dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; savedMoneyUSD?: number; byModel?: Record<string, ModelUsageStats> }[]
@@ -136,28 +115,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   cardUnusable: false,
   cardProducts: [],
   entitledProducts: [],
-  quotaMode: '',
-  accountFractions: {},
-  accountResetMs: {},
-  accountResetAt: {},
-  myFractions: {},
-  myPersonalFractions: {},
-  myResetMs: {},
-  myResetAt: {},
-  myShares: {},
-  myWeeklyFractions: {},
-  myPersonalWeeklyFractions: {},
-  myWeeklyResetMs: {},
-  myWeeklyResetAt: {},
-  cardWeight: 1,
-  cardShareSeats: 1,
-  cardShareCapacity: 8,
-  cardExclusive: false,
-  cardBuckets: {},
-  cardWeeklyBuckets: {},
-  codexQuota: null,
-  claudeQuota: null,
-  boundAccounts: [],
   activationExpiresAt: '',
   todayRequests: 0,
   todayErrors: 0,
@@ -169,6 +126,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   cumulativeSaving: 0,
   todayApiValueUSD: 0,
   todayByModel: {},
+  localTodayTokens: 0,
+  localTodayApiValueUSD: 0,
   dailyHistory: [],
   hourlyHistory: [],
   chartMode: 'daily',
@@ -191,7 +150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await api.getStats()
       const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0, savedMoneyUSD: 0, byModel: {} }
       const lq = data.leaser?.localQuota
-      const accessKeyStatus = data.leaser?.accessKeyStatus as ({ weight?: number; shareCapacity?: number; shareSeats?: number; exclusive?: boolean } | undefined)
+      const localToday = data.localUsage?.today
 
       set({
         proxyRunning: data.proxyRunning,
@@ -205,47 +164,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         cardUnusable: data.leaser?.cardUnusable || false,
         cardProducts: data.leaser?.accessKeyStatus?.products || [],
         entitledProducts: (data.leaser?.entitledProducts as string[] | undefined) || [],
-        quotaMode: (data.leaser as any)?.quotaMode || (data.leaser?.accessKeyStatus as any)?.quotaMode || '',
-        accountFractions: data.leaser?.accountFractions || {},
-        accountResetMs: data.leaser?.accountResetMs || {},
-        accountResetAt: data.leaser?.accountResetAt || {},
-        myFractions: data.leaser?.myFractions || {},
-        myPersonalFractions: data.leaser?.myPersonalFractions || {},
-        myResetMs: data.leaser?.myResetMs || {},
-        myResetAt: data.leaser?.myResetAt || {},
-        myShares: data.leaser?.myShares || {},
-        myWeeklyFractions: data.leaser?.myWeeklyFractions || {},
-        myPersonalWeeklyFractions: data.leaser?.myPersonalWeeklyFractions || {},
-        myWeeklyResetMs: data.leaser?.myWeeklyResetMs || {},
-        myWeeklyResetAt: data.leaser?.myWeeklyResetAt || {},
-        cardWeight: accessKeyStatus?.weight || 1,
-        cardShareSeats: accessKeyStatus?.shareSeats || accessKeyStatus?.weight || 1,
-        cardShareCapacity: accessKeyStatus?.shareCapacity || 8,
-        // 权威 exclusive 优先;旧服务端不带该字段时回退 weight>=capacity 启发式。
-        cardExclusive: isExclusiveCard(
-          accessKeyStatus?.shareSeats || accessKeyStatus?.weight || 1,
-          accessKeyStatus?.shareCapacity || 0,
-          accessKeyStatus?.exclusive,
-        ),
-        cardBuckets: Object.fromEntries(
-          // resetMs 取该卡 5h 窗口自身的 reset(服务端已对齐到 hourly,绝非周);各桶共享同一 5h 窗口。
-          (data.leaser?.accessKeyStatus?.buckets || []).map((b) => [b.bucket, {
-            used: b.used,
-            limit: b.limit,
-            resetMs: data.leaser?.accessKeyStatus?.tokenWindowResetMs,
-          }]),
-        ),
-        cardWeeklyBuckets: Object.fromEntries(
-          (data.leaser?.accessKeyStatus?.weeklyBuckets || []).map((b) => [b.bucket, {
-            used: b.used,
-            limit: b.limit,
-            resetMs: b.weeklyWindowResetMs,
-            resetAt: b.weeklyWindowResetAt,
-          }]),
-        ),
-        codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
-        claudeQuota: (data.leaser?.claudeQuota as AppState['claudeQuota']) || null,
-        boundAccounts: data.leaser?.boundAccounts || [],
         activationExpiresAt: data.leaser?.activationExpiresAt || '',
         // 今日请求 = 成功生成数(对齐服务端"计费调用"口径,排除探活/重试/错误)
         todayRequests: today.generations || 0,
@@ -258,6 +176,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         cumulativeSaving: data.cumulativeSaving || 0,
         todayApiValueUSD: (today as { savedMoneyUSD?: number }).savedMoneyUSD || 0,
         todayByModel: (today as { byModel?: Record<string, ModelUsageStats> }).byModel || {},
+        localTodayTokens: (localToday?.inputTokens || 0) + (localToday?.outputTokens || 0) + (localToday?.cachedTokens || 0) + (localToday?.cacheWriteTokens || 0),
+        localTodayApiValueUSD: localToday?.savedMoneyUSD || 0,
         dailyHistory: data.dailyHistory || [],
         hourlyHistory: data.hourlyHistory || [],
         chartMode: data.chartMode || 'daily',
@@ -330,12 +250,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await api.userLogin(email, password)
     await get().fetchAccountState()
     await get().fetchConfig()
+    await get().fetchStats()
     return result
   },
 
   logout: async () => {
     await api.userLogout()
-    set({ account: null })
+    set({
+      account: null,
+      todayRequests: 0, todayErrors: 0, todayInputTokens: 0, todayOutputTokens: 0,
+      todayCachedTokens: 0, todayCacheWriteTokens: 0, todayBillableTokens: 0,
+      todayApiValueUSD: 0, todayByModel: {}, cumulativeSaving: 0,
+      localTodayTokens: 0, localTodayApiValueUSD: 0, dailyHistory: [], hourlyHistory: [],
+    })
     await get().fetchAccountState()
   },
 
@@ -359,5 +286,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     // 无论成败都从配置重读账号态:致命类已被后端清掉/更新 → UI 跟着落地。
     await get().fetchAccountState()
+    await get().fetchStats()
   },
 }))

@@ -45,9 +45,9 @@ function makeFakeProvider(
   };
 }
 
-function fakeSessionJwt(sub = "cust-1"): string {
+function fakeSessionJwt(sub = "cust-1", device = "device-1"): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString("base64url");
-  return `${enc({ alg: "HS256", typ: "JWT" })}.${enc({ typ: "user-session", sub })}.sig`;
+  return `${enc({ alg: "HS256", typ: "JWT" })}.${enc({ typ: "user-session", sub, device })}.sig`;
 }
 
 describe("LeaseService — session-JWT leases", () => {
@@ -167,6 +167,30 @@ describe("LeaseService — session-JWT leases", () => {
     // refreshSession skipped — no per-card session state was created.
     expect(record.activeSessionId).toBeUndefined();
     expect(record.sessionExpiresAt).toBeUndefined();
+  });
+
+  it("serializes reports by subscription id across different device JWTs", async () => {
+    const { service, store } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
+    const reqA = { headers: { authorization: `Bearer ${fakeSessionJwt("cust-1", "A")}` } };
+    const reqB = { headers: { authorization: `Bearer ${fakeSessionJwt("cust-1", "B")}` } };
+    const leaseA = await service.leaseToken(reqA, { clientId: "client-A", modelKey: "gpt-5-codex" });
+    const leaseB = await service.leaseToken(reqB, { clientId: "client-B", modelKey: "gpt-5-codex" });
+    const lockIdentities: string[] = [];
+    const originalLock = store.withUsageReportLock.bind(store);
+    vi.spyOn(store, "withUsageReportLock").mockImplementation(async (identity, task) => {
+      lockIdentities.push(identity);
+      return originalLock(identity, task);
+    });
+
+    await Promise.all([
+      service.reportResult(reqA, { leaseId: leaseA.leaseId, reportId: "device-A", status: 200, totalTokens: 1 }),
+      service.reportResult(reqB, { leaseId: leaseB.leaseId, reportId: "device-B", status: 200, totalTokens: 1 }),
+    ]);
+
+    expect(lockIdentities).toEqual(["sub-1", "sub-1"]);
+    expect(store.publicStatus(store.findById("sub-1")!).recentWindowTokens).toBe(2);
   });
 
   it("ACTIVE sub + EXPIRED shadow record + session token → 403 with the SUBSCRIPTION_EXPIRED machine code (drift surfaced, not a generic 401)", async () => {

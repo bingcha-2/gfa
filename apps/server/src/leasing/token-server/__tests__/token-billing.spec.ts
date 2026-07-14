@@ -170,12 +170,11 @@ describe('normalizeUsageToGross', () => {
 
 describe('resetWindowIfExpired', () => {
   it('should reset window when windowStartedAt is 0', () => {
-    const record: any = { windowStartedAt: 0, usageEvents: [{ at: 1 }], tokenUsageEvents: [{ at: 1 }] };
+    const record: any = { windowStartedAt: 0, tokenUsageEvents: [{ at: 1 }] };
     const now = Date.now();
     const result = resetWindowIfExpired(record, now);
     expect(result).toBe(true);
     expect(record.windowStartedAt).toBe(now);
-    expect(record.usageEvents).toEqual([]);
     expect(record.tokenUsageEvents).toEqual([]);
   });
 
@@ -184,7 +183,6 @@ describe('resetWindowIfExpired', () => {
     const record: any = {
       windowStartedAt: now - DEFAULT_KEY_WINDOW_MS - 1000,
       windowMs: DEFAULT_KEY_WINDOW_MS,
-      usageEvents: [{ at: now - 1000 }],
       tokenUsageEvents: [],
     };
     const result = resetWindowIfExpired(record, now);
@@ -197,12 +195,11 @@ describe('resetWindowIfExpired', () => {
     const record: any = {
       windowStartedAt: now - 1000,
       windowMs: DEFAULT_KEY_WINDOW_MS,
-      usageEvents: [{ at: now }],
       tokenUsageEvents: [],
     };
     const result = resetWindowIfExpired(record, now);
     expect(result).toBe(false);
-    expect(record.usageEvents).toHaveLength(1);
+    expect(record.tokenUsageEvents).toHaveLength(0);
   });
 });
 
@@ -230,7 +227,6 @@ describe('recentTokenUsage', () => {
     const record: any = {
       windowStartedAt: now - 1000,
       windowMs: DEFAULT_KEY_WINDOW_MS,
-      usageEvents: [],
       tokenUsageEvents: [
         { at: now, inputTokens: 100, outputTokens: 50, modelKey: 'opus' },
         { at: now, inputTokens: 200, outputTokens: 100, modelKey: 'gemini-pro' },
@@ -248,7 +244,6 @@ describe('recentTokenUsage', () => {
     const record: any = {
       windowStartedAt: now,
       windowMs: DEFAULT_KEY_WINDOW_MS,
-      usageEvents: [],
       tokenUsageEvents: [],
     };
     const result = recentTokenUsage(record, now);
@@ -264,7 +259,6 @@ describe('tokenWindowResetMs', () => {
     const record: any = {
       windowStartedAt: now - 1000,
       windowMs: DEFAULT_KEY_WINDOW_MS,
-      usageEvents: [],
       tokenUsageEvents: [],
     };
     const result = tokenWindowResetMs(record, now);
@@ -273,7 +267,7 @@ describe('tokenWindowResetMs', () => {
   });
 
   it('should return 0 when no window started', () => {
-    const record: any = { windowStartedAt: 0, usageEvents: [], tokenUsageEvents: [] };
+    const record: any = { windowStartedAt: 0, tokenUsageEvents: [] };
     // resetWindowIfExpired will set a new window, then remaining is full window
     const result = tokenWindowResetMs(record, Date.now());
     expect(result).toBeGreaterThan(0);

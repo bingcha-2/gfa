@@ -129,6 +129,15 @@ export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, 
     products: config.products,
     windowMs: config.windowMs,
     keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : undefined,
+    ...(config.usdQuotaByProduct && typeof config.usdQuotaByProduct === "object"
+      ? { usdQuotaByProduct: config.usdQuotaByProduct }
+      : {}),
+    // Legacy aggregate fields are read only long enough to migrate an in-memory
+    // window into the new per-product state.
+    ...(config.usdLimit5h == null ? {} : { usdLimit5h: config.usdLimit5h }),
+    ...(config.usdLimitWeekly == null ? {} : { usdLimitWeekly: config.usdLimitWeekly }),
+    ...(config.quotaAlgorithm == null ? {} : { quotaAlgorithm: config.quotaAlgorithm }),
+    ...(Array.isArray(config.usdQuotaProducts) ? { usdQuotaProducts: config.usdQuotaProducts } : {}),
   };
   if (config.line === "bind") {
     return {
@@ -136,8 +145,9 @@ export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, 
       bindings: config.bindings || {},
       displayBindings: config.displayBindings || config.bindings || {},
       assignmentPolicy: config.assignmentPolicy || "pinned",
-      // fair-share 保底席位数 N 的来源(per-product 销售容量);见 access-key-store.getSeatCapacityFor。
-      salesSeatCapacity: config.salesSeatCapacity || {},
+      ...(config.quotaSeatCapacity == null ? {} : { quotaSeatCapacity: config.quotaSeatCapacity }),
+      // Legacy read-through only; new rows no longer write the per-product map.
+      ...(config.salesSeatCapacity == null ? {} : { salesSeatCapacity: config.salesSeatCapacity }),
       levels: config.levels || {},
       shareSeats: config.shareSeats ?? config.weight,
       shareCapacity: config.shareCapacity ?? 8,

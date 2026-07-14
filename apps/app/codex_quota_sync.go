@@ -101,8 +101,8 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 }
 
 func applyCodexReportResponse(body []byte) {
-	recordAccountBuckets(body)
-	recordFairShareQuota(body)
+	// The response may still contain legacy fair-share fields during rollout.
+	// Codex uses product-scoped dollar quotas, so the desktop ignores them.
 }
 
 // 上游额度拉取的最小间隔(地板)。拉取由上报触发(reportResult → fetchCodexQuotaAsync),

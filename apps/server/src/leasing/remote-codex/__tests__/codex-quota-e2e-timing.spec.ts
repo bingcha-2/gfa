@@ -48,7 +48,7 @@ describe("Codex 额度 E2E · 时序/走向/抖动", () => {
     }));
   }
   const acct = (id: number) => ({ id, email: `a${id}@x.com`, refreshToken: `rt-${id}`, enabled: true, planType: "pro" });
-  const card = (id: number, accountId: number, weight = 1) => ({ id: `card-${id}`, key: `s-${id}`, status: "active", durationMs: HOUR, bindings: { codex: accountId }, weight });
+  const card = (id: number, accountId: number, weight = 1) => ({ id: `card-${id}`, key: `s-${id}`, status: "active", durationMs: 24 * HOUR, bindings: { codex: accountId }, weight });
   const quota = (accountId: number, h: number, w: number, hReset?: string) => ({
     accountId, planType: "pro",
     codexQuota: { hourlyPercent: h, weeklyPercent: w, ...(hReset ? { hourlyResetTime: hReset } : {}) },

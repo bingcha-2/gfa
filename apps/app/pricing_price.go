@@ -80,7 +80,20 @@ func findAPIPriceModel(provider, modelID string, at time.Time) *apiPriceModel {
 		matchLength := 0
 		for _, alias := range append([]string{model.CanonicalModelID}, model.Aliases...) {
 			normalized := strings.ToLower(strings.TrimSpace(alias))
-			if id == normalized || strings.HasPrefix(id, normalized+"-") {
+			isDatedSnapshot := false
+			if strings.HasPrefix(id, normalized+"-") {
+				suffix := strings.TrimPrefix(id, normalized+"-")
+				datePart := suffix
+				if len(datePart) >= 10 && datePart[4] == '-' && datePart[7] == '-' {
+					datePart = datePart[:10]
+				} else if len(datePart) >= 8 {
+					datePart = datePart[:8]
+				}
+				_, compactErr := time.Parse("20060102", datePart)
+				_, dashedErr := time.Parse("2006-01-02", datePart)
+				isDatedSnapshot = compactErr == nil || dashedErr == nil
+			}
+			if id == normalized || isDatedSnapshot {
 				if len(normalized) > matchLength {
 					matchLength = len(normalized)
 				}
@@ -96,34 +109,40 @@ func findAPIPriceModel(provider, modelID string, at time.Time) *apiPriceModel {
 
 func conservativeAPIPrice(provider, mode string, at time.Time) apiTokenPrice {
 	var result apiTokenPrice
-	for _, model := range exactAPIPrices.Models {
-		if model.Provider != provider || !apiModelActiveAt(model, at) {
-			continue
-		}
-		prices, ok := model.Modes[mode]
-		if !ok {
-			continue
-		}
-		for _, price := range []*apiTokenPrice{prices.Short, prices.Long} {
-			if price == nil {
+	collect := func(candidateMode string) {
+		for _, model := range exactAPIPrices.Models {
+			if model.Provider != provider || !apiModelActiveAt(model, at) {
 				continue
 			}
-			if price.Input > result.Input {
-				result.Input = price.Input
+			prices, ok := model.Modes[candidateMode]
+			if !ok {
+				continue
 			}
-			if price.CacheRead > result.CacheRead {
-				result.CacheRead = price.CacheRead
-			}
-			if price.CacheWrite5m > result.CacheWrite5m {
-				result.CacheWrite5m = price.CacheWrite5m
-			}
-			if price.CacheWrite1h > result.CacheWrite1h {
-				result.CacheWrite1h = price.CacheWrite1h
-			}
-			if price.Output > result.Output {
-				result.Output = price.Output
+			for _, price := range []*apiTokenPrice{prices.Short, prices.Long} {
+				if price == nil {
+					continue
+				}
+				if price.Input > result.Input {
+					result.Input = price.Input
+				}
+				if price.CacheRead > result.CacheRead {
+					result.CacheRead = price.CacheRead
+				}
+				if price.CacheWrite5m > result.CacheWrite5m {
+					result.CacheWrite5m = price.CacheWrite5m
+				}
+				if price.CacheWrite1h > result.CacheWrite1h {
+					result.CacheWrite1h = price.CacheWrite1h
+				}
+				if price.Output > result.Output {
+					result.Output = price.Output
+				}
 			}
 		}
+	}
+	collect(mode)
+	if mode != "standard" && result == (apiTokenPrice{}) {
+		collect("standard")
 	}
 	return result
 }
@@ -149,28 +168,25 @@ func calculateAPIValue(provider, modelID, mode string, contextTokens, input, out
 	} else {
 		canonical = model.CanonicalModelID
 		requested := "short"
-		if model.ContextThreshold > 0 && contextTokens >= model.ContextThreshold {
+		if model.ContextThreshold > 0 && contextTokens > model.ContextThreshold {
 			requested = "long"
 		}
 		prices, ok := model.Modes[mode]
 		if !ok {
-			prices = model.Modes["standard"]
-		}
-		selected := prices.Short
-		if requested == "long" {
-			selected = prices.Long
-		}
-		if selected == nil {
-			selected = prices.Short
-			if selected == nil {
-				selected = model.Modes["standard"].Short
-			}
-			quality, contextTier = "unsupported-context", "unknown"
+			price = conservativeAPIPrice(provider, mode, at)
+			quality, contextTier = "conservative-fallback", "unknown"
 		} else {
-			contextTier = requested
-		}
-		if selected != nil {
-			price = *selected
+			selected := prices.Short
+			if requested == "long" {
+				selected = prices.Long
+			}
+			if selected == nil {
+				price = conservativeAPIPrice(provider, mode, at)
+				quality, contextTier = "unsupported-context", "unknown"
+			} else {
+				contextTier = requested
+				price = *selected
+			}
 		}
 	}
 	usd := (positiveTokens(input)*price.Input + positiveTokens(output)*price.Output +

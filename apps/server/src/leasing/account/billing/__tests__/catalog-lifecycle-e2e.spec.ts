@@ -25,7 +25,7 @@
  *
  * 权益口径:test env BCAI_ACCOUNT_SHARE_CAPACITY=4(vitest.config.ts)。绑定线 shareSeats/weight=cap/N
  * (= ACCOUNT_SHARE_CAPACITY / 共享人数,服务端读目录时注入,与运行时权益分母同源,去双源)。
- * 销售容量口径由 supplyPolicies.salesSeatsPerAccount 控制;默认 max-20x/pro/ultra=10,测满座时显式覆盖。
+ * 最大可售份数 = ceil(基础容量 × oversellFactor)，个人美元额度 = 单份配置 × 购买份数。
  */
 import "reflect-metadata";
 import * as fs from "fs";
@@ -50,6 +50,7 @@ import { DeviceService } from "../../device/device.service";
 import { TokenServerService } from "../../../token-server/token-server.service";
 import { RemoteCodexService } from "../../../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../../../remote-anthropic/service/remote-anthropic.service";
+import { BillingAdminService } from "../../../console/billing-admin/billing-admin.service";
 import * as crypto from "crypto";
 
 import { ACCOUNT_SHARE_CAPACITY } from "../../../token-server/token-billing";
@@ -112,17 +113,6 @@ const CATALOG_CONFIG = {
   windowMs: WINDOW_MS,
 };
 
-function catalogWithSalesSeatCapacity(product: string, level: string, capacity: number): Record<string, unknown> {
-  return {
-    ...CATALOG_CONFIG,
-    supplyPolicies: {
-      [product]: {
-        salesSeatsPerAccount: { [level]: capacity },
-      },
-    },
-  };
-}
-
 // ── Shared mutable harness (rebuilt per test) ─────────────────────────────────
 let tmpDir: string;
 let accessKeysPath: string;
@@ -131,6 +121,7 @@ let rosetta: RosettaService;
 let entitlementSync: EntitlementSyncService;
 let subscriptionService: SubscriptionService;
 let billingService: BillingService;
+let billingAdmin: BillingAdminService;
 let callbackService: EpayCallbackService;
 let planCatalog: PlanCatalogService;
 let catalogPublic: PlanCatalogPublicController;
@@ -215,7 +206,7 @@ beforeEach(async () => {
   store.setSessionResolver(sessionResolver);
 
   rosetta = new RosettaService({ dataDir: tmpDir });
-  planCatalog = new PlanCatalogService(prisma as any);
+  planCatalog = new PlanCatalogService(prisma as any, store);
   catalogPublic = new PlanCatalogPublicController(planCatalog);
   deviceService = new DeviceService(prisma as any);
 
@@ -226,6 +217,7 @@ beforeEach(async () => {
     {} as any, // remoteCodex
     {} as any, // remoteAnthropic
     prisma as any,
+    planCatalog,
   );
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
@@ -235,6 +227,12 @@ beforeEach(async () => {
     rosetta,
     callbackService,
     subscriptionService,
+  );
+  billingAdmin = new BillingAdminService(
+    prisma as any,
+    subscriptionService,
+    billingService,
+    entitlementSync,
   );
 
   // Three lease lines sharing the SAME store + injecting the real engine.
@@ -246,15 +244,24 @@ beforeEach(async () => {
     now: () => Date.now(),
     randomId: () => `lease-${++leaseSeq}`,
     minClientVersion: "",
+    prisma: prisma as any,
   };
   leaseServices = {
     anthropic: new RemoteAnthropicService({ ...common, accountsFilePath: path.join(tmpDir, "anthropic-accounts.json") }),
     codex: new RemoteCodexService({ ...common, accountsFilePath: path.join(tmpDir, "codex-accounts.json") }),
     antigravity: new TokenServerService({ ...common, accountsFilePath: path.join(tmpDir, "accounts.json") }),
   };
+  // Supplying Prisma enables the production subscription-window boot barrier.
+  // Run the real owner boot so the shared store is ready before lease assertions.
+  await leaseServices.antigravity.onModuleInit();
 });
 
 afterEach(async () => {
+  await Promise.all([
+    leaseServices.anthropic.onModuleDestroy(),
+    leaseServices.codex.onModuleDestroy(),
+    leaseServices.antigravity.onModuleDestroy(),
+  ]);
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -469,27 +476,432 @@ describe("E2E 绑定线:下单 → 激活 → 分配座位(写 config.bindings)�
     expect((r as any).displayBound).toBe(true);
   });
 
-  it("绑定线默认销售容量 10:2 人拼车可售 5 张、第 6 张同号订阅无座位", async () => {
+  it("绑定线按超卖比例固定最大可售份数，达到上限后拒绝新单", async () => {
     await publishCatalog();
-    const customers = await Promise.all(Array.from({ length: 6 }, () => createTestCustomer()));
+    const customers = await Promise.all(Array.from({ length: 4 }, () => createTestCustomer()));
 
-    // 2 人拼车 → weight cap/2。权益分母仍是 ACCOUNT_SHARE_CAPACITY,销售容量由目录默认策略放大到 10。
+    // 测试容量 4、默认超卖 1.5 → 最大可售 6 份；2 席套餐最多绑定 3 张。
     const sel = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
     const sold = [];
-    for (const customer of customers.slice(0, 5)) {
+    for (const customer of customers.slice(0, 3)) {
       sold.push(await purchaseAndActivate(customer.id, sel));
     }
 
     for (const item of sold) {
       expect(cfg(item.sub).weight).toBe(ACCOUNT_SHARE_CAPACITY / 2);
-      expect(cfg(item.sub).salesSeatCapacity).toEqual({ anthropic: 10 });
+      expect(cfg(item.sub).quotaSeatCapacity).toBe(6);
       expect(cfg(item.sub).bindings).toEqual({ anthropic: 1 });
     }
 
-    // 5 张各占 2 席,合计占满默认销售容量 10;第 6 张【超卖】(决策7:Σw>N 放开)→ 仍下单成功、
-    // 绑到同号 acct1(每席变薄而非拒人)。
-    const sixth = await purchaseAndActivate(customers[5].id, sel);
-    expect(cfg(sixth.sub).bindings).toEqual({ anthropic: 1 });
+    await expect(billingService.createCatalogOrder(customers[3].id, sel, "ALIPAY"))
+      .rejects.toThrow("暂无可用座位");
+  });
+});
+
+describe("E2E 美元额度:套餐 → 下单 → 扣费 → 改额 → 持久化 → 重启恢复", () => {
+  it("母号重置会原子持久化同一母号下所有订阅", async () => {
+    const catalog = structuredClone(CATALOG_CONFIG) as any;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      codex: { pro: { fiveHour: 5, weekly: 50 } },
+    };
+    await publishCatalog(catalog);
+    const firstCustomer = await seedCustomerWithDevice("mother-reset-device-a");
+    const secondCustomer = await seedCustomerWithDevice("mother-reset-device-b");
+    const selection = {
+      line: "bind", items: [{ product: "codex", level: "pro" }], shareSeats: 1, deviceLimit: 1,
+    };
+    const first = await purchaseAndActivate(firstCustomer.customer.id, selection);
+    const second = await purchaseAndActivate(secondCustomer.customer.id, selection);
+    expect(cfg(first.sub).bindings).toEqual({ codex: 1 });
+    expect(cfg(second.sub).bindings).toEqual({ codex: 1 });
+
+    for (const [token, reportId] of [
+      [firstCustomer.token, "mother-usage-a"],
+      [secondCustomer.token, "mother-usage-b"],
+    ] as const) {
+      const currentLease = await lease("codex", token, { modelKey: "gpt-5.6-luna" });
+      await leaseServices.codex.reportResult(
+        { headers: { authorization: `Bearer ${token}` } },
+        { leaseId: currentLease.leaseId, reportId, status: 200, modelKey: "gpt-5.6-luna",
+          inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000, contextTokens: 100_000 },
+      );
+    }
+    expect(store.publicStatus(store.findById(second.sub!.id)!).usdQuotaByProduct.codex.fiveHour.used).toBe(1);
+
+    const reporterLease = await lease("codex", firstCustomer.token, { modelKey: "gpt-5.6-luna" });
+    const base = Date.now();
+    const quota = (resetAt: number, observedAt: number) => ({
+      accountId: 1,
+      observedAt,
+      codexQuota: {
+        hourlyPercent: resetAt === base + 6 * 60 * 60_000 ? 99 : 40,
+        weeklyPercent: 40,
+        hourlyResetTime: new Date(resetAt).toISOString(),
+        weeklyResetTime: new Date(base + 5 * 24 * 60 * 60_000).toISOString(),
+      },
+    });
+    await leaseServices.codex.reportResult(
+      { headers: { authorization: `Bearer ${firstCustomer.token}` } },
+      { leaseId: reporterLease.leaseId, reportId: "mother-baseline", status: 0,
+        modelKey: "gpt-5.6-luna", accountQuota: quota(base + 60 * 60_000, base + 1) },
+    );
+    await leaseServices.codex.reportResult(
+      { headers: { authorization: `Bearer ${firstCustomer.token}` } },
+      { leaseId: reporterLease.leaseId, reportId: "mother-new-epoch", status: 0,
+        modelKey: "gpt-5.6-luna", accountQuota: quota(base + 6 * 60 * 60_000, base + 2) },
+    );
+
+    expect(store.publicStatus(store.findById(first.sub!.id)!).usdQuotaByProduct.codex.fiveHour.used).toBe(0);
+    expect(store.publicStatus(store.findById(second.sub!.id)!).usdQuotaByProduct.codex.fiveHour.used).toBe(0);
+    const persistedSecond = await prisma.subscription.findUniqueOrThrow({ where: { id: second.sub!.id } });
+    const persistedUsage = JSON.parse(String(persistedSecond.windowState)).usdUsageByProduct.codex;
+    expect(Number(persistedUsage.used5h || 0)).toBe(0);
+    expect(persistedUsage.upstreamFiveHour.resetAt).toBe(base + 6 * 60 * 60_000);
+  });
+
+  it("同一订阅内 Codex/Anthropic 按产品分别乘份数、分别扣费和限流", async () => {
+    const catalog = structuredClone(CATALOG_CONFIG) as any;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      codex: { pro: { fiveHour: 0.1, weekly: 0.2 } },
+      anthropic: { "max-20x": { fiveHour: 0.15, weekly: 0.3 } },
+    };
+    await publishCatalog(catalog);
+    const { token, customer } = await seedCustomerWithDevice("mixed-usd-device");
+    const { sub } = await purchaseAndActivate(customer.id, {
+      line: "bind",
+      items: [
+        { product: "codex", level: "pro" },
+        { product: "anthropic", level: "max-20x" },
+      ],
+      shareSeats: 2,
+      deviceLimit: 1,
+    });
+
+    expect(cfg(sub).usdQuotaByProduct).toEqual({
+      codex: { fiveHour: 0.2, weekly: 0.4 },
+      anthropic: { fiveHour: 0.3, weekly: 0.6 },
+    });
+
+    const anthropicLease = await lease("anthropic", token, { clientId: "mixed-client" });
+    await leaseServices.anthropic.reportResult(
+      { headers: { authorization: `Bearer ${token}` } },
+      {
+        leaseId: anthropicLease.leaseId,
+        reportId: "mixed-anthropic-1",
+        status: 200,
+        modelKey: "claude-sonnet-4-6",
+        inputTokens: 0,
+        cacheWrite5mTokens: 100_000,
+        cacheWrite1hTokens: 100_000,
+        outputTokens: 0,
+        rawTotalTokens: 200_000,
+        totalTokens: 200_000,
+      },
+    );
+
+    const status = store.publicStatus(store.findById(sub!.id)!);
+    expect(status.usdQuota).toBeNull();
+    // Sonnet 4.6: 100k 5m × $3.75/M + 100k 1h × $6/M = $0.975。
+    expect(status.usdQuotaByProduct.anthropic.fiveHour.used).toBeCloseTo(0.975);
+    expect(status.usdQuotaByProduct.codex.fiveHour.used).toBe(0);
+    await expect(lease("anthropic", token, { clientId: "mixed-client" })).rejects.toMatchObject({ statusCode: 429 });
+    expect((await lease("codex", token, { clientId: "mixed-client" })).ok).toBe(true);
+  });
+
+  it("覆盖 5h/周独立限流、保留已用金额、紧凑快照和 fair-share 隔离", async () => {
+    const catalog = structuredClone(CATALOG_CONFIG) as any;
+    catalog.oversellFactor = 1.25;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      codex: { pro: { fiveHour: 0.8, weekly: 1.6 } },
+    };
+    await publishCatalog(catalog);
+    const { token, customer } = await seedCustomerWithDevice("usd-device");
+
+    // 单份 $0.8/$1.6；购买 2 份固定得到 $1.6/$3.2，超卖系数只控制可售数量。
+    const { sub } = await purchaseAndActivate(customer.id, {
+      line: "bind",
+      items: [{ product: "codex", level: "pro" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    });
+    expect(cfg(sub)).toMatchObject({
+      quotaAlgorithm: "usd",
+      quotaSeatCapacity: 5,
+      usdQuotaByProduct: { codex: { fiveHour: 1.6, weekly: 3.2 } },
+      bindings: { codex: 1 },
+    });
+
+    const subscriptionId = sub!.id;
+    const record = store.findById(subscriptionId)!;
+    expect(store.hardBoundAccountIds("codex").has(1)).toBe(true); // 仍占用绑定母号
+    expect(store.getHardBoundCardWeights(1, "codex")).toEqual([]); // 但不稀释旧 fair-share
+
+    // gpt-5.6-sol 标准输入价 $5/M；200k input = $1。
+    const firstLease = await lease("codex", token, { modelKey: "gpt-5.6-sol" });
+    await leaseServices.codex.reportResult(
+      { headers: { authorization: `Bearer ${token}` } },
+      {
+        leaseId: firstLease.leaseId,
+        reportId: "usd-e2e-1",
+        status: 200,
+        modelKey: "gpt-5.6-sol",
+        inputTokens: 200_000,
+        outputTokens: 0,
+        totalTokens: 200_000,
+        contextTokens: 100_000,
+      },
+    );
+    expect(store.publicStatus(record)).toMatchObject({
+      quotaMode: "usd",
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: { used: 1, limit: 1.6 },
+          weekly: { used: 1, limit: 3.2 },
+        },
+      },
+    });
+    expect(record.tokenUsageEvents ?? []).toHaveLength(0);
+    expect(record.weeklyTokenUsageEvents ?? []).toHaveLength(0);
+    expect(await prisma.quotaReportReceipt.findUnique({
+      where: { provider_reportId: { provider: "codex", reportId: "usd-e2e-1" } },
+    })).not.toBeNull();
+    const firstHourly = await prisma.cardUsageHourly.findMany({ where: { customerId: customer.id } });
+    expect(firstHourly.reduce((sum, row) => sum + row.requests, 0)).toBe(1);
+    expect(firstHourly.reduce((sum, row) => sum + row.apiValueUsd, 0)).toBeCloseTo(1);
+
+    // 发布新的“每份额度”后，已经拼成的订阅立即按份数重算；当前窗口已用 $1 不清零。
+    const updatedCatalog = structuredClone(catalog) as any;
+    updatedCatalog.pricing.bind.usdQuotaPerSeat.codex.pro = { fiveHour: 1, weekly: 2 };
+    await publishCatalog(updatedCatalog);
+    expect(cfg(await prisma.subscription.findUniqueOrThrow({ where: { id: subscriptionId } }))).toMatchObject({
+      usdQuotaByProduct: { codex: { fiveHour: 2, weekly: 4 } },
+    });
+    expect(store.publicStatus(store.findById(subscriptionId)!)).toMatchObject({
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: { used: 1, limit: 2 },
+          weekly: { used: 1, limit: 4 },
+        },
+      },
+    });
+
+    // 两个窗口同时关闭会把美元算法变成无限额度，后台必须拒绝且不能改动当前用量。
+    await expect(
+      billingAdmin.updateSubscription(subscriptionId, {
+        usdQuotaPerSeatByProduct: { codex: { fiveHour: 0, weekly: 0 } },
+      }),
+    ).rejects.toThrow("codex 的 5 小时和每周额度不能同时为 0");
+    expect(store.publicStatus(store.findById(subscriptionId)!)).toMatchObject({
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: { used: 1, limit: 2 },
+          weekly: { used: 1, limit: 4 },
+        },
+      },
+    });
+
+    // 降到已用金额以下：当前周期用量不清零，下一次租号立即 429。
+    await billingAdmin.updateSubscription(subscriptionId, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 0.25, weekly: 2 } },
+    });
+    expect(store.publicStatus(store.findById(subscriptionId)!)).toMatchObject({
+      usdQuotaByProduct: { codex: { fiveHour: { used: 1, limit: 0.5 } } },
+    });
+    await expect(lease("codex", token, { modelKey: "gpt-5.6-sol" })).rejects.toMatchObject({
+      statusCode: 429,
+      body: { ok: false },
+    });
+
+    // 升高 5h 后恢复使用，同时把周额度改到 $1.5；已有 $1 仍保留。
+    await billingAdmin.updateSubscription(subscriptionId, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 1, weekly: 0.75 } },
+    });
+    const secondLease = await lease("codex", token, { modelKey: "gpt-5.6-sol" });
+    const secondPayload = {
+        leaseId: secondLease.leaseId,
+        reportId: "usd-e2e-2",
+        status: 200,
+        modelKey: "gpt-5.6-sol",
+        inputTokens: 100_000,
+        outputTokens: 0,
+        totalTokens: 100_000,
+        contextTokens: 100_000,
+    };
+    // A transport retry can race the original response. Both requests reach
+    // the real report endpoint concurrently; only one may mutate the USD
+    // windows and CardUsageHourly.
+    const concurrent = await Promise.all([
+      leaseServices.codex.reportResult(
+        { headers: { authorization: `Bearer ${token}` } }, secondPayload,
+      ),
+      leaseServices.codex.reportResult(
+        { headers: { authorization: `Bearer ${token}` } }, secondPayload,
+      ),
+    ]);
+    expect(concurrent.filter((result) => result?.reason === "already_reported")).toHaveLength(1);
+    const beforeRestart = store.publicStatus(store.findById(subscriptionId)!);
+    expect(beforeRestart.usdQuotaByProduct.codex.fiveHour).toMatchObject({ used: 1.5, limit: 2 });
+    expect(beforeRestart.usdQuotaByProduct.codex.weekly).toMatchObject({ used: 1.5, limit: 1.5 });
+    await expect(lease("codex", token, { modelKey: "gpt-5.6-sol" })).rejects.toMatchObject({
+      statusCode: 429,
+      body: { ok: false, error: "账户所有订阅额度已用尽" },
+    });
+    expect(await billingAdmin.getSubscription(subscriptionId)).toMatchObject({
+      usdQuotaUsageByProduct: {
+        codex: {
+          fiveHour: { used: 1.5, limit: 2 },
+          weekly: { used: 1.5, limit: 1.5 },
+        },
+      },
+    });
+
+    // 后台只清零周窗口：5h 已用保持 $1.5；周已用立即变 $0，并同步持久化。
+    const reset = await billingAdmin.resetSubscriptionUsdQuotaUsage(subscriptionId, "codex", "weekly");
+    expect(reset).toMatchObject({ previousUsed: 1.5, limit: 1.5, product: "codex", scope: "weekly" });
+    expect(store.publicStatus(store.findById(subscriptionId)!)).toMatchObject({
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: { used: 1.5, limit: 2 },
+          weekly: { used: 0, limit: 1.5 },
+        },
+      },
+    });
+    expect(await billingAdmin.getSubscription(subscriptionId)).toMatchObject({
+      usdQuotaUsageByProduct: {
+        codex: {
+          fiveHour: { used: 1.5, limit: 2 },
+          weekly: { used: 0, limit: 1.5 },
+        },
+      },
+    });
+    const immediatelyPersisted = await prisma.subscription.findUniqueOrThrow({ where: { id: subscriptionId } });
+    expect(JSON.parse(String(immediatelyPersisted.windowState))).toMatchObject({
+      usdUsageByProduct: { codex: { used5h: 1.5 } },
+    });
+    expect((await lease("codex", token, { modelKey: "gpt-5.6-sol" })).ok).toBe(true);
+
+    // 走真实 TokenServerService 持久化入口，数据库只落两个累计值，不落逐请求事件。
+    const windowOwner = new TokenServerService({
+      accountsFilePath: path.join(tmpDir, "accounts.json"),
+      accessKeysFilePath: accessKeysPath,
+      accessKeyStore: store,
+      tokenProvider,
+      prisma: prisma as any,
+    });
+    try {
+      await windowOwner.persistSubscriptionWindows();
+    } finally {
+      await windowOwner.onModuleDestroy();
+    }
+    const persisted = await prisma.subscription.findUniqueOrThrow({ where: { id: subscriptionId } });
+    const windowState = JSON.parse(String(persisted.windowState));
+    expect(windowState).toMatchObject({
+      usdUsageByProduct: { codex: { used5h: 1.5 } },
+    });
+    expect(windowState.usdUsageByProduct.codex.usedWeekly).toBeUndefined();
+    expect(windowState).not.toHaveProperty("tokenUsageEvents");
+    expect(windowState).not.toHaveProperty("weeklyTokenUsageEvents");
+
+    // 模拟完整重启：新 store 由 DB 重新加载订阅和窗口，新 Codex 服务仍按周额度拒绝。
+    const restartedKeysPath = path.join(tmpDir, "restart-access-keys.json");
+    fs.writeFileSync(restartedKeysPath, JSON.stringify({ keys: [], updatedAt: "" }));
+    const restartedStore = new AccessKeyStore(restartedKeysPath);
+    restartedStore.setSessionResolver(new SessionTokenResolver(customerTokens, prisma as any));
+    const bootOwner = new TokenServerService({
+      accountsFilePath: path.join(tmpDir, "accounts.json"),
+      accessKeysFilePath: restartedKeysPath,
+      accessKeyStore: restartedStore,
+      tokenProvider,
+      prisma: prisma as any,
+    });
+    const restartedCodex = new RemoteCodexService({
+      accountsFilePath: path.join(tmpDir, "codex-accounts.json"),
+      accessKeysFilePath: restartedKeysPath,
+      accessKeyStore: restartedStore,
+      tokenProvider,
+      randomId: () => "restart-lease",
+      minClientVersion: "",
+      prisma: prisma as any,
+    });
+    try {
+      await bootOwner.onModuleInit();
+      expect(restartedStore.publicStatus(restartedStore.findById(subscriptionId)!)).toMatchObject({
+        usdQuotaByProduct: {
+          codex: {
+            fiveHour: { used: 1.5, limit: 2 },
+            weekly: { used: 0, limit: 1.5 },
+          },
+        },
+      });
+      const duplicate = await restartedCodex.reportResult(
+        { headers: { authorization: `Bearer ${token}` } },
+        {
+          leaseId: firstLease.leaseId, reportId: "usd-e2e-1", status: 200,
+          modelKey: "gpt-5.6-sol", inputTokens: 200_000, outputTokens: 0,
+          totalTokens: 200_000, contextTokens: 100_000,
+        },
+      );
+      expect(duplicate).toMatchObject({ ok: true, ignored: true, reason: "already_reported" });
+      const afterDuplicate = await prisma.cardUsageHourly.findMany({ where: { customerId: customer.id } });
+      expect(afterDuplicate.reduce((sum, row) => sum + row.requests, 0)).toBe(2);
+      await expect(restartedCodex.leaseToken(
+        { headers: { authorization: `Bearer ${token}` } },
+        { clientId: "restart-client", modelKey: "gpt-5.6-sol", bodyBytes: 200 },
+      )).resolves.toMatchObject({ ok: true });
+    } finally {
+      await restartedCodex.onModuleDestroy();
+      await bootOwner.onModuleDestroy();
+    }
+  });
+
+  it("旧目录创建的 Codex 绑定订阅在同步时自动补默认美元额度", async () => {
+    await publishCatalog(); // 老目录没有 usdQuota，服务端必须回退内置默认值。
+    const { token, customer } = await seedCustomerWithDevice("legacy-usd-device");
+    const { sub } = await purchaseAndActivate(customer.id, {
+      line: "bind",
+      items: [{ product: "codex", level: "pro" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    });
+    const subscriptionId = sub!.id;
+    const persisted = await prisma.subscription.findUniqueOrThrow({ where: { id: subscriptionId } });
+    expect(cfg(persisted)).toMatchObject({
+      quotaAlgorithm: "usd",
+      // 内置默认已经是单份额度，购买 2 份直接乘 2。
+      quotaSeatCapacity: 6,
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+    });
+    const record = store.findById(subscriptionId)!;
+    expect(store.getHardBoundCardWeights(1, "codex")).toEqual([]);
+
+    // 自动迁移后立即可用；Codex 5h 已停用，本次 $1 用量只展示在周窗口。
+    const legacyLease = await lease("codex", token, { modelKey: "gpt-5.6-sol" });
+    await leaseServices.codex.reportResult(
+      { headers: { authorization: `Bearer ${token}` } },
+      {
+        leaseId: legacyLease.leaseId,
+        status: 200,
+        modelKey: "gpt-5.6-sol",
+        inputTokens: 200_000,
+        outputTokens: 0,
+        totalTokens: 200_000,
+        contextTokens: 100_000,
+      },
+    );
+    expect(store.publicStatus(record)).toMatchObject({
+      quotaMode: "usd",
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: null,
+          weekly: { used: 1, limit: 583.333334 },
+        },
+      },
+    });
+    expect(record.tokenUsageEvents ?? []).toEqual([]);
+    expect(record.weeklyTokenUsageEvents ?? []).toEqual([]);
+
+    // 默认额度仍有余额，下一次真实租号继续成功。
+    expect((await lease("codex", token, { modelKey: "gpt-5.6-sol" })).ok).toBe(true);
   });
 });
 
@@ -615,17 +1027,16 @@ describe("E2E 续费/改配置:同 config 延长不新建;不同 config 并存",
 // ════════════════════════════════════════════════════════════════════════════
 describe("E2E 取消/退款/过期:座位释放复用、过期租号拒", () => {
   it("退款(取消订阅)→ 座位释放,后续同号订阅可复用该座位", async () => {
-    await publishCatalog(catalogWithSalesSeatCapacity("anthropic", "max-20x", ACCOUNT_SHARE_CAPACITY));
+    await publishCatalog();
     const c1 = await createTestCustomer();
     const c2 = await createTestCustomer();
 
-    // c1 独号占满 account 1(本用例显式把销售容量压到 4)。
+    // c1 先占用 account 1 的 4 个基础席位。
     const sel = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 };
     const first = await purchaseAndActivate(c1.id, sel);
-    expect(cfg(first.sub).salesSeatCapacity).toEqual({ anthropic: ACCOUNT_SHARE_CAPACITY });
+    expect(cfg(first.sub).quotaSeatCapacity).toBe(4); // 独享拿整号，不按超卖份数摊分。
     expect(cfg(first.sub).bindings).toEqual({ anthropic: 1 });
 
-    // (决策7:座位满不再硬拦下单 —— 超卖放开;此处只验证退款释放 + 复用绑号链路。)
     // c1 退款 → 取消订阅(座位会计只数 ACTIVE,CANCELLED 即释放)。
     await subscriptionService.cancelSubscription(first.sub!.id);
     const refreshed = await prisma.subscription.findUnique({ where: { id: first.sub!.id } });
@@ -655,13 +1066,13 @@ describe("E2E 取消/退款/过期:座位释放复用、过期租号拒", () => 
 // 场景 7 — 边界/异常
 // ════════════════════════════════════════════════════════════════════════════
 describe("E2E 边界/异常", () => {
-  it("绑定座位满(该等级号已占满)→ 下单【超卖】放过(决策7),仍落单", async () => {
-    await publishCatalog(catalogWithSalesSeatCapacity("anthropic", "max-20x", ACCOUNT_SHARE_CAPACITY));
-    // 用满 account 1(本用例显式把销售容量压到 cap):一个独号(weight=cap)订阅即占满。
+  it("基础席位已满但未到固定超卖上限 → 允许卖到上限", async () => {
+    await publishCatalog();
+    // 先占 4 个基础席位；固定上限是 ceil(4 × 1.5) = 6。
     const cFull = await createTestCustomer();
     await purchaseAndActivate(cFull.id, { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 });
 
-    // 决策7:座位满不再硬拦 —— 超卖放开。新客户下单成功、订单落库(使用层 D=max(N,Σw) 自动切薄)。
+    // 再买 2 席刚好达到 6，允许下单；已购订阅的美元额度不发生变化。
     const cNew = await createTestCustomer();
     const order = await billingService.createCatalogOrder(
       cNew.id,
@@ -965,7 +1376,8 @@ describe("E2E 真·一条龙:注册→验证→登录→(真 token)下单→激�
     await reportUsage("codex", sessionToken, rc.leaseId, "gpt-5-codex", 200);
     await reportUsage("antigravity", sessionToken, rg.leaseId, "gemini-2.5-pro", 300);
     expect(store.publicStatus(store.findById(subA.id)!).recentWindowTokens).toBe(100);
-    expect(store.publicStatus(store.findById(subC.id)!).recentWindowTokens).toBe(200);
+    expect(store.publicStatus(store.findById(subC.id)!).recentWindowTokens).toBe(0);
+    expect(store.publicStatus(store.findById(subC.id)!).usdQuotaByProduct.codex.weekly.used).toBeGreaterThan(0);
     expect(store.publicStatus(store.findById(subG.id)!).recentWindowTokens).toBe(300);
   });
 

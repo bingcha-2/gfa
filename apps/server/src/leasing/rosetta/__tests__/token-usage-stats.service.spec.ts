@@ -6,7 +6,7 @@ import { beijingDayKey } from "../../../shared/common/beijing-time";
 // Prisma stub with two tables backed by one row list:
 //   - cardUsageHourly: powers summary / hourly-frequency / today / trend.
 //     Reads hourStart + requests + token sums; scoped by the stable accountEmail.
-//   - cardTokenUsage:  powers getAccountUsageTrend (still per-call raw, by accountId).
+//   - CardUsageHourly powers card/account trends and summaries.
 // A test row carries BOTH timestamp and hourStart (same instant) and requests
 // (default 1), so it behaves like one call unless requests is overridden to model
 // a pre-aggregated hour.
@@ -236,28 +236,5 @@ describe("TokenUsageStatsService.getUsageTrend", () => {
     expect(out.daily.length).toBeGreaterThanOrEqual(7);
     expect(out.totals).toEqual({ totalTokens: 0, requests: 0 });
     expect(out.daily.every((d) => d.totalTokens === 0)).toBe(true);
-  });
-});
-
-describe("TokenUsageStatsService.cleanupHourly", () => {
-  it("删除 ~60 天前的小时聚合行(hourStart < cutoff)", async () => {
-    const deleteMany = vi.fn(async () => ({ count: 3 }));
-    const svc = new TokenUsageStatsService({ cardUsageHourly: { deleteMany } } as any);
-
-    await svc.cleanupHourly();
-
-    expect(deleteMany).toHaveBeenCalledTimes(1);
-    const arg = (deleteMany.mock.calls[0] as any)[0];
-    expect(arg.where.hourStart.lt).toBeInstanceOf(Date);
-    // 截止点约在 60 天前(按北京日零点对齐,容差 2 天)。
-    const cutoffMs = (arg.where.hourStart.lt as Date).getTime();
-    const sixtyDaysAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
-    expect(Math.abs(cutoffMs - sixtyDaysAgo)).toBeLessThan(2 * 24 * 60 * 60 * 1000);
-  });
-
-  it("删 0 行不报错", async () => {
-    const deleteMany = vi.fn(async () => ({ count: 0 }));
-    const svc = new TokenUsageStatsService({ cardUsageHourly: { deleteMany } } as any);
-    await expect(svc.cleanupHourly()).resolves.toBeUndefined();
   });
 });

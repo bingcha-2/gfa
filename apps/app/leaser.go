@@ -57,15 +57,21 @@ type LocalQuota struct {
 }
 
 type pendingReport struct {
-	Payload       map[string]interface{}
-	Card          string
+	Payload map[string]interface{}
+	// Retries always use the currently authenticated user's renewed JWT. Never
+	// persist an old bearer token to disk; legacy files that contain Card remain
+	// readable because unknown JSON fields are ignored.
+	Card          string `json:"-"`
 	UpstreamProxy string
 	AddedAt       time.Time
 }
 
 const (
-	reportMaxRetries    = 3
-	maxPendingReports   = 30
+	reportMaxRetries  = 3
+	maxPendingReports = 500
+	// The server retains the lease/account causal mapping for 35 minutes. Keeping
+	// reports longer would imply retry safety that the server cannot authenticate
+	// after that mapping expires (especially across a server restart).
 	pendingReportMaxAge = 30 * time.Minute
 )
 
@@ -480,15 +486,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		l.mu.Unlock()
 	}
 	// 记录绑定号在该模型上的真实上游剩余 + 恢复时间(供血条显示真实余量/倒计时)。
-	if leaseResp.BoundAccount != nil {
-		mk, _ := options["modelKey"].(string)
-		recordBoundFractionForModel("antigravity", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
-	}
-	// 服务端把"绑定号已知的各 bucket 额度"一并带回 → 激活/首次预热那一下就能把每条血条
-	// 都填上真实值(共享号,别人用过就有数据),而非只填被租的那个模型。
-	recordAccountBuckets(body)
-	// 公平份额：如果服务端返回了 per-card fair share 比例，用它覆盖 accountBuckets。
-	// fairShareQuota 反映的是"这张卡的均分额度剩余"而非"整个账号剩余"。
+	// Antigravity locally caches only its personal fair-share gate.
 	recordFairShareQuota(body)
 
 	// Calculate expiry time in millisecond unix timestamp

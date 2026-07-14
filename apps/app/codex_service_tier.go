@@ -10,10 +10,6 @@ import (
 // priority(≠ 字面 "fast",也 ≠ reasoning effort)。
 const codexFastServiceTier = "priority"
 
-// codexFastCostMultiplier 是「快速档」相对标准档的成本溢价倍数,对齐 OpenAI service_tiers
-// priority 的「1.5x speed, increased usage」。用于成本估算(usage_stats)与服务端计量加权。
-const codexFastCostMultiplier = 1.5
-
 // codexPlanSupportsFast 判断某会员等级的 ChatGPT 号是否具备「快速」服务档能力。
 // 快速(priority)是 Pro / Team / Business / Enterprise / Edu 的特性;Plus / Free / 未知
 // 一律不发 priority —— 上游对不具此能力的号会忽略或直接报错,发了纯属浪费(还可能触发 4xx

@@ -18,6 +18,7 @@
  */
 
 import type { CatalogConfig } from "@/lib/account/catalog-pricing";
+import { API_USD_QUOTA_PER_SEAT_DEFAULTS } from "@gfa/shared";
 
 // ── 席位档(绑定线 share 折扣的键)。与购买页 SHARE_OPTIONS 对齐。 ──
 export const SHARE_SEATS = [1, 2, 4, 8] as const;
@@ -58,6 +59,8 @@ export interface PoolPricingForm {
 export interface BindPricingForm {
   /** 等级价矩阵(元),产品 → 等级 → 元字符串。 */
   levelPrice: Record<string, Record<string, string>>;
+  /** 每一份固定美元额度；订阅总额度 = 单份额度 × 购买份数。 */
+  usdQuotaPerSeat?: Record<string, Record<string, { fiveHour: string; weekly: string }>>;
   /** 席位折扣(元,通常为负),"1"|"2"|"4"|"8" → 元字符串。 */
   share: Record<string, string>;
   /** 每多一台设备加价(元)。 */
@@ -66,7 +69,6 @@ export interface BindPricingForm {
 
 export interface SupplyPolicyForm {
   defaultLevel: string;
-  salesSeatsPerAccount: Record<string, string>;
   buckets: Record<string, unknown>;
 }
 
@@ -90,7 +92,7 @@ export interface PlanCatalogForm {
   windowMs: string;
   /** 统一绑定线动态供给策略;数字字段在表单里以字符串编辑。 */
   supplyPolicies?: Record<string, SupplyPolicyForm>;
-  /** 自动分配时允许超过供给策略席位的倍率;空值表示使用服务端默认值。 */
+  /** 自动分配时允许超过供给策略席位的倍率;历史目录缺失时回填 1.5。 */
   oversellFactor?: string;
 }
 
@@ -126,6 +128,15 @@ function intToStr(value: number): string {
 
 function factorToStr(value: number): string {
   return Number.isFinite(value) ? String(value) : "";
+}
+
+function decimalToStr(value: number): string {
+  return Number.isFinite(value) ? String(value) : "0";
+}
+
+function toNonNegativeDecimal(value: string): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1_000_000) / 1_000_000 : 0;
 }
 
 function optionalOversellFactor(value: string | undefined): Pick<CatalogConfig, "oversellFactor"> {
@@ -202,8 +213,27 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
   for (const n of SHARE_SEATS) {
     share[String(n)] = centsToYuan(Number(bindPricing.share?.[String(n)] ?? 0));
   }
+  const perSeatQuota = bindPricing.usdQuotaPerSeat
+    ?? convertLegacyFullQuotaToPerSeat(bindPricing.usdQuota, config)
+    // Existing published catalogs created before USD quotas should open with
+    // editable operational defaults instead of blank inputs. An explicitly
+    // stored (including partially stored) config always wins and is never
+    // overwritten by these defaults.
+    ?? API_USD_QUOTA_PER_SEAT_DEFAULTS;
   const bind: BindPricingForm = {
     levelPrice,
+    ...(perSeatQuota === undefined ? {} : {
+      usdQuotaPerSeat: Object.fromEntries(productOrder.map((product) => [
+        product,
+        Object.fromEntries((levels[product] ?? []).map((level) => {
+          const quota = perSeatQuota?.[product]?.[level];
+          return [level, {
+            fiveHour: decimalToStr(Number(quota?.fiveHour ?? 0)),
+            weekly: decimalToStr(Number(quota?.weekly ?? 0)),
+          }];
+        })),
+      ])),
+    }),
     share,
     devicePerExtra: centsToYuan(Number(bindPricing.devicePerExtra ?? 0)),
   };
@@ -214,9 +244,7 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     pricing: { pool, bind },
     durationDays: intToStr(Number(config.durationDays ?? 0)),
     windowMs: intToStr(Number(config.windowMs ?? 0)),
-    ...(config.oversellFactor === undefined
-      ? {}
-      : { oversellFactor: factorToStr(Number(config.oversellFactor)) }),
+    oversellFactor: factorToStr(Number(config.oversellFactor ?? 1.5)),
     ...(config.supplyPolicies === undefined
       ? {}
       : { supplyPolicies: supplyPoliciesToForm(config.supplyPolicies) }),
@@ -268,12 +296,23 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
 
   // bind 定价(元 → 分)。等级价只写当前等级列表里的等级。
   const levelPrice: Record<string, Record<string, number>> = {};
+  const usdQuotaPerSeat: NonNullable<CatalogConfig["pricing"]["bind"]["usdQuotaPerSeat"]> = {};
   for (const row of form.products) {
     const out: Record<string, number> = {};
+    const quotaOut: Record<string, { fiveHour: number; weekly: number }> = {};
     for (const level of levels[row.product]) {
       out[level] = yuanToCents(form.pricing.bind.levelPrice[row.product]?.[level] ?? "");
+      if (form.pricing.bind.usdQuotaPerSeat !== undefined) {
+        const quota = form.pricing.bind.usdQuotaPerSeat[row.product]?.[level];
+        const fiveHour = toNonNegativeDecimal(quota?.fiveHour ?? "");
+        const weekly = toNonNegativeDecimal(quota?.weekly ?? "");
+        if (fiveHour > 0 || weekly > 0) quotaOut[level] = { fiveHour, weekly };
+      }
     }
     levelPrice[row.product] = out;
+    if (form.pricing.bind.usdQuotaPerSeat !== undefined && Object.keys(quotaOut).length > 0) {
+      usdQuotaPerSeat[row.product] = quotaOut;
+    }
   }
   const share: Record<string, number> = {};
   for (const n of SHARE_SEATS) {
@@ -292,6 +331,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
       },
       bind: {
         levelPrice,
+        ...(form.pricing.bind.usdQuotaPerSeat === undefined ? {} : { usdQuotaPerSeat }),
         share,
         devicePerExtra: yuanToCents(form.pricing.bind.devicePerExtra),
       },
@@ -303,6 +343,23 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
       ? {}
       : { supplyPolicies: supplyPoliciesToConfig(form.supplyPolicies) }),
   };
+}
+
+function convertLegacyFullQuotaToPerSeat(
+  legacy: CatalogConfig["pricing"]["bind"]["usdQuota"],
+  config: CatalogConfig,
+): CatalogConfig["pricing"]["bind"]["usdQuotaPerSeat"] | undefined {
+  if (legacy === undefined) return undefined;
+  const capacity = Math.max(1, Math.floor(Number(config.accountCapacity ?? config.shareCapacity ?? 8)));
+  const factor = Math.max(1, Number.isFinite(Number(config.oversellFactor)) ? Number(config.oversellFactor) : 1.5);
+  const sellableShares = Math.ceil(capacity * factor);
+  return Object.fromEntries(Object.entries(legacy).map(([product, levels]) => [
+    product,
+    Object.fromEntries(Object.entries(levels).map(([level, quota]) => [level, {
+      fiveHour: Math.round((Number(quota.fiveHour || 0) / sellableShares) * 1_000_000) / 1_000_000,
+      weekly: Math.round((Number(quota.weekly || 0) / sellableShares) * 1_000_000) / 1_000_000,
+    }])),
+  ]));
 }
 
 // ── 校验(发布前)────────────────────────────────────────────────────────────────
@@ -363,13 +420,8 @@ function supplyPoliciesToForm(
 ): Record<string, SupplyPolicyForm> {
   const out: Record<string, SupplyPolicyForm> = {};
   for (const [product, policy] of Object.entries(policies ?? {})) {
-    const salesSeatsPerAccount: Record<string, string> = {};
-    for (const [level, seats] of Object.entries(policy.salesSeatsPerAccount ?? {})) {
-      salesSeatsPerAccount[level] = intToStr(Number(seats));
-    }
     out[product] = {
       defaultLevel: policy.defaultLevel ?? "",
-      salesSeatsPerAccount,
       buckets: mapBucketSources(policy.buckets ?? {}, quotaSourceToForm),
     };
   }
@@ -381,13 +433,8 @@ function supplyPoliciesToConfig(
 ): NonNullable<CatalogConfig["supplyPolicies"]> {
   const out: NonNullable<CatalogConfig["supplyPolicies"]> = {};
   for (const [product, policy] of Object.entries(policies ?? {})) {
-    const salesSeatsPerAccount: Record<string, number> = {};
-    for (const [level, seats] of Object.entries(policy.salesSeatsPerAccount ?? {})) {
-      salesSeatsPerAccount[level] = toInt(String(seats));
-    }
     out[product] = {
       defaultLevel: policy.defaultLevel ?? "",
-      salesSeatsPerAccount,
       buckets: mapBucketSources(policy.buckets ?? {}, quotaSourceToConfig),
     };
   }

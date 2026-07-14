@@ -374,12 +374,9 @@ func TestUserLogout_ClearsMitmToken(t *testing.T) {
 	}
 }
 
-// ── 血条缓存与账号会话解耦 ───────────────────────────────────────────────────
+// ── Antigravity fair-share 缓存与账号会话解耦 ───────────────────────────────
 
-// TestUserLogout_ClearsBloodBars:登出必须清空血条缓存(我的份额 + 个人份额
-// 两个窗口维度),防止上一账号的独享个人血条在下一账号首个 lease 应答前串显
-// (设计场景 7「不继承旧卡血条」)。
-func TestUserLogout_ClearsBloodBars(t *testing.T) {
+func TestUserLogoutClearsAntigravityFairShare(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir
 	defer func() { origConfigDir = "" }()
@@ -392,29 +389,19 @@ func TestUserLogout_ClearsBloodBars(t *testing.T) {
 
 	resetBoundFractions()
 	defer resetBoundFractions()
-	recordMyBucketFraction("anthropic-claude", 0.4, 0, 0.5)
-	recordMyPersonalBucketFraction("anthropic-claude", 0.9)
-	recordMyPersonalWeeklyBucketFraction("anthropic-claude", 0.8)
+	recordMyBucketFraction("antigravity-claude", 0.4, time.Now().Add(time.Hour).UnixMilli(), 0.5)
 
 	app := &App{}
 	if err := app.UserLogout(); err != nil {
 		t.Fatalf("UserLogout: %v", err)
 	}
 
-	if got := snapshotMyFractions(); len(got) != 0 {
-		t.Errorf("my fractions after logout = %v, want empty", got)
-	}
-	if got := snapshotMyPersonalFractions(); len(got) != 0 {
-		t.Errorf("personal fractions after logout = %v, want empty", got)
-	}
-	if got := snapshotMyPersonalWeeklyFractions(); len(got) != 0 {
-		t.Errorf("personal weekly fractions after logout = %v, want empty", got)
+	if got := fairShareCacheSizeForTest(); got != 0 {
+		t.Errorf("fair-share cache size after logout = %v, want 0", got)
 	}
 }
 
-// TestUserLogin_ClearsBloodBars:登录(可能换账号)同样必须清空旧血条缓存,
-// 新账号额度由其首个 lease/heartbeat 应答重新写入。
-func TestUserLogin_ClearsBloodBars(t *testing.T) {
+func TestUserLoginClearsAntigravityFairShare(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir
 	defer func() { origConfigDir = "" }()
@@ -444,15 +431,15 @@ func TestUserLogin_ClearsBloodBars(t *testing.T) {
 
 	resetBoundFractions()
 	defer resetBoundFractions()
-	recordMyPersonalBucketFraction("anthropic-claude", 0.9)
+	recordMyBucketFraction("antigravity-claude", 0.4, time.Now().Add(time.Hour).UnixMilli(), 0.5)
 
 	app := &App{}
 	if _, err := app.UserLogin("next@example.com", "secret-pass"); err != nil {
 		t.Fatalf("UserLogin: %v", err)
 	}
 
-	if got := snapshotMyPersonalFractions(); len(got) != 0 {
-		t.Errorf("personal fractions after login = %v, want empty", got)
+	if got := fairShareCacheSizeForTest(); got != 0 {
+		t.Errorf("fair-share cache size after login = %v, want 0", got)
 	}
 }
 
@@ -772,7 +759,7 @@ func TestHeartbeat_Success_PersistsSubscription(t *testing.T) {
 	}
 }
 
-func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
+func TestHeartbeat_Success_PersistsPersonalSubscriptionUsdQuota(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir
 	defer func() { origConfigDir = "" }()
@@ -785,20 +772,18 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 			"status":   "ACTIVE",
 			"priority": 1,
 			"products": []interface{}{"anthropic"},
-			"productQuota": map[string]interface{}{
+			"usdQuotaByProduct": map[string]interface{}{
 				"anthropic": map[string]interface{}{
-					"hourlyPercent":            95.0,
-					"weeklyPercent":            93.0,
-					"hourlyResetAt":            "2026-06-21T10:00:00Z",
-					"weeklyResetAt":            "2026-06-23T10:00:00Z",
-					"myHourlyFraction":         0.55,
-					"myWeeklyFraction":         0.77,
-					"myPersonalHourlyFraction": 0.85,
-					"myPersonalWeeklyFraction": 0.97,
-					"myShare":                  0.25,
-					"exclusive":                true,
+					"fiveHour": map[string]interface{}{
+						"used": 38.25, "limit": 400.0, "resetAt": "2026-06-21T10:00:00Z",
+					},
+					"weekly": map[string]interface{}{
+						"used": 722.4, "limit": 1900.0, "resetAt": "2026-06-23T10:00:00Z",
+					},
 				},
 			},
+			"exclusive":  true,
+			"shareSeats": 2.0,
 		}},
 	}
 	srv := newHeartbeatServer(t, resp, http.StatusOK)
@@ -816,24 +801,18 @@ func TestHeartbeat_Success_PersistsProductQuotaFairShare(t *testing.T) {
 	if len(cfg.Subscriptions) != 1 {
 		t.Fatalf("Subscriptions length = %d, want 1", len(cfg.Subscriptions))
 	}
-	q := cfg.Subscriptions[0].ProductQuota["anthropic"]
-	if q.MyHourlyFraction == nil || *q.MyHourlyFraction != 0.55 {
-		t.Fatalf("MyHourlyFraction = %v, want 0.55", q.MyHourlyFraction)
+	q, ok := cfg.Subscriptions[0].UsdQuotaByProduct["anthropic"]
+	if !ok || q.FiveHour == nil || q.FiveHour.Used != 38.25 || q.FiveHour.Limit != 400 {
+		t.Fatalf("five-hour USD quota = %#v, want used=38.25 limit=400", q)
 	}
-	if q.MyWeeklyFraction == nil || *q.MyWeeklyFraction != 0.77 {
-		t.Fatalf("MyWeeklyFraction = %v, want 0.77", q.MyWeeklyFraction)
+	if q.Weekly == nil || q.Weekly.Used != 722.4 || q.Weekly.Limit != 1900 {
+		t.Fatalf("weekly USD quota = %#v, want used=722.4 limit=1900", q.Weekly)
 	}
-	if q.MyPersonalHourlyFraction == nil || *q.MyPersonalHourlyFraction != 0.85 {
-		t.Fatalf("MyPersonalHourlyFraction = %v, want 0.85", q.MyPersonalHourlyFraction)
+	if !cfg.Subscriptions[0].Exclusive {
+		t.Fatal("subscription exclusive flag was not persisted")
 	}
-	if q.MyPersonalWeeklyFraction == nil || *q.MyPersonalWeeklyFraction != 0.97 {
-		t.Fatalf("MyPersonalWeeklyFraction = %v, want 0.97", q.MyPersonalWeeklyFraction)
-	}
-	if q.MyShare == nil || *q.MyShare != 0.25 {
-		t.Fatalf("MyShare = %v, want 0.25", q.MyShare)
-	}
-	if q.Exclusive == nil || *q.Exclusive != true {
-		t.Fatalf("Exclusive = %v, want true", q.Exclusive)
+	if cfg.Subscriptions[0].ShareSeats != 2 {
+		t.Fatalf("shareSeats = %d, want 2", cfg.Subscriptions[0].ShareSeats)
 	}
 }
 

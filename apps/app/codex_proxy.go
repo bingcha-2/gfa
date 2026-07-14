@@ -309,15 +309,6 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	audit.reqBody = body
 	audit.model = modelKey
 
-	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
-	// (见 quota_enforcement.go)。无份额数据(号池/静态卡)→ 自然放行。
-	if ok, retryMs, reason := checkBoundFairShare(bucketKey("codex", modelKey)); !ok {
-		atomic.AddInt64(&p.totalErrors, 1)
-		audit.note = "本地公平限额拦截:" + reason
-		writeQuotaExhausted(w, &QuotaExhaustedError{RetryAfterMs: retryMs, Reason: reason})
-		return
-	}
-
 	leaseFunc := p.leaseToken
 	if leaseFunc == nil {
 		leaseFunc = GetCodexLeaser().LeaseToken
@@ -456,7 +447,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
-			audit.note = "流中断(不上报用量):" + copyErr.Error()
+			audit.note = "流中断(已上报已解析用量):" + copyErr.Error()
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 			return
 		}
@@ -1176,13 +1167,13 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (model st
 		n, readErr := body.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
+			scan(chunk, false)
 			if _, writeErr := w.Write(chunk); writeErr != nil {
 				return model, input, output, cached, total, writeErr
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
-			scan(chunk, false)
 		}
 		if readErr == io.EOF {
 			scan(nil, true)
@@ -1253,6 +1244,7 @@ func codexDetailsFrom(status int, modelKey string, input, output, cached, total 
 		InputTokens:         input,
 		OutputTokens:        output,
 		CachedInputTokens:   cached,
+		ContextTokens:       input,
 		RawTotalTokens:      raw,
 		BillableTotalTokens: billable,
 	}

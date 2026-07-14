@@ -3,7 +3,7 @@ import * as path from "path";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import type { Provider } from "../lease-core/provider";
 import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-billing";
-import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
+import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provider";
 import { codexBindingWindow } from "./auth/codex-usage";
 import { CodexModelCatalog } from "./codex-model-catalog";
@@ -113,13 +113,6 @@ export class CodexProvider implements Provider<CodexAccount> {
       };
     }
     return extras;
-  }
-
-  /** Blood bar = the account-level codex binding (min hourly/weekly) fraction.
-   * Unknown (no quota snapshot yet) → -1 so the client shows "未知", not a fake 100%. */
-  bloodBarFraction(account: CodexAccount, _modelKey: string): { fraction: number; resetAt: number } {
-    const f = getModelQuotaFraction(account, "codex");
-    return { fraction: f === null || f < 0 ? -1 : f, resetAt: getModelQuotaResetAt(account, "codex") };
   }
 
   /**

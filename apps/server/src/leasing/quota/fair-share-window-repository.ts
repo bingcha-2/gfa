@@ -40,6 +40,10 @@ export interface HourlyUsageAccounting {
   outputTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  cacheWrite5mTokens?: number;
+  cacheWrite1hTokens?: number;
+  apiValueUsd?: number;
+  apiPriced?: boolean;
   rawTotalTokens: number;
   totalTokens: number;
   reverseProxy: boolean;
@@ -449,6 +453,8 @@ export class FairShareWindowRepository {
         requests: 1, failedRequests: failed,
         inputTokens: accounting.inputTokens, outputTokens: accounting.outputTokens,
         cachedInputTokens: accounting.cachedInputTokens, cacheCreationTokens: accounting.cacheCreationTokens,
+        cacheWrite5mTokens: Number(accounting.cacheWrite5mTokens || 0), cacheWrite1hTokens: Number(accounting.cacheWrite1hTokens || 0),
+        apiValueUsd: Number(accounting.apiValueUsd || 0), apiPricedRequests: accounting.apiPriced ? 1 : 0,
         rawTotalTokens: accounting.rawTotalTokens, totalTokens: accounting.totalTokens,
         reverseProxyHits, priorityTokens,
       };
@@ -465,6 +471,8 @@ export class FairShareWindowRepository {
           requests: { increment: sums.requests }, failedRequests: { increment: sums.failedRequests },
           inputTokens: { increment: sums.inputTokens }, outputTokens: { increment: sums.outputTokens },
           cachedInputTokens: { increment: sums.cachedInputTokens }, cacheCreationTokens: { increment: sums.cacheCreationTokens },
+          cacheWrite5mTokens: { increment: sums.cacheWrite5mTokens }, cacheWrite1hTokens: { increment: sums.cacheWrite1hTokens },
+          apiValueUsd: { increment: sums.apiValueUsd }, apiPricedRequests: { increment: sums.apiPricedRequests },
           rawTotalTokens: { increment: sums.rawTotalTokens }, totalTokens: { increment: sums.totalTokens },
           reverseProxyHits: { increment: sums.reverseProxyHits }, priorityTokens: { increment: sums.priorityTokens },
         },

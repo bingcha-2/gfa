@@ -958,14 +958,15 @@ try {
         where: { reportId: { in: ["live-lease-u1", "live-lease-u2"] } },
         orderBy: { reportId: "asc" },
       });
-      const hourly = await prisma.cardUsageHourly.findFirst({
+      const hourly = await prisma.cardUsageHourly.aggregate({
         where: { accessKeyId: `card-${id}`, modelKey: "gpt-5.6-luna" },
+        _sum: { requests: true, totalTokens: true },
       });
       const receiptSummary = receipts.map((receipt) => ({ reportId: receipt.reportId, accountId: receipt.accountId }));
       assert(receipts.length === 2 && receipts.every((receipt) => receipt.accountId === id),
         `reused live lease lost account attribution: receipts=${JSON.stringify(receiptSummary)}, response=${JSON.stringify(second.responses.at(-1))}`);
-      assert(hourly?.requests === 2 && hourly.totalTokens === 2_000_000,
-        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly && { requests: hourly.requests, totalTokens: hourly.totalTokens })}`);
+      assert(hourly._sum.requests === 2 && hourly._sum.totalTokens === 2_000_000,
+        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly._sum)}`);
     }
 
     // 启动屏障:订阅表未就绪时放租必须 503(而不是拿残缺成员表算出 429),

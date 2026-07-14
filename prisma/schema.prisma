@@ -455,7 +455,7 @@ model SiteSetting {
 
 /// 小时用量聚合:写入时按(小时 × 卡 × 上游号 × 客户 × 模型 × bucket)就地累加,
 /// 行数只跟「卡×模型×小时」走、与请求次数脱钩(客户狂刷不会撑大此表)。
-/// 趋势/今日/按模型/24h分布/成本 都读这张;单条明细仍读 CardTokenUsage(只留最近)。
+/// 趋势/今日/按模型/24h分布/成本统一读这张；逐请求旧表已退役并删除。
 /// hourStart = 该请求时刻向下取整到整点(UTC 起点;北京为整数时差,小时/日分桶天然对齐)。
 /// 唯一键里 accountEmail/customerId 用空串("")代替 null,避免 SQLite NULL 不参与唯一约束。
 model CardUsageHourly {
@@ -472,6 +472,10 @@ model CardUsageHourly {
   outputTokens      Int      @default(0)
   cachedInputTokens Int      @default(0)
   cacheCreationTokens Int    @default(0)          // 缓存写(cache_creation);仅 claude 非零,历史行=0
+  cacheWrite5mTokens Int     @default(0)          // Claude 5m 缓存写，不能与 1h 档混算
+  cacheWrite1hTokens Int     @default(0)          // Claude 1h 缓存写
+  apiValueUsd      Float     @default(0)          // 请求发生时冻结的 API 等价美元价值
+  apiPricedRequests Int      @default(0)          // 已按精确模型价冻结价值的请求数
   rawTotalTokens    Int      @default(0)
   totalTokens       Int      @default(0)          // 计费 token(扣缓存折扣后)
   reverseProxyHits  Int      @default(0)          // 命中反代检测(非真 Claude Code 客户端)的请求数;查"哪张卡在反代"
@@ -543,7 +547,7 @@ model FairShareWindowHead {
   @@index([provider, accountId, bucket])
 }
 
-/// Exactly-once quota acknowledgements. Kept for only three days; the current
+/// Exactly-once quota acknowledgements. Kept for fourteen days; the current
 /// window checkpoint remains fixed-size and does not retain request history.
 model QuotaReportReceipt {
   provider  String
@@ -771,8 +775,8 @@ model Subscription {
   weeklyTokenLimit    Int?
   windowMs            Int                @default(18000000)
   backingKeyValue     String             @unique  // opaque key value written into access-keys.json
-  // 限流窗口快照(JSON 字符串):{ windowStartedAt, weeklyWindowStartedAt, tokenUsageEvents, weeklyTokenUsageEvents }。
-  // 由 token-server 定时 + 关机持久化;重启时直接恢复 5h/周窗口(精准,不再从 CardTokenUsage 回放)。
+  // 限流窗口快照(JSON 字符串):旧算法保存窗口事件；美元算法按产品保存 usdUsageByProduct。
+  // Antigravity 与 Codex/Anthropic 可同时保存各自状态。由 token-server 定时 + 关机持久化,重启时精准恢复。
   windowState         String?
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt

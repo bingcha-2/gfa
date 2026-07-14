@@ -22,15 +22,20 @@
 生产库是 `db push` 管理的、已有真实数据,**不能**直接 `migrate deploy`(会因表已存在而失败),需先 baseline:
 
 1. **先备份生产 `dev.db`。**
-2. 让生产库 schema 追到最新(本次改动:删 credit 两表 + 建 3 张新表 + CardTokenUsage 索引)。两种方式二选一:
+2. 让生产库 schema 追到最新(以当前 `schema.prisma` 和版本化迁移为准；已退役的
+   `CardTokenUsage` 会被删除)。两种方式二选一:
    - 用最后一次旧流程:`pnpm db:init:sqlite`(它 diff 当前库→新 schema 并应用)。
    - 或手工执行本次改动的 DDL。
-   完成后生产库 schema 应与 `0_init` 一致。
-3. **重置迁移历史并打基线**(只动 `_prisma_migrations` 元数据表,不动业务数据):
+   完成后生产库 schema 应与当前 `schema.prisma` 一致。
+3. **重置迁移历史并登记当前全部迁移**(只动 `_prisma_migrations` 元数据表,不动业务数据)。
+   因为第 2 步已经把所有 DDL 手工应用到库中，不能只登记 `0_init`，否则下一次部署会
+   重放后续迁移并可能因重复加列而失败:
    ```sh
-   # 清掉旧的迁移记录(若有),再把 0_init 标记为已应用
+   # 清掉旧的迁移记录(若有),再把当前仓库里的迁移按目录逐个登记为已应用
    sqlite3 <prod.db> "DELETE FROM _prisma_migrations;"   # 仅元数据表
-   pnpm prisma migrate resolve --applied 0_init
+   for dir in prisma/migrations/*/; do
+     pnpm prisma migrate resolve --applied "$(basename "$dir")"
+   done
    ```
 4. 验证:`pnpm db:migrate:status` 应显示 `Database schema is up to date!`。
 5. 之后把 launcher(`scripts/private-hosting/launcher.ps1`)里调 `db:init:sqlite` 的那行改为 `db:migrate`,生产从此走 `migrate deploy`。

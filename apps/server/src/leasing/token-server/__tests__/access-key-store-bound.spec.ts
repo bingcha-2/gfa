@@ -106,4 +106,23 @@ describe('AccessKeyStore.getRecordsBoundTo', () => {
     expect(store.hardBoundAccountIds('antigravity').has(7)).toBe(false);
     expect(store.getHardBoundCardWeights(7, 'antigravity')).toEqual([]);
   });
+
+  it('keeps USD subscriptions hard-bound for routing but excludes them from fair-share weights', () => {
+    const store = makeStore();
+    store.loadSubscriptionRecords([
+      {
+        id: 'legacy-sub', customerId: 'c1', status: 'active', products: ['codex'],
+        bindings: { codex: 7 }, weight: 2,
+      },
+      {
+        id: 'usd-sub', customerId: 'c2', status: 'active', products: ['codex'],
+        bindings: { codex: 7 }, weight: 4, quotaAlgorithm: 'usd', usdLimit5h: 10,
+      },
+    ]);
+
+    expect(store.hardBoundAccountIds('codex').has(7)).toBe(true);
+    expect(store.getHardBoundCardWeights(7, 'codex')).toEqual([
+      { cardId: 'legacy-sub', weight: 2 },
+    ]);
+  });
 });

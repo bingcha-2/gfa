@@ -143,7 +143,7 @@ The Wails build output `apps\app\build\bin\` is not the public update dir.
 
 ### Server minimum client version
 
-`apps\server\src\leasing\lease-core\lease-service.ts` → `minClientVersion` default (currently `9.2.0`) is the
+`apps\server\src\leasing\lease-core\lease-service.ts` → `minClientVersion` default (currently `13.5.4`) is the
 single floor for ALL lease paths — `RemoteAnthropicService` / `RemoteCodexService` / `TokenServerService`
 all extend `LeaseService` and none override it (their modules call
 `new XxxService({ tokenUsageTracker, accountQuotaSnapshotTracker })` with no `minClientVersion`).

@@ -209,93 +209,36 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	}
 }
 
-// recordAccountBuckets 解析 lease 响应里的 accountBuckets(绑定号已知的各 bucket 额度),
-// 一次性记录所有 bucket,让激活/预热那一下每条血条都有真实值。
-func recordAccountBuckets(body []byte) {
-	var resp struct {
-		AccountBuckets map[string]struct {
-			Fraction float64 `json:"fraction"`
-			ResetAt  int64   `json:"resetAt"`
-		} `json:"accountBuckets"`
-	}
-	if json.Unmarshal(body, &resp) != nil {
-		return
-	}
-	for bucket, q := range resp.AccountBuckets {
-		recordAccountBucketFraction(bucket, q.Fraction, q.ResetAt)
-	}
-}
-
-// recordFairShareQuota 解析 lease 响应里的 fairShareQuota(绑定卡的均分额度剩余)。
-// accountBuckets 与 fairShareQuota 是整号/个人两个独立维度；旧服务端不下发
-// personalFraction 时，必须清掉之前由新版服务端留下的个人维度。
+// recordFairShareQuota only keeps Antigravity's local enforcement cache.
+// Codex/Anthropic dollar quotas are enforced by the server and ignored here.
 func recordFairShareQuota(body []byte) {
 	var resp struct {
-		AccountBuckets map[string]struct {
+		FairShareQuota map[string]struct {
 			Fraction float64 `json:"fraction"`
 			ResetAt  int64   `json:"resetAt"`
-		} `json:"accountBuckets"`
-		FairShareQuota map[string]struct {
-			Fraction         float64  `json:"fraction"`
-			PersonalFraction *float64 `json:"personalFraction"`
-			ResetAt          int64    `json:"resetAt"`
-			Share            float64  `json:"share"` // e_i:我的份额占整号比例(双层血条外层几何;旧服务端无 → 0)
 		} `json:"fairShareQuota"`
-		// 周血条:与 fairShareQuota 平行,同 bucket 键(仅 codex/anthropic 下发;旧服务端无此字段)。
 		WeeklyFairShareQuota map[string]struct {
-			Fraction         float64  `json:"fraction"`
-			PersonalFraction *float64 `json:"personalFraction"`
-			ResetAt          int64    `json:"resetAt"`
+			Fraction float64 `json:"fraction"`
+			ResetAt  int64   `json:"resetAt"`
 		} `json:"weeklyFairShareQuota"`
-		CodexWindows *struct {
-			HourlyPresent *bool `json:"hourlyPresent"`
-			WeeklyPresent *bool `json:"weeklyPresent"`
-		} `json:"codexWindows"`
 	}
 	if json.Unmarshal(body, &resp) != nil {
 		return
 	}
 	for bucket, q := range resp.FairShareQuota {
-		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt, q.Share)
-		if q.PersonalFraction != nil {
-			recordMyPersonalBucketFraction(bucket, *q.PersonalFraction)
-		} else {
-			clearMyPersonalBucketFraction(bucket)
-		}
+		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt, 0)
 	}
 	for bucket, q := range resp.WeeklyFairShareQuota {
 		recordMyWeeklyBucketFraction(bucket, q.Fraction, q.ResetAt)
-		if q.PersonalFraction != nil {
-			recordMyPersonalWeeklyBucketFraction(bucket, *q.PersonalFraction)
-		} else {
-			clearMyPersonalWeeklyBucketFraction(bucket)
-		}
-	}
-	// If an old server omits the weekly map entirely, any bucket present in the
-	// current response still proves that a previously cached weekly personal value
-	// is stale. Do not let it freeze indefinitely after a server rollback.
-	for bucket := range resp.AccountBuckets {
-		if _, ok := resp.WeeklyFairShareQuota[bucket]; !ok {
-			clearMyPersonalWeeklyBucketFraction(bucket)
-		}
 	}
 	for bucket := range resp.FairShareQuota {
 		if _, ok := resp.WeeklyFairShareQuota[bucket]; !ok {
-			clearMyPersonalWeeklyBucketFraction(bucket)
-		}
-	}
-	if resp.CodexWindows != nil {
-		if resp.CodexWindows.HourlyPresent != nil && !*resp.CodexWindows.HourlyPresent {
-			clearMyBucketFraction("codex-gpt")
-		}
-		if resp.CodexWindows.WeeklyPresent != nil && !*resp.CodexWindows.WeeklyPresent {
-			clearMyWeeklyBucketFraction("codex-gpt")
+			clearMyWeeklyBucketFraction(bucket)
 		}
 	}
 }
 
 func syncQuotaStateFromBody(l *Leaser, body []byte) {
-	recordAccountBuckets(body)
 	recordFairShareQuota(body)
 	var raw map[string]interface{}
 	if json.Unmarshal(body, &raw) != nil {

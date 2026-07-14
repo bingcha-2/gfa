@@ -138,6 +138,20 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
     tracker.destroy();
   });
 
+  it("按请求完成时间而不是延迟上报时间归入小时桶", async () => {
+    const prisma = makePrisma();
+    const tracker = new TokenUsageTracker(prisma);
+    const occurredAt = Date.parse("2026-06-10T03:59:59Z");
+    tracker.record({
+      accessKeyId: "sub-time", modelKey: "gpt-5-codex", bucket: "codex-gpt",
+      status: 200, inputTokens: 1, outputTokens: 1, totalTokens: 2, occurredAt,
+    });
+    await tracker.flush();
+    const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
+    expect(arg.create.hourStart.toISOString()).toBe("2026-06-10T03:00:00.000Z");
+    tracker.destroy();
+  });
+
   it("不同小时桶 → 分别 upsert", async () => {
     const prisma = makePrisma();
     const tracker = new TokenUsageTracker(prisma);

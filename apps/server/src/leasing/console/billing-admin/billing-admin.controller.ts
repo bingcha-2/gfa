@@ -132,10 +132,35 @@ export class BillingAdminController {
     return result;
   }
 
+  @Post("subscriptions/:id/usd-quota/reset")
+  async resetSubscriptionUsdQuotaUsage(
+    @Param("id") id: string,
+    @Body() body: { product?: string; scope?: "fiveHour" | "weekly" },
+    @Request() req: any,
+  ) {
+    const product = String(body?.product || "");
+    const scope = String(body?.scope || "") as "fiveHour" | "weekly";
+    const result = await this.billingAdmin.resetSubscriptionUsdQuotaUsage(id, product, scope);
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "RESET_SUBSCRIPTION_USD_QUOTA",
+      targetType: "Subscription",
+      targetId: id,
+      detail: {
+        customerId: result.customerId,
+        product: result.product,
+        scope: result.scope,
+        previousUsed: result.previousUsed,
+        limit: result.limit,
+      },
+    });
+    return result;
+  }
+
   @Patch("subscriptions/:id")
   async updateSubscription(
     @Param("id") id: string,
-    @Body() body: { expiresAt?: string },
+    @Body() body: { expiresAt?: string; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
     @Request() req: any,
   ) {
     const result = await this.billingAdmin.updateSubscription(id, body);
@@ -149,6 +174,8 @@ export class BillingAdminController {
         customerId: result.subscription.customerId,
         previousExpiresAt: result.previousExpiresAt?.toISOString() ?? null,
         expiresAt: result.subscription.expiresAt?.toISOString() ?? null,
+        previousUsdQuotaByProduct: result.previousUsdQuotaByProduct,
+        usdQuotaByProduct: result.subscription.config ? JSON.parse(result.subscription.config).usdQuotaByProduct ?? {} : {},
       },
     });
 

@@ -31,23 +31,31 @@ export function getCustomerPrisma(): PrismaClient {
 /** Push the Prisma schema into the test db if its tables are missing. */
 export async function ensureCustomerSchema(): Promise<void> {
   if (schemaEnsured) return;
-  const db = getCustomerPrisma();
-  try {
-    await db.$queryRawUnsafe(`SELECT id FROM "Subscription" LIMIT 1`);
-  } catch {
-    const prismaCli = resolve(repoRoot, "node_modules/prisma/build/index.js");
-    const schemaPath = resolve(repoRoot, "prisma/schema.prisma");
-    execSync(`node "${prismaCli}" db push --skip-generate --schema "${schemaPath}"`, {
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: "ignore",
-    });
-  }
+  // Always reconcile the reusable test database. Checking only that one table
+  // exists leaves new columns absent after a schema migration and produces
+  // misleading runtime failures unrelated to the code under test.
+  const prismaCli = resolve(repoRoot, "node_modules/prisma/build/index.js");
+  const schemaPath = resolve(repoRoot, "prisma/schema.prisma");
+  execSync(`node "${prismaCli}" db push --skip-generate --schema "${schemaPath}"`, {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    stdio: "ignore",
+  });
   schemaEnsured = true;
 }
 
 /** Delete all customer-system rows (FK-safe order). */
 export async function cleanCustomerTables(): Promise<void> {
   const db = getCustomerPrisma();
+  // Runtime accounting tables have no customer FK cascade. Clear them first so
+  // fixed report ids in restart/idempotency tests cannot leak across test runs.
+  await db.banEventRequest.deleteMany();
+  await db.accountBanEvent.deleteMany();
+  await db.requestLog.deleteMany();
+  await db.quotaReportReceipt.deleteMany();
+  await db.fairShareWindowHead.deleteMany();
+  await db.fairShareWindow.deleteMany();
+  await db.accountQuotaSnapshot.deleteMany();
+  await db.cardUsageHourly.deleteMany();
   await db.notification.deleteMany();
   await db.device.deleteMany();
   await db.activationCode.deleteMany();

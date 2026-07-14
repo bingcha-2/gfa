@@ -311,8 +311,8 @@ export function billableTokenUsageTotal(usage: any = {}, modelKey = ''): number 
  * input 为 gross(computeUsageDetail 已 normalizeUsageToGross,netInput=input-cached)。
  * 无 input/output 拆分的异常/legacy 事件 → 退回原始计费,不臆测方向(避免把总量当输出 8× 高估)。
  */
-/** Codex 快速档(service_tier=priority)对卡 CU 计费的成本乘数,对齐 fair-share
- *  CODEX_PRIORITY_FAIR_SHARE_MULTIPLIER 与客户端 codexFastCostMultiplier(均 1.5x)。 */
+/** Codex 快速档(service_tier=priority)对旧 CU 口径的成本乘数。
+ * 拼车美元额度不走此常量，而按请求发生时的模型/service tier 价格精确冻结。 */
 export const CODEX_FAST_CU_MULTIPLIER = 1.5;
 function fastCostMultiplier(item: any): number {
   return String(item?.serviceTier || '').trim().toLowerCase() === 'priority' ? CODEX_FAST_CU_MULTIPLIER : 1;
@@ -405,7 +405,6 @@ export function resetWindowIfExpired(record: any, now = Date.now()): boolean {
   const startedAt = Number(record.windowStartedAt || 0);
   if (startedAt === 0 || now - startedAt >= windowMs) {
     record.windowStartedAt = now;
-    record.usageEvents = [];
     record.tokenUsageEvents = [];
     return true;
   }
@@ -556,8 +555,8 @@ export function recentWeeklyBucketUsage(record: any, now = Date.now()): Map<stri
 
 /**
  * 由"用满后下次使用才开新窗"(use-anchored 固定窗)的用量事件,回放重建出 `now` 时刻所在窗口的
- * 起点 + 裁剪到该窗口的事件。用于订阅 record 跨重启从 CardTokenUsage 重建窗口起点 —— boot 时
- * windowStartedAt 已随内存丢失,5h 号池窗口与周窗口都按此回放(两者都是 use-anchored:见
+ * 起点 + 裁剪到该窗口的事件。用于兼容旧窗口事件快照并重建窗口起点；5h 号池窗口与周窗口
+ * 都按此回放(两者都是 use-anchored:见
  * resetWindowIfExpired / resetWeeklyWindowIfExpired,过期或起点为 0 时把起点设成首次使用时刻)。
  *
  * 活窗判定与 resetWindowIfExpired 一致(`now - startedAt >= windowMs` 即过期)。返回 startedAt=0

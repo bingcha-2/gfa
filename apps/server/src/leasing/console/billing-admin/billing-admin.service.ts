@@ -27,7 +27,9 @@ import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../subscription/entitlement-sync.service";
 import { rowToConfig } from "../../subscription/subscription-config";
+import { SUBSCRIPTION_USD_MIGRATION_VERSION } from "../../subscription/subscription-usd-migration";
 import { BillingService } from "../../account/billing/billing.service";
+import { supportsApiUsdProduct } from "../../token-server/api-usd-quota";
 
 export interface RefundResult {
   order: PlanOrder;
@@ -45,6 +47,7 @@ export interface RevokeResult {
 export interface UpdateSubscriptionResult {
   subscription: Subscription;
   previousExpiresAt: Date | null;
+  previousUsdQuotaByProduct: Record<string, { fiveHour: number; weekly: number }>;
 }
 
 /**
@@ -198,11 +201,25 @@ export class BillingAdminService {
    */
   private subscriptionViewFields(s: { config?: string | null } & Record<string, any>): {
     line: "bind" | "pool";
+    shareSeats: number;
+    usdQuotaByProduct: Record<string, { fiveHour: number; weekly: number }>;
+    usdQuotaUsageByProduct: Record<string, {
+      fiveHour: { used: number; limit: number; resetAt: string } | null;
+      weekly: { used: number; limit: number; resetAt: string } | null;
+    }>;
     boundAccounts?: Record<string, { id: number; email: string | null }>;
   } {
     const config = rowToConfig(s as any);
     const line = String(config.line || "pool") === "bind" ? "bind" : "pool";
-    if (line !== "bind") return { line };
+    const shareSeats = Math.max(1, Math.floor(Number(config.shareSeats ?? config.weight ?? s.weight) || 1));
+    const usdQuotaByProduct = Object.fromEntries(Object.entries(
+      config.usdQuotaByProduct && typeof config.usdQuotaByProduct === "object" ? config.usdQuotaByProduct : {},
+    ).map(([product, quota]: [string, any]) => [product, {
+      fiveHour: displayUsdLimit(quota?.fiveHour),
+      weekly: displayUsdLimit(quota?.weekly),
+    }]));
+    const usdQuotaUsageByProduct = this.entitlementSync.subscriptionUsdQuotaUsage?.(s.id) ?? {};
+    if (line !== "bind") return { line, shareSeats, usdQuotaByProduct, usdQuotaUsageByProduct };
     const bindings = config.bindings && typeof config.bindings === "object" ? config.bindings : {};
     const boundAccounts: Record<string, { id: number; email: string | null }> = {};
     for (const [product, raw] of Object.entries(bindings)) {
@@ -210,7 +227,13 @@ export class BillingAdminService {
       if (!(accountId > 0)) continue;
       boundAccounts[product] = this.entitlementSync.lookupPoolAccount(product, accountId) ?? { id: accountId, email: null };
     }
-    return { line, boundAccounts: Object.keys(boundAccounts).length ? boundAccounts : undefined };
+    return {
+      line,
+      shareSeats,
+      usdQuotaByProduct,
+      usdQuotaUsageByProduct,
+      boundAccounts: Object.keys(boundAccounts).length ? boundAccounts : undefined,
+    };
   }
 
   /**
@@ -285,7 +308,7 @@ export class BillingAdminService {
     }
 
     // 使用检测：订单支付后如果该客户产生过 token 用量，不允许退款。
-    // 查小时聚合表(保留 ~60 天，覆盖任意订阅期)；原始流水只留 2 天、不能判老订单。
+    // 查永久保留的小时聚合表 CardUsageHourly；请求级流水已经退役。
     // 下界按 paidAt 所在整点向下取整(保守：含该小时全部用量)。
     const since = order.paidAt ?? order.createdAt;
     const hourFloor = new Date(Math.floor(since.getTime() / 3_600_000) * 3_600_000);
@@ -382,20 +405,82 @@ export class BillingAdminService {
 
   async updateSubscription(
     subscriptionId: string,
-    dto: { expiresAt?: string },
+    dto: { expiresAt?: string; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
   ): Promise<UpdateSubscriptionResult> {
     const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
     if (!sub) throw new NotFoundException(`Subscription "${subscriptionId}" not found`);
 
-    const expiresAt = parseExpiresAt(dto.expiresAt);
+    const config = rowToConfig(sub as any) as Record<string, any>;
+    const previousUsdQuotaByProduct = structuredClone(config.usdQuotaByProduct || {});
+    if (dto.usdQuotaPerSeatByProduct !== undefined) {
+      config.quotaAlgorithm = "usd";
+      config.usdQuotaSource = "manual";
+      config.usdQuotaMigrationVersion = SUBSCRIPTION_USD_MIGRATION_VERSION;
+      const allowed = new Set((Array.isArray(config.products) ? config.products : []).map(String).filter(supportsApiUsdProduct));
+      const seats = Math.max(1, Math.floor(Number(config.shareSeats ?? config.weight) || 1));
+      const next: Record<string, { fiveHour: number; weekly: number }> = {};
+      for (const [product, quota] of Object.entries(dto.usdQuotaPerSeatByProduct)) {
+        if (!allowed.has(product)) throw new ConflictException(`产品 ${product} 不支持美元额度或不属于该订阅`);
+        const fiveHour = parseUsdLimit(quota?.fiveHour ?? 0, `${product}.fiveHour`);
+        const weekly = parseUsdLimit(quota?.weekly ?? 0, `${product}.weekly`);
+        if (fiveHour <= 0 && weekly <= 0) throw new ConflictException(`${product} 的 5 小时和每周额度不能同时为 0`);
+        next[product] = {
+          fiveHour: Math.round(fiveHour * seats * 1_000_000) / 1_000_000,
+          weekly: Math.round(weekly * seats * 1_000_000) / 1_000_000,
+        };
+      }
+      if (allowed.size === 0) throw new ConflictException("该订阅没有可配置美元额度的 Codex 或 Anthropic 产品");
+      const missing = [...allowed].filter((product) => !next[product]);
+      if (missing.length > 0) throw new ConflictException(`缺少产品额度配置: ${missing.join(", ")}`);
+      config.usdQuotaByProduct = next;
+      delete config.usdLimit5h;
+      delete config.usdLimitWeekly;
+      delete config.usdQuotaProducts;
+    }
+    const expiresAt = dto.expiresAt === undefined ? sub.expiresAt : parseExpiresAt(dto.expiresAt);
     const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },
-      data: { expiresAt },
+      data: { expiresAt, config: JSON.stringify(config) },
     });
-    await this.entitlementSync.syncSubscription(updated);
+    try {
+      await this.entitlementSync.syncSubscription(updated);
+    } catch (error) {
+      // The database is the source of truth, but the active in-memory record
+      // must change in the same operator action. Restore both sides if runtime
+      // refresh fails instead of returning an error after a half-applied edit.
+      const restored = await this.prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: { expiresAt: sub.expiresAt, config: sub.config },
+      });
+      try {
+        await this.entitlementSync.syncSubscription(restored);
+      } catch (restoreError) {
+        this.logger.error(
+          `[billing-admin] failed to restore runtime subscription ${subscriptionId}: ${String(restoreError)}`,
+        );
+      }
+      throw error;
+    }
 
-    this.logger.log(`[billing-admin] subscription ${subscriptionId} expiresAt updated`);
-    return { subscription: updated, previousExpiresAt: sub.expiresAt };
+    this.logger.log(`[billing-admin] subscription ${subscriptionId} configuration updated`);
+    return { subscription: updated, previousExpiresAt: sub.expiresAt, previousUsdQuotaByProduct };
+  }
+
+  async resetSubscriptionUsdQuotaUsage(
+    subscriptionId: string,
+    product: string,
+    scope: 'fiveHour' | 'weekly',
+  ) {
+    const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
+    if (!sub) throw new NotFoundException(`Subscription "${subscriptionId}" not found`);
+    if (!supportsApiUsdProduct(product)) throw new ConflictException(`产品 ${product} 不支持美元额度`);
+    if (scope !== 'fiveHour' && scope !== 'weekly') throw new ConflictException(`未知额度窗口 ${scope}`);
+    const result = await this.entitlementSync.resetSubscriptionUsdQuotaUsage(subscriptionId, product, scope);
+    if (!result) throw new ConflictException(`${product} 的${scope === 'fiveHour' ? ' 5 小时' : '每周'}额度未启用`);
+    this.logger.warn(
+      `[billing-admin] reset ${subscriptionId} ${product}.${scope} USD usage $${result.previousUsed}`,
+    );
+    return { ...result, subscriptionId, customerId: sub.customerId, product, scope };
   }
 
   /**
@@ -460,4 +545,17 @@ function parseExpiresAt(value: string | undefined): Date {
     throw new ConflictException("expiresAt must be a valid date");
   }
   return date;
+}
+
+function parseUsdLimit(value: unknown, field: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new ConflictException(`${field} must be a non-negative finite USD amount`);
+  }
+  return Math.round(n * 1_000_000) / 1_000_000;
+}
+
+function displayUsdLimit(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }

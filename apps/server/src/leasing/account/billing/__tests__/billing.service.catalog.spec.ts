@@ -194,7 +194,7 @@ describe("BillingService.createCatalogOrder", () => {
     });
   });
 
-  it("enriches bind catalog orders with sales-seat capacity + pinned policy (no static entitlements — fair-share governs)", async () => {
+  it("enriches bind catalog orders with the fixed oversell ceiling and pinned policy", async () => {
     const selection = {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
@@ -208,10 +208,10 @@ describe("BillingService.createCatalogOrder", () => {
     expect(cfg).toMatchObject({
       line: "bind",
       shareSeats: 2,
-      salesSeatCapacity: { anthropic: 10 },
+      quotaSeatCapacity: 12,
       assignmentPolicy: "pinned",
     });
-    // 绑定卡额度归 fair-share —— 不再下发静态 bucketLimits/weeklyBucketLimits。
+    // Codex/Claude 绑定卡使用订阅美元额度，不下发旧 token bucket 限额。
     expect(cfg.bucketLimits).toBeUndefined();
     expect(cfg.weeklyBucketLimits).toBeUndefined();
   });
@@ -250,7 +250,7 @@ describe("BillingService.createCatalogOrder", () => {
       shareSeats: 1,
       shareCapacity: 8,
       weight: 1,
-      salesSeatCapacity: { antigravity: 10 },
+      quotaSeatCapacity: 12,
       assignmentPolicy: "display-bound-pool",
       bucketLimits: {
         "antigravity-gemini": 12_500_000,
@@ -297,7 +297,7 @@ describe("BillingService.createCatalogOrder", () => {
       line: "bind",
       products: ["antigravity", "codex"],
       levels: { antigravity: "ultra", codex: "pro" },
-      salesSeatCapacity: { antigravity: 10, codex: 10 },
+      quotaSeatCapacity: 12,
       assignmentPolicy: "pinned",
     });
     expect(cfg.bucketLimits).toBeUndefined();
@@ -393,7 +393,7 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     expect(weight).toBe(4); // capacity 8 / 2 人,与 config.weight 一致
     expect(level).toBe("max-20x");
     expect(occupied).toBeInstanceOf(Map);
-    expect(salesCapacity).toBe(10);
+    expect(salesCapacity).toBe(12); // ceil(基础 8 人 × 1.5 倍超卖)
     expect(prisma.planOrder.create).toHaveBeenCalledOnce();
   });
 

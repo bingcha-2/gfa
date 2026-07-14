@@ -30,6 +30,7 @@ type Config struct {
 	UserToken       string `json:"userToken"`       // session JWT from /app/login
 	UserTokenExpiry string `json:"userTokenExpiry"` // ISO-8601 expiry
 	UserEmail       string `json:"userEmail"`       // account email
+	UserId          string `json:"userId"`          // stable server customer id; local stats namespace
 	PlanName        string `json:"planName"`        // subscription plan name
 	PlanExpiry      string `json:"planExpiry"`      // subscription expiry (ISO-8601 or null string)
 	PlanDeviceMax   int    `json:"planDeviceMax"`   // device limit from subscription
@@ -40,6 +41,7 @@ type Config struct {
 	// 「首订阅」派生,供既有单订阅 UI/判定兼容。心跳用服务端 subscriptions[] 覆盖刷新;
 	// 登出清空。
 	Subscriptions []SubscriptionSnapshot `json:"subscriptions"`
+	ServerUsage   *ServerUsageSummary    `json:"serverUsage,omitempty"`
 
 	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
 	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。
@@ -68,32 +70,21 @@ type SubscriptionSnapshot struct {
 	Priority    int               `json:"priority"`
 	Products    []string          `json:"products"`
 	Levels      map[string]string `json:"levels"`
-	// RemainFraction 是该订阅「最紧复合桶」的剩余额度比例(0-1);nil=无限额/无数据。
-	// 用于客户端多订阅余量条 —— 区分同产品同到期的订阅(谁在消耗、谁备用满额)。
-	RemainFraction *float64 `json:"remainFraction"`
-	// ProductQuota 是该订阅每个产品(绑定号)的整号 5h/周剩余,供逐订阅按产品画 5h/周血条。
-	// 来自服务端心跳(读 AccountQuotaSnapshot);空/缺产品 = 暂无该产品额度数据。
-	ProductQuota map[string]ProductQuotaWindow `json:"productQuota,omitempty"`
+	// UsdQuotaByProduct 是该订阅内各产品彼此独立的 API 等价美元额度。
+	UsdQuotaByProduct map[string]SubscriptionProductUsdQuota `json:"usdQuotaByProduct,omitempty"`
+	Exclusive         bool                                   `json:"exclusive"`
+	ShareSeats        int                                    `json:"shareSeats"`
 }
 
-// ProductQuotaWindow 单产品整号 5h/周剩余(百分比 0-100;nil=无数据)。与服务端 buildSubscriptionSummary 对齐。
-// My* 字段:该订阅在绑定母号上的「我的份额」(fair-share,0-1),供逐订阅画双层血条
-// (母号 HourlyPercent 打底 + 我的 MyHourlyFraction 叠加)。nil=服务端未下发/取不到 → 客户端退单层。
-// MyShare=e_i(我的份额占整号比例,双层外层几何)。不加这些字段,Go 解析会静默丢掉它们。
-type ProductQuotaWindow struct {
-	HourlyPercent *float64 `json:"hourlyPercent"`
-	WeeklyPercent *float64 `json:"weeklyPercent"`
-	HourlyResetAt string   `json:"hourlyResetAt"`
-	WeeklyResetAt string   `json:"weeklyResetAt"`
+type SubscriptionProductUsdQuota struct {
+	FiveHour *SubscriptionUsdQuotaWindow `json:"fiveHour"`
+	Weekly   *SubscriptionUsdQuotaWindow `json:"weekly"`
+}
 
-	MyHourlyFraction         *float64 `json:"myHourlyFraction,omitempty"`
-	MyWeeklyFraction         *float64 `json:"myWeeklyFraction,omitempty"`
-	MyPersonalHourlyFraction *float64 `json:"myPersonalHourlyFraction,omitempty"`
-	MyPersonalWeeklyFraction *float64 `json:"myPersonalWeeklyFraction,omitempty"`
-	MyShare                  *float64 `json:"myShare,omitempty"`
-	// Exclusive=独享(营销标签):权威标志。true → 前端血条画单层「剩余 X%」,不走拼车双层。
-	// 不加此字段,Go 解析会静默丢掉服务端下发的 exclusive,前端永远收不到。
-	Exclusive *bool `json:"exclusive,omitempty"`
+type SubscriptionUsdQuotaWindow struct {
+	Used    float64 `json:"used"`
+	Limit   float64 `json:"limit"`
+	ResetAt string  `json:"resetAt"`
 }
 
 var (

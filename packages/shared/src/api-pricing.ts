@@ -46,10 +46,18 @@ const tokens = (value: number) => Number.isFinite(value) && value > 0 ? value : 
 
 function findModel(usage: ApiValueUsage): ApiPriceModel | undefined {
   const id = norm(usage.modelId);
+  const aliasMatchLength = (aliasValue: string) => {
+    const alias = norm(aliasValue);
+    if (id === alias) return alias.length;
+    // Provider snapshots append a date to a stable model id. Do not accept an
+    // arbitrary suffix here: product variants such as `-spark` can have a
+    // different (or unpublished) rate and must fall back conservatively.
+    if (!id.startsWith(`${alias}-`)) return 0;
+    const suffix = id.slice(alias.length);
+    return /^-(?:\d{8}|\d{4}-\d{2}-\d{2})(?:$|[-.])/.test(suffix) ? alias.length : 0;
+  };
   const matchLength = (model: ApiPriceModel) => [model.canonicalModelId, ...model.aliases]
-    .map(norm)
-    .filter((alias) => id === alias || id.startsWith(`${alias}-`))
-    .reduce((longest, alias) => Math.max(longest, alias.length), 0);
+    .reduce((longest, alias) => Math.max(longest, aliasMatchLength(alias)), 0);
   return registry.models
     .filter((model) => model.provider === usage.provider && activeAt(model, usage.occurredAt))
     .filter((model) => matchLength(model) > 0)
@@ -57,10 +65,19 @@ function findModel(usage: ApiValueUsage): ApiPriceModel | undefined {
 }
 
 function conservativePrice(provider: QuotaProvider, mode: ApiPricingMode, at: number): TokenPrice {
-  const prices = registry.models
+  let prices = registry.models
     .filter((model) => model.provider === provider && activeAt(model, at))
     .flatMap((model) => Object.values(model.modes[mode] || {}))
     .filter((price): price is TokenPrice => Boolean(price));
+  // Anthropic currently has no Priority API tier, and older OpenAI models may
+  // not publish one. Fall back to the provider's highest Standard rate rather
+  // than returning $0 or silently presenting Standard as an exact tier match.
+  if (prices.length === 0 && mode !== "standard") {
+    prices = registry.models
+      .filter((model) => model.provider === provider && activeAt(model, at))
+      .flatMap((model) => Object.values(model.modes.standard || {}))
+      .filter((price): price is TokenPrice => Boolean(price));
+  }
   if (prices.length === 0) throw new Error(`No API pricing for ${provider}/${mode}`);
   const max = (field: keyof TokenPrice) => Math.max(...prices.map((price) => price[field]));
   return {
@@ -89,18 +106,22 @@ export function calculateApiValue(usage: ApiValueUsage): {
     price = conservativePrice(usage.provider, usage.pricingMode, usage.occurredAt);
     contextTier = "unknown";
   } else {
-    const requestedTier = model.contextThreshold != null && usage.contextTokens >= model.contextThreshold ? "long" : "short";
-    const modePrices = model.modes[usage.pricingMode] || model.modes.standard;
-    const exactTier = modePrices?.[requestedTier];
-    if (exactTier) {
-      price = exactTier;
-      contextTier = requestedTier;
-    } else {
-      const short = modePrices?.short || model.modes.standard?.short;
-      if (!short) throw new Error(`No usable API pricing for ${model.canonicalModelId}`);
-      price = short;
+    const requestedTier = model.contextThreshold != null && usage.contextTokens > model.contextThreshold ? "long" : "short";
+    const modePrices = model.modes[usage.pricingMode];
+    if (!modePrices) {
+      price = conservativePrice(usage.provider, usage.pricingMode, usage.occurredAt);
       contextTier = "unknown";
-      quality = "unsupported-context";
+      quality = "conservative-fallback";
+    } else {
+      const exactTier = modePrices[requestedTier];
+      if (exactTier) {
+        price = exactTier;
+        contextTier = requestedTier;
+      } else {
+        price = conservativePrice(usage.provider, usage.pricingMode, usage.occurredAt);
+        contextTier = "unknown";
+        quality = "unsupported-context";
+      }
     }
   }
 

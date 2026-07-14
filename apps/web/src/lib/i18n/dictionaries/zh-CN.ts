@@ -617,6 +617,10 @@ export const zhCN = {
     quota: {
       unlimited: "不限量",
       dynamicBadge: "动态额度",
+      usdBadge: "订阅额度",
+      usd5hLabel: "5 小时额度",
+      usdWeeklyLabel: "每周额度",
+      remainingLabel: "剩余",
       resetIn: "{time}后重置",
       hoursMinutes: "{h} 小时 {m} 分钟",
       minutesOnly: "{m} 分钟",

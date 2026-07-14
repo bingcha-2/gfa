@@ -25,6 +25,16 @@ func TestAPIValueUsesExactModelAndContextPrices(t *testing.T) {
 	if long.USD != 10 || long.ContextTier != "long" {
 		t.Fatalf("long context = %+v", long)
 	}
+	boundary := calculateAPIValue("codex", "gpt-5.6-sol", "standard", 272_000,
+		1_000_000, 0, 0, 0, 0, at)
+	if boundary.USD != 5 || boundary.ContextTier != "short" {
+		t.Fatalf("272k boundary = %+v, want short-context pricing", boundary)
+	}
+	mini := calculateAPIValue("codex", "gpt-5.4-mini", "standard", 1_000_000,
+		1_000_000, 0, 0, 0, 0, at)
+	if mini.USD != 0.75 || mini.Quality != "exact" {
+		t.Fatalf("mini context = %+v, want published flat price", mini)
+	}
 }
 
 func TestAPIValuePriorityAndClaudeCacheTTL(t *testing.T) {
@@ -36,8 +46,13 @@ func TestAPIValuePriorityAndClaudeCacheTTL(t *testing.T) {
 	}
 	unsupported := calculateAPIValue("codex", "gpt-5.6-sol", "priority", 300_000,
 		1_000_000, 0, 0, 0, 0, at)
-	if unsupported.USD != 10 || unsupported.Quality != "unsupported-context" {
+	if unsupported.USD != 12.5 || unsupported.Quality != "unsupported-context" {
 		t.Fatalf("priority long fallback = %+v", unsupported)
+	}
+	missingMode := calculateAPIValue("codex", "gpt-5.3-codex", "priority", 100_000,
+		1_000_000, 0, 0, 0, 0, at)
+	if missingMode.USD <= 0 || missingMode.Quality != "conservative-fallback" {
+		t.Fatalf("unpublished mode fallback = %+v", missingMode)
 	}
 	claude := calculateAPIValue("anthropic", "claude-opus-4-8", "standard", 0,
 		0, 0, 0, 1_000_000, 1_000_000, at)

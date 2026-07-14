@@ -1,7 +1,5 @@
 // 仅本地预览用:伪造 Wails 绑定(window.go / window.runtime),让前端脱离 Go 后端与真实账号
-// 直接跑起来看「独享 badge + 充能彩蛋 + 滑跪感谢」效果。只在 VITE_MOCK 下由 main.tsx 动态引入,
-// 绝不进生产包。造两条订阅:一条独享 anthropic(出 badge + 单层满血)、一条拼车 codex(无 badge,
-// 双层条)作对照。
+// 直接跑起来看个人订阅美元额度。只在 VITE_MOCK 下由 main.tsx 动态引入,绝不进生产包。
 
 const now = Date.now()
 
@@ -24,17 +22,14 @@ const account = {
       priority: 0,
       products: ['anthropic'],
       levels: { anthropic: 'max-20x' },
-      remainFraction: 1,
-      productQuota: {
+      usdQuotaByProduct: {
         anthropic: {
-          hourlyPercent: 100,
-          weeklyPercent: 100,
-          hourlyResetAt: null,
-          weeklyResetAt: null,
-          myShare: 1,
-          exclusive: true, // → 尊贵·独享 badge + 单层「剩余 100%」
+          fiveHour: { used: 38.25, limit: 400, resetAt: new Date(now + 4 * 3600_000).toISOString() },
+          weekly: { used: 722.4, limit: 2000, resetAt: new Date(now + 6 * 86400_000).toISOString() },
         },
       },
+      exclusive: true,
+      shareSeats: 1,
     },
     {
       id: 'sub-codex-9Q2X',
@@ -44,19 +39,14 @@ const account = {
       priority: 1,
       products: ['codex'],
       levels: { codex: 'pro' },
-      remainFraction: 0.42,
-      productQuota: {
+      usdQuotaByProduct: {
         codex: {
-          hourlyPercent: 68,
-          weeklyPercent: 80,
-          hourlyResetAt: null,
-          weeklyResetAt: null,
-          myHourlyFraction: 0.5,
-          myWeeklyFraction: 0.6,
-          myShare: 0.25,
-          exclusive: false, // 拼车对照:无 badge、双层条
+          fiveHour: { used: 105, limit: 200, resetAt: new Date(now + 2 * 3600_000).toISOString() },
+          weekly: { used: 512.5, limit: 1750, resetAt: new Date(now + 4 * 86400_000).toISOString() },
         },
       },
+      exclusive: false,
+      shareSeats: 2,
     },
     {
       id: 'sub-antigravity-7LKA',
@@ -66,19 +56,9 @@ const account = {
       priority: 2,
       products: ['antigravity'],
       levels: { antigravity: 'ultra' },
-      remainFraction: 0.71,
-      productQuota: {
-        antigravity: {
-          hourlyPercent: 88,
-          weeklyPercent: 73,
-          hourlyResetAt: null,
-          weeklyResetAt: null,
-          myHourlyFraction: 0.71,
-          myWeeklyFraction: 0.58,
-          myShare: 0.25,
-          exclusive: false,
-        },
-      },
+      usdQuotaByProduct: {},
+      exclusive: false,
+      shareSeats: 1,
     },
   ],
 }
@@ -96,11 +76,6 @@ const stats = {
     lastError: '',
     activationExpiresAt: '',
     entitledProducts: ['anthropic', 'codex', 'antigravity'],
-    boundAccounts: [
-      { product: 'anthropic', accountId: 101, emailHint: 'fl**@torontomail.com', planType: 'max', accessToken: '', expiresAt: now + 3600_000, leasedAt: now },
-      { product: 'codex', accountId: 202, emailHint: 'co**@example.com', planType: 'pro', accessToken: '', expiresAt: now + 3600_000, leasedAt: now },
-      { product: 'antigravity', accountId: 303, emailHint: 'ag**@gmail.com', planType: 'ultra', accessToken: '', expiresAt: now + 3600_000, leasedAt: now },
-    ],
     accessKeyStatus: { products: ['anthropic', 'codex', 'antigravity'] },
   },
   today: {

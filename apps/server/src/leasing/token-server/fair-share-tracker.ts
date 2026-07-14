@@ -47,7 +47,8 @@ const WEEKLY_SUFFIX = "::weekly";
 /**
  * Codex 快速档(service_tier=priority)的成本乘数,对齐 OpenAI service_tiers priority 的
  * 「1.5x speed, increased usage」。用于 fair-share 份额分账 + 卡 CU 计费:fast 请求按 ×1.5
- * 计,让它更快消耗份额与客户额度(与客户端成本估算 codexFastCostMultiplier 一致)。
+ * 计。Codex/Claude 的拼车美元额度由 api-usd-quota 单独按真实 API 价格结算；这里仅保留
+ * 给非美元旧口径与内部 CU 统计使用。
  */
 export const CODEX_PRIORITY_FAIR_SHARE_MULTIPLIER = 1.5;
 
@@ -306,7 +307,65 @@ export class FairShareTracker {
 
   /** True only when a previous acknowledgement survived a process restart. */
   async hasPersistedReport(reportId: string): Promise<boolean> {
-    return this.windowRepository ? this.windowRepository.hasReport(reportId) : false;
+    if (this.windowRepository) return this.windowRepository.hasReport(reportId);
+    if (!this.prisma?.quotaReportReceipt?.findUnique || !reportId) return false;
+    return Boolean(await this.prisma.quotaReportReceipt.findUnique({
+      where: { provider_reportId: { provider: this.providerId, reportId } },
+      select: { reportId: true },
+    }));
+  }
+
+  /** USD quota reports use Subscription.windowState as their compact head.
+   * Receipt, head and customer hourly usage commit together, making a retry
+   * exactly-once across process restarts. */
+  async checkpointUsdReport(
+    subscriptionId: string,
+    accountId: number,
+    bucket: string,
+    reportId: string,
+    windowStates: Array<{ id: string; windowState: string }>,
+    accounting?: HourlyUsageAccounting,
+  ): Promise<boolean> {
+    if (!this.prisma?.$transaction || !reportId) return true;
+    return this.prisma.$transaction(async (tx: any) => {
+      const inserted = await tx.$executeRawUnsafe(
+        `INSERT OR IGNORE INTO QuotaReportReceipt
+          (provider, reportId, accountId, bucket, revision, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        this.providerId, reportId, accountId, bucket, BigInt(0), accounting?.at || new Date(),
+      );
+      if (Number(inserted) === 0) return false;
+      const states = windowStates.length > 0
+        ? windowStates
+        : [{ id: subscriptionId, windowState: '{}' }];
+      for (const state of states) {
+        await tx.subscription.update({ where: { id: state.id }, data: { windowState: state.windowState } });
+      }
+      if (accounting) {
+        const hourStart = new Date(Math.floor(accounting.at.getTime() / 3_600_000) * 3_600_000);
+        const sums = {
+          requests: 1,
+          failedRequests: accounting.status >= 200 && accounting.status < 300 ? 0 : 1,
+          inputTokens: accounting.inputTokens, outputTokens: accounting.outputTokens,
+          cachedInputTokens: accounting.cachedInputTokens, cacheCreationTokens: accounting.cacheCreationTokens,
+          cacheWrite5mTokens: Number(accounting.cacheWrite5mTokens || 0), cacheWrite1hTokens: Number(accounting.cacheWrite1hTokens || 0),
+          apiValueUsd: Number(accounting.apiValueUsd || 0), apiPricedRequests: accounting.apiPriced ? 1 : 0,
+          rawTotalTokens: accounting.rawTotalTokens, totalTokens: accounting.totalTokens,
+          reverseProxyHits: accounting.reverseProxy ? 1 : 0,
+          priorityTokens: accounting.serviceTier === "priority" ? accounting.totalTokens : 0,
+        };
+        await tx.cardUsageHourly.upsert({
+          where: { hourStart_accessKeyId_accountEmail_customerId_modelKey_bucket: {
+            hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+            customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket,
+          } },
+          create: { hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+            customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket, ...sums },
+          update: Object.fromEntries(Object.entries(sums).map(([key, value]) => [key, { increment: value }])),
+        });
+      }
+      return true;
+    });
   }
 
   /** Acknowledge only after compact heads + report receipt + hourly aggregate
@@ -1334,7 +1393,9 @@ export class FairShareTracker {
     this.receiptPruneRunning = true;
     try {
       await this.accountingCoordinator.scheduleLowPriority(async () => {
-        const cutoff = new Date(this.nowFn() - 3 * 24 * 60 * 60 * 1000);
+        // Failed client reports are retained for seven days. Keep receipts
+        // twice as long so a delayed retry can never become billable again.
+        const cutoff = new Date(this.nowFn() - 14 * 24 * 60 * 60 * 1000);
         for (let batch = 0; batch < 20; batch++) {
           const deleted = await this.windowRepository!.pruneReceipts(cutoff, 500);
           if (deleted < 500) break;

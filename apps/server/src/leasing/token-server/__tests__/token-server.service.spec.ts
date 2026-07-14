@@ -100,13 +100,110 @@ describe("TokenServerService", () => {
     await service.onModuleDestroy(); // 清掉持久化定时器
   });
 
+  it("onModuleInit 幂等迁移有效 Codex/Claude 绑定订阅，跳过取消和过期历史", async () => {
+    const base = {
+      customerId: "c1", priority: 0, status: "ACTIVE", expiresAt: null,
+      bucketLimits: null, deviceLimit: 1, weeklyTokenLimit: null,
+      windowMs: 18_000_000, windowState: null,
+    };
+    const codex: any = {
+      ...base,
+      id: "sub-old-codex", backingKeyValue: "BK-CODEX",
+      productEntitlements: JSON.stringify(["codex"]),
+      bindings: JSON.stringify({ codex: 1 }), levels: JSON.stringify({ codex: "pro" }), weight: 2,
+      config: JSON.stringify({
+        line: "bind", products: ["codex"], levels: { codex: "pro" }, bindings: { codex: 1 },
+        shareSeats: 2, shareCapacity: 4, weight: 2, deviceLimit: 1, windowMs: 18_000_000,
+        usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 287.01 } },
+        usdQuotaSource: "catalog", usdQuotaMigrationVersion: 4,
+      }),
+    };
+    const mixed: any = {
+      ...base,
+      id: "sub-old-mixed", backingKeyValue: "BK-MIXED",
+      productEntitlements: JSON.stringify(["anthropic", "antigravity"]),
+      bindings: JSON.stringify({ anthropic: 2, antigravity: 3 }),
+      levels: JSON.stringify({ anthropic: "max-20x", antigravity: "ultra" }), weight: 1,
+      config: JSON.stringify({
+        line: "bind", products: ["anthropic", "antigravity"],
+        levels: { anthropic: "max-20x", antigravity: "ultra" },
+        bindings: { anthropic: 2, antigravity: 3 }, shareSeats: 1, shareCapacity: 4, weight: 1,
+        usdLimit5h: 77, deviceLimit: 1, windowMs: 18_000_000,
+      }),
+    };
+    const historical: any = {
+      ...base,
+      id: "sub-cancelled-codex", status: "CANCELLED", backingKeyValue: "BK-CANCELLED",
+      productEntitlements: JSON.stringify(["codex"]),
+      bindings: JSON.stringify({ codex: 4 }), levels: JSON.stringify({ codex: "plus" }), weight: 1,
+      config: JSON.stringify({
+        line: "bind", products: ["codex"], levels: { codex: "plus" }, bindings: { codex: 4 },
+        shareSeats: 1, shareCapacity: 4, weight: 1, deviceLimit: 1, windowMs: 18_000_000,
+      }),
+    };
+    const expired: any = {
+      ...historical,
+      id: "sub-expired-codex", status: "ACTIVE", expiresAt: new Date(Date.now() - 60_000),
+      backingKeyValue: "BK-EXPIRED",
+    };
+    const rows = [codex, mixed, historical, expired];
+    const update = vi.fn(async ({ where, data }: any) => {
+      const row = rows.find((item) => item.id === where.id);
+      if (row && data.config) row.config = data.config;
+      return row || {};
+    });
+    const prisma = {
+      subscription: {
+        findMany: vi.fn(async (args: any) => args?.where
+          ? rows.filter((row) => row.status === "ACTIVE" && (!row.expiresAt || new Date(row.expiresAt).getTime() > Date.now()))
+          : rows),
+        update,
+      },
+      planCatalog: { findFirst: vi.fn(async () => null) },
+    };
+    const service = withSessionResolver(new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "migration", minClientVersion: "", prisma,
+    }));
+
+    await service.onModuleInit();
+    const store = (service as any).accessKeyStore;
+    expect(JSON.parse(codex.config)).toMatchObject({
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+    });
+    expect(JSON.parse(mixed.config)).toMatchObject({
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { anthropic: { fiveHour: 30, weekly: 158.333333 } },
+    });
+    expect(JSON.parse(historical.config)).not.toHaveProperty("quotaAlgorithm");
+    expect(JSON.parse(expired.config)).not.toHaveProperty("quotaAlgorithm");
+    expect(store.findById("sub-old-codex")).toMatchObject({
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+    });
+    expect(store.getHardBoundCardWeights(1, "codex")).toEqual([]);
+    // The same mixed record is USD-managed for Claude but remains a fair-share
+    // participant for Antigravity.
+    expect(store.getHardBoundCardWeights(2, "anthropic")).toEqual([]);
+    expect(store.getHardBoundCardWeights(3, "antigravity")).toEqual([
+      { cardId: "sub-old-mixed", weight: 1 },
+    ]);
+    expect(store.findById("sub-cancelled-codex")).toBeNull();
+    expect(store.findById("sub-expired-codex")).toBeNull();
+    expect(update).toHaveBeenCalledTimes(2);
+
+    await (service as any).loadActiveSubscriptions(prisma);
+    expect(update).toHaveBeenCalledTimes(2); // second boot pass is idempotent
+    await service.onModuleDestroy();
+  });
+
   it("keeps leases gated until a failed startup subscription query retries successfully", async () => {
     vi.useFakeTimers();
     const prisma = {
       subscription: {
         findMany: vi.fn()
           .mockRejectedValueOnce(new Error("sqlite busy"))
-          .mockResolvedValueOnce([]),
+          .mockResolvedValue([]),
         update: vi.fn(async () => ({})),
       },
     };
@@ -118,7 +215,7 @@ describe("TokenServerService", () => {
       await service.onModuleInit();
       expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(false);
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(prisma.subscription.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.subscription.findMany).toHaveBeenCalledTimes(3);
       expect((service as any).accessKeyStore.areSubscriptionsReady()).toBe(true);
     } finally {
       await service.onModuleDestroy();

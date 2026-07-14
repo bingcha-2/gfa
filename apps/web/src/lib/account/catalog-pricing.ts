@@ -19,7 +19,6 @@ export interface CatalogUsageTier {
 
 export interface CatalogSupplyPolicy {
   defaultLevel: string;
-  salesSeatsPerAccount: Record<string, number>;
   buckets: Record<string, unknown>;
 }
 
@@ -36,6 +35,9 @@ export interface CatalogConfig {
     };
     bind: {
       levelPrice: Record<string, Record<string, number>>;
+      usdQuotaPerSeat?: Record<string, Record<string, { fiveHour: number; weekly: number }>>;
+      /** Legacy full-account quota, never written by the current console. */
+      usdQuota?: Record<string, Record<string, { fiveHour: number; weekly: number }>>;
       share: Record<string, number>;
       devicePerExtra: number;
     };
@@ -43,8 +45,10 @@ export interface CatalogConfig {
   durationDays: number;
   windowMs: number;
   supplyPolicies?: Record<string, CatalogSupplyPolicy>;
-  /** Global multiplier applied to salesSeatsPerAccount when auto-assigning seats. */
+  /** Global multiplier applied to accountCapacity when auto-assigning seats. */
   oversellFactor?: number;
+  /** Optional catalog override for the base number of shares in one account. */
+  accountCapacity?: number;
   /**
    * Seats one upstream account is sliced into (= server runtime
    * ACCOUNT_SHARE_CAPACITY, injected when the catalog is read server-side and
@@ -126,9 +130,11 @@ function computePool(catalog: CatalogConfig, selection: PoolSelection): Purchase
 
 function computeBind(catalog: CatalogConfig, selection: BindSelection): PurchaseResult {
   const bind = catalog.pricing.bind;
-  const shareCapacity = catalog.shareCapacity ?? 8;
+  const shareCapacity = catalog.accountCapacity ?? catalog.shareCapacity ?? 8;
+  const sellableShares = Math.ceil(shareCapacity * Math.max(1, catalog.oversellFactor ?? 1.5));
   const share = normalizeShareSelection(selection, shareCapacity);
   let fullPriceCents = 0;
+  const usdQuotaByProduct: Record<string, { fiveHour: number; weekly: number }> = {};
   const products: string[] = [];
   const levels: Record<string, string> = {};
   for (const { product, level } of selection.items) {
@@ -137,6 +143,14 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       throw new Error(`unknown level "${level}" for product "${product}"`);
     }
     fullPriceCents += price;
+    const quota = bind.usdQuotaPerSeat?.[product]?.[level]
+      ?? legacyPerSeatQuota(bind.usdQuota?.[product]?.[level], sellableShares);
+    if ((product === "codex" || product === "anthropic") && (positiveAmount(quota?.fiveHour) > 0 || positiveAmount(quota?.weekly) > 0)) {
+      usdQuotaByProduct[product] = {
+        fiveHour: scalePerSeatQuota(positiveAmount(quota?.fiveHour), share.shareSeats),
+        weekly: scalePerSeatQuota(positiveAmount(quota?.weekly), share.shareSeats),
+      };
+    }
     products.push(product);
     levels[product] = level;
   }
@@ -153,6 +167,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       shareSeats: share.shareSeats,
       shareCapacity,
       weight: share.shareSeats,
+      ...(Object.keys(usdQuotaByProduct).length > 0 ? { quotaAlgorithm: "usd", usdQuotaByProduct } : {}),
       assignmentPolicy: "preferred-dynamic",
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
@@ -191,4 +206,24 @@ function isSeatOption(value: number): value is (typeof SEAT_OPTIONS)[number] {
 
 function extraDeviceCost(deviceLimit: number, perExtra: number): number {
   return Math.max(0, deviceLimit - 1) * perExtra;
+}
+
+function positiveAmount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function legacyPerSeatQuota(
+  quota: { fiveHour: number; weekly: number } | undefined,
+  sellableShares: number,
+): { fiveHour: number; weekly: number } | undefined {
+  if (!quota) return undefined;
+  return {
+    fiveHour: Number(quota.fiveHour || 0) / sellableShares,
+    weekly: Number(quota.weekly || 0) / sellableShares,
+  };
+}
+
+function scalePerSeatQuota(perSeat: number, seats: number): number {
+  return Math.round((perSeat * seats) * 1_000_000) / 1_000_000;
 }

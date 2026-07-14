@@ -67,34 +67,20 @@ function InlineStatus({ tone = 'success', children }: { tone?: 'success' | 'warn
 function UsageMeter({ value, tone = 'brand' }: { value: number; tone?: 'brand' | 'good' | 'warning' }) {
   return (
     <span className="block h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-      <span className={cn('block h-full rounded-full', tone === 'good' ? 'bg-[var(--success)]' : tone === 'warning' ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]')} style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+      <span className={cn('block h-full rounded-full', tone === 'good' ? 'bg-[var(--success)]' : tone === 'warning' ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]')} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </span>
   )
 }
 
-function QuotaWindow({
-  label,
-  mine,
-  account,
-  reset,
-  exclusive = false,
-}: {
-  label: string
-  mine: number
-  account: number
-  reset: string
-  exclusive?: boolean
-}) {
-  const tone = mine < 20 ? 'warning' : mine > 60 ? 'good' : 'brand'
+function RatioQuota({ label, remaining, reset }: { label: string; remaining: number; reset: string }) {
+  const percent = Math.max(0, Math.min(100, remaining))
+  const tone = percent < 20 ? 'warning' : percent > 60 ? 'good' : 'brand'
   return (
     <div className="min-w-0">
       <div className="mb-1.5 flex items-center justify-between gap-2"><span className="text-[8px] font-semibold text-[var(--text-secondary)]">{label}</span><span className="font-mono-data text-[8px] text-[var(--warning-deep)]">{reset}</span></div>
-      <div className="relative h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-        {!exclusive && <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--text-muted)] opacity-25" style={{ width: `${account}%` }} />}
-        <span className={cn('absolute inset-y-0 left-0 rounded-full', tone === 'good' ? 'bg-[var(--success)]' : tone === 'warning' ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]')} style={{ width: `${exclusive ? mine : Math.min(mine, account)}%` }} />
-      </div>
+      <UsageMeter value={percent} tone={tone} />
       <div className="mt-1 flex justify-between text-[7px] text-[var(--text-muted)]">
-        {exclusive ? <span>剩余 {mine}%</span> : <><span>我的总剩余 {mine}%</span><span>账号总剩余 {account}%</span></>}
+        <span>剩余 {percent}%</span>
       </div>
     </div>
   )
@@ -151,31 +137,31 @@ export function DashboardPreview() {
 
       <section className="overflow-hidden rounded-[14px] border border-[var(--border-light)] bg-[var(--bg-card)]">
         <div className="flex items-center justify-between px-4 py-3">
-          <div><div className="flex items-center gap-2"><h2 className="text-[11px] font-bold text-[var(--text-primary)]">订阅与额度</h2><span className="rounded-full bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[8px] font-semibold text-[var(--text-muted)]">3 条生效订阅</span></div><p className="mt-0.5 text-[9px] text-[var(--text-muted)]">每条订阅、每个产品、每个窗口都保留；拼车订阅同时显示账号总余量与我的总剩余</p></div>
+          <div><div className="flex items-center gap-2"><h2 className="text-[11px] font-bold text-[var(--text-primary)]">订阅与额度</h2><span className="rounded-full bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[8px] font-semibold text-[var(--text-muted)]">3 条生效订阅</span></div><p className="mt-0.5 text-[9px] text-[var(--text-muted)]">Codex 与 Anthropic 按产品独立显示拼车份数与剩余比例</p></div>
           <div className="flex items-center gap-3"><button className="text-[9px] font-semibold text-[var(--primary-strong)]">调整接力顺序</button><Button size="sm" variant="secondary"><RefreshCw size={12} />刷新全部额度</Button></div>
         </div>
 
-        <div className="grid grid-cols-[150px_1fr_1fr_120px] border-y border-[var(--border-light)] bg-[var(--bg-tertiary)]/55 px-4 py-2 text-[8px] font-semibold text-[var(--text-muted)]"><span>订阅 / 产品</span><span>5h 窗口</span><span>周窗口</span><span>当前服务账号</span></div>
+        <div className="grid grid-cols-[150px_1fr_1fr_120px] border-y border-[var(--border-light)] bg-[var(--bg-tertiary)]/55 px-4 py-2 text-[8px] font-semibold text-[var(--text-muted)]"><span>订阅 / 产品</span><span>5h 余量</span><span>周余量</span><span>拼车份数</span></div>
 
         <div className="grid grid-cols-[150px_1fr_1fr_120px] items-center gap-x-4 px-4 py-3.5">
-          <div className="min-w-0"><div className="flex items-center gap-2"><ProviderLogo provider="anthropic" size={12} /><span className="text-[9px] font-bold text-[var(--text-primary)]">Anthropic · Claude</span></div><div className="mt-1.5 flex flex-wrap gap-1"><span className="rounded-[5px] bg-[var(--primary-light)] px-1.5 py-0.5 text-[7px] font-semibold text-[var(--primary-strong)]">Max 20x</span><span className="rounded-[5px] bg-[var(--success)]/10 px-1.5 py-0.5 text-[7px] font-semibold text-[var(--success-strong)]">尊贵 · 独享</span><span className="font-mono-data text-[7px] text-[var(--text-muted)]">#T6HM</span></div></div>
-          <QuotaWindow label="5h 窗口" mine={82} account={82} reset="1h 42m 后恢复" exclusive />
-          <QuotaWindow label="周窗口" mine={64} account={64} reset="4天 8h 后恢复" exclusive />
-          <div className="min-w-0"><p className="truncate font-mono-data text-[8px] text-[var(--text-secondary)]">fl**@torontomail.com</p><p className="mt-1 text-[7px] text-[var(--success-strong)]">当前使用中</p></div>
+          <div className="min-w-0"><div className="flex items-center gap-2"><ProviderLogo provider="anthropic" size={12} /><span className="text-[9px] font-bold text-[var(--text-primary)]">Anthropic · Claude</span></div><div className="mt-1.5 flex flex-wrap gap-1"><span className="rounded-[5px] bg-[var(--primary-light)] px-1.5 py-0.5 text-[7px] font-semibold text-[var(--primary-strong)]">Max 20x</span><span className="font-mono-data text-[7px] text-[var(--text-muted)]">#T6HM</span></div></div>
+          <RatioQuota label="5h 窗口" remaining={72} reset="1h 42m 后恢复" />
+          <RatioQuota label="周窗口" remaining={64} reset="4天 8h 后恢复" />
+          <div className="min-w-0"><p className="font-mono-data text-[12px] font-bold text-[var(--text-primary)]">2 份</p></div>
         </div>
 
         <div className="grid grid-cols-[150px_1fr_1fr_120px] items-center gap-x-4 border-t border-[var(--border-light)] px-4 py-3.5">
-          <div className="min-w-0"><div className="flex items-center gap-2"><ProviderLogo provider="codex" size={12} /><span className="text-[9px] font-bold text-[var(--text-primary)]">Codex · GPT</span></div><div className="mt-1.5 flex flex-wrap gap-1"><span className="rounded-[5px] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[7px] font-semibold text-[var(--text-secondary)]">Pro</span><span className="rounded-[5px] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[7px] text-[var(--text-muted)]">我的份额 1/4</span><span className="font-mono-data text-[7px] text-[var(--text-muted)]">#9Q2X</span></div></div>
-          <QuotaWindow label="5h 份额" mine={18.5} account={74} reset="2h 18m 后恢复" />
-          <QuotaWindow label="周份额" mine={12} account={54} reset="周一恢复" />
-          <div className="min-w-0"><p className="truncate font-mono-data text-[8px] text-[var(--text-secondary)]">co**@example.com</p><p className="mt-1 text-[7px] text-[var(--text-muted)]">接力第 2 位</p></div>
+          <div className="min-w-0"><div className="flex items-center gap-2"><ProviderLogo provider="codex" size={12} /><span className="text-[9px] font-bold text-[var(--text-primary)]">Codex · GPT</span></div><div className="mt-1.5 flex flex-wrap gap-1"><span className="rounded-[5px] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[7px] font-semibold text-[var(--text-secondary)]">Pro 20x</span><span className="font-mono-data text-[7px] text-[var(--text-muted)]">#9Q2X</span></div></div>
+          <RatioQuota label="5h 窗口" remaining={100} reset="暂无限制" />
+          <RatioQuota label="周窗口" remaining={77} reset="周一恢复" />
+          <div className="min-w-0"><p className="font-mono-data text-[12px] font-bold text-[var(--text-primary)]">3 份</p></div>
         </div>
 
         <div className="grid grid-cols-[150px_1fr_1fr_120px] gap-x-4 border-t border-[var(--border-light)] px-4 py-3.5">
           <div className="min-w-0 pt-0.5"><div className="flex items-center gap-2"><ProviderLogo provider="antigravity" size={12} /><span className="text-[9px] font-bold text-[var(--text-primary)]">Antigravity</span></div><div className="mt-1.5 flex flex-wrap gap-1"><span className="rounded-[5px] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[7px] font-semibold text-[var(--text-secondary)]">Ultra</span><span className="rounded-[5px] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[7px] text-[var(--text-muted)]">Claude + Gemini</span><span className="font-mono-data text-[7px] text-[var(--text-muted)]">#7LKA</span></div></div>
-          <div className="space-y-3"><QuotaWindow label="Claude · 5h" mine={71} account={88} reset="3h 18m" /><QuotaWindow label="Gemini · 5h" mine={63} account={79} reset="4h 02m" /></div>
-          <div className="space-y-3"><QuotaWindow label="Claude · 周" mine={58} account={73} reset="5天 2h" /><QuotaWindow label="Gemini · 周" mine={49} account={68} reset="5天 2h" /></div>
-          <div className="min-w-0 pt-0.5"><p className="truncate font-mono-data text-[8px] text-[var(--text-secondary)]">ag**@gmail.com</p><p className="mt-1 text-[7px] text-[var(--text-muted)]">接力第 3 位</p></div>
+          <div className="self-center text-[8px] text-[var(--text-muted)]">沿用 Antigravity 固定产品算法</div>
+          <div className="self-center text-[8px] text-[var(--text-muted)]">不与订阅比例混算</div>
+          <div className="min-w-0 pt-0.5"><p className="font-mono-data text-[12px] font-bold text-[var(--text-primary)]">1 份</p><p className="mt-1 text-[7px] text-[var(--text-muted)]">独立额度体系</p></div>
         </div>
       </section>
 

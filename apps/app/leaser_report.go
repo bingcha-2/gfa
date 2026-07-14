@@ -69,10 +69,6 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 	// 额度超限(429)→ 把该模型的血条标记为"已用尽"(0%),并按 retryAfter 记录恢复时间。
 	// 这样血条立刻反映真实情况,不再因"没采到额度"而乐观显示满。短 429(<5s 速率限制)
 	// 会很快恢复,不当作用尽。
-	if details.StatusCode == 429 && details.ModelKey != "" && details.RetryAfterMs >= 5000 {
-		recordBoundFractionForModel("antigravity", details.ModelKey, 0, time.Now().UnixMilli()+details.RetryAfterMs)
-	}
-
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
 		"accountId":         lease.AccountId,
@@ -125,6 +121,7 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 		"cachedInputTokens":  details.CachedInputTokens,
 		"cacheWrite5mTokens": details.CacheWrite5mTokens,
 		"cacheWrite1hTokens": details.CacheWrite1hTokens,
+		"contextTokens":      details.ContextTokens,
 		"rawTotalTokens":     details.RawTotalTokens,
 		"totalTokens":        details.BillableTotalTokens,
 		"errorText":          getErrorSnippet(details.ErrorText),
@@ -228,9 +225,7 @@ func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, 
 		}
 	}
 
-	// 服务端在 report-result 响应里也带回 per-card fairShareQuota/weeklyFairShareQuota
-	// (与 lease 同形)。立即刷新血条 —— 让额度条在每次上报后即时更新,不必等下一次租号。
-	recordAccountBuckets(body)
+	// Antigravity keeps a minimal local fair-share gate between lease refreshes.
 	recordFairShareQuota(body)
 
 	// 成功后补发积压的失败 report
@@ -255,6 +250,7 @@ func (l *Leaser) queueFailedReport(payload map[string]interface{}, card string, 
 		UpstreamProxy: upstreamProxy,
 		AddedAt:       time.Now(),
 	})
+	persistPendingReports(GetUsageStats().Namespace(), "antigravity", l.pendingReports)
 	Log("[token-leaser] Queued failed report (%d pending)", len(l.pendingReports))
 }
 
@@ -270,6 +266,7 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 	pending := l.pendingReports
 	l.pendingReports = nil
 	l.mu.Unlock()
+	persistPendingReports(GetUsageStats().Namespace(), "antigravity", nil)
 
 	if len(pending) == 0 {
 		return
@@ -284,14 +281,12 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 		if now.Sub(p.AddedAt) > pendingReportMaxAge {
 			continue
 		}
-		// 卡密不匹配的跳过（保留在队列中）
-		if p.Card != card {
-			requeue = append(requeue, p)
-			continue
-		}
-
-		_, _, err := postBcaiWithFallback("/report-result", p.Payload, p.Card, upstreamProxy)
+		// The queue is already scoped to the authenticated server user. Use the
+		// current JWT so session renewal cannot strand a valid report; reportId and
+		// lease ownership still prevent cross-subscription billing.
+		_, _, err := postBcaiWithFallback("/report-result", p.Payload, card, p.UpstreamProxy)
 		if err != nil {
+			p.Card = card
 			// 又失败了，全部放回队列，停止重发
 			requeue = append(requeue, p)
 			// 后续尚未访问的也全部放回。必须按原始遍历索引切片；sent
@@ -309,6 +304,7 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 	if len(requeue) > 0 {
 		l.mu.Lock()
 		l.pendingReports = append(requeue, l.pendingReports...)
+		persistPendingReports(GetUsageStats().Namespace(), "antigravity", l.pendingReports)
 		l.mu.Unlock()
 	}
 

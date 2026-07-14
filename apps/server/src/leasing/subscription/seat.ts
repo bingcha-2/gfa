@@ -5,6 +5,8 @@
 export interface SubConfig {
   line?: string;
   bindings?: Record<string, number>;
+  quotaSeatCapacity?: number;
+  /** Legacy snapshot read only; new subscriptions use quotaSeatCapacity. */
   salesSeatCapacity?: Record<string, number>;
   shareSeats?: number;
   /** 该订阅占的份数(独享=C … 拼车=1)。缺省按 1 计。 */
@@ -65,11 +67,14 @@ export function exclusiveLockedByAccount(
   return new Set<number>();
 }
 
-export function salesSeatCapacityForProduct(
-  config: Pick<SubConfig, "salesSeatCapacity">,
+export function quotaSeatCapacityForProduct(
+  config: Pick<SubConfig, "quotaSeatCapacity" | "salesSeatCapacity">,
   product: string,
   fallback: number,
 ): number {
+  const fixed = Math.floor(Number(config.quotaSeatCapacity));
+  if (Number.isFinite(fixed) && fixed > 0) return fixed;
+  // Smooth-read old snapshots until every historical row has been migrated.
   const raw = Number(config.salesSeatCapacity?.[product]);
   if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
   const fallbackCapacity = Math.floor(Number(fallback));

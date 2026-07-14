@@ -255,6 +255,7 @@ export default function PlanCatalogPage() {
               <PricingSection
                 products={form.products}
                 bind={form.pricing.bind}
+                oversellFactor={form.oversellFactor}
                 onBindChange={(bindNext) =>
                   patchForm({ pricing: { ...form.pricing, bind: bindNext } })
                 }
@@ -369,10 +370,11 @@ export default function PlanCatalogPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>发布到线上?</AlertDialogTitle>
             <AlertDialogDescription>
-              将把当前编辑保存为新草稿版本并发布,客户端购买页立即读到新配置;
+              将把当前编辑保存为新草稿版本并发布。客户端购买页立即读到新配置，
+              Codex/Claude 的每份美元额度也会立即重算到全部已有订阅；已用金额和窗口时间不会清零。
               当前发布版
               {publishedVersion != null ? ` v${publishedVersion}` : ""}
-              将归档(可回滚)。在售订单不受影响(各自快照)。
+              将归档(可回滚)。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

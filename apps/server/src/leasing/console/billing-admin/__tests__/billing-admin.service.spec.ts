@@ -21,7 +21,11 @@ import {
 const prisma = getCustomerPrisma();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-let entitlementSync: { syncSubscription: ReturnType<typeof vi.fn>; expireShadowRecord: ReturnType<typeof vi.fn> };
+let entitlementSync: {
+  syncSubscription: ReturnType<typeof vi.fn>;
+  expireShadowRecord: ReturnType<typeof vi.fn>;
+  resetSubscriptionUsdQuotaUsage: ReturnType<typeof vi.fn>;
+};
 let billing: {
   refundEpayOrder: ReturnType<typeof vi.fn>;
   revokeReferralRewardForOrder: ReturnType<typeof vi.fn>;
@@ -73,7 +77,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await cleanCustomerTables();
-  entitlementSync = { syncSubscription: vi.fn(), expireShadowRecord: vi.fn() };
+  entitlementSync = {
+    syncSubscription: vi.fn(),
+    expireShadowRecord: vi.fn(),
+    resetSubscriptionUsdQuotaUsage: vi.fn(),
+  };
   // refund/revoke only exercise SubscriptionService.cancelSubscription, which
   // touches neither the catalog nor rosetta — stub them.
   const subscriptionService = new SubscriptionService(
@@ -274,6 +282,118 @@ describe("BillingAdminService.revokeSubscription", () => {
 });
 
 describe("BillingAdminService.updateSubscription", () => {
+  it("updates USD limits inside config, preserves the live window, and resyncs immediately", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: {
+        config: JSON.stringify({
+          line: "bind",
+          products: ["anthropic"],
+          bindings: { anthropic: 7 },
+          shareSeats: 2,
+          usdQuotaByProduct: { anthropic: { fiveHour: 16, weekly: 80 } },
+        }),
+        windowState: JSON.stringify({ windowStartedAt: 123, tokenUsageEvents: [{ at: 123, apiValueUsd: 6 }] }),
+      },
+    });
+
+    const result = await service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { anthropic: { fiveHour: 5, weekly: 20 } },
+    });
+    const saved = await prisma.subscription.findUniqueOrThrow({ where: { id: sub.id } });
+    const config = JSON.parse(saved.config!);
+
+    expect(config.usdQuotaByProduct).toEqual({ anthropic: { fiveHour: 10, weekly: 40 } });
+    expect(config.usdQuotaSource).toBe("manual");
+    expect(config.usdQuotaMigrationVersion).toBe(5);
+    expect(saved.windowState).toContain('apiValueUsd');
+    expect(saved.expiresAt?.toISOString()).toBe(sub.expiresAt?.toISOString());
+    expect(result.previousUsdQuotaByProduct).toEqual({ anthropic: { fiveHour: 16, weekly: 80 } });
+    expect(entitlementSync.syncSubscription).toHaveBeenCalledWith(expect.objectContaining({ id: sub.id }));
+  });
+
+  it("rolls the database and runtime record back when immediate resync fails", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    const originalConfig = JSON.stringify({
+      line: "bind", products: ["codex"], shareSeats: 1,
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 40 } },
+      usdQuotaMigrationVersion: 4,
+    });
+    await prisma.subscription.update({ where: { id: sub.id }, data: { config: originalConfig } });
+    entitlementSync.syncSubscription.mockRejectedValueOnce(new Error("runtime refresh failed"));
+
+    await expect(service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 0, weekly: 50 } },
+    })).rejects.toThrow("runtime refresh failed");
+
+    const restored = await prisma.subscription.findUniqueOrThrow({ where: { id: sub.id } });
+    expect(restored.config).toBe(originalConfig);
+    expect(entitlementSync.syncSubscription).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(entitlementSync.syncSubscription.mock.calls[1][0].config)).toEqual(JSON.parse(originalConfig));
+  });
+
+  it("rejects negative or non-finite USD limits", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+
+    await expect(service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: -1, weekly: 10 } },
+    })).rejects.toThrow(ConflictException);
+    await expect(service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 1, weekly: Number.NaN } },
+    })).rejects.toThrow(ConflictException);
+  });
+
+  it("rejects disabling both USD windows so a migrated subscription cannot become unlimited", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: { config: JSON.stringify({ line: "bind", products: ["codex"], usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 50 } } }) },
+    });
+
+    await expect(
+      service.updateSubscription(sub.id, { usdQuotaPerSeatByProduct: { codex: { fiveHour: 0, weekly: 0 } } }),
+    ).rejects.toThrow("codex 的 5 小时和每周额度不能同时为 0");
+  });
+
+  it("requires every supported product in a mixed subscription", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: {
+        config: JSON.stringify({
+          line: "bind",
+          products: ["codex", "anthropic"],
+          shareSeats: 2,
+          usdQuotaByProduct: {
+            codex: { fiveHour: 2, weekly: 10 },
+            anthropic: { fiveHour: 4, weekly: 20 },
+          },
+        }),
+      },
+    });
+
+    await expect(service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 1, weekly: 5 } },
+    })).rejects.toThrow("缺少产品额度配置: anthropic");
+  });
+
+  it("rejects USD limits for subscriptions without Codex or Anthropic", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+
+    await expect(service.updateSubscription(sub.id, {
+      usdQuotaPerSeatByProduct: { codex: { fiveHour: 10, weekly: 0 } },
+    })).rejects.toThrow(
+      "产品 codex 不支持美元额度或不属于该订阅",
+    );
+  });
+
   it("updates expiresAt and resyncs the subscription shadow record", async () => {
     const customer = await createTestCustomer();
     const sub = await createSub(customer.id);
@@ -302,5 +422,45 @@ describe("BillingAdminService.updateSubscription", () => {
     await expect(service.updateSubscription("no-such-sub", { expiresAt: new Date().toISOString() })).rejects.toThrow(
       NotFoundException,
     );
+  });
+});
+
+describe("BillingAdminService.resetSubscriptionUsdQuotaUsage", () => {
+  it("resets only the requested product window", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    entitlementSync.resetSubscriptionUsdQuotaUsage = vi.fn().mockResolvedValue({
+      previousUsed: 7.25,
+      limit: 80,
+      usageByProduct: {
+        anthropic: {
+          fiveHour: { used: 2, limit: 10 },
+          weekly: { used: 0, limit: 80 },
+        },
+      },
+    });
+
+    const result = await service.resetSubscriptionUsdQuotaUsage(sub.id, "anthropic", "weekly");
+
+    expect(entitlementSync.resetSubscriptionUsdQuotaUsage).toHaveBeenCalledWith(sub.id, "anthropic", "weekly");
+    expect(result).toMatchObject({
+      subscriptionId: sub.id,
+      customerId: customer.id,
+      product: "anthropic",
+      scope: "weekly",
+      previousUsed: 7.25,
+      limit: 80,
+    });
+  });
+
+  it("rejects disabled windows and unknown subscriptions", async () => {
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    entitlementSync.resetSubscriptionUsdQuotaUsage = vi.fn().mockResolvedValue(null);
+
+    await expect(service.resetSubscriptionUsdQuotaUsage(sub.id, "codex", "fiveHour"))
+      .rejects.toThrow("codex 的 5 小时额度未启用");
+    await expect(service.resetSubscriptionUsdQuotaUsage("missing", "codex", "weekly"))
+      .rejects.toThrow(NotFoundException);
   });
 });

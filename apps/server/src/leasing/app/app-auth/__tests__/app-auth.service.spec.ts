@@ -21,7 +21,6 @@ import { AppAuthService } from "../app-auth.service";
 import { CustomerAuthService } from "../../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../../account/device/device.service";
-import { sharedFairShareRegistry } from "../../../token-server/fair-share-registry";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +85,12 @@ function makeDevice(overrides: Partial<{
 async function makeAppAuthService(options: {
   customer?: ReturnType<typeof makeCustomer>;
   devices?: ReturnType<typeof makeDevice>[];
+  store?: {
+    findById: (id: string) => any;
+    publicStatus: (record: any) => any;
+    isExclusiveCard: (id: string) => boolean;
+  };
+  portalService?: { getClientUsageSummary: (customerId: string) => Promise<any> };
 } = {}) {
   process.env.CUSTOMER_JWT_SECRET = "test-customer-secret-that-is-32-chars-long!!";
 
@@ -173,9 +178,6 @@ async function makeAppAuthService(options: {
     subscription: {
       findFirst: vi.fn(async () => null), // no subscriptions in these tests
       findMany: vi.fn(async () => [])     // effectiveDeviceLimit → no subs → limit 1
-    },
-    accountQuotaSnapshot: {
-      findFirst: vi.fn(async () => null)  // 逐订阅 5h/周明细:测试无快照 → 缺省
     }
   };
 
@@ -203,8 +205,8 @@ async function makeAppAuthService(options: {
     customerAuthService,
     tokenService,
     deviceService,
-    // SHARED_ACCESS_KEY_STORE:订阅剩余额度 best-effort 读取,测试降级为 null(不阻断登录/排序)。
-    { findById: () => null, publicStatus: () => null } as any
+    options.store ?? { findById: () => null, publicStatus: () => null, isExclusiveCard: () => false } as any,
+    options.portalService as any,
   );
 
   return { appAuthService, tokenService, prisma, customer, devices };
@@ -230,6 +232,8 @@ describe("AppAuthService.login", () => {
     expect(result.token).toBeDefined();
     expect(result.tokenExpiresAt).toBeInstanceOf(Date);
     expect(result.account.email).toBe("user@example.com");
+    expect(result.account.id).toBe("cust-1");
+    expect(result.usageSummary).toMatchObject({ source: "CardUsageHourly", cumulativeSaving: 0 });
 
     // Login must use upsert (race-safe), never the find-then-create path
     expect(prisma.device.upsert).toHaveBeenCalledOnce();
@@ -247,6 +251,21 @@ describe("AppAuthService.login", () => {
     // One device row created
     expect(devices).toHaveLength(1);
     expect(devices[0].sessionJti).toBeTruthy();
+  });
+
+  it("does not block login when the usage aggregate is temporarily unavailable", async () => {
+    const { appAuthService } = await makeAppAuthService({
+      portalService: { getClientUsageSummary: vi.fn().mockRejectedValue(new Error("database busy")) },
+    });
+
+    await expect(appAuthService.login({
+      email: "user@example.com",
+      password: "password123",
+      deviceId: "device-usage-fallback",
+    })).resolves.toMatchObject({
+      account: { id: "cust-1" },
+      usageSummary: { source: "CardUsageHourly", cumulativeSaving: 0 },
+    });
   });
 
   it("second login with same deviceId updates (does not create duplicate)", async () => {
@@ -450,27 +469,50 @@ describe("AppAuthService.login", () => {
     expect(result.subscriptions[0].levels).toEqual({ codex: "pro", anthropic: "max-20x" });
     expect(result.subscription.levels).toEqual({ codex: "pro", anthropic: "max-20x" });
   });
-});
 
-describe("AppAuthService personal fair-share projection", () => {
-  it("keeps effective and personal 5h/weekly fractions separate", async () => {
-    const { appAuthService } = await makeAppAuthService();
-    sharedFairShareRegistry.register("codex", {
-      getCardQuotaFractions: () => ({
-        "codex-gpt": { fraction: 0.4, personalFraction: 0.8, share: 0.5, resetAt: 1 },
-      }),
-      getCardWeeklyQuotaFractions: () => ({
-        "codex-gpt": { fraction: 0.3, personalFraction: 0.7, share: 0.5, resetAt: 2 },
-      }),
-    } as any);
+  it("returns the user's subscription USD windows and never a mother-account quota", async () => {
+    const store = {
+      findById: vi.fn((id: string) => ({ id, shareSeats: 2 })),
+      publicStatus: vi.fn(() => ({
+        quotaMode: "usd",
+        usdQuotaByProduct: {
+          codex: {
+            fiveHour: { used: 32.5, limit: 800, resetAt: "2026-07-14T15:00:00Z" },
+            weekly: { used: 712.25, limit: 7000, resetAt: "2026-07-19T00:00:00Z" }
+          }
+        }
+      })),
+      isExclusiveCard: vi.fn(() => true)
+    };
+    const { appAuthService, prisma } = await makeAppAuthService({ store });
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: "sub-codex-pro-20x",
+      status: "ACTIVE",
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+      deviceLimit: 3,
+      priority: 1,
+      productEntitlements: JSON.stringify(["codex"]),
+      levels: JSON.stringify({ codex: "pro-20x" })
+    }]);
 
-    expect((appAuthService as any).myFairShareForProduct("codex", 1, "card-1")).toEqual({
-      hourlyFraction: 0.4,
-      hourlyPersonalFraction: 0.8,
-      weeklyFraction: 0.3,
-      weeklyPersonalFraction: 0.7,
-      share: 0.5,
+    const result = await appAuthService.login({
+      email: "user@example.com",
+      password: "password123",
+      deviceId: "device-abc"
     });
+
+    expect(result.subscriptions[0]).toMatchObject({
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: { used: 32.5, limit: 800 },
+          weekly: { used: 712.25, limit: 7000 }
+        }
+      },
+      exclusive: true,
+      shareSeats: 2
+    });
+    expect(result.subscriptions[0]).not.toHaveProperty("productQuota");
+    expect(result.subscriptions[0]).not.toHaveProperty("remainFraction");
   });
 });
 

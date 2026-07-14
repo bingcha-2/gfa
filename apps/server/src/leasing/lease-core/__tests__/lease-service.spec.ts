@@ -175,7 +175,7 @@ describe("LeaseService (generic core)", () => {
     let now = startedAt;
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 7 * 24 * 60 * 60 * 1000, bindings: { fake: 1 } }],
     });
     const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "ancient-lease", minClientVersion: "",
@@ -195,7 +195,7 @@ describe("LeaseService (generic core)", () => {
     let now = startedAt;
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 7 * 24 * 60 * 60 * 1000, bindings: { fake: 1 } }],
     });
     const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "long-stream-lease", minClientVersion: "",
@@ -1217,12 +1217,12 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     }));
 
-    // Below the in-code floor (now 13.5.3) must be rejected (426 upgrade required).
+    // Below the in-code floor (now 13.5.4) must be rejected (426 upgrade required).
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.2" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.3" }),
     ).rejects.toThrow();
     // The floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.3" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.4" });
     expect(ok.ok).toBe(true);
   });
 

@@ -7,6 +7,7 @@
 //   让运营有个可改的起点,而不是空白表单。价格单位=分。
 
 import type { CatalogConfig } from "@/lib/account/catalog-pricing";
+import { API_USD_QUOTA_PER_SEAT_DEFAULTS } from "@gfa/shared";
 
 /** 产品展示名(与购买页 productNames 一致;键缺失回退原始 key)。 */
 export const PRODUCT_LABELS: Record<string, string> = {
@@ -22,6 +23,18 @@ export const ANTIGRAVITY_FIXED_QUOTA_DEFAULTS: Record<
   "antigravity-gemini": { window5h: 100_000_000, weekly: 400_000_000 },
   "antigravity-claude": { window5h: 12_000_000, weekly: 40_000_000 },
 };
+
+/**
+ * 每一份 API 等价美元额度默认值，资料口径截至 2026-07-14。
+ *
+ * - Codex 当前临时取消 5h 卡点，因此 5h=0，只启用周额度。
+ * - Codex `plus` 沿用目录现有的低档键，对应资料中的 5x 档；`pro` 对应 20x 档。
+ * - Claude 周额度使用可复现实测的保守下界（Max 5x 约 $523、Max 20x
+ *   约 $1,100），不把临时活动固化进长期套餐；5h 使用当前可编辑估值。
+ *
+ * 这些是运营默认值，不是厂商承诺额度；后台发布目录前可逐档修改。
+ */
+export { API_USD_QUOTA_PER_SEAT_DEFAULTS };
 
 /** 每产品暴露的模型家族 → 复合桶键 "<product>-<family>"。 */
 export const FAMILIES_BY_PRODUCT: Record<string, string[]> = {
@@ -91,16 +104,17 @@ export const DEFAULT_CONFIG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
+      usdQuotaPerSeat: API_USD_QUOTA_PER_SEAT_DEFAULTS,
       share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },
   durationDays: 30,
   windowMs: 18_000_000,
+  oversellFactor: 1.5,
   supplyPolicies: {
     antigravity: {
       defaultLevel: "ultra",
-      salesSeatsPerAccount: { ultra: 8 },
       buckets: Object.fromEntries(
         Object.entries(ANTIGRAVITY_FIXED_QUOTA_DEFAULTS).map(([bucket, quota]) => [
           bucket,

@@ -147,13 +147,13 @@ func copyStreamingClaudeResponse(w io.Writer, body io.Reader) (claudeUsage, erro
 		n, err := body.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
+			parser.Write(chunk)
 			if _, writeErr := w.Write(chunk); writeErr != nil {
 				return parser.Usage(), writeErr
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
-			parser.Write(chunk)
 		}
 		if err == io.EOF {
 			return parser.Usage(), nil

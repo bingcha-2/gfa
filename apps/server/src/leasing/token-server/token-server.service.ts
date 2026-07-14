@@ -6,6 +6,8 @@ import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 import type { AccessKeyStore } from "./access-key-store";
 import { rowToConfig, subscriptionToLimitRecord } from "../subscription/subscription-config";
+import { migrateBindSubscriptionToUsd } from "../subscription/subscription-usd-migration";
+import type { CatalogConfig } from "../plan-catalog/pricing";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -124,21 +126,25 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
    * Subscription.windowState. Runs on an interval + once on shutdown. Best-effort:
    * a failed write just means that sub falls back to a cold(er) window next boot.
    */
-  async persistSubscriptionWindows(): Promise<void> {
+  async persistSubscriptionWindows(strict = false): Promise<void> {
     const prisma = this.bootPrisma;
     if (!prisma?.subscription?.update) return;
     let snapshots: Array<{ id: string; windowState: string }>;
     try {
-      snapshots = this.accessKeyStore.serializeSubscriptionWindows();
+      // USD-only Codex/Claude windows commit atomically with each report receipt;
+      // a delayed timer snapshot must never overwrite that newer durable head.
+      snapshots = this.accessKeyStore.serializeSubscriptionWindows({ includeUsd: strict });
     } catch (err: any) {
       console.error(`[token-server] serialize subscription windows failed: ${err?.message || err}`);
+      if (strict) throw err;
       return;
     }
     for (const { id, windowState } of snapshots) {
       try {
         await prisma.subscription.update({ where: { id }, data: { windowState } });
-      } catch {
+      } catch (err) {
         // Sub may have been deleted/expired between snapshot and write — ignore.
+        if (strict) throw err;
       }
     }
   }
@@ -159,15 +165,53 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
   }
 
   /**
-   * 去影子:把所有生效订阅(老列)转成限额 record,注册进 AccessKeyStore 的内存
-   * subscriptionById。boot 跑一次;新订阅激活时由 entitlement-sync 增量注册。
+   * 上线先幂等迁移全部历史 Codex/Claude 绑定订阅；再把生效订阅转成限额 record,
+   * 注册进 AccessKeyStore 的内存 subscriptionById。新订阅激活时由 entitlement-sync 增量注册。
    * 失败不阻塞启动,但保持启动屏障:成员对账与放租等到某次重试成功才恢复,
    * 不允许拿「没有订阅」的残缺名单覆盖旧账本。
    */
   private async loadActiveSubscriptions(prisma: any, attempt = 0): Promise<void> {
     if (!prisma?.subscription?.findMany) return;
     try {
+      // Only currently usable subscriptions are migrated. Cancelled/revoked or
+      // expired rows remain untouched; if one is renewed later, entitlement-sync
+      // performs the same migration at activation time using then-current defaults.
       const now = new Date();
+      const migrationRows = await prisma.subscription.findMany({
+        where: { status: "ACTIVE", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        select: {
+          id: true, productEntitlements: true,
+          bucketLimits: true, bindings: true, levels: true, weight: true,
+          deviceLimit: true, weeklyTokenLimit: true, windowMs: true, config: true,
+        },
+      });
+      let catalog: Partial<CatalogConfig> | null = null;
+      let catalogVersion: number | undefined;
+      try {
+        const published = await prisma.planCatalog?.findFirst?.({ where: { status: "PUBLISHED" } });
+        catalog = published?.config ? JSON.parse(published.config) : null;
+        catalogVersion = Number.isFinite(Number(published?.version)) ? Number(published.version) : undefined;
+      } catch {
+        // Built-in defaults are authoritative fallback when no catalog exists or
+        // an old published row is malformed.
+        catalog = null;
+      }
+      let migratedCount = 0;
+      const migratedConfigs = new Map<string, string>();
+      for (const sub of migrationRows) {
+        const migration = migrateBindSubscriptionToUsd(rowToConfig(sub), catalog, { catalogVersion });
+        if (!migration.changed) continue;
+        const serialized = JSON.stringify(migration.config);
+        // Migration is part of the readiness barrier: never serve an in-memory
+        // USD config that failed to become durable in Subscription.config.
+        await prisma.subscription.update({ where: { id: sub.id }, data: { config: serialized } });
+        sub.config = serialized;
+        migratedConfigs.set(sub.id, serialized);
+        migratedCount++;
+      }
+      if (migratedCount > 0) {
+        console.log(`[token-server] migrated ${migratedCount} Codex/Claude subscription(s) to USD quota defaults`);
+      }
       const subs = await prisma.subscription.findMany({
         where: { status: "ACTIVE", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
         select: {
@@ -176,14 +220,22 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
           deviceLimit: true, weeklyTokenLimit: true, windowMs: true, windowState: true, config: true,
         },
       });
+      for (const sub of subs) {
+        const migratedConfig = migratedConfigs.get(sub.id);
+        if (migratedConfig) sub.config = migratedConfig;
+      }
       const records = subs.map((s: any) =>
         subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, backingKeyValue: s.backingKeyValue, status: s.status, expiresAt: s.expiresAt, config: rowToConfig(s) }),
       );
       this.accessKeyStore.loadSubscriptionRecords(records as any);
-      // 精准恢复 5h/周窗口快照(优先于从 CardTokenUsage 回放;恢复过的订阅 hydrate 会跳过)。
+      // 从 Subscription.windowState 精准恢复 5h/周窗口；逐请求旧表已退役。
       for (const s of subs) {
         if (s.windowState) this.accessKeyStore.restoreSubscriptionWindow(s.id, s.windowState);
       }
+      // Migration may have converted legacy token events into compact USD
+      // counters. Make that conversion durable before opening the readiness
+      // barrier, so a crash cannot replay the legacy snapshot as fresh quota.
+      await this.persistSubscriptionWindows(true);
       await this.accessKeyStore.markSubscriptionsReady();
       if (this.subscriptionRetryTimer) {
         clearTimeout(this.subscriptionRetryTimer);
