@@ -100,7 +100,10 @@ function modelAwareCostForRow(row: any, netInput: number, output: number, cacheR
   const priorityRatio = Math.min(1, Math.max(0, Number(row.priorityTokens || 0) / totalRaw));
   const fast = (value: number) => Math.round(Math.max(0, value) * priorityRatio);
   const fi = fast(netInput), fo = fast(output), fr = fast(cacheRead), fw = fast(cacheWrite);
-  const occurredAt = row.hourStart instanceof Date ? row.hourStart.getTime() : Date.now();
+  const rawOccurredAt = row.hourStart instanceof Date
+    ? row.hourStart.getTime()
+    : Number(row.hourStart);
+  const occurredAt = Number.isFinite(rawOccurredAt) && rawOccurredAt > 0 ? rawOccurredAt : Date.now();
   const value = (mode: "standard" | "priority", input: number, out: number, read: number, write: number) => calculateApiValue({
     provider, modelId: String(row.modelKey), pricingMode: mode,
     inputTokens: input, outputTokens: out, cachedInputTokens: read,
@@ -495,19 +498,31 @@ export class PortalService {
     todayStart.setHours(0, 0, 0, 0);
     const historyStart = new Date(todayStart);
     historyStart.setDate(historyStart.getDate() - 29);
-    const rows = await this.prisma.cardUsageHourly.findMany({
-      where: { customerId, hourStart: { gte: historyStart } },
-      orderBy: { hourStart: "asc" },
-    });
-    const allValue = await this.prisma.cardUsageHourly.findMany({
-      where: { customerId },
-      select: {
-        bucket: true, modelKey: true, hourStart: true, requests: true,
-        inputTokens: true, outputTokens: true, cachedInputTokens: true,
-        cacheCreationTokens: true, cacheWrite5mTokens: true, cacheWrite1hTokens: true,
-        priorityTokens: true, apiValueUsd: true, apiPricedRequests: true,
-      },
-    });
+    const [rows, frozenAggregate, unpricedRows] = await Promise.all([
+      this.prisma.cardUsageHourly.findMany({
+        where: { customerId, hourStart: { gte: historyStart } },
+        orderBy: { hourStart: "asc" },
+      }),
+      // New requests freeze their exact occurrence-time API value. Sum that
+      // scalar in SQLite instead of loading a customer's permanent history into
+      // Node on every heartbeat.
+      this.prisma.cardUsageHourly.aggregate({
+        where: { customerId },
+        _sum: { apiValueUsd: true },
+      }),
+      // Only pre-rollout or mixed deployment rows still need token-based
+      // estimation. This set is bounded: newly written rows are fully priced.
+      this.prisma.$queryRaw<any[]>`
+        SELECT
+          "bucket", "modelKey", "hourStart", "requests",
+          "inputTokens", "outputTokens", "cachedInputTokens",
+          "cacheCreationTokens", "cacheWrite5mTokens", "cacheWrite1hTokens",
+          "priorityTokens", "apiValueUsd", "apiPricedRequests"
+        FROM "CardUsageHourly"
+        WHERE "customerId" = ${customerId}
+          AND "apiPricedRequests" < "requests"
+      `,
+    ]);
     const apiValue = (r: any) => {
       const input = netInputForRow(r);
       const cached = Number(r.cachedInputTokens) || 0;
@@ -564,7 +579,15 @@ export class PortalService {
       dailyHistory: [...daily.values()],
       hourlyHistory: hourly,
       chartMode: rows.some((r: any) => r.hourStart < todayStart) ? "daily" : "hourly",
-      cumulativeSaving: round(allValue.reduce((sum: number, row: any) => sum + apiValue(row), 0)),
+      cumulativeSaving: round(
+        Math.max(0, Number(frozenAggregate._sum.apiValueUsd) || 0)
+        + unpricedRows.reduce((sum: number, row: any) => {
+          // apiValue(row) includes the row's frozen portion. It is already in
+          // frozenAggregate, so add only the estimated unpriced remainder.
+          const frozen = Math.max(0, Number(row.apiValueUsd) || 0);
+          return sum + Math.max(0, apiValue(row) - frozen);
+        }, 0),
+      ),
       source: "CardUsageHourly",
     };
   }

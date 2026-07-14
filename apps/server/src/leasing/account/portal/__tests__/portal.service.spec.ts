@@ -53,7 +53,18 @@ function makePrisma(opts: {
     },
     cardUsageHourly: {
       findMany: vi.fn(async () => opts.hourlyRecords ?? []),
+      aggregate: vi.fn(async () => ({
+        _sum: {
+          apiValueUsd: (opts.hourlyRecords ?? []).reduce(
+            (sum, row) => sum + Math.max(0, Number(row.apiValueUsd) || 0),
+            0,
+          ),
+        },
+      })),
     },
+    $queryRaw: vi.fn(async () => (opts.hourlyRecords ?? []).filter(
+      (row) => Math.max(0, Number(row.apiPricedRequests) || 0) < Math.max(0, Number(row.requests) || 0),
+    )),
   };
 }
 
@@ -754,6 +765,9 @@ describe("PortalService.getUsageStats", () => {
     });
     expect(result.cumulativeSaving).toBe(9.25);
     expect(result.today.byModel["claude-opus-4-8"].estimatedCostUSD).toBe(9.25);
+    expect(prisma.cardUsageHourly.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cardUsageHourly.aggregate).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it("preserves frozen request-time value in a mixed legacy/current hour", async () => {
