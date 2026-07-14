@@ -781,6 +781,8 @@ model Subscription {
 
   @@index([customerId])
   @@index([activatedFromOrderId])
+  @@index([createdAt])
+  @@index([status, createdAt])
 }
 
 /// Versioned plan catalog: global pricing / level / usage rules, published to clients.

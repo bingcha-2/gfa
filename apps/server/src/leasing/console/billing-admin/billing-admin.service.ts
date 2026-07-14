@@ -47,6 +47,30 @@ export interface UpdateSubscriptionResult {
   previousExpiresAt: Date | null;
 }
 
+/**
+ * Console subscription reads must stay deliberately narrow. In particular,
+ * never select `windowState` (a potentially multi-megabyte runtime snapshot)
+ * or `backingKeyValue` (an opaque credential) for browser-facing responses.
+ */
+const CONSOLE_SUBSCRIPTION_SELECT = {
+  id: true,
+  customerId: true,
+  status: true,
+  startsAt: true,
+  expiresAt: true,
+  config: true,
+  productEntitlements: true,
+  bucketLimits: true,
+  bindings: true,
+  levels: true,
+  weight: true,
+  deviceLimit: true,
+  weeklyTokenLimit: true,
+  windowMs: true,
+  createdAt: true,
+  customer: { select: { email: true } },
+} satisfies Prisma.SubscriptionSelect;
+
 @Injectable()
 export class BillingAdminService {
   private readonly logger = new Logger(BillingAdminService.name);
@@ -137,9 +161,7 @@ export class BillingAdminService {
     const [subscriptions, total] = await Promise.all([
       this.prisma.subscription.findMany({
         where,
-        include: {
-          customer: { select: { email: true } },
-        },
+        select: CONSOLE_SUBSCRIPTION_SELECT,
         orderBy: { createdAt: "desc" },
         skip,
         take: pageSize,
@@ -163,7 +185,7 @@ export class BillingAdminService {
   async getSubscription(id: string) {
     const sub = await this.prisma.subscription.findUnique({
       where: { id },
-      include: { customer: { select: { email: true } } },
+      select: CONSOLE_SUBSCRIPTION_SELECT,
     });
     if (!sub) throw new NotFoundException(`Subscription "${id}" not found`);
     return { ...sub, ...this.subscriptionViewFields(sub as any) };
