@@ -14,6 +14,18 @@ function makePrisma() {
 }
 
 describe("RequestLogTracker", () => {
+  it("只安排下一次本地时间 04:00 的每日清理", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 1, 0, 0));
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+
+    const t = new RequestLogTracker(makePrisma());
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3 * 60 * 60 * 1000);
+    t.destroy();
+    vi.useRealTimers();
+  });
+
   it("record 缓冲,flush 批量 createMany 后清空队列", async () => {
     const prisma = makePrisma();
     const t = new RequestLogTracker(prisma, { autoStart: false, now: () => 1000 });
@@ -148,6 +160,23 @@ describe("RequestLogTracker", () => {
     await t.pruneOld();
     expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(1); // 仅 TTL 小批扫描
     expect((prisma.requestLog.deleteMany as any).mock.calls).toHaveLength(0);
+  });
+
+  it("清理达到 5 秒时间上限后停止后续批次", async () => {
+    const prisma = makePrisma();
+    let now = 0;
+    prisma.requestLog.findMany = vi.fn().mockImplementation(async () => {
+      now += 3_000;
+      return Array.from({ length: 500 }, (_, i) => ({ id: i + 1 }));
+    });
+    prisma.requestLog.deleteMany = vi.fn().mockResolvedValue({ count: 500 });
+    const t = new RequestLogTracker(prisma, { autoStart: false, now: () => now });
+
+    await t.pruneOld();
+
+    expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.requestLog.deleteMany).toHaveBeenCalledTimes(2);
+    expect(prisma.requestLog.count).not.toHaveBeenCalled();
   });
 
   it("队列封顶并暴露溢出计数", () => {

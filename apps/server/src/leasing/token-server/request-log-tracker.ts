@@ -3,7 +3,7 @@
  *
  * 全量逐请求落 RequestLog,但:
  *   - 写:缓冲 + 每 ~5s 批量 createMany(热路径不阻塞,对齐 TokenUsageTracker);
- *   - 清:每 ~1h 分小批删 48 小时之前的行(短保留控量)。
+ *   - 清:每天本地时间 04:00 分小批删 48 小时之前的行(短保留控量)。
  *
  * 行数 = 请求量 × 2 天,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
  * headers 即使客户端已过滤也必须在服务端再次递归脱敏,绝不存 body/凭证。
@@ -12,12 +12,13 @@
 import { ApiWriteQueue } from "./api-write-queue";
 
 const FLUSH_INTERVAL_MS = 5_000;
-const PRUNE_INTERVAL_MS = 60 * 60 * 1000; // 1h
+const PRUNE_AT_HOUR = 4;
+const PRUNE_MAX_DURATION_MS = 5_000;
 const HEADERS_MAX = 2_000;
 const QUEUE_MAX = 10_000;
 const FLUSH_BATCH = 1_000;
 const PRUNE_BATCH = 500;
-const PRUNE_MAX_BATCHES = 20;
+const PRUNE_MAX_BATCHES = 200;
 
 export const REQUEST_LOG_RETENTION_MS = 48 * 60 * 60 * 1000;
 
@@ -78,11 +79,12 @@ export interface RequestLogEvent {
 export class RequestLogTracker {
   private queue: any[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private pruneTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly now: () => number;
   private overflowCount = 0;
   private flushPromise: Promise<void> | null = null;
   private prunePromise: Promise<void> | null = null;
+  private destroyed = false;
 
   private readonly writeQueue: ApiWriteQueue;
 
@@ -96,9 +98,7 @@ export class RequestLogTracker {
       this.flushTimer = setInterval(() => {
         if (!this.flushPromise) void this.flush();
       }, FLUSH_INTERVAL_MS);
-      this.pruneTimer = setInterval(() => {
-        if (!this.prunePromise) void this.pruneOld();
-      }, PRUNE_INTERVAL_MS);
+      this.scheduleNextPrune();
     }
   }
 
@@ -176,8 +176,10 @@ export class RequestLogTracker {
 
   private async pruneOldOnce(): Promise<void> {
     const cutoff = new Date(this.now() - REQUEST_LOG_RETENTION_MS);
+    const startedAt = this.now();
     try {
       for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
+        if (this.now() - startedAt >= PRUNE_MAX_DURATION_MS) return;
         const old = await this.prisma.requestLog.findMany({
           where: { at: { lt: cutoff } }, orderBy: { at: "asc" }, take: PRUNE_BATCH, select: { id: true },
         });
@@ -187,11 +189,13 @@ export class RequestLogTracker {
       }
 
       // 体积兜底也只做小批量 ID 删除，避免一次大范围 DELETE 长时间独占写锁。
+      if (this.now() - startedAt >= PRUNE_MAX_DURATION_MS) return;
       const count = await this.prisma.requestLog.count();
       if (count > REQUEST_LOG_MAX_ROWS) {
         let remaining = count - REQUEST_LOG_MAX_ROWS;
         let trimmed = 0;
         for (let batch = 0; batch < PRUNE_MAX_BATCHES && remaining > 0; batch++) {
+          if (this.now() - startedAt >= PRUNE_MAX_DURATION_MS) break;
           const oldest = await this.prisma.requestLog.findMany({
             orderBy: { at: "asc" }, take: Math.min(PRUNE_BATCH, remaining), select: { id: true },
           });
@@ -211,9 +215,24 @@ export class RequestLogTracker {
     }
   }
 
+  private scheduleNextPrune(): void {
+    if (this.destroyed || this.pruneTimer) return;
+    const now = new Date(this.now());
+    const nextRun = new Date(now);
+    nextRun.setHours(PRUNE_AT_HOUR, 0, 0, 0);
+    if (nextRun.getTime() <= now.getTime()) nextRun.setDate(nextRun.getDate() + 1);
+
+    this.pruneTimer = setTimeout(() => {
+      this.pruneTimer = null;
+      void this.pruneOld().finally(() => this.scheduleNextPrune());
+    }, Math.max(1, nextRun.getTime() - now.getTime()));
+    (this.pruneTimer as any)?.unref?.();
+  }
+
   destroy(): void {
+    this.destroyed = true;
     if (this.flushTimer) clearInterval(this.flushTimer);
-    if (this.pruneTimer) clearInterval(this.pruneTimer);
+    if (this.pruneTimer) clearTimeout(this.pruneTimer);
     this.flushTimer = null;
     this.pruneTimer = null;
   }

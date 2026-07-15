@@ -605,8 +605,8 @@ model BanEventRequest {
   @@index([banEventId])
 }
 
-/// per-request 热表(全量明细,短保留 72h,RequestLogTracker 批量写 + 定时清理)。
-/// 行数 = 请求量 × 72h,靠 TTL 清理控量;封号相关的永久副本另存于 BanEventRequest。
+/// per-request 热表(全量明细,短保留 48h,RequestLogTracker 批量写 + 每日清理)。
+/// 行数 = 请求量 × 48h,靠 TTL 清理控量;封号相关的永久副本另存于 BanEventRequest。
 /// 仅 codex/anthropic 写入。headers 为过滤后的 JSON(去凭证头、跳超大值),不含 body。
 model RequestLog {
   id           String   @id @default(cuid())
