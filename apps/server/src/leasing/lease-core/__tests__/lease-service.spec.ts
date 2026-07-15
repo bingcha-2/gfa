@@ -98,6 +98,59 @@ describe("LeaseService (generic core)", () => {
     expect(order).toEqual(["load", "membership", "checkpoint"]);
   });
 
+  it("seeds an idle USD subscription with its mother account's weekly reset on startup", async () => {
+    const now = Date.parse("2026-07-15T08:00:00.000Z");
+    const weeklyResetAt = new Date(now + 4 * 24 * 60 * 60 * 1000);
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "one@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        weeklyResetAt: weeklyResetAt.toISOString(),
+      }],
+    });
+    const provider = makeFakeProvider(accountsFilePath, refreshToken, "codex");
+    provider.quotaSnapshotInputs = (account: any) => [{
+      modelKey: "codex",
+      hourlyPresent: false,
+      weeklyPresent: true,
+      weeklyPercent: 46,
+      weeklyResetAt: new Date(account.weeklyResetAt),
+    }];
+    const service = new LeaseService(provider, {
+      accessKeysFilePath,
+      now: () => now,
+    });
+    const store = (service as any).accessKeyStore;
+    store.beginSubscriptionBarrier();
+
+    await service.onModuleInit();
+    store.loadSubscriptionRecords([{
+      id: "idle-codex-sub",
+      key: "subscription-secret",
+      status: "active",
+      products: ["codex"],
+      bindings: { codex: 1 },
+      requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 } },
+      usdUsageByProduct: {
+        codex: {
+          usedWeekly: 25,
+          windowStartedAtWeekly: now - 6 * 24 * 60 * 60 * 1000,
+        },
+      },
+    }]);
+    await store.markSubscriptionsReady();
+
+    const record = store.findById("idle-codex-sub");
+    const weekly = store.publicStatus(record).usdQuotaByProduct.codex.weekly;
+    expect(weekly.used).toBe(25);
+    expect(weekly.resetMs).toBe(4 * 24 * 60 * 60 * 1000);
+    expect(weekly.resetAt).toBe(weeklyResetAt.toISOString());
+  });
+
   it("fails startup when persisted fair-share state cannot be restored", async () => {
     const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath,

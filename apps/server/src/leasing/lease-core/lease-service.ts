@@ -1113,6 +1113,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
   }
 
+  /**
+   * Seed every fixed-USD subscription with the reset epochs already known by
+   * its bound mother account. Quota reports keep these epochs fresh during
+   * normal traffic, but a subscription that has not made a request since a
+   * restart otherwise falls back to its own use-anchored window. That fallback
+   * can make the customer page say "1 day" while the mother account correctly
+   * says "4 days".
+   *
+   * This runs only after the shared subscription readiness barrier opens, so
+   * subscriptionsBoundToAccount() sees the complete DB-backed membership.
+   * applyUpstreamUsdQuotaSnapshot() treats a first observation as a baseline and
+   * therefore preserves existing customer usage while adopting the real reset.
+   */
+  private syncUsdQuotaSnapshotsFromAccounts(): void {
+    if (!this.provider.quotaSnapshotInputs) return;
+    const arrivedAt = this.now();
+    for (const account of this.readAccounts()) {
+      const inputs = this.provider.quotaSnapshotInputs(account);
+      if (inputs.length === 0) continue;
+      this.accessKeyStore.applyUpstreamUsdQuotaSnapshot(
+        account.id,
+        this.provider.id,
+        inputs,
+        {
+          observedAt: arrivedAt,
+          arrivedAt,
+          snapshotId: `startup:${this.provider.id}:${account.id}:${arrivedAt}`,
+        },
+      );
+    }
+  }
+
   private clampEventTime(value: unknown, minimum: number, maximum: number): number {
     const parsed = typeof value === "number" ? value : Date.parse(String(value || ""));
     if (!Number.isFinite(parsed)) return maximum;
@@ -1849,6 +1881,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 429 those users until a rebind.
     const reconcile = async () => {
       try {
+        this.syncUsdQuotaSnapshotsFromAccounts();
         this.fairShareTracker?.refreshAllParticipants();
         await this.fairShareTracker?.flush();
       } catch (err) {
