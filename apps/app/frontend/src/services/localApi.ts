@@ -197,6 +197,9 @@ export interface ProviderLocalApi {
   setGatewayPort(port: number): Promise<LocalGatewayStatus>
   stats(): Promise<LocalStatsSnapshot>
   exportAccounts(ids: string[]): Promise<string>
+  /** 导出到用户选定的文件(后端弹原生保存框 + 落盘)。返回保存路径;用户取消返回空串。
+   *  不用浏览器 blob 下载——那在 Wails WebView 里不生效(点了没反应、没文件)。 */
+  exportAccountsToFile(ids: string[]): Promise<string>
   importFromJSON(json: string): Promise<number>
   /** 从本机已装客户端导入(读 ~/.codex/auth.json);仅 codex 支持。返回新增数。 */
   importFromLocal?(): Promise<number>
@@ -256,6 +259,7 @@ export const codexLocalApi: ProviderLocalApi = {
   setGatewayPort: (port) => app().LocalSetGatewayPort(port) as Promise<LocalGatewayStatus>,
   stats: () => app().LocalCodexStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportCodexAccounts(ids) as Promise<string>,
+  exportAccountsToFile: (ids) => app().LocalExportCodexAccountsToFile(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportCodexFromJSON(json) as Promise<number>,
   importFromLocal: () => app().LocalImportCodexFromLocal() as Promise<number>,
   importAuthFiles: (contents) => app().LocalImportCodexAuthFiles(contents) as Promise<number>,
@@ -295,6 +299,7 @@ export const antigravityLocalApi: ProviderLocalApi = {
   setGatewayPort: (port) => app().LocalSetGatewayPort(port) as Promise<LocalGatewayStatus>,
   stats: () => app().LocalAntigravityStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportAntigravityAccounts(ids) as Promise<string>,
+  exportAccountsToFile: (ids) => app().LocalExportAntigravityAccountsToFile(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportAntigravityFromJSON(json) as Promise<number>,
   importAuthFiles: (contents) => app().LocalImportAntigravityAuthFiles(contents) as Promise<number>,
   syncFromIDE: () => app().LocalSyncAntigravityFromIDE() as Promise<number>,

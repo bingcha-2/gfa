@@ -294,8 +294,24 @@ export function LocalExportAntigravityAccounts(arg1) {
   return window['go']['main']['App']['LocalExportAntigravityAccounts'](arg1);
 }
 
+export function LocalExportAntigravityAccountsToFile(arg1) {
+  return window['go']['main']['App']['LocalExportAntigravityAccountsToFile'](arg1);
+}
+
 export function LocalExportCodexAccounts(arg1) {
   return window['go']['main']['App']['LocalExportCodexAccounts'](arg1);
+}
+
+export function LocalExportCodexAccountsToFile(arg1) {
+  return window['go']['main']['App']['LocalExportCodexAccountsToFile'](arg1);
+}
+
+export function LocalExportAntigravityAccountsToFile(arg1) {
+  return window['go']['main']['App']['LocalExportAntigravityAccountsToFile'](arg1);
+}
+
+export function LocalExportCodexAccountsToFile(arg1) {
+  return window['go']['main']['App']['LocalExportCodexAccountsToFile'](arg1);
 }
 
 export function LocalGatewayConnTest() {
