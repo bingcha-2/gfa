@@ -14,9 +14,10 @@ function makePrisma() {
 }
 
 describe("RequestLogTracker", () => {
-  it("只安排下一次本地时间 04:00 的每日清理", () => {
+  it("只安排下一次北京时间 04:00 的每日清理", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 6, 15, 1, 0, 0));
+    // 17:00 UTC = 01:00 the next day in Beijing, regardless of host timezone.
+    vi.setSystemTime(new Date("2026-07-14T17:00:00.000Z"));
     const setTimeoutSpy = vi.spyOn(global, "setTimeout");
 
     const t = new RequestLogTracker(makePrisma());

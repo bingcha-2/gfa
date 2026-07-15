@@ -1,3 +1,5 @@
+import { msUntilNextBeijingHour } from "./beijing-daily-schedule";
+
 const DEFAULT_RUN_AT_HOUR = 3;
 const DEFAULT_BATCH_SIZE = 500;
 const DEFAULT_MAX_BATCHES = 100;
@@ -101,18 +103,15 @@ export class ReceiptPruneScheduler {
 
   private ensureTimer(): void {
     if (this.timer) return;
-    const now = new Date(this.now());
     const runAtHour = Math.min(23, Math.max(0, Math.trunc(this.options.runAtHour ?? DEFAULT_RUN_AT_HOUR)));
-    const nextRun = new Date(now);
-    nextRun.setHours(runAtHour, 0, 0, 0);
-    if (nextRun.getTime() <= now.getTime()) nextRun.setDate(nextRun.getDate() + 1);
+    const delayMs = msUntilNextBeijingHour(this.now(), runAtHour);
 
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.runOnce().finally(() => {
         if (this.targets.size > 0) this.ensureTimer();
       });
-    }, Math.max(1, nextRun.getTime() - now.getTime()));
+    }, delayMs);
     (this.timer as any)?.unref?.();
   }
 

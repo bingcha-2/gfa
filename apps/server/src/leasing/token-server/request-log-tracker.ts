@@ -3,13 +3,14 @@
  *
  * 全量逐请求落 RequestLog,但:
  *   - 写:缓冲 + 每 ~5s 批量 createMany(热路径不阻塞,对齐 TokenUsageTracker);
- *   - 清:每天本地时间 04:00 分小批删 48 小时之前的行(短保留控量)。
+ *   - 清:每天北京时间 04:00 分小批删 48 小时之前的行(短保留控量)。
  *
  * 行数 = 请求量 × 2 天,靠 TTL 收敛;封号相关的永久副本另存 BanEventRequest。
  * headers 即使客户端已过滤也必须在服务端再次递归脱敏,绝不存 body/凭证。
  */
 
 import { ApiWriteQueue } from "./api-write-queue";
+import { msUntilNextBeijingHour } from "./beijing-daily-schedule";
 
 const FLUSH_INTERVAL_MS = 5_000;
 const PRUNE_AT_HOUR = 4;
@@ -217,15 +218,12 @@ export class RequestLogTracker {
 
   private scheduleNextPrune(): void {
     if (this.destroyed || this.pruneTimer) return;
-    const now = new Date(this.now());
-    const nextRun = new Date(now);
-    nextRun.setHours(PRUNE_AT_HOUR, 0, 0, 0);
-    if (nextRun.getTime() <= now.getTime()) nextRun.setDate(nextRun.getDate() + 1);
+    const delayMs = msUntilNextBeijingHour(this.now(), PRUNE_AT_HOUR);
 
     this.pruneTimer = setTimeout(() => {
       this.pruneTimer = null;
       void this.pruneOld().finally(() => this.scheduleNextPrune());
-    }, Math.max(1, nextRun.getTime() - now.getTime()));
+    }, delayMs);
     (this.pruneTimer as any)?.unref?.();
   }
 

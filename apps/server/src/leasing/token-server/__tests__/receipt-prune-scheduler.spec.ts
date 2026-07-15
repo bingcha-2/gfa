@@ -26,9 +26,10 @@ describe("ReceiptPruneScheduler", () => {
     expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules the shared cleanup for the next local 03:00", () => {
+  it("schedules the shared cleanup for the next Beijing-time 03:00", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 6, 15, 1, 0, 0));
+    // 17:00 UTC = 01:00 the next day in Beijing, regardless of host timezone.
+    vi.setSystemTime(new Date("2026-07-14T17:00:00.000Z"));
     const setTimeoutSpy = vi.spyOn(global, "setTimeout");
     const scheduler = new ReceiptPruneScheduler();
 
