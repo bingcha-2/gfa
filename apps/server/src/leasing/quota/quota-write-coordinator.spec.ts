@@ -142,5 +142,40 @@ describe("QuotaWriteCoordinator", () => {
     await vi.runAllTimersAsync();
     await prune;
     expect(order).toEqual(["checkpoint", "prune"]);
+    await expect(prune).resolves.toBe(true);
+  });
+
+  it("gives up on the deadline without running work the coordinator never made room for", async () => {
+    vi.useFakeTimers();
+    const work = vi.fn(async () => undefined);
+    // Never resolves, so the coordinator stays mid-flush exactly as it would
+    // while a write-lock storm holds the commit open.
+    const coordinator = new QuotaWriteCoordinator<{ value: number }>({ commit: () => new Promise<void>(() => {}) });
+    void coordinator.enqueue("account-1", 1, { value: 1 });
+    await vi.advanceTimersByTimeAsync(10);
+
+    const prune = coordinator.scheduleLowPriority(work, 5_000);
+    await vi.advanceTimersByTimeAsync(4_990);
+    expect(work).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(prune).resolves.toBe(false);
+    // The point of the deadline: skipped outright, never deferred into a later
+    // turn where it would race whatever the caller scheduled next.
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it("waits without a deadline when the coordinator goes quiet before it lapses", async () => {
+    vi.useFakeTimers();
+    const work = vi.fn(async () => undefined);
+    const coordinator = new QuotaWriteCoordinator<{ value: number }>({ commit: async () => undefined });
+    const checkpoint = coordinator.enqueue("account-1", 1, { value: 1 });
+    const prune = coordinator.scheduleLowPriority(work, 5_000);
+    await vi.advanceTimersByTimeAsync(10);
+    await checkpoint;
+    await vi.runAllTimersAsync();
+
+    await expect(prune).resolves.toBe(true);
+    expect(work).toHaveBeenCalledOnce();
   });
 });

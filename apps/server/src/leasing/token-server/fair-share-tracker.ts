@@ -32,6 +32,7 @@ import { WindowCuFairShareEngine } from "../quota/window-cu-fair-share-engine";
 import type { FairShareUsageEvent } from "../quota/fair-share-cu";
 import { FairShareWindowRepository, type HourlyUsageAccounting } from "../quota/fair-share-window-repository";
 import { QuotaWriteCoordinator } from "../quota/quota-write-coordinator";
+import { sharedReceiptPruneScheduler } from "./receipt-prune-scheduler";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 静态封顶复用,避免循环依赖)。
 export { quotaWeightFor };
@@ -81,6 +82,11 @@ const REBOUND_EPS = 0.02;
 
 /** 定时批量持久化间隔。 */
 const FLUSH_INTERVAL_MS = 30_000;
+// How long a receipt-prune batch waits for its provider's accounting coordinator
+// to go quiet before giving up for this tick. Generous next to the coordinator's
+// 10ms flush cadence, and bounded so a storm on one provider cannot hold the
+// scheduler's single serial lane away from the others.
+const RECEIPT_PRUNE_QUIET_WAIT_MS = 5_000;
 
 /** 某桶对应的周窗口 key。 */
 export function weeklyBucketKey(bucket: string): string {
@@ -185,8 +191,7 @@ export class FairShareTracker {
   private readonly trackWeekly: boolean;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private scheduledFlushRunning = false;
-  private receiptPruneTimer: ReturnType<typeof setInterval> | null = null;
-  private receiptPruneRunning = false;
+  private unregisterReceiptPruner: (() => void) | null = null;
   private dirty = false;
   // Serializes flushes: each flush() runs after the previous settles, so a
   // scheduled tick and a shutdown flush never overlap and never no-op each other.
@@ -294,8 +299,11 @@ export class FairShareTracker {
           this.scheduledFlushRunning = false;
         });
       }, Math.max(1, Number(opts.flushIntervalMs || FLUSH_INTERVAL_MS)));
-      if (this.writeCoordinator) {
-        this.receiptPruneTimer = setInterval(() => { void this.pruneExpiredReceipts(); }, 60 * 1000);
+      if (this.accountingCoordinator && this.windowRepository) {
+        this.unregisterReceiptPruner = sharedReceiptPruneScheduler.register({
+          provider: this.providerId,
+          pruneBatch: (batchSize) => this.pruneExpiredReceiptBatch(batchSize),
+        });
       }
     }
     // Self-register so the heartbeat (app-auth) can read this provider's live
@@ -1086,9 +1094,6 @@ export class FairShareTracker {
         }
         else console.warn(`[fair-share-tracker] rejected ${this.providerId}/${group.accountId}/${group.bucket}: ${group.result.reason}`);
       }
-      if (this.writeCoordinator) {
-        await this.pruneExpiredReceipts();
-      }
       return;
     }
     if (!this.prisma || !this.providerId) return;
@@ -1261,8 +1266,8 @@ export class FairShareTracker {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.receiptPruneTimer) clearInterval(this.receiptPruneTimer);
-    this.receiptPruneTimer = null;
+    this.unregisterReceiptPruner?.();
+    this.unregisterReceiptPruner = null;
   }
 
   private serializeRows(): Array<{
@@ -1389,28 +1394,22 @@ export class FairShareTracker {
     };
   }
 
-  private async pruneExpiredReceipts(): Promise<void> {
-    // Defer to the coordinator that writes QuotaReportReceipt (the table this
-    // prunes). After the persistence split that is accountingCoordinator, not
-    // writeCoordinator — gating on the latter let the DELETE bursts contend with
-    // the awaited hot-path receipt commit they were meant to yield to.
-    if (!this.accountingCoordinator || !this.windowRepository || this.receiptPruneRunning) return;
-    this.receiptPruneRunning = true;
-    try {
-      await this.accountingCoordinator.scheduleLowPriority(async () => {
-        // Failed client reports are retained for seven days. Keep receipts
-        // twice as long so a delayed retry can never become billable again.
-        const cutoff = new Date(this.nowFn() - 14 * 24 * 60 * 60 * 1000);
-        for (let batch = 0; batch < 20; batch++) {
-          const deleted = await this.windowRepository!.pruneReceipts(cutoff, 500);
-          if (deleted < 500) break;
-        }
-      });
-    } catch (error) {
-      console.error("[fair-share-tracker] receipt prune failed:", error);
-    } finally {
-      this.receiptPruneRunning = false;
-    }
+  private async pruneExpiredReceiptBatch(batchSize: number): Promise<number> {
+    // The process-wide scheduler serializes providers. The provider-local
+    // accounting coordinator additionally yields to awaited receipt commits.
+    if (!this.accountingCoordinator || !this.windowRepository) return 0;
+    let deleted = 0;
+    const ran = await this.accountingCoordinator.scheduleLowPriority(async () => {
+      // Clients do not retry usage reports after 24 hours, so older exactly-once
+      // receipts can be removed by the low-priority daily cleanup.
+      const cutoff = new Date(this.nowFn() - 24 * 60 * 60 * 1000);
+      deleted = await this.windowRepository!.pruneReceipts(cutoff, batchSize);
+    }, RECEIPT_PRUNE_QUIET_WAIT_MS);
+    // The deadline lapsed with the coordinator still busy, so nothing was
+    // deleted. Reporting 0 retires this provider for the tick: the scheduler
+    // runs providers in one serial lane, and waiting out a storm here would
+    // stall every other provider's cleanup behind this one.
+    return ran ? deleted : 0;
   }
 }
 

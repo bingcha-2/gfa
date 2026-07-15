@@ -60,14 +60,32 @@ export class QuotaWriteCoordinator<T> {
     return promise;
   }
 
-  scheduleLowPriority(work: () => Promise<void>): Promise<void> {
+  /**
+   * Runs `work` in the first window where no commit is pending or in flight.
+   *
+   * Resolves true once `work` has run. With `waitDeadlineMs` set, gives up and
+   * resolves false — without ever running `work` — if no quiet window opens in
+   * time. A saturated coordinator may never go quiet (under a write-lock storm
+   * that is precisely when it stays busy), and an unbounded wait would pin the
+   * caller for as long as the storm lasts. Skipping outright rather than
+   * deferring keeps the cancellation clean: a caller that serializes writes
+   * across coordinators does not get a stray `work` run leaking into a later
+   * turn it no longer controls.
+   */
+  scheduleLowPriority(work: () => Promise<void>, waitDeadlineMs?: number): Promise<boolean> {
     return new Promise((resolve, reject) => {
+      const pollMs = this.options.maxDelayMs || 10;
+      const expiresAt = waitDeadlineMs == null ? null : Date.now() + Math.max(0, waitDeadlineMs);
       const attempt = () => {
         if (this.pending.size > 0 || this.flushing) {
-          setTimeout(attempt, this.options.maxDelayMs || 10);
+          if (expiresAt != null && Date.now() >= expiresAt) {
+            resolve(false);
+            return;
+          }
+          setTimeout(attempt, pollMs);
           return;
         }
-        void work().then(resolve, reject);
+        void work().then(() => resolve(true), reject);
       };
       setTimeout(attempt, 0);
     });
