@@ -76,6 +76,33 @@ describe("AccountQuotaSnapshotTracker", () => {
     expect(createMany).not.toHaveBeenCalled();
   });
 
+  it("前一次 flush 未结束时不会追加第二个写任务", async () => {
+    let resolveCreateMany!: (value: { count: number }) => void;
+    const createMany = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveCreateMany = resolve;
+      }))
+      .mockResolvedValue({ count: 1 });
+    const tracker = new AccountQuotaSnapshotTracker(
+      { accountQuotaSnapshot: { createMany } },
+      { autoStart: false },
+    );
+    tracker.record({ provider: "codex", accountId: 1, modelKey: "codex", hourlyPercent: 80 });
+
+    const first = tracker.flush();
+    await Promise.resolve();
+    tracker.record({ provider: "codex", accountId: 2, modelKey: "codex", hourlyPercent: 70 });
+    const second = tracker.flush();
+
+    expect(createMany).toHaveBeenCalledOnce();
+    resolveCreateMany({ count: 1 });
+    await Promise.all([first, second]);
+    expect(tracker.getQueueForTesting()).toHaveLength(1);
+
+    await tracker.flush();
+    expect(createMany).toHaveBeenCalledTimes(2);
+  });
+
   it("destroy() stops the flush timer", () => {
     const { tracker } = makeTracker();
     const spy = vi.spyOn(global, "clearInterval");

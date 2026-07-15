@@ -184,6 +184,7 @@ export class FairShareTracker {
   private readonly nowFn: () => number;
   private readonly trackWeekly: boolean;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private scheduledFlushRunning = false;
   private receiptPruneTimer: ReturnType<typeof setInterval> | null = null;
   private receiptPruneRunning = false;
   private dirty = false;
@@ -285,8 +286,12 @@ export class FairShareTracker {
       : null;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
+        if (this.scheduledFlushRunning) return;
+        this.scheduledFlushRunning = true;
         void this.flush().catch((error) => {
           console.error("[fair-share-tracker] scheduled flush failed:", error);
+        }).finally(() => {
+          this.scheduledFlushRunning = false;
         });
       }, Math.max(1, Number(opts.flushIntervalMs || FLUSH_INTERVAL_MS)));
       if (this.writeCoordinator) {

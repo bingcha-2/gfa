@@ -13,6 +13,11 @@ import { CustomerTokenService } from "../../account/customer-auth/customer-token
 import { DeviceService } from "../../account/device/device.service";
 import { PortalService } from "../../account/portal/portal.service";
 
+const HEARTBEAT_LAST_SEEN_WRITE_INTERVAL_MS = 20 * 60 * 1000;
+const USAGE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
+const USAGE_SUMMARY_ERROR_CACHE_MS = 30 * 1000;
+const USAGE_SUMMARY_CACHE_MAX_ENTRIES = 10_000;
+
 export interface SubscriptionUsdQuotaWindow {
   used: number;
   limit: number;
@@ -83,6 +88,9 @@ function parseLevels(json: string | null | undefined): Record<string, string> {
 
 @Injectable()
 export class AppAuthService {
+  private readonly usageSummaryCache = new Map<string, { expiresAt: number; value: any }>();
+  private readonly usageSummaryInFlight = new Map<string, Promise<any>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly customerAuthService: CustomerAuthService,
@@ -98,13 +106,39 @@ export class AppAuthService {
       cumulativeSaving: 0, source: "CardUsageHourly",
     };
     if (!this.portalService) return empty;
-    try {
-      return await this.portalService.getClientUsageSummary(customerId);
-    } catch {
-      // Usage charts are auxiliary. A transient aggregate-table failure must
-      // never prevent authentication, heartbeat, or subscription quota refresh.
-      return empty;
+
+    const now = Date.now();
+    const cached = this.usageSummaryCache.get(customerId);
+    if (cached && cached.expiresAt > now) return cached.value;
+    if (cached) this.usageSummaryCache.delete(customerId);
+
+    const existing = this.usageSummaryInFlight.get(customerId);
+    if (existing) return existing;
+
+    const pending = this.portalService.getClientUsageSummary(customerId)
+      .then((value) => {
+        this.cacheUsageSummary(customerId, value, USAGE_SUMMARY_CACHE_MS);
+        return value;
+      })
+      .catch(() => {
+        // Usage charts are auxiliary. A transient aggregate-table failure must
+        // never prevent authentication, heartbeat, or subscription quota refresh.
+        this.cacheUsageSummary(customerId, empty, USAGE_SUMMARY_ERROR_CACHE_MS);
+        return empty;
+      })
+      .finally(() => {
+        this.usageSummaryInFlight.delete(customerId);
+      });
+    this.usageSummaryInFlight.set(customerId, pending);
+    return pending;
+  }
+
+  private cacheUsageSummary(customerId: string, value: any, ttlMs: number): void {
+    if (!this.usageSummaryCache.has(customerId) && this.usageSummaryCache.size >= USAGE_SUMMARY_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.usageSummaryCache.keys().next().value;
+      if (oldestKey !== undefined) this.usageSummaryCache.delete(oldestKey);
     }
+    this.usageSummaryCache.set(customerId, { expiresAt: Date.now() + ttlMs, value });
   }
 
   /** 读取订阅自己的 5h/周 API 等价美元窗口。Best-effort，绝不阻断登录/心跳。 */
@@ -337,11 +371,17 @@ export class AppAuthService {
       });
     }
 
-    // Update lastSeenAt
-    await this.prisma.device.update({
-      where: { id: device.id },
-      data: { lastSeenAt: new Date() }
-    });
+    // Heartbeats are primarily session checks. Persist presence at most once per
+    // 20 minutes so old clients polling every minute do not continuously lock SQLite.
+    const now = new Date();
+    const lastSeenAtMs = device.lastSeenAt instanceof Date ? device.lastSeenAt.getTime() : Number.NaN;
+    const elapsedMs = now.getTime() - lastSeenAtMs;
+    if (!Number.isFinite(lastSeenAtMs) || elapsedMs < 0 || elapsedMs >= HEARTBEAT_LAST_SEEN_WRITE_INTERVAL_MS) {
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { lastSeenAt: now }
+      });
+    }
 
     const [subs, usageSummary] = await Promise.all([
       this.listActiveSubscriptionsSorted(dto.customerId),

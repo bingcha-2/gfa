@@ -664,7 +664,7 @@ func parseSubscriptionUsdQuotaByProduct(raw map[string]interface{}) map[string]S
 	return out
 }
 
-// HeartbeatCheck sends a heartbeat to the server (frontend polls ~60s),
+// HeartbeatCheck sends a heartbeat to the server (frontend polls ~20min),
 // persists refreshed subscription info, and handles fatal session classes:
 //   - SESSION_INVALID / DEVICE_REVOKED / DEVICE_LIMIT_EXCEEDED → the session is
 //     dead server-side: stop services and clear the local session so the UI

@@ -6,6 +6,7 @@ import { TokenUsageTracker } from "./token-usage-tracker";
 import { BanEventTracker } from "./ban-event-tracker";
 import { RequestLogTracker } from "./request-log-tracker";
 import { AccountQuotaSnapshotTracker } from "./account-quota-snapshot-tracker";
+import { ApiWriteQueue } from "./api-write-queue";
 import { AccessKeyStore } from "./access-key-store";
 import { SessionTokenResolver } from "./session-token-resolver";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
@@ -21,16 +22,21 @@ const sharedAccessKeyStoreProvider = {
   useFactory: () => new AccessKeyStore(`${defaultRemoteAccessDataDir()}/access-keys.json`),
 };
 
+const apiWriteQueueProvider = {
+  provide: "API_WRITE_QUEUE",
+  useFactory: () => new ApiWriteQueue(),
+};
+
 const tokenUsageTrackerProvider = {
   provide: "TOKEN_USAGE_TRACKER",
-  useFactory: (prisma: PrismaService) => new TokenUsageTracker(prisma),
-  inject: [PrismaService],
+  useFactory: (prisma: PrismaService, writeQueue: ApiWriteQueue) => new TokenUsageTracker(prisma, { writeQueue }),
+  inject: [PrismaService, "API_WRITE_QUEUE"],
 };
 
 const accountQuotaSnapshotTrackerProvider = {
   provide: "ACCOUNT_QUOTA_SNAPSHOT_TRACKER",
-  useFactory: (prisma: PrismaService) => new AccountQuotaSnapshotTracker(prisma),
-  inject: [PrismaService],
+  useFactory: (prisma: PrismaService, writeQueue: ApiWriteQueue) => new AccountQuotaSnapshotTracker(prisma, { writeQueue }),
+  inject: [PrismaService, "API_WRITE_QUEUE"],
 };
 
 // 封号事件记录器。共享一份(内存环按 provider+accountId 隔离)。只被 codex/anthropic
@@ -41,11 +47,11 @@ const banEventTrackerProvider = {
   inject: [PrismaService],
 };
 
-// per-request 热表写入器(72h)。同样只被 codex/anthropic 模块注入。
+// per-request 热表写入器(48h)。同样只被 codex/anthropic 模块注入。
 const requestLogTrackerProvider = {
   provide: "REQUEST_LOG_TRACKER",
-  useFactory: (prisma: PrismaService) => new RequestLogTracker(prisma),
-  inject: [PrismaService],
+  useFactory: (prisma: PrismaService, writeQueue: ApiWriteQueue) => new RequestLogTracker(prisma, { writeQueue }),
+  inject: [PrismaService, "API_WRITE_QUEUE"],
 };
 
 const tokenServerProvider = {
@@ -64,8 +70,8 @@ const tokenServerProvider = {
   // (verifies customer session JWTs on the lease hot path).
   imports: [CustomerAuthModule],
   controllers: [TokenServerController],
-  providers: [tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, banEventTrackerProvider, requestLogTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
-  exports: [TokenServerService, "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
+  providers: [apiWriteQueueProvider, tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, banEventTrackerProvider, requestLogTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
+  exports: [TokenServerService, "API_WRITE_QUEUE", "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
 })
 export class TokenServerModule implements OnModuleInit {
   constructor(

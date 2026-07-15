@@ -554,6 +554,55 @@ describe("AppAuthService.heartbeat", () => {
     );
   });
 
+  it("does not rewrite lastSeenAt within the 20-minute heartbeat window", async () => {
+    const device = makeDevice({
+      customerId: "cust-1",
+      deviceId: "device-abc",
+      status: "ACTIVE",
+      sessionJti: "live-jti",
+      lastSeenAt: new Date()
+    });
+    const { appAuthService, prisma } = await makeAppAuthService({ devices: [device] });
+
+    await appAuthService.heartbeat({
+      customerId: "cust-1",
+      jti: "live-jti",
+      tokenDeviceId: "device-abc",
+      deviceId: "device-abc"
+    });
+
+    expect(prisma.device.update).not.toHaveBeenCalled();
+  });
+
+  it("caches usage summaries across repeated heartbeats", async () => {
+    const usageSummary = { source: "CardUsageHourly", cumulativeSaving: 42 };
+    const getClientUsageSummary = vi.fn().mockResolvedValue(usageSummary);
+    const device = makeDevice({
+      customerId: "cust-1",
+      deviceId: "device-abc",
+      status: "ACTIVE",
+      sessionJti: "live-jti",
+      lastSeenAt: new Date()
+    });
+    const { appAuthService } = await makeAppAuthService({
+      devices: [device],
+      portalService: { getClientUsageSummary },
+    });
+    const dto = {
+      customerId: "cust-1",
+      jti: "live-jti",
+      tokenDeviceId: "device-abc",
+      deviceId: "device-abc"
+    };
+
+    const first = await appAuthService.heartbeat(dto);
+    const second = await appAuthService.heartbeat(dto);
+
+    expect(getClientUsageSummary).toHaveBeenCalledOnce();
+    expect(first.usageSummary).toEqual(usageSummary);
+    expect(second.usageSummary).toEqual(usageSummary);
+  });
+
   it("stale jti (logged in elsewhere) → DEVICE_REVOKED (403)", async () => {
     const device = makeDevice({
       customerId: "cust-1",

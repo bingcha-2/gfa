@@ -39,6 +39,45 @@ describe("RequestLogTracker", () => {
     expect(t.getQueueForTesting()).toHaveLength(0);
   });
 
+  it("flush 每批最多写 1000 行", async () => {
+    const prisma = makePrisma();
+    const t = new RequestLogTracker(prisma, { autoStart: false });
+    for (let i = 0; i < 1001; i++) t.record({ provider: "codex", reportId: `r${i}` });
+
+    await t.flush();
+
+    const data = (prisma.requestLog.createMany as any).mock.calls[0][0].data;
+    expect(data).toHaveLength(1000);
+    expect(t.getQueueForTesting()).toHaveLength(1);
+    expect(t.getQueueForTesting()[0].reportId).toBe("r1000");
+  });
+
+  it("前一次 flush 未完成时不会启动第二个并发写入", async () => {
+    let resolveCreateMany!: (value: { count: number }) => void;
+    const createMany = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveCreateMany = resolve;
+      }))
+      .mockResolvedValue({ count: 1 });
+    const prisma = makePrisma();
+    prisma.requestLog.createMany = createMany;
+    const t = new RequestLogTracker(prisma, { autoStart: false });
+    t.record({ provider: "codex", reportId: "r1" });
+
+    const first = t.flush();
+    await Promise.resolve();
+    t.record({ provider: "codex", reportId: "r2" });
+    const second = t.flush();
+
+    expect(createMany).toHaveBeenCalledOnce();
+    resolveCreateMany({ count: 1 });
+    await Promise.all([first, second]);
+    expect(t.getQueueForTesting().map((row) => row.reportId)).toEqual(["r2"]);
+
+    await t.flush();
+    expect(createMany).toHaveBeenCalledTimes(2);
+  });
+
   it("缺 provider 的事件被忽略", () => {
     const t = new RequestLogTracker(makePrisma(), { autoStart: false });
     t.record({ provider: "", accountId: 1 } as any);
@@ -69,7 +108,7 @@ describe("RequestLogTracker", () => {
     expect(stored).toEqual({ "user-agent": "claude-cli/2", nested: { harmless: "kept" } });
   });
 
-  it("pruneOld 删保留期之前的行", async () => {
+  it("pruneOld 删 48 小时保留期之前的行", async () => {
     const prisma = makePrisma();
     const now = REQUEST_LOG_RETENTION_MS + 5000;
     const t = new RequestLogTracker(prisma, { autoStart: false, now: () => now });
@@ -79,21 +118,27 @@ describe("RequestLogTracker", () => {
     expect(where.at.lt.getTime()).toBe(5000); // now - 保留期
   });
 
-  it("体积兜底:行数超上限 → 按第 MAX 新行的 at 删更旧的", async () => {
-    const boundaryAt = new Date("2026-06-20T00:00:00Z");
+  it("体积兜底:行数超上限 → 按 ID 小批删除最旧行", async () => {
     const prisma = makePrisma();
-    prisma.requestLog.count = vi.fn().mockResolvedValue(REQUEST_LOG_MAX_ROWS + 1000);
-    prisma.requestLog.findMany = vi.fn().mockResolvedValue([{ at: boundaryAt }]);
+    prisma.requestLog.count = vi.fn().mockResolvedValue(REQUEST_LOG_MAX_ROWS + 600);
+    prisma.requestLog.findMany = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(Array.from({ length: 500 }, (_, i) => ({ id: i + 1 })))
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: i + 501 })));
+    prisma.requestLog.deleteMany = vi.fn()
+      .mockResolvedValueOnce({ count: 500 })
+      .mockResolvedValueOnce({ count: 100 });
     const t = new RequestLogTracker(prisma, { autoStart: false });
     await t.pruneOld();
 
-    // findMany 用 skip=MAX、take=1、按 at 倒序取边界行
     const fmCalls = (prisma.requestLog.findMany as any).mock.calls;
-    const fmArg = fmCalls[fmCalls.length - 1][0];
-    expect(fmArg).toMatchObject({ orderBy: { at: "desc" }, skip: REQUEST_LOG_MAX_ROWS, take: 1 });
-    // 第二次 deleteMany 删 < 边界 at
+    expect(fmCalls[1][0]).toMatchObject({ orderBy: { at: "asc" }, take: 500, select: { id: true } });
+    expect(fmCalls[2][0]).toMatchObject({ orderBy: { at: "asc" }, take: 100, select: { id: true } });
+    expect(fmCalls[1][0]).not.toHaveProperty("skip");
     const delCalls = (prisma.requestLog.deleteMany as any).mock.calls;
-    expect(delCalls[delCalls.length - 1][0].where.at.lt).toEqual(boundaryAt);
+    expect(delCalls).toHaveLength(2);
+    expect(delCalls[0][0].where.id.in).toHaveLength(500);
+    expect(delCalls[1][0].where.id.in).toHaveLength(100);
   });
 
   it("行数未超上限 → 不做体积兜底", async () => {

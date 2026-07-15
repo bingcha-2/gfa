@@ -11,6 +11,8 @@
  * authoritative limit windows live on the subscription records.
  */
 
+import { ApiWriteQueue } from "./api-write-queue";
+
 interface TokenUsageEvent {
   accessKeyId: string;
   customerId?: string;
@@ -40,9 +42,19 @@ const FLUSH_INTERVAL_MS = 10_000; // 10 seconds
 export class TokenUsageTracker {
   private queue: TokenUsageEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private flushPromise: Promise<void> | null = null;
+  private readonly writeQueue: ApiWriteQueue;
 
-  constructor(private readonly prisma: any) {
-    this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
+  constructor(
+    private readonly prisma: any,
+    opts: { autoStart?: boolean; writeQueue?: ApiWriteQueue } = {},
+  ) {
+    this.writeQueue = opts.writeQueue ?? new ApiWriteQueue();
+    if (opts.autoStart !== false) {
+      this.flushTimer = setInterval(() => {
+        if (!this.flushPromise) void this.flush();
+      }, FLUSH_INTERVAL_MS);
+    }
   }
 
   /**
@@ -107,6 +119,15 @@ export class TokenUsageTracker {
    * blow up the table. Errors are caught and logged — never thrown.
    */
   async flush(): Promise<void> {
+    if (this.flushPromise) return this.flushPromise;
+    const pending = this.writeQueue.enqueue(() => this.flushOnce()).finally(() => {
+      this.flushPromise = null;
+    });
+    this.flushPromise = pending;
+    return pending;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
     await this.flushHourly(batch);
