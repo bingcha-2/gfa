@@ -27,6 +27,12 @@ function idToTarget(id: string): string {
 
 const CLAUDE_STANDALONE_WIN_DOWNLOAD_URL = 'https://claude.ai/api/desktop/win32/x64/exe/latest/redirect'
 
+// 只写家目录配置的接管目标:Claude Code → ~/.claude/settings.json,Codex → ~/.codex/config.toml。
+// 家目录下的隐藏目录不归 macOS TCC 管,它们接管失败【一定】与「App 管理」这类隐私权限无关
+// (实际成因通常是目录被 root 占了),引导用户去开权限只会让人白折腾。其余目标(Hub 打 asar 补丁、
+// IDE / Desktop 要动已安装的应用)才可能真的缺 App 管理,保留原引导。
+const HOME_CONFIG_TARGETS = new Set(['claude', 'codex'])
+
 export function useRemoteTakeover() {
   const t = useT()
   const config = useAppStore((s) => s.config)
@@ -62,8 +68,9 @@ export function useRemoteTakeover() {
 
   // 统一的接管/还原执行:含 macOS 权限引导。loading 持续到状态真正翻转。
   //
-  // ⚠ 关键:任何弹窗(showAlert/showConfirm)前都必须先 setBusy(null) 关掉 LoadingOverlay。
-  // LoadingOverlay 的 z-index 高于 Dialog,不先关就会把弹窗整个盖住。故每个分支都先关遮罩再弹。
+  // 每个弹窗分支都先 setBusy(null) 再弹 —— 等用户读弹窗时本就不该继续转圈。这【不再】是
+  // 正确性要求:LoadingOverlay 的 z 已经低于 Dialog,漏关也只是多转个圈,不会盖住弹窗
+  // (盖住弹窗曾是真事故,见 LoadingOverlay 的注释)。
   const runTakeover = async (target: string, inject: boolean): Promise<boolean> => {
     setBusy(target)
     setBusyLabel(inject ? t('takeover.injecting', { name: targetName(target) }) : t('takeover.stopping', { name: targetName(target) }))
@@ -109,8 +116,18 @@ export function useRemoteTakeover() {
         }
         return false
       }
+      // ── 文件属主/权限位问题(FILE_PERM):后端已诊断出是谁占着目录、该怎么修,原样透出即可。
+      //    这与系统隐私权限无关,绝不能引导去开「App 管理」——用户照着做也修不好。
+      if (msg && msg.includes('FILE_PERM:')) {
+        setBusy(null)
+        await fetchIDEStatus()
+        const detail = msg.split('FILE_PERM:').pop()?.replace(/\)\s*$/, '').trim() || msg
+        await showAlert(t('takeover.filePermTitle'), detail)
+        return false
+      }
       // ── 失败(尤其 macOS 权限)直接走错误分支,不必等状态翻转。
-      if (/失败|权限|permission|not permitted|denied/i.test(msg) && isMac) {
+      //    「App 管理」引导只对会改应用包的目标成立,见 HOME_CONFIG_TARGETS。
+      if (/失败|权限|permission|not permitted|denied/i.test(msg) && isMac && !HOME_CONFIG_TARGETS.has(target)) {
         setBusy(null)
         await fetchIDEStatus()
         await showAlert(t('takeover.permissionTitle'), t('takeover.permissionBody', { message: msg }))
@@ -185,5 +202,11 @@ export function useRemoteTakeover() {
   const confirmDesktopTakeover = (): Promise<boolean> =>
     showConfirm(t('takeover.desktopConfirmTitle'), t('takeover.desktopConfirmBody'))
 
-  return { busy, busyLabel, hasCard, runTakeover, ensureCard, confirmDesktopTakeover, preflightSanitize, modalProps, relayDialogProps }
+  return {
+    busy,
+    // 不忙时一律给空 label:setBusy(null) 不会清 busyLabel,而宿主的遮罩还有 hostBusy 这个
+    // 独立开关 —— 直接透出 busyLabel 会让遮罩在弹窗期间挂着「正在接管 X…」的旧文案。
+    busyLabel: busy !== null ? busyLabel : '',
+    hasCard, runTakeover, ensureCard, confirmDesktopTakeover, preflightSanitize, modalProps, relayDialogProps,
+  }
 }

@@ -29,6 +29,30 @@ func TestSourceStore_SetGetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSourceStore_ProviderRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSourceStore(dir)
+	if err := s.SetProvider("codex", "prov-42"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if s.Get("codex") != SourceProvider {
+		t.Fatalf("expected provider source, got %q", s.Get("codex"))
+	}
+	if id := s.GetProviderID("codex"); id != "prov-42" {
+		t.Fatalf("GetProviderID = %q, want prov-42", id)
+	}
+	// 持久化
+	s2 := NewSourceStore(dir)
+	if s2.Get("codex") != SourceProvider || s2.GetProviderID("codex") != "prov-42" {
+		t.Fatalf("provider source/id not persisted: src=%q id=%q", s2.Get("codex"), s2.GetProviderID("codex"))
+	}
+	// 切回 local 后 provider id 不再返回
+	_ = s.Set("codex", SourceLocal)
+	if s.GetProviderID("codex") != "" {
+		t.Fatal("provider id should be empty after switching to local")
+	}
+}
+
 func TestSourceStore_Overwrite(t *testing.T) {
 	dir := t.TempDir()
 	s := NewSourceStore(dir)

@@ -67,6 +67,7 @@ const { codexApi, antigravityApi, agLocalMocks } = vi.hoisted(() => {
     agLocalMocks: {
       antigravityLocalInjected: vi.fn().mockResolvedValue(false),
       setAntigravityLocalInjected: vi.fn().mockResolvedValue(undefined),
+      listModelProviders: vi.fn().mockResolvedValue([]),
     },
   }
 })
@@ -75,6 +76,7 @@ vi.mock('@/services/localApi', () => ({
   antigravityLocalApi: antigravityApi,
   antigravityLocalInjected: agLocalMocks.antigravityLocalInjected,
   setAntigravityLocalInjected: agLocalMocks.setAntigravityLocalInjected,
+  listModelProviders: agLocalMocks.listModelProviders,
 }))
 
 const { store } = vi.hoisted(() => ({
@@ -111,6 +113,7 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     antigravityApi.getSource.mockResolvedValue('remote')
     agLocalMocks.antigravityLocalInjected.mockResolvedValue(false)
     agLocalMocks.setAntigravityLocalInjected.mockResolvedValue(undefined)
+    agLocalMocks.listModelProviders.mockResolvedValue([])
     store.state.ideProducts = [
       { id: 'claude_code', name: 'Claude Code (CLI + VSCode)', detected: true, injected: false },
       { id: 'claude_desktop', name: 'Claude Desktop (Code/Cowork)', detected: true, injected: false },
@@ -228,6 +231,42 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     })
   })
 
+  // ── 模型厂商接管(接管中心选厂商) ──
+  it('Codex 卡:本地段选自定义厂商并接管 → 调 setSource(provider:<id>)', async () => {
+    setPlatform('MacIntel')
+    agLocalMocks.listModelProviders.mockResolvedValue([
+      { id: 'p1', name: 'MyVend', baseURL: 'https://api.vend.com/v1', apiKey: 'k', wireApi: 'responses', modelCatalog: [], createdAt: 0 },
+    ])
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+    // 号源下拉出现,选中厂商 p1
+    const select = await within(codex).findByRole('combobox', { name: 'codex 本地接管号源' })
+    fireEvent.change(select, { target: { value: 'p1' } })
+    // 接管
+    fireEvent.click(await within(codex).findByRole('button', { name: '接管' }))
+    await waitFor(() => {
+      expect(codexApi.setSource).toHaveBeenCalledWith('provider:p1')
+    })
+  })
+
+  it('Codex 已用厂商接管:回填选中厂商 + 状态显示厂商名', async () => {
+    setPlatform('MacIntel')
+    codexApi.getSource.mockResolvedValue('provider:p1')
+    agLocalMocks.listModelProviders.mockResolvedValue([
+      { id: 'p1', name: 'MyVend', baseURL: 'https://api.vend.com/v1', apiKey: 'k', wireApi: 'responses', modelCatalog: [], createdAt: 0 },
+    ])
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    // provider 号源被视为本地接管 → 显示「停止」
+    const stop = await within(codex).findByRole('button', { name: '停止' })
+    expect(within(codex).getByText(/已接管 · 厂商 MyVend/)).toBeInTheDocument()
+    const select = within(codex).getByRole('combobox', { name: 'codex 本地接管号源' }) as HTMLSelectElement
+    expect(select.value).toBe('p1')
+    fireEvent.click(stop)
+    await waitFor(() => expect(codexApi.setSource).toHaveBeenCalledWith('remote'))
+  })
+
   // ── 本地语义文案:codex 与 antigravity 都是注入式接管(直连官方),反代是另一回事 ──
   it('Codex 本地模式头部副标题点明「注入 auth.json + 不走反代」(反代是单独功能)', async () => {
     setPlatform('MacIntel')
@@ -321,6 +360,32 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     // 清理调 sanitize(空数组=全部),随后才真正接管 claude。
     await waitFor(() => expect(apiMocks.sanitizeCompetingClaudeConfig).toHaveBeenCalledWith([]))
     await waitFor(() => expect(apiMocks.injectSelected).toHaveBeenCalledWith(['claude']))
+  })
+
+  // ── 宿主防护接管中失败:弹窗必须能被看见 ──
+  //
+  // 复现原事故:遮罩由 tk.busy 与 hostBusy 两个开关驱动,runTakeover 只关得掉前者,
+  // startProtectedTakeover 全程持有 hostBusy=true → 遮罩挂着,且 z 高于 Dialog,
+  // 用户只看到「正在接管 Claude Code...」转圈,看不到底下的失败原因。
+  it('宿主防护接管中 Claude Code 报 FILE_PERM:弹窗给出可执行指引,遮罩不再挂着旧文案', async () => {
+    setPlatform('MacIntel')
+    apiMocks.injectSelected.mockResolvedValueOnce(
+      'Claude Code: 接管失败 (FILE_PERM:~/.claude 的属主是 root,当前用户没有写权限,接管无法写入配置。\n\n请在终端执行下面这条,然后回来重新接管:\n\n    sudo chown -R "$(whoami)" "/Users/ink/.claude")',
+    )
+    render(<TakeoverCenterPage />)
+    const takeover = screen.getByRole('button', { name: /确认并接管/ })
+    await waitFor(() => expect(takeover).not.toBeDisabled())
+    // 取消勾选 Desktop,只接管 Claude Code(默认两个都选中)。
+    fireEvent.click(screen.getByRole('button', { name: /Claude Desktop \(Code\/Cowork\)/ }))
+    fireEvent.click(takeover)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('需要修复文件权限')
+    expect(dialog).toHaveTextContent('sudo chown -R "$(whoami)" "/Users/ink/.claude"')
+    // hostBusy 此刻仍是 true,但遮罩不能再顶着接管中的旧文案。
+    expect(screen.queryByText(/正在接管 Claude Code/)).toBeNull()
+    // 文件权限问题不得引导去开 App 管理。
+    expect(apiMocks.openSystemPermissionSettings).not.toHaveBeenCalled()
   })
 
   it('接管 Claude 前检测到冲突,用户「仍要接管」:不清理但继续接管', async () => {

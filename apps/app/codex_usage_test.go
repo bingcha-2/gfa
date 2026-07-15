@@ -22,6 +22,11 @@ func TestCodexUsageFromJSON(t *testing.T) {
 		{"cached clamped to input", `{"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":500},"output_tokens":5}}`, 100, 5, 100, 105, true},
 		{"no usage", `{"type":"response.output_text.delta","delta":"hi"}`, 0, 0, 0, 0, false},
 		{"bad json", `not json`, 0, 0, 0, 0, false},
+		// 生图工具用量:tool_usage.image_gen 折进 output+total(生图 token 计费,不漏计)。
+		{"image_gen folds into output (nested)", `{"type":"response.completed","response":{"usage":{"input_tokens":80,"output_tokens":20,"total_tokens":100},"tool_usage":{"image_gen":{"input_tokens":5,"output_tokens":200}}}}`, 80, 225, 0, 305, true},
+		{"image_gen folds into output (top-level)", `{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15},"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":300}}}`, 10, 305, 0, 315, true},
+		// 无 tool_usage 时不影响主 usage(不误加)。
+		{"no image_gen no change", `{"usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150}}`, 100, 50, 0, 150, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

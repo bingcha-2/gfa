@@ -415,17 +415,14 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     } catch (e) { setErr(String(e)) } finally { setBusy(null) }
   }
 
+  // 导出走后端原生保存对话框(Blob + <a download> 在 Wails WebView 里不生效——
+  // 点了没反应也没文件)。后端弹框选路径并落盘,返回保存路径;用户取消返回空串。
   const onExport = async () => {
     setBusy('export')
+    setErr('')
     try {
-      const json = await api.exportAccounts([])
-      const blob = new Blob([json], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `${title.toLowerCase()}-accounts.json`
-      link.click()
-      URL.revokeObjectURL(url)
+      const path = await api.exportAccountsToFile([])
+      if (path) setNotice(`已导出 ${accounts.length} 个账号到:${path}`)
     } catch (e) {
       setErr(String(e))
     } finally {

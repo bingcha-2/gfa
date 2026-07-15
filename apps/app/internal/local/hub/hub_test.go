@@ -12,6 +12,10 @@ type fakePlatform struct {
 	codexInjectCount   int
 	codexRestoreCount  int
 	codexInjectedToken CodexToken
+
+	codexProviderInjectCount  int
+	codexProviderRestoreCount int
+	codexInjectedProvider     CodexProvider
 	agInjectCount      int
 	agRestoreCount     int
 	agInjectedToken    AntigravityToken
@@ -37,6 +41,12 @@ func (f *fakePlatform) CodexInjectAccount(tok CodexToken) error {
 	return nil
 }
 func (f *fakePlatform) CodexRestoreAccount() error { f.codexRestoreCount++; return nil }
+func (f *fakePlatform) CodexInjectProvider(p CodexProvider) error {
+	f.codexProviderInjectCount++
+	f.codexInjectedProvider = p
+	return nil
+}
+func (f *fakePlatform) CodexRestoreProvider() error { f.codexProviderRestoreCount++; return nil }
 func (f *fakePlatform) AntigravityInjectAccount(tok AntigravityToken) error {
 	f.agInjectCount++
 	f.agInjectedToken = tok

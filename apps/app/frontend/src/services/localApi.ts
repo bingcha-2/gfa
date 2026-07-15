@@ -137,11 +137,15 @@ export interface GatewayTimeouts {
 /** 一个超时预设。 */
 export interface GatewayTimeoutPreset { id: string; name: string; timeouts: GatewayTimeouts; createdAt: number; updatedAt: number }
 /** 网关运维配置(超时 / 预设 / 上游代理)。 */
+/** 生图模式:on=全部注入 / off=从不注入 / images-only=仅图像端点。 */
+export type ImageGenMode = 'on' | 'off' | 'images-only'
+
 export interface GatewayOpsConfig {
   timeouts: GatewayTimeouts
   timeoutPresets: GatewayTimeoutPreset[] | null
   activePresetId: string
   upstreamProxyUrl: string
+  imageGenerationMode: ImageGenMode
 }
 
 /** 读网关运维配置。 */
@@ -155,6 +159,10 @@ export function saveGatewayTimeouts(t: GatewayTimeouts): Promise<GatewayOpsConfi
 /** 保存出口上游代理 URL(空=直连)。 */
 export function saveGatewayUpstreamProxy(raw: string): Promise<GatewayOpsConfig> {
   return app().LocalSaveGatewayUpstreamProxy(raw) as Promise<GatewayOpsConfig>
+}
+/** 保存本地网关生图模式(on/off/images-only),即时生效。 */
+export function saveGatewayImageGenMode(mode: ImageGenMode): Promise<GatewayOpsConfig> {
+  return app().LocalSaveGatewayImageGenMode(mode) as Promise<GatewayOpsConfig>
 }
 
 /** 一个 provider 的本地账号能力(UI 组件只依赖此接口)。 */
@@ -189,6 +197,9 @@ export interface ProviderLocalApi {
   setGatewayPort(port: number): Promise<LocalGatewayStatus>
   stats(): Promise<LocalStatsSnapshot>
   exportAccounts(ids: string[]): Promise<string>
+  /** 导出到用户选定的文件(后端弹原生保存框 + 落盘)。返回保存路径;用户取消返回空串。
+   *  不用浏览器 blob 下载——那在 Wails WebView 里不生效(点了没反应、没文件)。 */
+  exportAccountsToFile(ids: string[]): Promise<string>
   importFromJSON(json: string): Promise<number>
   /** 从本机已装客户端导入(读 ~/.codex/auth.json);仅 codex 支持。返回新增数。 */
   importFromLocal?(): Promise<number>
@@ -210,9 +221,10 @@ export interface ProviderLocalApi {
   clearWakeupVerificationHistory(batchIds: string[]): Promise<number>
   /** 单账号即席保活测试(按 id,provider 无关)。 */
   wakeupTestOne(id: string): Promise<WakeupVerifyResult>
-  /** 接管号源切换(仅部分 provider 支持,如 codex)。 */
+  /** 接管号源切换(仅部分 provider 支持,如 codex)。
+   *  codex 额外支持 `provider:<厂商id>`——用自定义模型厂商接管(见 model provider)。 */
   getSource?(): Promise<string>
-  setSource?(source: 'remote' | 'local'): Promise<void>
+  setSource?(source: 'remote' | 'local' | `provider:${string}`): Promise<void>
 }
 
 type GoApp = Record<string, (...args: unknown[]) => Promise<unknown>>
@@ -247,6 +259,7 @@ export const codexLocalApi: ProviderLocalApi = {
   setGatewayPort: (port) => app().LocalSetGatewayPort(port) as Promise<LocalGatewayStatus>,
   stats: () => app().LocalCodexStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportCodexAccounts(ids) as Promise<string>,
+  exportAccountsToFile: (ids) => app().LocalExportCodexAccountsToFile(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportCodexFromJSON(json) as Promise<number>,
   importFromLocal: () => app().LocalImportCodexFromLocal() as Promise<number>,
   importAuthFiles: (contents) => app().LocalImportCodexAuthFiles(contents) as Promise<number>,
@@ -286,6 +299,7 @@ export const antigravityLocalApi: ProviderLocalApi = {
   setGatewayPort: (port) => app().LocalSetGatewayPort(port) as Promise<LocalGatewayStatus>,
   stats: () => app().LocalAntigravityStats() as Promise<LocalStatsSnapshot>,
   exportAccounts: (ids) => app().LocalExportAntigravityAccounts(ids) as Promise<string>,
+  exportAccountsToFile: (ids) => app().LocalExportAntigravityAccountsToFile(ids) as Promise<string>,
   importFromJSON: (json) => app().LocalImportAntigravityFromJSON(json) as Promise<number>,
   importAuthFiles: (contents) => app().LocalImportAntigravityAuthFiles(contents) as Promise<number>,
   syncFromIDE: () => app().LocalSyncAntigravityFromIDE() as Promise<number>,

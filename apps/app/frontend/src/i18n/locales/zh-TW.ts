@@ -192,6 +192,8 @@ export const zhTW: DeepPartialDict = {
     storeClaudeBtn: '下載獨立版',
     permissionTitle: '需要系統權限',
     permissionBody: '{message}\n\n請在「系統設定 → 隱私權與安全性 → App 管理」中開啟冰茶AI 的權限,然後重試。',
+    // 檔案屬主/權限位問題,與系統隱私權限無關:內文直接用後端診斷出的可執行指引。
+    filePermTitle: '需要修復檔案權限',
     opFailed: '操作失敗',
     egressBlockedTitle: '⚠ 接管已攔截 · 出口未通過',
     needCardTitle: '需要登入帳號',

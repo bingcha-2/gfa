@@ -31,3 +31,18 @@ func (h *Hub) ActivateGatewayTimeoutPreset(id string) (gatewaycfg.OpsConfig, err
 func (h *Hub) SaveGatewayUpstreamProxy(raw string) (gatewaycfg.OpsConfig, error) {
 	return h.gwOps.SaveUpstreamProxy(raw)
 }
+
+// SaveGatewayImageGenMode 保存生图模式(on/off/images-only)并即时套到网关运行时
+//(与超时/代理不同,这个必须真生效——否则开关无意义:网关默认在给所有 codex 请求注入
+// 生图工具、悄悄耗号)。归一后返回全量配置。
+func (h *Hub) SaveGatewayImageGenMode(mode string) (gatewaycfg.OpsConfig, error) {
+	cfg, err := h.gwOps.SaveImageGenerationMode(mode)
+	if err != nil {
+		return gatewaycfg.OpsConfig{}, err
+	}
+	// 套到网关(若在运行则重启生效;未运行则记录,Start 时生效)。
+	if e := h.gw.SetImageGenMode(cfg.ImageGenerationMode); e != nil {
+		return cfg, e
+	}
+	return cfg, nil
+}

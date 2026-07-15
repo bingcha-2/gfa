@@ -1281,6 +1281,12 @@ func codexUsageFromJSON(data []byte) (input, output, cached, total int64, ok boo
 	if cached > input {
 		cached = input
 	}
+	// 生图工具用量:responses.completed 把它单列在 tool_usage.image_gen,不在主 usage 里。
+	// 折进 output/total 计费(生图 token 不漏计,避免池号成本泄漏)。见 [[codex-imagegen-metering]]。
+	if imgIn, imgOut := codexImageToolTokens(payload); imgIn+imgOut > 0 {
+		output += imgIn + imgOut
+		total += imgIn + imgOut
+	}
 	if total == 0 {
 		total = input + output
 	}
@@ -1288,6 +1294,22 @@ func codexUsageFromJSON(data []byte) (input, output, cached, total int64, ok boo
 		return 0, 0, 0, 0, false
 	}
 	return input, output, cached, total, true
+}
+
+// codexImageToolTokens 取生图工具用量(tool_usage.image_gen,顶层或 response 下),
+// 返回 input/output token。远程链路注入 hosted image_generation 后,生图消耗从这里计费。
+func codexImageToolTokens(payload map[string]interface{}) (input, output int64) {
+	toolUsage, _ := payload["tool_usage"].(map[string]interface{})
+	if toolUsage == nil {
+		if resp, ok := payload["response"].(map[string]interface{}); ok {
+			toolUsage, _ = resp["tool_usage"].(map[string]interface{})
+		}
+	}
+	img, _ := toolUsage["image_gen"].(map[string]interface{})
+	if img == nil {
+		return 0, 0
+	}
+	return jsonNumberAsInt64(img["input_tokens"]), jsonNumberAsInt64(img["output_tokens"])
 }
 
 // codexModelFromJSON 从事件 JSON 里取**上游实际使用**的模型:顶层 .model 或 .response.model

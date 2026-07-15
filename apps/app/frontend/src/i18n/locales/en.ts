@@ -192,6 +192,9 @@ export const en: DeepPartialDict = {
     storeClaudeBtn: 'Download standalone',
     permissionTitle: 'System permission required',
     permissionBody: '{message}\n\nEnable BingchaAI under "System Settings → Privacy & Security → App Management", then retry.',
+    // File ownership / mode problem, unrelated to system privacy permissions: the body is
+    // the backend's actionable diagnosis, shown verbatim.
+    filePermTitle: 'File permissions need fixing',
     opFailed: 'Operation failed',
     egressBlockedTitle: '⚠ Takeover blocked · egress check failed',
     needCardTitle: 'Sign in required',

@@ -8,7 +8,7 @@ import { ProviderLogo } from '@/components/ProviderLogo'
 import { cn } from '@/lib/utils'
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { useT, t as tr } from '@/i18n'
-import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected } from '@/services/localApi'
+import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected, listModelProviders, type ModelProvider } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import { HostProtectionPanel, type HostProtectionConfig, type HostProtectionMode } from './HostProtectionPanel'
 import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode, getHostProtectionStatus, probeHostProtectionStatus, applyHostProtection, restoreHostProtection, releaseHostProtectionTarget, type HostProtectionStatus } from '@/services/wails'
@@ -200,6 +200,11 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
   const [busyLocal, setBusyLocal] = useState(false)
   const [err, setErr] = useState('')
   const isAntigravity = provider === 'antigravity'
+  const isCodex = provider === 'codex'
+  // codex 专属:本地自有号下可改「用自定义模型厂商接管」。rawSource 保留后端原始号源
+  //(含复合 "provider:<id>"),providerId 是当前选中的厂商('' = 自有号直连)。
+  const [providers, setProviders] = useState<ModelProvider[]>([])
+  const [providerId, setProviderId] = useState('')
   // 仅 antigravity:两个 app(IDE / 独立版)各自独立的本地接管态。和远程那两行对称,互不影响。
   const [agInjected, setAgInjected] = useState<Record<'ide' | 'standalone', boolean>>({ ide: false, standalone: false })
   const [busyVariant, setBusyVariant] = useState<string | null>(null)
@@ -211,10 +216,13 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
   }, [isAntigravity])
 
   // 刷新实际态(source/账号数/antigravity 两个 app 接管态)。不动 mode —— 段控只反映用户选择。
+  // codex 的 provider 号源(复合 "provider:<id>")视为「本地」段,并回填选中的厂商 id。
   const refresh = useCallback(async () => {
     try {
-      const src = (await api.getSource?.()) === 'local' ? 'local' : 'remote'
-      setSource(src)
+      const raw = (await api.getSource?.()) ?? 'remote'
+      const local = raw === 'local' || raw.startsWith('provider')
+      setSource(local ? 'local' : 'remote')
+      setProviderId(raw.startsWith('provider:') ? raw.slice('provider:'.length) : '')
       const list = await api.listAccounts()
       setAccounts(list.length)
       await loadAgInjected()
@@ -226,10 +234,13 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
   // 挂载:仅当实际已是本地接管时,把段控初始化到本地;远程则保留默认段,不强切。
   useEffect(() => {
     void (async () => {
-      const src = (await api.getSource?.()) === 'local' ? 'local' : 'remote'
-      setSource(src)
-      if (src === 'local') setMode('local')
+      const raw = (await api.getSource?.()) ?? 'remote'
+      const local = raw === 'local' || raw.startsWith('provider')
+      setSource(local ? 'local' : 'remote')
+      setProviderId(raw.startsWith('provider:') ? raw.slice('provider:'.length) : '')
+      if (local) setMode('local')
       try {
+        if (isCodex) setProviders(await listModelProviders())
         const list = await api.listAccounts()
         setAccounts(list.length)
         await loadAgInjected()
@@ -237,14 +248,33 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
         setErr(String(e))
       }
     })()
-  }, [api, loadAgInjected])
+  }, [api, loadAgInjected, isCodex])
 
   // codex 本地接管/停止:setSource('local'/'remote')。前端只切 source、刷新实际态。
   const onToggleLocal = async () => {
     setBusyLocal(true)
     setErr('')
     try {
-      await api.setSource?.(source === 'local' ? 'remote' : 'local')
+      // 接管:按当前选中的号源(自有号直连 or 某厂商);停止:回远程。
+      const next = source === 'local' ? 'remote' : providerId ? (`provider:${providerId}` as const) : 'local'
+      await api.setSource?.(next)
+      await refresh()
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusyLocal(false)
+    }
+  }
+
+  // codex:切换「用哪个号源接管」——'' = 自有号直连(local),否则 provider:<id>。
+  // 仅当已处于本地接管时即时生效;未接管时只记选择,待点「接管」时用。
+  const onSelectProvider = async (id: string) => {
+    setProviderId(id)
+    if (source !== 'local') return // 未接管:仅暂存选择
+    setBusyLocal(true)
+    setErr('')
+    try {
+      await api.setSource?.(id ? `provider:${id}` : 'local')
       await refresh()
     } catch (e) {
       setErr(String(e))
@@ -323,29 +353,51 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
           </button>
         </>
       ) : (
-        <div className="flex items-center justify-between gap-3 py-1.5">
-          <div className="min-w-0">
-            {/* 状态一行:和远程行一样只留「状态点 + 文案」;号源/落点已在头部副标题说明 */}
-            <div className="flex items-center gap-1.5 text-[11px]">
-              <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
-              <span className={localActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}>{localActive ? '已接管 · 直连官方' : '未接管'}</span>
+        <div className="flex flex-col gap-2 py-1.5">
+          {/* codex 专属:号源选择——自有号直连 or 用某个自定义模型厂商接管。 */}
+          {isCodex && providers.length > 0 && (
+            <label className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+              号源
+              <select
+                aria-label="codex 本地接管号源"
+                value={providerId}
+                onChange={(e) => void onSelectProvider(e.target.value)}
+                disabled={busyLocal}
+                className="flex-1 rounded-[7px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 h-[28px] text-[11px] text-[var(--text-primary)] disabled:opacity-50"
+              >
+                <option value="">自有号直连(OpenAI)</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>厂商 · {p.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              {/* 状态一行:和远程行一样只留「状态点 + 文案」;号源/落点已在头部副标题说明 */}
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className={cn('w-1.5 h-1.5 rounded-full', localActive ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
+                <span className={localActive ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}>
+                  {localActive ? (providerId ? `已接管 · 厂商 ${providers.find((p) => p.id === providerId)?.name ?? ''}` : '已接管 · 直连官方') : '未接管'}
+                </span>
+              </div>
+              <button
+                onClick={onManageAccounts}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)]"
+              >
+                <Users size={11} /> {accounts} 个自有号 · 管理账号 <ArrowRight size={11} />
+              </button>
             </div>
-            <button
-              onClick={onManageAccounts}
-              className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)]"
+            <Button
+              size="sm"
+              variant={localActive ? 'secondary' : 'default'}
+              disabled={busyLocal}
+              onClick={onToggleLocal}
+              className="shrink-0 cursor-pointer min-w-[68px]"
             >
-              <Users size={11} /> {accounts} 个自有号 · 管理账号 <ArrowRight size={11} />
-            </button>
+              {busyLocal ? '...' : localActive ? '停止' : '接管'}
+            </Button>
           </div>
-          <Button
-            size="sm"
-            variant={localActive ? 'secondary' : 'default'}
-            disabled={busyLocal}
-            onClick={onToggleLocal}
-            className="shrink-0 cursor-pointer min-w-[68px]"
-          >
-            {busyLocal ? '...' : localActive ? '停止' : '接管'}
-          </Button>
         </div>
       )}
       {err && <div className="text-[10px] text-[var(--danger)] break-all pt-1">{err}</div>}

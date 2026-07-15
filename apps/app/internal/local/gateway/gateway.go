@@ -14,6 +14,7 @@ import (
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/authsync"
+	"bcai-wails/internal/local/gatewaycfg"
 	"bcai-wails/internal/local/routingcfg"
 	"bcai-wails/internal/local/stats"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
@@ -45,6 +46,30 @@ type Gateway struct {
 	maxRetryCredentials    int
 	maxRetryIntervalSec    int
 	upstreamProxyURL       string
+	imageGenMode           string // gatewaycfg.ImageGen*(空=默认 on)
+}
+
+// SetImageGenMode 设置生图模式(gatewaycfg.ImageGenOn/Off/ImagesOnly)并重启网关
+// 使之生效(若在运行)。空/未知回落默认 on。
+func (g *Gateway) SetImageGenMode(mode string) error {
+	g.mu.Lock()
+	g.imageGenMode = gatewaycfg.NormalizeImageGenMode(mode)
+	g.mu.Unlock()
+	return g.restartIfRunning()
+}
+
+// imageGenDisableYAML 把正向生图模式映射到库 disable-image-generation 的 yaml 值
+//（on→false 全开 / off→true 全关 / images-only→chat 仅图像端点)。库的枚举类型在
+// internal/config,外部模块无法命名,故用 yaml 值 + config.ParseConfigBytes 取回正确类型。
+func imageGenDisableYAML(mode string) string {
+	switch gatewaycfg.NormalizeImageGenMode(mode) {
+	case gatewaycfg.ImageGenOff:
+		return "true"
+	case gatewaycfg.ImageGenImagesOnly:
+		return "chat"
+	default:
+		return "false"
+	}
 }
 
 // NewShared 构建反代网关:单实例、单 Service,auth Store 只喂 codex 自有号
@@ -196,10 +221,15 @@ func (g *Gateway) Start(port int) (int, error) {
 	cfg.MaxRetryCredentials = g.maxRetryCredentials
 	cfg.MaxRetryInterval = g.maxRetryIntervalSec
 	cfg.ProxyURL = g.upstreamProxyURL // 出口代理:红线之外的自有号数据面出口
+	// 生图注入开关(库默认 off=注入)。用库解析器把 yaml 值解析成正确的枚举类型再拷字段。
+	disableYAML := imageGenDisableYAML(g.imageGenMode)
+	if parsed, err := config.ParseConfigBytes([]byte("disable-image-generation: " + disableYAML)); err == nil {
+		cfg.DisableImageGeneration = parsed.DisableImageGeneration
+	}
 
 	// Build 要求 config path(用于 watcher/reload);写一份最小 yaml 与 cfg 对齐。
 	cfgPath := filepath.Join(g.dataDir, "cliproxy.yaml")
-	yaml := fmt.Sprintf("host: %q\nport: %d\nauth-dir: %q\napi-keys:\n%s", g.host, port, authDir, yamlStringList(g.apiKeys))
+	yaml := fmt.Sprintf("host: %q\nport: %d\nauth-dir: %q\ndisable-image-generation: %s\napi-keys:\n%s", g.host, port, authDir, disableYAML, yamlStringList(g.apiKeys))
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
 		return 0, err
 	}

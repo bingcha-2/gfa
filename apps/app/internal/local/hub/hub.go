@@ -55,6 +55,14 @@ type CodexToken struct {
 	APIKey       string
 }
 
+// CodexProvider 是「用自定义模型厂商接管」写进 config.toml 所需的字段(来自 modelprovider.Provider)。
+type CodexProvider struct {
+	Name    string
+	BaseURL string
+	APIKey  string
+	WireAPI string // "responses" | "chat_completions"
+}
+
 // Platform 抽象 package main 里的平台专有动作(接管注入 / app 检测 / 进程启停)。
 //
 // 接管模型(对齐 cockpit)—— 接管都是「把号注入正版客户端」,与反代(cliproxy 网关)无关:
@@ -67,6 +75,10 @@ type Platform interface {
 	CodexInjectAccount(tok CodexToken) error
 	// CodexRestoreAccount 还原 codex 注入前的 auth.json。
 	CodexRestoreAccount() error
+	// CodexInjectProvider 把 codex config.toml 指向自定义模型厂商(不经网关、不碰 auth.json)。
+	CodexInjectProvider(p CodexProvider) error
+	// CodexRestoreProvider 清掉自定义厂商在 config.toml 的重定向(还原到接管前状态)。
+	CodexRestoreProvider() error
 	// AntigravityInjectAccount 把一份自有号 token 注入 Antigravity IDE(state.vscdb),不经网关。
 	AntigravityInjectAccount(tok AntigravityToken) error
 	// AntigravityRestoreAccount 移除 Antigravity IDE 的注入登录态。
@@ -167,9 +179,10 @@ func New(dir string, platform Platform) (*Hub, error) {
 
 		groups: accountgroups.NewStore(dir),
 	}
-	// 把持久化的访问 key / 局域网范围套到网关上(网关此刻未启动,仅记录;Start 时生效)。
+	// 把持久化的访问 key / 局域网范围 / 生图模式套到网关上(网关此刻未启动,仅记录;Start 时生效)。
 	_ = h.gw.SetAPIKeys(h.gwKeys.Values())
 	_ = h.gw.SetHost(h.gwScope.Load().Host())
+	_ = h.gw.SetImageGenMode(h.gwOps.Load().ImageGenerationMode)
 	h.providers[account.ProviderCodex] = h.mkProvider(account.ProviderCodex, codexauth.Login, codexauth.LoginWithPrompt, quota.NewCodexRefresher(quota.CodexEndpoints{}))
 	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, antigravityauth.LoginWithPrompt, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
 	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。
@@ -624,9 +637,12 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		}
 		return nil
 	}
-	if src == takeover.SourceLocal {
+	prev := h.sources.Get(string(p)) // 上一号源:决定切走时要不要清 config.toml 厂商表
+	switch src {
+	case takeover.SourceLocal:
 		// codex 'local' = 注入式接管:挑一个自有号直接写进 ~/.codex/auth.json,
 		// 真 codex CLI 直连 OpenAI。不碰反代网关(反代是单独功能,反代 tab 自开自关)。
+		// CodexInjectAccount 内部先 RestoreCodexSettings(清掉厂商表/远程重定向),互斥由此保证。
 		tok, err := h.pickCodexToken()
 		if err != nil {
 			return err
@@ -635,12 +651,35 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		if err := h.platform.CodexInjectAccount(tok); err != nil {
 			return err
 		}
-	} else {
-		// 还原:仅撤注入。网关生命周期与接管解耦——不在此处停网关(反代 tab 独立控制)。
+	case takeover.SourceProvider:
+		// codex 'provider' = 把 config.toml 指向自定义厂商;先撤自有号注入(互斥),再写厂商表。
+		id := takeover.ProviderID(source)
+		prov, ok := h.modelProv.Get(id)
+		if !ok {
+			return errProviderNotFound(id)
+		}
+		_ = h.platform.CodexRestoreAccount()
+		if err := h.platform.CodexInjectProvider(CodexProvider{
+			Name: prov.Name, BaseURL: prov.BaseURL, APIKey: prov.APIKey, WireAPI: string(prov.WireAPI),
+		}); err != nil {
+			return err
+		}
+	default: // remote:撤本地接管,交还远程托管。
+		if prev == takeover.SourceProvider {
+			// 上一次是厂商接管:清掉 config.toml 厂商表(auth.json 本就没动)。
+			_ = h.platform.CodexRestoreProvider()
+		}
 		_ = h.platform.CodexRestoreAccount()
 	}
-	if err := h.sources.Set(string(p), src); err != nil {
-		return err
+	// 持久化:provider 源要连同选中的厂商 id 一起记(复合值);其余存裸号源。
+	var perr error
+	if src == takeover.SourceProvider {
+		perr = h.sources.SetProvider(string(p), takeover.ProviderID(source))
+	} else {
+		perr = h.sources.Set(string(p), src)
+	}
+	if perr != nil {
+		return perr
 	}
 	// 切换接管源后重启对应客户端,让注入/还原的登录真正生效。
 	h.restartClientAfterSwitch(p)

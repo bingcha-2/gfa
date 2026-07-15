@@ -23,6 +23,36 @@ func TestOpsStore_DefaultAndTimeoutsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOpsStore_ImageGenModeDefaultsOn(t *testing.T) {
+	s := NewOpsStore(t.TempDir())
+	if got := s.Load().ImageGenerationMode; got != ImageGenOn {
+		t.Fatalf("default image-gen mode = %q, want %q", got, ImageGenOn)
+	}
+}
+
+func TestOpsStore_ImageGenModeRoundTrip(t *testing.T) {
+	s := NewOpsStore(t.TempDir())
+	for _, mode := range []string{ImageGenOff, ImageGenImagesOnly, ImageGenOn} {
+		if _, err := s.SaveImageGenerationMode(mode); err != nil {
+			t.Fatalf("SaveImageGenerationMode(%q): %v", mode, err)
+		}
+		if got := NewOpsStore(dirOf(s)).Load().ImageGenerationMode; got != mode {
+			t.Fatalf("reloaded image-gen mode = %q, want %q", got, mode)
+		}
+	}
+}
+
+func TestOpsStore_ImageGenModeUnknownNormalizesToOn(t *testing.T) {
+	s := NewOpsStore(t.TempDir())
+	cfg, err := s.SaveImageGenerationMode("garbage")
+	if err != nil {
+		t.Fatalf("SaveImageGenerationMode: %v", err)
+	}
+	if cfg.ImageGenerationMode != ImageGenOn {
+		t.Fatalf("unknown mode should normalize to %q, got %q", ImageGenOn, cfg.ImageGenerationMode)
+	}
+}
+
 func TestOpsStore_TimeoutsNegativeClampedToZero(t *testing.T) {
 	s := NewOpsStore(t.TempDir())
 	cfg, err := s.SaveTimeouts(Timeouts{StreamKeepaliveSeconds: -5, StreamBootstrapRetries: -1, MaxRetryCredentials: -2, MaxRetryIntervalSeconds: -3})

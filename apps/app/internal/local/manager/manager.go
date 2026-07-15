@@ -84,6 +84,11 @@ type Manager struct {
 
 	mu     sync.Mutex
 	logins map[string]*loginState
+
+	// refreshLocks 每账号一把额度刷新锁(key=账号 id,值 *sync.Mutex)。
+	// 防同一账号被并发刷:refreshOne 过期时会续 token,而 refresh_token 是轮换的——
+	// 两路同时续同一个号会互相作废。对齐 cockpit 的 per-account locks。
+	refreshLocks sync.Map
 }
 
 func New(acc *account.Store, gw Reloader, provider account.Provider, loginFn LoginFunc) *Manager {

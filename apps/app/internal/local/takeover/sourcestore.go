@@ -34,11 +34,29 @@ func (s *SourceStore) Get(product string) AccountSource {
 	return Normalize(m[product])
 }
 
-func (s *SourceStore) Set(product string, src AccountSource) error {
+// GetProviderID 返回该产品 provider 号源选中的厂商 id;非 provider 源返回空。
+func (s *SourceStore) GetProviderID(product string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.load()
-	m[product] = string(src)
+	return ProviderID(m[product])
+}
+
+func (s *SourceStore) Set(product string, src AccountSource) error {
+	return s.setRaw(product, string(src))
+}
+
+// SetProvider 把产品号源设为「用自定义厂商接管」并记住选中的厂商 id
+//(存成复合值 "provider:<id>",与 remote/local 同一文件、向后兼容)。
+func (s *SourceStore) SetProvider(product, providerID string) error {
+	return s.setRaw(product, string(SourceProvider)+":"+providerID)
+}
+
+func (s *SourceStore) setRaw(product, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.load()
+	m[product] = value
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

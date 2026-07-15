@@ -71,6 +71,9 @@
   /* ── Semantic z-index scale ── */
   --z-dropdown: 30;
   --z-sticky: 40;
+  /* 全屏 loading 遮罩。刻意排在 modal 之下:它常与弹窗同时挂着(接管流程里 busy 与 hostBusy
+     是两个独立开关),排在上面就会盖住错误弹窗。见 LoadingOverlay。 */
+  --z-loading: 45;
   --z-modal-backdrop: 50;
   --z-modal: 60;
   --z-overlay: 70;

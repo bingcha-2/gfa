@@ -39,3 +39,11 @@ func (a *App) LocalSaveGatewayUpstreamProxy(raw string) (gatewaycfg.OpsConfig, e
 	}
 	return localHub.SaveGatewayUpstreamProxy(raw)
 }
+
+// LocalSaveGatewayImageGenMode 保存本地网关生图模式(on/off/images-only)并即时生效。
+func (a *App) LocalSaveGatewayImageGenMode(mode string) (gatewaycfg.OpsConfig, error) {
+	if err := ensureLocal(); err != nil {
+		return gatewaycfg.OpsConfig{}, err
+	}
+	return localHub.SaveGatewayImageGenMode(mode)
+}

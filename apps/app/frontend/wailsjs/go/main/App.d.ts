@@ -162,7 +162,11 @@ export function LocalEvaluateCodexAlert():Promise<economy.AlertResult>;
 
 export function LocalExportAntigravityAccounts(arg1:Array<string>):Promise<string>;
 
+export function LocalExportAntigravityAccountsToFile(arg1:Array<string>):Promise<string>;
+
 export function LocalExportCodexAccounts(arg1:Array<string>):Promise<string>;
+
+export function LocalExportCodexAccountsToFile(arg1:Array<string>):Promise<string>;
 
 export function LocalGatewayConnTest():Promise<gateway.ConnTestResult>;
 
@@ -253,6 +257,8 @@ export function LocalRotateGatewayKey(arg1:string):Promise<gatewaykeys.Key>;
 export function LocalSaveCodexQuickConfig(arg1:any,arg2:any):Promise<codexsettings.QuickConfig>;
 
 export function LocalSaveCodexSettings(arg1:codexsettings.Settings):Promise<codexsettings.Settings>;
+
+export function LocalSaveGatewayImageGenMode(arg1:string):Promise<gatewaycfg.OpsConfig>;
 
 export function LocalSaveGatewayTimeoutPresets(arg1:Array<gatewaycfg.TimeoutPreset>):Promise<gatewaycfg.OpsConfig>;
 
