@@ -11,8 +11,8 @@ import (
 // 构建时通过 ldflags 注入 buildAPIBase；运行时可用 BCAI_ANTHROPIC_REMOTE_BASE 覆盖
 var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", buildAPIBase+"/api/app/lease/anthropic")
 
-// ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
-// 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。
+// ClaudeQuotaWindow 保存上游账号两个限额窗口的剩余百分比(0-100,越高越健康),
+// 用于下一次上报时把最新上游快照带回服务端，不参与用户美元额度展示。
 type ClaudeQuotaWindow struct {
 	HourlyPercent   float64 `json:"hourlyPercent"`
 	WeeklyPercent   float64 `json:"weeklyPercent"`
@@ -36,25 +36,19 @@ type ClaudeTokenLease struct {
 }
 
 type claudeLeaseTokenResp struct {
-	Success      *bool           `json:"success"`
-	Ok           *bool           `json:"ok"`
-	Code         string          `json:"code"`
-	Message      string          `json:"message"`
-	Error        string          `json:"error"`
-	AccessToken  string          `json:"accessToken"`
-	AccountId    json.RawMessage `json:"accountId"`
-	AccountUuid  string          `json:"accountUuid"`
-	LeaseId      string          `json:"leaseId"`
-	EmailHint    string          `json:"emailHint"`
-	PlanType     string          `json:"planType"`
-	ExpiresAt    string          `json:"expiresAt"`
-	BoundAccount *struct {
-		Id       int     `json:"id"`
-		Fraction float64 `json:"fraction"`
-		ResetAt  int64   `json:"resetAt"`
-	} `json:"boundAccount"`
-	// 服务端把绑定/被租 claude 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
-	// 客户端据此渲染 claude 血条,无需自己抓上游(claude 不做客户端上游额度拉取)。
+	Success     *bool           `json:"success"`
+	Ok          *bool           `json:"ok"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+	Error       string          `json:"error"`
+	AccessToken string          `json:"accessToken"`
+	AccountId   json.RawMessage `json:"accountId"`
+	AccountUuid string          `json:"accountUuid"`
+	LeaseId     string          `json:"leaseId"`
+	EmailHint   string          `json:"emailHint"`
+	PlanType    string          `json:"planType"`
+	ExpiresAt   string          `json:"expiresAt"`
+	// 服务端把绑定/被租 claude 号的 5h+周窗口一并带回，客户端保存后供后续上报同步。
 	ClaudeWindows *ClaudeQuotaWindow `json:"claudeWindows"`
 	// 通用出口策略:该账号绑定的粘性出口代理 + 是否强制经代理出站。anthropic 恒 required。
 	AccountProxyUrl string `json:"accountProxyUrl"`
@@ -67,7 +61,7 @@ type ClaudeLeaser struct {
 	lastError string
 
 	mu             sync.Mutex
-	lastQuota      *ClaudeQuotaWindow // 持久副本(供前端显示 claude 血条)
+	lastQuota      *ClaudeQuotaWindow // 上游窗口持久副本，仅供后续报告同步
 	lastLease      *ClaudeTokenLease  // 最近一次成功租到的号(供前端"绑定账号信息"显示)
 	pendingReports []pendingReport    // 失败上报队列(防丢用量)
 
@@ -87,7 +81,7 @@ var globalClaudeLeaser = &ClaudeLeaser{}
 
 func GetClaudeLeaser() *ClaudeLeaser { return globalClaudeLeaser }
 
-// LatestClaudeQuota 返回最近一次拿到的 claude 5h/周限额(供血条显示),无则 nil。
+// LatestClaudeQuota 返回最近一次拿到的 claude 上游 5h/周限额，无则 nil。
 func (l *ClaudeLeaser) LatestClaudeQuota() *ClaudeQuotaWindow {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -139,7 +133,6 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 
 	body, status, err := postClaudeBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
-		recordAccountBuckets(body)
 		recordFairShareQuota(body)
 		// 不熔断、不重试:额度超限就如实返回,允许用户/IDE 自己再调(每次都真 lease,
 		// accessKeyStatus 也随之刷新)。硬额度(token limit exceeded,retryAfter 达数小时)→
@@ -193,14 +186,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		LeasedAt:    time.Now().UnixMilli(),
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
-	// 记录 claude 绑定号的真实上游剩余(供血条显示真实余量)。
-	if leaseResp.BoundAccount != nil {
-		mk, _ := options["modelKey"].(string)
-		if mk == "" {
-			mk = "claude-opus-4-20250514"
-		}
-		recordBoundFractionForModel("anthropic", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
-	}
+	// 保存绑定号的真实上游剩余，供后续报告同步服务端。
 	syncQuotaStateFromBody(GetLeaser(), body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)
 	l.mu.Lock()
@@ -212,7 +198,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	return lease, nil
 }
 
-// applyClaudeWindowsFromBody 从上报/租号响应体解析 claudeWindows 并应用(供血条「账号总剩余」)。
+// applyClaudeWindowsFromBody 从上报/租号响应体解析并保存 claudeWindows。
 // 与 lease 路径(applyClaudeWindows(leaseResp.ClaudeWindows))同形;响应无该字段 → nil → 保留旧值。
 func (l *ClaudeLeaser) applyClaudeWindowsFromBody(body []byte) {
 	var resp struct {
@@ -224,7 +210,7 @@ func (l *ClaudeLeaser) applyClaudeWindowsFromBody(body []byte) {
 	l.applyClaudeWindows(resp.ClaudeWindows)
 }
 
-// applyClaudeWindows 用服务端下发的 5h/周窗口更新本地持久快照(供血条显示)。
+// applyClaudeWindows 用服务端下发的 5h/周窗口更新本地持久快照。
 // nil 表示服务端暂无该号窗口数据 → 保留现有快照,不清空。
 func (l *ClaudeLeaser) applyClaudeWindows(w *ClaudeQuotaWindow) {
 	if w == nil {
@@ -260,6 +246,7 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 		"cachedInputTokens":  details.CachedInputTokens,
 		"cacheWrite5mTokens": details.CacheWrite5mTokens,
 		"cacheWrite1hTokens": details.CacheWrite1hTokens,
+		"contextTokens":      details.ContextTokens,
 		"rawTotalTokens":     details.RawTotalTokens,
 		"totalTokens":        details.BillableTotalTokens,
 		"errorText":          getErrorSnippet(details.ErrorText),
@@ -321,12 +308,8 @@ func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, c
 		l.queueClaudeReport(payload, card, upstreamProxy)
 		return
 	}
-	// 服务端 report-result 响应同样带回 fairShareQuota/weeklyFairShareQuota(与 lease 同形),
-	// 立即刷新血条 —— 每次上报后即时更新,不必等下一次租号。
-	recordAccountBuckets(body)
-	recordFairShareQuota(body)
-	// 账号总剩余的「周血条」只能靠 claudeWindows(accountBuckets 仅含 5h 绑定桶)。服务端现在每次
-	// 上报也回带 claudeWindows → 随上报应用,整号余量不必等下次租号才刷新(否则平时闪「未知」)。
+	// Anthropic 订阅按产品美元窗口限流；旧 fair-share 响应不进入本地状态。
+	// claudeWindows 仍用于下一次上报时携带最新上游窗口，不进入用户额度展示。
 	l.applyClaudeWindowsFromBody(body)
 	billable := claudeDisplayBillable(payloadInt64(payload["rawTotalTokens"]), payloadInt64(payload["cachedInputTokens"]))
 	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v 计费=%d 原始=%v)→ 服务端额度应已更新", payload["leaseId"], billable, payload["totalTokens"])
@@ -342,6 +325,7 @@ func (l *ClaudeLeaser) queueClaudeReport(payload map[string]interface{}, card, u
 	l.pendingReports = append(l.pendingReports, pendingReport{
 		Payload: payload, Card: card, UpstreamProxy: upstreamProxy, AddedAt: time.Now(),
 	})
+	persistPendingReports(GetUsageStats().Namespace(), "anthropic", l.pendingReports)
 	Log("[claude-leaser] queued failed report (%d pending)", len(l.pendingReports))
 }
 
@@ -351,13 +335,24 @@ func (l *ClaudeLeaser) flushClaudePending(card, upstreamProxy string) {
 	pending := l.pendingReports
 	l.pendingReports = nil
 	l.mu.Unlock()
+	persistPendingReports(GetUsageStats().Namespace(), "anthropic", nil)
 
+	var requeue []pendingReport
 	for _, r := range pending {
-		if time.Since(r.AddedAt) > 30*time.Minute {
+		if time.Since(r.AddedAt) > pendingReportMaxAge {
 			continue // 过期丢弃
 		}
-		if _, _, err := postClaudeBcai("/report-result", r.Payload, r.Card, r.UpstreamProxy); err != nil {
-			l.queueClaudeReport(r.Payload, r.Card, r.UpstreamProxy) // 仍失败,重新入队
+		if _, _, err := postClaudeBcai("/report-result", r.Payload, card, r.UpstreamProxy); err != nil {
+			// Preserve the first enqueue time; the server's lease/account causal
+			// mapping is bounded, so a retry failure must not renew this deadline.
+			r.Card = card
+			requeue = append(requeue, r)
 		}
+	}
+	if len(requeue) > 0 {
+		l.mu.Lock()
+		l.pendingReports = append(requeue, l.pendingReports...)
+		persistPendingReports(GetUsageStats().Namespace(), "anthropic", l.pendingReports)
+		l.mu.Unlock()
 	}
 }

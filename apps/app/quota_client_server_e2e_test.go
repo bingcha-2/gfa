@@ -37,7 +37,7 @@ func waitQuotaE2E(t *testing.T, label string, condition func() bool) {
 
 // TestQuotaClientServerE2E is run by tests/quota-e2e/run.mjs with a real Nest
 // HTTP process. It deliberately uses the production CodexLeaser/ClaudeLeaser,
-// quota parser, reporter, retry payload, and blood-bar consumers rather than a
+// quota parser, reporter, retry payload, and product-dollar consumers rather than a
 // generic hand-built HTTP request helper.
 func TestQuotaClientServerE2E(t *testing.T) {
 	base := os.Getenv("BCAI_QUOTA_E2E_BASE")
@@ -74,7 +74,7 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		}
 		if weeklyOnly {
 			primary = map[string]any{
-				"used_percent": usedPercent,
+				"used_percent":         usedPercent,
 				"limit_window_seconds": 7 * 24 * 60 * 60,
 			}
 			secondary = nil
@@ -114,16 +114,8 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		UpstreamCompletedAt: time.Now().Add(-time.Second).UnixMilli(),
 		ServiceTier:         "priority", Surface: "desktop",
 	}, "", codexLease)
-	waitQuotaE2E(t, "Codex weekly-only blood bar", func() bool {
-		_, weekly := snapshotMyWeeklyFractions()["codex-gpt"]
-		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["codex-gpt"]
-		return weekly && personalWeekly
-	})
-	if _, ok := snapshotMyFractions()["codex-gpt"]; ok {
-		t.Fatal("weekly-only Codex still exposed a 5h fair-share window")
-	}
-	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
-		t.Fatal("weekly-only Codex still exposed a 5h personal window")
+	if fairShareCacheHasForTest("codex-gpt") {
+		t.Fatal("Codex entered the retired local fair-share cache")
 	}
 	// 再租一次,强制从服务端持久状态回传窗口。若服务端仍保留旧5h,这里会重新变成 hourlyPresent=true。
 	if _, err := codex.LeaseToken(codexCard, "go-e2e-codex", true, map[string]any{
@@ -174,31 +166,21 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		ClaudeWeeklyResetTime: now.Add(7 * 24 * time.Hour).Format(time.RFC3339),
 		Surface:               "cli", UserId: "go-e2e-user", SessionId: "go-e2e-session",
 	}, "", claudeLease)
-	waitQuotaE2E(t, "Claude primary and weekly blood bars", func() bool {
-		_, primary := snapshotMyFractions()["anthropic-claude"]
-		_, weekly := snapshotMyWeeklyFractions()["anthropic-claude"]
-		_, personalPrimary := snapshotMyPersonalFractions()["anthropic-claude"]
-		_, personalWeekly := snapshotMyPersonalWeeklyFractions()["anthropic-claude"]
-		return primary && weekly && personalPrimary && personalWeekly
-	})
+	if fairShareCacheHasForTest("anthropic-claude") {
+		t.Fatal("Anthropic entered the retired local fair-share cache")
+	}
 
-	// Verify the Wails GetStats boundary that the React store consumes, not just
-	// the internal Go parser maps.
+	// Wails stats must not expose mother-account or legacy personal-fraction bars.
+	// The UI obtains only subscription USD windows through app heartbeat.
 	stats := (&App{}).GetStats()
 	leaserStats, ok := stats["leaser"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("GetStats leaser payload type = %T", stats["leaser"])
 	}
-	personalPrimary, ok := leaserStats["myPersonalFractions"].(map[string]float64)
-	if !ok || personalPrimary["anthropic-claude"] <= 0 {
-		t.Fatalf("GetStats personal primary payload = %#v", leaserStats["myPersonalFractions"])
-	}
-	if _, exists := personalPrimary["codex-gpt"]; exists {
-		t.Fatalf("GetStats retained absent Codex primary payload = %#v", personalPrimary)
-	}
-	personalWeekly, ok := leaserStats["myPersonalWeeklyFractions"].(map[string]float64)
-	if !ok || personalWeekly["codex-gpt"] <= 0 || personalWeekly["anthropic-claude"] <= 0 {
-		t.Fatalf("GetStats personal weekly payload = %#v", leaserStats["myPersonalWeeklyFractions"])
+	for _, key := range []string{"accountFractions", "accountResetMs", "accountResetAt", "codexQuota", "claudeQuota", "boundAccounts", "myPersonalFractions", "myPersonalWeeklyFractions"} {
+		if _, exists := leaserStats[key]; exists {
+			t.Fatalf("GetStats unexpectedly exposed %s: %#v", key, leaserStats[key])
+		}
 	}
 
 	// Exercise the actual client proxy path, not a direct stats helper: an
@@ -249,53 +231,21 @@ func TestQuotaClientServerE2E(t *testing.T) {
 		return quota != nil && quota.HourlyPercent == 75 && quota.WeeklyPercent == 80
 	})
 
-	for bucket, fraction := range snapshotMyFractions() {
-		if fraction < 0 || fraction > 1 {
-			t.Fatalf("invalid primary fraction %s=%v", bucket, fraction)
-		}
-	}
-	for bucket, fraction := range snapshotMyWeeklyFractions() {
-		if fraction < 0 || fraction > 1 {
-			t.Fatalf("invalid weekly fraction %s=%v", bucket, fraction)
-		}
-	}
-	if got := snapshotMyWeeklyResetAts()["anthropic-claude"]; got <= now.UnixMilli() {
-		t.Fatalf("Claude weekly resetAt was not consumed: %d", got)
-	}
-	if got := snapshotMyWeeklyResetAts()["codex-gpt"]; got <= now.UnixMilli() {
-		t.Fatalf("Codex weekly resetAt was not consumed: %d", got)
-	}
-
-	// Simulate a live rollback to an older server payload that still carries the
-	// two fair-share bars but does not know personalFraction. The production Go
-	// parser must remove values cached from the newer server.
+	// A rollout response from an old server must not revive Codex fair-share state.
 	recordFairShareQuota([]byte(`{
 		"accountBuckets":{"codex-gpt":{"fraction":0.5,"resetAt":1000}},
 		"fairShareQuota":{"codex-gpt":{"fraction":0.4,"resetAt":2000,"share":1}},
 		"weeklyFairShareQuota":{"codex-gpt":{"fraction":0.3,"resetAt":3000}}
 	}`))
-	if _, ok := snapshotMyPersonalFractions()["codex-gpt"]; ok {
-		t.Fatal("old-server response left the newer primary personal bar frozen")
-	}
-	if _, ok := snapshotMyPersonalWeeklyFractions()["codex-gpt"]; ok {
-		t.Fatal("old-server response left the newer weekly personal bar frozen")
+	if fairShareCacheHasForTest("codex-gpt") {
+		t.Fatal("old-server response revived Codex fair-share state")
 	}
 
-	// 会话切换清理(放在全部血条断言之后):登出/换号路径调用的 clearLocalCardState
-	// 必须把 GetStats 暴露给前端的个人血条一并清空,下一账号不能看到上一账号的
-	// 独享余量。
+	// 会话切换仍清理运行时额度，但不删除本机用量历史。
 	globalUsageStats.AddModelTokens("gpt", "gpt-5.6-luna", 123, 45, 0, 168, false)
 	usageBefore := globalUsageStats.GetTodayRecord()
 	usageBeforeClear := usageBefore.InputTokens + usageBefore.OutputTokens + usageBefore.CachedTokens + usageBefore.CacheWriteTokens
 	clearLocalCardState()
-	clearedStats := (&App{}).GetStats()
-	clearedLeaser := clearedStats["leaser"].(map[string]interface{})
-	if cleared, _ := clearedLeaser["myPersonalFractions"].(map[string]float64); len(cleared) != 0 {
-		t.Fatalf("personal fractions survived clearLocalCardState: %#v", cleared)
-	}
-	if cleared, _ := clearedLeaser["myPersonalWeeklyFractions"].(map[string]float64); len(cleared) != 0 {
-		t.Fatalf("personal weekly fractions survived clearLocalCardState: %#v", cleared)
-	}
 	usageAfter := globalUsageStats.GetTodayRecord()
 	if usageAfterClear := usageAfter.InputTokens + usageAfter.OutputTokens + usageAfter.CachedTokens + usageAfter.CacheWriteTokens; usageAfterClear != usageBeforeClear {
 		t.Fatalf("clearLocalCardState deleted usage history: before=%d after=%d", usageBeforeClear, usageAfterClear)
@@ -305,7 +255,8 @@ func TestQuotaClientServerE2E(t *testing.T) {
 
 // TestQuotaPendingQueueE2E drives the production retry queue through a real
 // HTTP transport failure and recovery. The old offset bug duplicated the failed
-// item when an expired and another-card item preceded it.
+// item when an expired item preceded it. Card fields may contain expired JWTs;
+// the user-scoped queue retries all live reports with the current JWT.
 func TestQuotaPendingQueueE2E(t *testing.T) {
 	now := time.Now()
 	var failing atomic.Bool
@@ -364,7 +315,7 @@ func TestQuotaPendingQueueE2E(t *testing.T) {
 	mu.Lock()
 	gotAccepted := append([]string(nil), accepted...)
 	mu.Unlock()
-	wantAccepted := []string{"failed", "untouched", "other-card"}
+	wantAccepted := []string{"other-card", "failed", "untouched"}
 	if len(gotAccepted) != len(wantAccepted) {
 		t.Fatalf("accepted reports=%v, want %v", gotAccepted, wantAccepted)
 	}

@@ -2,9 +2,10 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
-// Auth/session transitions clear quota state but keep the user's local history.
+// Quota/session clearing does not delete the active user's namespaced history.
 func TestClearLocalCardState_PreservesUsageHistory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	GetUsageStats().Reset()
@@ -12,7 +13,7 @@ func TestClearLocalCardState_PreservesUsageHistory(t *testing.T) {
 
 	// Accumulate some state
 	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0, 79_000)
-	recordAccountBucketFraction("anthropic-claude", 0.3, 0)
+	recordMyBucketFraction("antigravity-claude", 0, time.Now().Add(time.Hour).UnixMilli(), 1)
 	GetLeaser().setLastError("卡额度已用完:antigravity ...")
 	GetClaudeLeaser().setLastError("卡额度已用完:claude ...")
 	GetCodexLeaser().setLastError("卡额度已用完:codex ...")
@@ -27,8 +28,8 @@ func TestClearLocalCardState_PreservesUsageHistory(t *testing.T) {
 	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 31_700 || got.OutputTokens != 47_300 {
 		t.Fatalf("会话切换不应删除 today token, 得到 %+v", got)
 	}
-	if n := len(snapshotAccountFractions()); n != 0 {
-		t.Fatalf("清空后血条应为零, 仍残留 %d 个 bucket", n)
+	if n := fairShareCacheSizeForTest(); n != 0 {
+		t.Fatalf("清空后 Antigravity fair-share 缓存应为零,仍残留 %d 个 bucket", n)
 	}
 	if e := GetLeaser().LastError(); e != "" {
 		t.Fatalf("antigravity lastError 应清空, got %q", e)
@@ -51,7 +52,8 @@ func TestSaveConfig_TokenChange_ClearsState(t *testing.T) {
 	resetBoundFractions()
 
 	// Set up initial token
-	if err := SaveConfig(Config{UserToken: "token-A", DeviceId: "dev1", ProxyPort: 48800}); err != nil {
+	GetUsageStats().SwitchNamespace("user-a")
+	if err := SaveConfig(Config{UserToken: "token-A", UserId: "user-a", DeviceId: "dev1", ProxyPort: 48800}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
 	GetUsageStats().AddTokens("claude", 100, 200, 0, 300)
@@ -59,12 +61,16 @@ func TestSaveConfig_TokenChange_ClearsState(t *testing.T) {
 
 	// Change token → should clear state
 	app := &App{}
-	if err := app.SaveConfig(Config{UserToken: "token-B", DeviceId: "dev1", ProxyPort: 48800}); err != nil {
+	if err := app.SaveConfig(Config{UserToken: "token-B", UserId: "user-b", DeviceId: "dev1", ProxyPort: 48800}); err != nil {
 		t.Fatalf("SaveConfig failed: %v", err)
 	}
 
+	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 0 {
+		t.Fatalf("换用户后不能串用上一用户的本机历史, 得到 %+v", got)
+	}
+	GetUsageStats().SwitchNamespace("user-a")
 	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 100 {
-		t.Fatalf("换 token 后本地历史应保留, 得到 %+v", got)
+		t.Fatalf("切回原用户应恢复其独立历史, 得到 %+v", got)
 	}
 	if e := GetLeaser().LastError(); e != "" {
 		t.Fatalf("换 token 后 leaser error 应清空, got %q", e)

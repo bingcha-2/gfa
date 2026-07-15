@@ -48,6 +48,16 @@ describe("SubscriptionScheduler — 优先级接力", () => {
     expect(sched.selectForFailover(opts).picked?.id).toBe("s2");
   });
 
+  it("美元额度订阅通过本地预检后不再进入 fair-share 闸门", () => {
+    const store = makeStore(
+      [{ id: "s-usd", customerId: "c1", boundAccountId: 10, products: ["codex"], usdLimitWeekly: 100 }],
+      () => ({ allowed: true }),
+    );
+    const tracker = { checkFairShare: () => ({ allowed: false, resetMs: 7000 }) } as any;
+
+    expect(new SubscriptionScheduler(store, tracker).selectForFailover(opts).picked?.id).toBe("s-usd");
+  });
+
   it("纯 fair-share 拦截 → picked=null 且带上 fair-share 的 resetMs(此前漏报)", () => {
     const store = makeStore(
       [{ id: "s1", customerId: "c1", boundAccountId: 10, products: ["codex"] }],

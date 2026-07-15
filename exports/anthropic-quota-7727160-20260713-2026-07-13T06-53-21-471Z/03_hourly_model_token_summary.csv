@@ -1,0 +1,15 @@
+bjHour,accountEmail,accessKeyId,modelKey,bucket,requests,failedRequests,inputTokens,outputTokens,cachedInputTokens,cacheCreationTokens,rawTotalTokens,billableTokens
+2026-07-13 09:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-fable-5,anthropic-claude,11,0,997590,15147,761473,228655,1012737,327416
+2026-07-13 09:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-haiku-4-5-20251001,anthropic-claude,2,0,7082,147,4511,0,7229,3170
+2026-07-13 09:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-opus-4-8,anthropic-claude,101,0,25138135,144895,23897563,1196980,25283030,3775266
+2026-07-13 10:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-fable-5,anthropic-claude,44,0,10701022,70576,10425123,205948,10771598,1389007
+2026-07-13 10:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-haiku-4-5-20251001,anthropic-claude,3,0,13343,287,9022,0,13630,5512
+2026-07-13 10:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-opus-4-8,anthropic-claude,177,0,22014698,252097,21030428,950253,22266795,3339492
+2026-07-13 11:00:00,,cmre9143o26f9s15spzp0pw7s,claude-fable-5,anthropic-claude,1,0,368681,4537,361339,7340,373218,48013
+2026-07-13 11:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-fable-5,anthropic-claude,14,0,5355259,25067,5321458,33013,5380326,591019
+2026-07-13 11:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-haiku-4-5-20251001,anthropic-claude,1,0,6335,110,4511,0,6445,2386
+2026-07-13 12:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-haiku-4-5-20251001,anthropic-claude,1,0,6602,177,4511,0,6779,2720
+2026-07-13 12:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-opus-4-8,anthropic-claude,15,0,3158728,14493,2795568,361512,3173221,657217
+2026-07-13 14:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-fable-5,anthropic-claude,36,0,12862466,94898,12501427,359918,12957364,1706097
+2026-07-13 14:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-haiku-4-5-20251001,anthropic-claude,1,0,6223,105,4511,0,6328,2269
+2026-07-13 14:00:00,genevieve_solutakfu@minister.com,cmre9143o26f9s15spzp0pw7s,claude-opus-4-8,anthropic-claude,1,0,88193,7,35636,52451,88200,56128

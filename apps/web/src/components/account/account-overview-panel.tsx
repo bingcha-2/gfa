@@ -40,6 +40,14 @@ const STATE_STAT_TONE: Record<MembershipState, "ok" | "warn" | "danger" | undefi
 
 function usedPercent(quota: SubscriptionQuota | null): number | null {
   if (!quota) return null;
+  if (quota.quotaMode === "usd") {
+    const windows = Object.values(quota.usdQuotaByProduct ?? {}).flatMap((product) => [
+      product.fiveHour,
+      product.weekly,
+    ]).filter((window): window is NonNullable<typeof window> => Boolean(window?.limit && window.limit > 0));
+    if (windows.length === 0) return null;
+    return Math.min(100, Math.round(Math.max(...windows.map((window) => window.used / window.limit)) * 100));
+  }
   const first = quota.buckets[0];
   if (!first || first.limit <= 0) return null;
   return Math.min(100, Math.round(((first.used ?? 0) / first.limit) * 100));

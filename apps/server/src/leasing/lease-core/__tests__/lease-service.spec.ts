@@ -98,6 +98,59 @@ describe("LeaseService (generic core)", () => {
     expect(order).toEqual(["load", "membership", "checkpoint"]);
   });
 
+  it("seeds an idle USD subscription with its mother account's weekly reset on startup", async () => {
+    const now = Date.parse("2026-07-15T08:00:00.000Z");
+    const weeklyResetAt = new Date(now + 4 * 24 * 60 * 60 * 1000);
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "one@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        weeklyResetAt: weeklyResetAt.toISOString(),
+      }],
+    });
+    const provider = makeFakeProvider(accountsFilePath, refreshToken, "codex");
+    provider.quotaSnapshotInputs = (account: any) => [{
+      modelKey: "codex",
+      hourlyPresent: false,
+      weeklyPresent: true,
+      weeklyPercent: 46,
+      weeklyResetAt: new Date(account.weeklyResetAt),
+    }];
+    const service = new LeaseService(provider, {
+      accessKeysFilePath,
+      now: () => now,
+    });
+    const store = (service as any).accessKeyStore;
+    store.beginSubscriptionBarrier();
+
+    await service.onModuleInit();
+    store.loadSubscriptionRecords([{
+      id: "idle-codex-sub",
+      key: "subscription-secret",
+      status: "active",
+      products: ["codex"],
+      bindings: { codex: 1 },
+      requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 } },
+      usdUsageByProduct: {
+        codex: {
+          usedWeekly: 25,
+          windowStartedAtWeekly: now - 6 * 24 * 60 * 60 * 1000,
+        },
+      },
+    }]);
+    await store.markSubscriptionsReady();
+
+    const record = store.findById("idle-codex-sub");
+    const weekly = store.publicStatus(record).usdQuotaByProduct.codex.weekly;
+    expect(weekly.used).toBe(25);
+    expect(weekly.resetMs).toBe(4 * 24 * 60 * 60 * 1000);
+    expect(weekly.resetAt).toBe(weeklyResetAt.toISOString());
+  });
+
   it("fails startup when persisted fair-share state cannot be restored", async () => {
     const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath,
@@ -175,7 +228,7 @@ describe("LeaseService (generic core)", () => {
     let now = startedAt;
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 7 * 24 * 60 * 60 * 1000, bindings: { fake: 1 } }],
     });
     const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "ancient-lease", minClientVersion: "",
@@ -195,7 +248,7 @@ describe("LeaseService (generic core)", () => {
     let now = startedAt;
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 7 * 24 * 60 * 60 * 1000, bindings: { fake: 1 } }],
     });
     const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath, now: () => now, leaseTtlMs: 5 * 60 * 1000, randomId: () => "long-stream-lease", minClientVersion: "",
@@ -1217,12 +1270,12 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     }));
 
-    // Below the in-code floor (now 13.5.3) must be rejected (426 upgrade required).
+    // Below the in-code floor (now 13.5.5) must be rejected (426 upgrade required).
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.2" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.4" }),
     ).rejects.toThrow();
     // The floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.3" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.5" });
     expect(ok.ok).toBe(true);
   });
 

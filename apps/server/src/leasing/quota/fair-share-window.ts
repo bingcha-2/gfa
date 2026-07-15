@@ -212,7 +212,7 @@ function applyCoreEvent(input: WindowCoreState, event: WindowEvent): WindowCoreS
 
   const forwardReset = hasValidResetAt
     && event.resetAt > core.resetAt + 60_000
-    && event.observedAt >= core.resetAt;
+    && (event.observedAt >= core.resetAt || fraction >= core.fraction);
   if (forwardReset) {
     core = resetCore(core, { ...event, fraction });
     core.compactedThroughAt = Math.max(core.compactedThroughAt, causalAt(event));

@@ -205,12 +205,15 @@ func TestClaudeReportCarriesCacheCreationTTLBreakdown(t *testing.T) {
 	l := &ClaudeLeaser{}
 	l.ReportUsage("card-1", "dev-1", ReportDetails{
 		StatusCode: 200, ModelKey: "claude-opus-4-8",
-		CacheWrite5mTokens: 20, CacheWrite1hTokens: 30,
+		CacheWrite5mTokens: 20, CacheWrite1hTokens: 30, ContextTokens: 50,
 	}, "", &ClaudeTokenLease{LeaseId: "lease-cache", AccountId: 1})
 	select {
 	case body := <-received:
 		if body["cacheWrite5mTokens"] != float64(20) || body["cacheWrite1hTokens"] != float64(30) {
 			t.Fatalf("cache TTL payload = %#v", body)
+		}
+		if body["contextTokens"] != float64(50) {
+			t.Fatalf("context payload = %#v", body)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for report")

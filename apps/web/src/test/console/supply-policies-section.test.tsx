@@ -13,7 +13,6 @@ describe("SupplyPoliciesSection", () => {
         value={{
           antigravity: {
             defaultLevel: "ultra",
-            salesSeatsPerAccount: { ultra: "8" },
             buckets: {
               "antigravity-gemini": {
                 source: "learned",

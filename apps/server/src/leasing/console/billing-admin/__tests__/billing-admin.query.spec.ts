@@ -50,6 +50,10 @@ async function createSub(customerId: string, status = "ACTIVE") {
       expiresAt: new Date(Date.now() + 30 * DAY_MS),
       productEntitlements: JSON.stringify(["antigravity"]),
       backingKeyValue: `sub_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}${++seq}`,
+      windowState: JSON.stringify({
+        windowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: Array.from({ length: 100 }, (_, i) => ({ at: i, totalTokens: i + 1 })),
+      }),
     },
   });
 }
@@ -101,9 +105,40 @@ describe("BillingAdminService.listSubscriptions", () => {
     const active = await service.listSubscriptions({ page: 1, pageSize: 20, status: "ACTIVE" });
     expect(active.total).toBe(1);
     expect(active.subscriptions[0].customer?.email).toBe("sub@subs.test");
+    expect(active.subscriptions[0]).not.toHaveProperty("windowState");
+    expect(active.subscriptions[0]).not.toHaveProperty("backingKeyValue");
 
     const byEmail = await service.listSubscriptions({ page: 1, pageSize: 20, search: "sub@subs" });
     expect(byEmail.total).toBe(2);
+  });
+
+  it("selects only console fields for list and detail", async () => {
+    const customer = await createTestCustomer({ email: "safe@subs.test" });
+    const sub = await createSub(customer.id);
+    const findMany = vi.spyOn(prisma.subscription, "findMany");
+    const findUnique = vi.spyOn(prisma.subscription, "findUnique");
+
+    try {
+      const list = await service.listSubscriptions({ page: 1, pageSize: 20 });
+      const detail = await service.getSubscription(sub.id);
+
+      expect(list.subscriptions[0]).not.toHaveProperty("windowState");
+      expect(list.subscriptions[0]).not.toHaveProperty("backingKeyValue");
+      expect(detail).not.toHaveProperty("windowState");
+      expect(detail).not.toHaveProperty("backingKeyValue");
+
+      const listSelect = findMany.mock.calls.at(-1)?.[0]?.select;
+      const detailSelect = findUnique.mock.calls.at(-1)?.[0]?.select;
+      expect(listSelect).toBeDefined();
+      expect(detailSelect).toBeDefined();
+      expect(listSelect).not.toHaveProperty("windowState");
+      expect(listSelect).not.toHaveProperty("backingKeyValue");
+      expect(detailSelect).not.toHaveProperty("windowState");
+      expect(detailSelect).not.toHaveProperty("backingKeyValue");
+    } finally {
+      findMany.mockRestore();
+      findUnique.mockRestore();
+    }
   });
 
   it("bind 订阅:附带 line=bind + boundAccounts(按 accountId 解析绑定号邮箱)", async () => {

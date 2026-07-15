@@ -80,6 +80,68 @@ describe("computePurchase 独享(exclusive)", () => {
 });
 
 describe("computePurchase bind line", () => {
+  it("multiplies configured per-share USD quotas by the purchased shares", () => {
+    const catalog = structuredClone(CATALOG) as any;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      anthropic: { "max-20x": { fiveHour: 40, weekly: 100 } },
+      codex: { pro: { fiveHour: 0, weekly: 200 } },
+    };
+
+    const result = computePurchase(catalog, {
+      line: "bind",
+      items: [
+        { product: "anthropic", level: "max-20x" },
+        { product: "codex", level: "pro" },
+      ],
+      shareSeats: 2,
+      deviceLimit: 1,
+    } as any);
+
+    expect(result.config).toMatchObject({
+      quotaSeatCapacity: 12,
+      usdQuotaByProduct: {
+        anthropic: { fiveHour: 80, weekly: 200 },
+        codex: { fiveHour: 0, weekly: 400 },
+      },
+    });
+  });
+
+  it("does not dilute a per-share quota when the oversell factor changes", () => {
+    const catalog = structuredClone(CATALOG) as any;
+    catalog.accountCapacity = 8;
+    catalog.oversellFactor = 1.25;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      anthropic: { "max-20x": { fiveHour: 20, weekly: 100 } },
+    };
+
+    const result = computePurchase(catalog, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareSeats: 1,
+      deviceLimit: 1,
+    } as any);
+
+    expect(result.config).toMatchObject({
+      shareCapacity: 8,
+      quotaSeatCapacity: 10,
+      usdQuotaByProduct: { anthropic: { fiveHour: 20, weekly: 100 } },
+    });
+  });
+
+  it("rejects API-equivalent USD quota for products without a pricing provider", () => {
+    const catalog = structuredClone(CATALOG) as any;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      antigravity: { pro: { fiveHour: 100, weekly: 500 } },
+    };
+
+    expect(() => computePurchase(catalog, {
+      line: "bind",
+      items: [{ product: "antigravity", level: "pro" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    } as any)).toThrow("API-equivalent USD quota is not supported");
+  });
+
   it("uses shareSeats=8 as full-account seats without a seat discount, marks it exclusive(满容量即独享)", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",

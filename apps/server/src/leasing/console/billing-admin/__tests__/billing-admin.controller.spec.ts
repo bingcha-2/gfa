@@ -13,6 +13,7 @@ let billingAdmin: {
   refundOrder: ReturnType<typeof vi.fn>;
   revokeSubscription: ReturnType<typeof vi.fn>;
   updateSubscription: ReturnType<typeof vi.fn>;
+  resetSubscriptionUsdQuotaUsage: ReturnType<typeof vi.fn>;
 };
 let auditLog: { log: ReturnType<typeof vi.fn> };
 let controller: BillingAdminController;
@@ -20,7 +21,12 @@ let controller: BillingAdminController;
 const req = { user: { id: "admin-1" } } as any;
 
 beforeEach(() => {
-  billingAdmin = { refundOrder: vi.fn(), revokeSubscription: vi.fn(), updateSubscription: vi.fn() };
+  billingAdmin = {
+    refundOrder: vi.fn(),
+    revokeSubscription: vi.fn(),
+    updateSubscription: vi.fn(),
+    resetSubscriptionUsdQuotaUsage: vi.fn(),
+  };
   auditLog = { log: vi.fn() };
   controller = new BillingAdminController(billingAdmin as any, auditLog as any);
 });
@@ -91,8 +97,14 @@ describe("POST console/subscriptions/:id/revoke", () => {
 describe("PATCH console/subscriptions/:id", () => {
   it("delegates to the service and audit-logs the expiry update", async () => {
     billingAdmin.updateSubscription.mockResolvedValue({
-      subscription: { id: "sub-1", customerId: "cust-1", expiresAt: new Date("2026-07-01T00:00:00.000Z") },
+      subscription: {
+        id: "sub-1",
+        customerId: "cust-1",
+        expiresAt: new Date("2026-07-01T00:00:00.000Z"),
+        config: JSON.stringify({ usdQuotaByProduct: { codex: { fiveHour: 25, weekly: 100 } } }),
+      },
       previousExpiresAt: new Date("2026-06-01T00:00:00.000Z"),
+      previousUsdQuotaByProduct: { codex: { fiveHour: 10, weekly: 50 } },
     });
 
     const result = await controller.updateSubscription(
@@ -114,6 +126,61 @@ describe("PATCH console/subscriptions/:id", () => {
         customerId: "cust-1",
         previousExpiresAt: "2026-06-01T00:00:00.000Z",
         expiresAt: "2026-07-01T00:00:00.000Z",
+        previousUsdQuotaByProduct: { codex: { fiveHour: 10, weekly: 50 } },
+        usdQuotaByProduct: { codex: { fiveHour: 25, weekly: 100 } },
+      },
+    });
+  });
+
+  it("passes USD-only edits through without requiring expiresAt", async () => {
+    billingAdmin.updateSubscription.mockResolvedValue({
+      subscription: {
+        id: "sub-1", customerId: "cust-1", expiresAt: null,
+        config: JSON.stringify({ usdQuotaByProduct: { codex: { fiveHour: 12.5, weekly: 80 } } }),
+      },
+      previousExpiresAt: null,
+      previousUsdQuotaByProduct: {},
+    });
+
+    const quota = { codex: { fiveHour: 12.5, weekly: 80 } };
+    await controller.updateSubscription("sub-1", { usdQuotaPerSeatByProduct: quota }, req);
+
+    expect(billingAdmin.updateSubscription).toHaveBeenCalledWith("sub-1", {
+      usdQuotaPerSeatByProduct: quota,
+    });
+  });
+});
+
+describe("POST console/subscriptions/:id/usd-quota/reset", () => {
+  it("delegates one product window reset and records the previous amount in the audit log", async () => {
+    billingAdmin.resetSubscriptionUsdQuotaUsage.mockResolvedValue({
+      subscriptionId: "sub-1",
+      customerId: "cust-1",
+      product: "codex",
+      scope: "weekly",
+      previousUsed: 12.5,
+      limit: 100,
+      usageByProduct: { codex: { fiveHour: null, weekly: { used: 0, limit: 100 } } },
+    });
+
+    await controller.resetSubscriptionUsdQuotaUsage(
+      "sub-1",
+      { product: "codex", scope: "weekly" },
+      req,
+    );
+
+    expect(billingAdmin.resetSubscriptionUsdQuotaUsage).toHaveBeenCalledWith("sub-1", "codex", "weekly");
+    expect(auditLog.log).toHaveBeenCalledWith({
+      operatorId: "admin-1",
+      action: "RESET_SUBSCRIPTION_USD_QUOTA",
+      targetType: "Subscription",
+      targetId: "sub-1",
+      detail: {
+        customerId: "cust-1",
+        product: "codex",
+        scope: "weekly",
+        previousUsed: 12.5,
+        limit: 100,
       },
     });
   });

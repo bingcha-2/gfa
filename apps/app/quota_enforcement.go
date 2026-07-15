@@ -12,11 +12,8 @@ import (
 // 拦不到 → 严重超用。这里用每次上报响应回灌的份额血条(MyFraction / MyWeeklyFraction)
 // 在本地当场拦截,补上这个 enforcement 缺口。
 //
-// 精度边界(诚实说清):MyFraction 是「快照级」更新的,不是逐 token——
-//   - antigravity:fraction 随客户端每次请求上报的 Google 快照归并,近乎逐请求,拦得很紧;
-//   - claude / codex:fraction 由服务端周期性拉取(秒~分钟级),本地拦滞后到「一个快照
-//     周期」,但远好于「一个取号窗口(几十分钟)」。
-// 剩余在飞的逐请求级 margin 由服务端归并 + 账号 Σe≤1 兜底,账号永不烧爆。
+// 仅 Antigravity 继续使用这条链。Codex/Anthropic 已切到服务端个人美元窗口，
+// 客户端不再缓存或执行它们的旧 fair-share 血条。
 
 // fairShareVerdict 仅凭缓存的份额血条判定该不该放行:5h 或周份额任一耗尽即拦,
 // Retry-After 取对应窗口 reset 的倒计时。无份额数据(号池卡 / 尚未取过号)→ 放行。
@@ -44,8 +41,7 @@ func fairShareVerdict(q bucketQuota, nowMs int64) (ok bool, retryMs int64, reaso
 	return true, 0, ""
 }
 
-// checkBoundFairShare 按复合桶 key 读缓存的份额血条并判定。三家 proxy(antigravity 经
-// CheckLocalQuota,claude/codex 经各自 ServeHTTP)共用此入口,口径一致。
+// checkBoundFairShare 按 Antigravity 复合桶 key 读缓存的份额血条并判定。
 func checkBoundFairShare(bucket string) (ok bool, retryMs int64, reason string) {
 	boundFracMu.RLock()
 	q := boundFractions[bucket]

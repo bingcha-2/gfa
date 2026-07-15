@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { beijingDayKey, beijingDayKeysSince, beijingDayStart, beijingHourOfDay } from "../../shared/common/beijing-time";
@@ -124,9 +123,8 @@ function addSessionToMinute(m: Map<number, Set<string>>, min: number, sessionId:
 }
 
 /**
- * Query + maintenance side of the per-card token usage log (CardTokenUsage).
- * The write side lives in token-server/token-usage-tracker.ts. Mirrors
- * CreditStatsService: paginated records, day/model aggregation, retention cron.
+ * Query + maintenance side of the fixed-size hourly usage aggregate.
+ * The write side lives in token-server/token-usage-tracker.ts.
  */
 @Injectable()
 export class TokenUsageStatsService {
@@ -236,7 +234,7 @@ export class TokenUsageStatsService {
 
     // `tokens` 是计费口径(billable,缓存读已 1/10 折);拆分出净输入 / 输出 /
     // 缓存写入(cache_creation,单独列) / 缓存读,让前端能解释"为什么计费 token 比净对话大"。
-    // stored inputTokens 是 gross(含缓存读+写),净输入 = gross − 缓存读 − 缓存写。
+    // CardUsageHourly 已统一为 gross input；缓存读写都是其子集。
     const empty = () => ({
       tokens: 0,
       requests: 0,
@@ -254,7 +252,6 @@ export class TokenUsageStatsService {
     for (const r of rows) {
       const cacheWrite = Number(r.cacheCreationTokens) || 0;
       const cacheRead = r.cachedInputTokens;
-      // stored inputTokens 是 gross,净输入 = gross − 缓存读 − 缓存写(clamp ≥0)。
       const netInput = Math.max(0, r.inputTokens - cacheRead - cacheWrite);
       for (const t of [totals, byProvider[bucketProduct(r.bucket)]]) {
         t.tokens += r.totalTokens;
@@ -456,7 +453,7 @@ export class TokenUsageStatsService {
       const product = bucketProduct(r.bucket);
       if (product !== "codex" && product !== "anthropic") continue; // 只看 codex/claude
       const email = r.accountEmail; if (!r.accountEmail) continue;
-      const key = `${product} ${email}`;
+      const key = `${product}\u0000${email}`;
       let a = byAccount.get(key);
       if (!a) {
         a = { product, accountEmail: email, requests: 0, failedRequests: 0, reverseProxyHits: 0, totalTokens: 0, cardIds: new Set(), customers: new Map() };
@@ -891,28 +888,6 @@ export class TokenUsageStatsService {
     return { days: risk.days, comparison, accounts: risk.accounts, banEvents: events.events };
   }
 
-  // ── Cleanup ─────────────────────────────────────────────────────────────
-
-  /** Hourly aggregate retention — covers the 30-day dashboards + refund "used since
-   *  paid" checks (subscriptions ≤30d) with buffer. Tiny (rows track cards×hours). */
-  static readonly HOURLY_RETENTION_DAYS = 60;
-
-  @Cron("25 3 * * *") // 3:25 AM daily — prune hourly aggregate
-  async cleanupHourly() {
-    const cutoff = beijingDayStart(TokenUsageStatsService.HOURLY_RETENTION_DAYS);
-    try {
-      const deleted = await this.prisma.cardUsageHourly.deleteMany({
-        where: { hourStart: { lt: cutoff } },
-      });
-      if (deleted.count > 0) {
-        this.logger.log(`Pruned ${deleted.count} hourly usage rows older than ${TokenUsageStatsService.HOURLY_RETENTION_DAYS} days`);
-      }
-    } catch (err) {
-      this.logger.error(
-        `Hourly usage cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
 }
 
 function emptyTotals() {

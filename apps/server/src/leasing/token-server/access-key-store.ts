@@ -47,6 +47,18 @@ import {
   bucketUsageInWindow,
   bucketUsageInWindowReadonly,
 } from './access-key-limit';
+import {
+  apiValueUsdForEvent,
+  apiValueUsdForEvents,
+  usdQuotaForProduct,
+  usdQuotaLimit,
+  usedUsd5h,
+  usedUsdWeekly,
+  supportsApiUsdProduct,
+  usesUsdQuota,
+  usesUsdQuotaForProduct,
+} from './api-usd-quota';
+import type { ProviderQuotaSnapshotInput } from '../lease-core/provider';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,7 +73,6 @@ export interface AccessKeyRecord {
   /** 每模型(复合桶 `<产品>-<家族>`)token 上限。每卡封顶的唯一来源。 */
   bucketLimits?: Record<string, number>;
   windowStartedAt?: number;
-  usageEvents?: any[];
   tokenUsageEvents?: any[];
   /** Weekly (long) window fields — independent second tier of rate limiting. */
   weeklyWindowMs?: number;
@@ -70,6 +81,26 @@ export interface AccessKeyRecord {
   weeklyBucketLimits?: Record<string, number>;
   weeklyWindowStartedAt?: number;
   weeklyTokenUsageEvents?: any[];
+  /** Product-scoped API-equivalent USD caps. Legacy aggregate fields are read during migration only. */
+  usdQuotaByProduct?: Record<string, { fiveHour?: number; weekly?: number }>;
+  usdUsageByProduct?: Record<string, {
+    used5h?: number;
+    usedWeekly?: number;
+    windowStartedAt5h?: number;
+    windowStartedAtWeekly?: number;
+    upstreamAccountId?: number;
+    upstreamFiveHour?: UsdUpstreamWindowState;
+    upstreamWeekly?: UsdUpstreamWindowState;
+  }>;
+  usdLimit5h?: number;
+  usdLimitWeekly?: number;
+  quotaAlgorithm?: string;
+  usdQuotaProducts?: string[];
+  usdUsed5h?: number;
+  usdUsedWeekly?: number;
+  /** Kept separate from legacy Antigravity token/fair-share windows. */
+  usdWindowStartedAt5h?: number;
+  usdWindowStartedAtWeekly?: number;
   /** Per-product static binding: { codex?: accountId, antigravity?: accountId }.
    * A card may be sold for one or both pools; each entry pins it to one account
    * in that pool. */
@@ -91,7 +122,7 @@ export interface AccessKeyRecord {
   keyExpiresAt?: string;
   /** Owning account (Customer.id). Set on subscription shadow records by
    *  entitlement-sync; legacy file/pool cards leave it undefined. Used by
-   *  reportResult to stamp CardTokenUsage.customerId. */
+   *  reportResult to stamp CardUsageHourly.customerId. */
   customerId?: string;
   /** Account-internal failover order (mirrors Subscription.priority); lower = used
    *  first. Set on subscription shadow records; legacy cards leave it undefined. */
@@ -113,6 +144,27 @@ export interface AccessKeyRecord {
   sessionTtlMs?: number;
   [k: string]: unknown;
 }
+
+export type UsdUpstreamWindowState = {
+  /** Whether the upstream explicitly reports that this window exists. */
+  present?: boolean;
+  /** End of the currently observed upstream epoch. */
+  resetAt?: number;
+  /** resetAt already consumed by the local natural-expiry path. */
+  appliedResetAt?: number;
+  lowFraction?: number;
+  observedAt?: number;
+  lastSnapshotId?: string;
+  reboundCandidateCount?: number;
+  /** Natural expiry already opened a new local epoch; next fraction is baseline. */
+  baselinePending?: boolean;
+};
+
+export type UpstreamUsdQuotaSnapshotMeta = {
+  observedAt?: number;
+  arrivedAt?: number;
+  snapshotId?: string;
+};
 
 export interface AccessKeysData {
   keys: AccessKeyRecord[];
@@ -138,6 +190,482 @@ export interface ResolveResult {
   sessionError?: { statusCode: number; code: string };
 }
 
+const UPSTREAM_RESET_DRIFT_MS = 60_000;
+const UPSTREAM_REBOUND_RECOVERY_RATIO = 0.5;
+const UPSTREAM_REBOUND_CONFIRMATIONS = 2;
+const FRACTION_EPSILON = 1e-9;
+
+/**
+ * USD quota amounts are fixed per subscription share. Only their reset epochs
+ * follow the bound upstream account. Before the first credible upstream sample,
+ * the historical usage-anchored window remains as a migration fallback.
+ */
+function usdProductKey(product: unknown): string {
+  return String(product || '').trim().toLowerCase();
+}
+
+function upstreamWindowState(
+  record: AccessKeyRecord,
+  product: unknown,
+  scope: 'fiveHour' | 'weekly',
+  create = false,
+): UsdUpstreamWindowState | null {
+  const usage = usdProductUsage(record, product, create);
+  if (!usage) return null;
+  const field = scope === 'fiveHour' ? 'upstreamFiveHour' : 'upstreamWeekly';
+  if (!usage[field] && create) usage[field] = {};
+  return usage[field] ?? null;
+}
+
+function clearUsdScopeUsage(
+  record: AccessKeyRecord,
+  product: unknown,
+  scope: 'fiveHour' | 'weekly',
+): void {
+  const state = usdProductUsage(record, product);
+  if (state) {
+    if (scope === 'fiveHour') {
+      state.windowStartedAt5h = undefined;
+      state.used5h = undefined;
+    } else {
+      state.windowStartedAtWeekly = undefined;
+      state.usedWeekly = undefined;
+    }
+    return;
+  }
+  if (scope === 'fiveHour') {
+    record.usdWindowStartedAt5h = undefined;
+    if (!Array.isArray(record.usdQuotaProducts)) record.windowStartedAt = undefined;
+    record.usdUsed5h = undefined;
+  } else {
+    record.usdWindowStartedAtWeekly = undefined;
+    if (!Array.isArray(record.usdQuotaProducts)) record.weeklyWindowStartedAt = undefined;
+    record.usdUsedWeekly = undefined;
+  }
+}
+
+function startUsdScopeAt(
+  record: AccessKeyRecord,
+  product: unknown,
+  scope: 'fiveHour' | 'weekly',
+  startedAt: number,
+): void {
+  const usage = usdProductUsage(record, product, true);
+  if (!usage || !(startedAt > 0)) return;
+  if (scope === 'fiveHour') usage.windowStartedAt5h = startedAt;
+  else usage.windowStartedAtWeekly = startedAt;
+}
+
+function resetUpstreamObservation(record: AccessKeyRecord, product: unknown): void {
+  const usage = usdProductUsage(record, product);
+  if (!usage) return;
+  usage.upstreamAccountId = undefined;
+  usage.upstreamFiveHour = undefined;
+  usage.upstreamWeekly = undefined;
+}
+
+function normalizeObservedAt(value: unknown, fallback: number): number {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  // Accept both Unix seconds and milliseconds from older clients.
+  return raw < 10_000_000_000 ? raw * 1000 : raw;
+}
+
+function normalizeRemainingFraction(percent: unknown): number | null {
+  if (percent === null || percent === undefined) return null;
+  const value = Number(percent);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.max(0, Math.min(1, value / 100));
+}
+
+function applyUpstreamWindowSnapshot(
+  record: AccessKeyRecord,
+  product: string,
+  scope: 'fiveHour' | 'weekly',
+  sample: { present?: boolean; fraction: number | null; resetAt?: number },
+  meta: { observedAt: number; snapshotId: string },
+): boolean {
+  const state = upstreamWindowState(record, product, scope, true)!;
+  const previousObservedAt = Number(state.observedAt || 0);
+  if (meta.snapshotId && state.lastSnapshotId === meta.snapshotId) return false;
+  if (previousObservedAt > 0 && meta.observedAt < previousObservedAt) return false;
+
+  const previousResetAt = Number(state.resetAt || 0);
+  const incomingResetAt = Number(sample.resetAt || 0);
+  if (incomingResetAt > 0 && previousResetAt > 0
+    && incomingResetAt + UPSTREAM_RESET_DRIFT_MS < previousResetAt) {
+    // A backward reset epoch is an out-of-order upstream sample. Do not let its
+    // high fraction masquerade as a reset rebound.
+    return false;
+  }
+
+  const commitMeta = () => {
+    state.observedAt = meta.observedAt;
+    state.lastSnapshotId = meta.snapshotId || undefined;
+  };
+  const clearCandidate = () => {
+    state.reboundCandidateCount = undefined;
+  };
+  const baselineFraction = () => {
+    state.lowFraction = sample.fraction ?? undefined;
+    state.baselinePending = undefined;
+    clearCandidate();
+  };
+
+  if (sample.present === false) {
+    clearUsdScopeUsage(record, product, scope);
+    state.present = false;
+    state.resetAt = undefined;
+    state.appliedResetAt = undefined;
+    state.lowFraction = undefined;
+    state.baselinePending = undefined;
+    clearCandidate();
+    commitMeta();
+    return true;
+  }
+
+  const restored = state.present === false && sample.present === true;
+  if (sample.present === true) state.present = true;
+  if (restored) {
+    // Explicit upstream window restoration starts a fresh local epoch, but is
+    // isolated to this scope (5h restoration cannot touch weekly, and vice versa).
+    clearUsdScopeUsage(record, product, scope);
+    startUsdScopeAt(record, product, scope, meta.observedAt);
+    state.resetAt = incomingResetAt || undefined;
+    state.appliedResetAt = undefined;
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
+
+  const firstCredibleSample = previousObservedAt <= 0
+    && previousResetAt <= 0
+    && state.lowFraction === undefined;
+  if (firstCredibleSample) {
+    // Smooth rollout: establish the mother-account epoch without gifting a
+    // reset to subscriptions that already carry historical usage.
+    state.resetAt = incomingResetAt || undefined;
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
+
+  if (incomingResetAt > previousResetAt + UPSTREAM_RESET_DRIFT_MS && previousResetAt > 0) {
+    // If natural expiry already consumed the old epoch, advancing resetAt is
+    // merely confirmation of the same rollover and must not clear twice.
+    if (Number(state.appliedResetAt || 0) !== previousResetAt) {
+      clearUsdScopeUsage(record, product, scope);
+    }
+    // The first trusted observation of the advanced epoch is the earliest
+    // boundary we can prove locally. Using resetAt-duration can point into the
+    // future when an upstream rolling window extends its resetAt, dropping the
+    // very request that carried the reset snapshot.
+    startUsdScopeAt(record, product, scope, meta.observedAt);
+    state.resetAt = incomingResetAt;
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
+  if (incomingResetAt > previousResetAt) state.resetAt = incomingResetAt;
+
+  if (state.baselinePending) {
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
+
+  const fraction = sample.fraction;
+  if (fraction === null) {
+    commitMeta();
+    return true;
+  }
+  const previousLow = Number(state.lowFraction);
+  if (!Number.isFinite(previousLow)) {
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
+
+  if (fraction <= previousLow + FRACTION_EPSILON) {
+    state.lowFraction = Math.min(previousLow, fraction);
+    clearCandidate();
+    commitMeta();
+    return true;
+  }
+
+  const consumed = 1 - previousLow;
+  const recovered = fraction - previousLow;
+  const recoveryRatio = consumed > FRACTION_EPSILON ? recovered / consumed : 0;
+  if (recoveryRatio + FRACTION_EPSILON < UPSTREAM_REBOUND_RECOVERY_RATIO) {
+    clearCandidate();
+    commitMeta();
+    return true;
+  }
+
+  state.reboundCandidateCount = Math.max(0, Number(state.reboundCandidateCount) || 0) + 1;
+  if (state.reboundCandidateCount >= UPSTREAM_REBOUND_CONFIRMATIONS) {
+    clearUsdScopeUsage(record, product, scope);
+    startUsdScopeAt(record, product, scope, meta.observedAt);
+    state.lowFraction = fraction;
+    clearCandidate();
+  }
+  commitMeta();
+  return true;
+}
+
+function resetAtMs(value: Date | null | undefined): number | undefined {
+  const ms = value instanceof Date ? value.getTime() : NaN;
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+function isUsdScopeActive(
+  record: AccessKeyRecord,
+  product: unknown,
+  scope: 'fiveHour' | 'weekly',
+): boolean {
+  return upstreamWindowState(record, product, scope)?.present !== false;
+}
+
+function usdProductUsage(record: AccessKeyRecord, product: unknown, create = false) {
+  const key = usdProductKey(product);
+  if (!key || !record.usdQuotaByProduct?.[key]) return null;
+  if (!record.usdUsageByProduct && create) record.usdUsageByProduct = {};
+  if (!record.usdUsageByProduct?.[key] && create) record.usdUsageByProduct![key] = {};
+  return record.usdUsageByProduct?.[key] ?? null;
+}
+
+function usedUsd5hForProduct(record: AccessKeyRecord, product: unknown): number {
+  const state = usdProductUsage(record, product);
+  return state ? Math.max(0, Number(state.used5h) || 0) : usedUsd5h(record);
+}
+
+function usedUsdWeeklyForProduct(record: AccessKeyRecord, product: unknown): number {
+  const state = usdProductUsage(record, product);
+  return state ? Math.max(0, Number(state.usedWeekly) || 0) : usedUsdWeekly(record);
+}
+
+function usd5hStartedAt(record: AccessKeyRecord, product: unknown = ''): number {
+  const state = usdProductUsage(record, product);
+  if (state) return Number(state.windowStartedAt5h || 0);
+  return Number(record.usdWindowStartedAt5h
+    || (!Array.isArray(record.usdQuotaProducts) ? record.windowStartedAt : 0)
+    || 0);
+}
+
+function usdWeeklyStartedAt(record: AccessKeyRecord, product: unknown = ''): number {
+  const state = usdProductUsage(record, product);
+  if (state) return Number(state.windowStartedAtWeekly || 0);
+  return Number(record.usdWindowStartedAtWeekly
+    || (!Array.isArray(record.usdQuotaProducts) ? record.weeklyWindowStartedAt : 0)
+    || 0);
+}
+
+function expireUsd5hWindow(record: AccessKeyRecord, now: number, product: unknown = ''): void {
+  const upstream = upstreamWindowState(record, product, 'fiveHour');
+  if (upstream?.present === false) {
+    clearUsdScopeUsage(record, product, 'fiveHour');
+    return;
+  }
+  const upstreamResetAt = Number(upstream?.resetAt || 0);
+  if (upstreamResetAt > 0 && now >= upstreamResetAt
+    && Number(upstream?.appliedResetAt || 0) !== upstreamResetAt) {
+    clearUsdScopeUsage(record, product, 'fiveHour');
+    upstream!.appliedResetAt = upstreamResetAt;
+    upstream!.baselinePending = true;
+    upstream!.reboundCandidateCount = undefined;
+    return;
+  }
+  const startedAt = usd5hStartedAt(record, product);
+  // Once an upstream epoch is known and still current, it is authoritative.
+  if (upstreamResetAt > now) return;
+  if (startedAt > 0 && now - startedAt >= tokenWindowMs(record)) {
+    clearUsdScopeUsage(record, product, 'fiveHour');
+    if (upstream) upstream.baselinePending = true;
+  }
+}
+
+function expireUsdWeeklyWindow(record: AccessKeyRecord, now: number, product: unknown = ''): void {
+  const upstream = upstreamWindowState(record, product, 'weekly');
+  if (upstream?.present === false) {
+    clearUsdScopeUsage(record, product, 'weekly');
+    return;
+  }
+  const upstreamResetAt = Number(upstream?.resetAt || 0);
+  if (upstreamResetAt > 0 && now >= upstreamResetAt
+    && Number(upstream?.appliedResetAt || 0) !== upstreamResetAt) {
+    clearUsdScopeUsage(record, product, 'weekly');
+    upstream!.appliedResetAt = upstreamResetAt;
+    upstream!.baselinePending = true;
+    upstream!.reboundCandidateCount = undefined;
+    return;
+  }
+  const startedAt = usdWeeklyStartedAt(record, product);
+  if (upstreamResetAt > now) return;
+  if (startedAt > 0 && now - startedAt >= weeklyWindowMsFn(record)) {
+    clearUsdScopeUsage(record, product, 'weekly');
+    if (upstream) upstream.baselinePending = true;
+  }
+}
+
+function usd5hResetMs(record: AccessKeyRecord, now: number, product: unknown = ''): number {
+  const upstream = upstreamWindowState(record, product, 'fiveHour');
+  if (upstream?.present === false) return 0;
+  const upstreamResetAt = Number(upstream?.resetAt || 0);
+  if (upstreamResetAt > now) return upstreamResetAt - now;
+  const startedAt = usd5hStartedAt(record, product);
+  return startedAt > 0 ? Math.max(0, startedAt + tokenWindowMs(record) - now) : 0;
+}
+
+function usdWeeklyResetMs(record: AccessKeyRecord, now: number, product: unknown = ''): number {
+  const upstream = upstreamWindowState(record, product, 'weekly');
+  if (upstream?.present === false) return 0;
+  const upstreamResetAt = Number(upstream?.resetAt || 0);
+  if (upstreamResetAt > now) return upstreamResetAt - now;
+  const startedAt = usdWeeklyStartedAt(record, product);
+  return startedAt > 0 ? Math.max(0, startedAt + weeklyWindowMsFn(record) - now) : 0;
+}
+
+/**
+ * Decide whether a delayed report belongs to the currently active local USD
+ * epoch. A report completed before an upstream rollover must not consume the
+ * newly-opened personal window merely because its retry arrived afterwards.
+ */
+function usdEventBelongsToCurrentScope(
+  record: AccessKeyRecord,
+  product: unknown,
+  scope: 'fiveHour' | 'weekly',
+  occurredAt: number,
+  now: number,
+): boolean {
+  const upstream = upstreamWindowState(record, product, scope);
+  if (upstream?.present === false) return false;
+  const duration = scope === 'fiveHour' ? tokenWindowMs(record) : weeklyWindowMsFn(record);
+  const upstreamResetAt = Number(upstream?.resetAt || 0);
+  if (upstreamResetAt > now) {
+    const startedAt = scope === 'fiveHour'
+      ? usd5hStartedAt(record, product)
+      : usdWeeklyStartedAt(record, product);
+    return occurredAt >= (startedAt > 0 ? startedAt : upstreamResetAt - duration)
+      && occurredAt < upstreamResetAt;
+  }
+  if (upstreamResetAt > 0 && Number(upstream?.appliedResetAt || 0) === upstreamResetAt) {
+    return occurredAt >= upstreamResetAt;
+  }
+  const startedAt = scope === 'fiveHour'
+    ? usd5hStartedAt(record, product)
+    : usdWeeklyStartedAt(record, product);
+  if (startedAt > 0) return occurredAt >= startedAt && occurredAt < startedAt + duration;
+  return occurredAt >= now - duration;
+}
+
+function hasLegacyQuotaProduct(record: Partial<AccessKeyRecord>): boolean {
+  const products = Array.isArray((record as any).products)
+    ? (record as any).products
+    : Object.keys(record.bindings && typeof record.bindings === 'object' ? record.bindings : {});
+  return products.some((product: unknown) => !supportsApiUsdProduct(product));
+}
+
+// Per-product USD weights from legacy window events. Each event carries the
+// product it was billed under (recordUsage stamps `product`), so we can value
+// events grouped by their REAL product instead of guessing. Products outside the
+// quota set (or unpriceable, e.g. antigravity → $0) contribute nothing.
+function usdUsageWeightsByProduct(
+  events: unknown,
+  products: string[],
+): { weights: Record<string, number>; total: number } {
+  const weights: Record<string, number> = {};
+  let total = 0;
+  if (Array.isArray(events)) {
+    for (const event of events) {
+      const product = String((event as { product?: unknown } | null)?.product || '');
+      if (!products.includes(product)) continue;
+      const value = apiValueUsdForEvent(event);
+      if (!(value > 0)) continue;
+      weights[product] = (weights[product] || 0) + value;
+      total += value;
+    }
+  }
+  return { weights, total };
+}
+
+// Convert a token-era window snapshot into per-product USD usage. The used-USD
+// aggregate is apportioned by each product's ACTUAL consumption (from the window
+// events); a limit-ratio split is only the fallback when no attributable events
+// survive (e.g. only a bare aggregate number was persisted). Splitting purely by
+// limit ratio mis-throttled multi-product subs on first boot after rollout —
+// e.g. spend entirely on Anthropic showed up partly as phantom Codex usage.
+function splitLegacyUsdUsage(
+  record: AccessKeyRecord,
+  quotas: Record<string, { fiveHour?: number; weekly?: number }>,
+  events5h?: unknown,
+  eventsWeekly?: unknown,
+): NonNullable<AccessKeyRecord['usdUsageByProduct']> {
+  const products = Object.keys(quotas);
+  const total5hLimit = products.reduce((sum, product) => sum + usdQuotaLimit(quotas[product]?.fiveHour), 0);
+  const totalWeeklyLimit = products.reduce((sum, product) => sum + usdQuotaLimit(quotas[product]?.weekly), 0);
+  const used5h = usedUsd5h(record);
+  const usedWeekly = usedUsdWeekly(record);
+  const started5h = usd5hStartedAt(record);
+  const startedWeekly = usdWeeklyStartedAt(record);
+  const weights5h = usdUsageWeightsByProduct(events5h, products);
+  const weightsWeekly = usdUsageWeightsByProduct(eventsWeekly, products);
+  const share = (
+    product: string,
+    used: number,
+    weights: { weights: Record<string, number>; total: number },
+    limit: number,
+    totalLimit: number,
+  ): number => {
+    if (!(used > 0)) return 0;
+    if (weights.total > 0) return used * (weights.weights[product] || 0) / weights.total;
+    return totalLimit > 0 ? used * limit / totalLimit : 0;
+  };
+  return Object.fromEntries(products.map((product) => {
+    const limit5h = usdQuotaLimit(quotas[product]?.fiveHour);
+    const limitWeekly = usdQuotaLimit(quotas[product]?.weekly);
+    return [product, {
+      used5h: share(product, used5h, weights5h, limit5h, total5hLimit),
+      usedWeekly: share(product, usedWeekly, weightsWeekly, limitWeekly, totalWeeklyLimit),
+      windowStartedAt5h: started5h || undefined,
+      windowStartedAtWeekly: startedWeekly || undefined,
+    }];
+  }));
+}
+
+function openUsd5hWindow(record: AccessKeyRecord, now: number, product: unknown = ''): void {
+  expireUsd5hWindow(record, now, product);
+  const state = usdProductUsage(record, product, true);
+  if (state) {
+    if (!(Number(state.windowStartedAt5h || 0) > 0)) {
+      state.windowStartedAt5h = now;
+      if (!Number.isFinite(Number(state.used5h))) state.used5h = 0;
+    }
+    return;
+  }
+  if (!(Number(record.usdWindowStartedAt5h || 0) > 0)) {
+    record.usdWindowStartedAt5h = usd5hStartedAt(record) || now;
+    if (!Array.isArray(record.usdQuotaProducts)) record.windowStartedAt = record.usdWindowStartedAt5h;
+    if (!Number.isFinite(Number(record.usdUsed5h))) record.usdUsed5h = 0;
+  }
+}
+
+function openUsdWeeklyWindow(record: AccessKeyRecord, now: number, product: unknown = ''): void {
+  expireUsdWeeklyWindow(record, now, product);
+  const state = usdProductUsage(record, product, true);
+  if (state) {
+    if (!(Number(state.windowStartedAtWeekly || 0) > 0)) {
+      state.windowStartedAtWeekly = now;
+      if (!Number.isFinite(Number(state.usedWeekly))) state.usedWeekly = 0;
+    }
+    return;
+  }
+  if (!(Number(record.usdWindowStartedAtWeekly || 0) > 0)) {
+    record.usdWindowStartedAtWeekly = usdWeeklyStartedAt(record) || now;
+    if (!Array.isArray(record.usdQuotaProducts)) record.weeklyWindowStartedAt = record.usdWindowStartedAtWeekly;
+    if (!Number.isFinite(Number(record.usdUsedWeekly))) record.usdUsedWeekly = 0;
+  }
+}
+
 // ── AccessKeyStore ───────────────────────────────────────────────────────────
 
 // Hard cap on the per-card reportId dedup ring (bounds access-keys.json size on
@@ -147,12 +675,15 @@ const MAX_RECENT_REPORT_IDS = 5000;
 export class AccessKeyStore {
   private cache: AccessKeysData | null = null;
   private dirty = false;
-  // In-memory reportId dedup: cardId → (reportId → seenAt). NOT persisted — keeps
-  // access-keys.json from growing with every request. Bounded per card by
-  // MAX_RECENT_REPORT_IDS (oldest evicted). A server restart clears it, so the
-  // only un-deduped case is a duplicate report arriving after a restart for a
-  // report counted before it — negligible (leases are in-memory and also reset).
+  // In-memory compatibility dedup: cardId → (reportId → seenAt). Durable quota
+  // paths additionally persist QuotaReportReceipt atomically with accounting;
+  // this bounded ring protects direct/legacy callers without growing JSON state.
   private reportDedup = new Map<string, Map<string, number>>();
+  // Serializes report mutation + durable checkpoint for the same session
+  // credential. The store is shared by every product service, so Codex and
+  // Anthropic reports for one subscription cannot overwrite each other's
+  // Subscription.windowState snapshots.
+  private usageReportChains = new Map<string, Promise<void>>();
   // O(1) lookup indexes over cache.keys, rebuilt whenever the cache is (re)loaded.
   // Card membership only changes via (re)load — recordUsage/session updates mutate
   // records in place, so these stay valid without per-write maintenance.
@@ -173,6 +704,7 @@ export class AccessKeyStore {
   constructor(
     private readonly filePath: string,
     private readonly billing: ProviderBilling = UNIVERSAL_BILLING,
+    private readonly now: () => number = Date.now,
   ) {}
 
   // ── Subscription readiness barrier ───────────────────────────────────────
@@ -227,6 +759,22 @@ export class AccessKeyStore {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
   }
 
+  async withUsageReportLock<T>(identity: string, task: () => Promise<T>): Promise<T> {
+    const lockKey = this.keyHash(identity || '__missing-identity__');
+    const previous = this.usageReportChains.get(lockKey) || Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.usageReportChains.set(lockKey, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.usageReportChains.get(lockKey) === tail) this.usageReportChains.delete(lockKey);
+    }
+  }
+
   // 周上限【只认显式配置】(QUOTA-REDESIGN 决策5):weeklyBucketLimits[bucket] > weeklyTokenLimit。
   // 「cap5h × R 自动派生」整套删除 —— 单一全局倍率 R 无法把 5h 正确换算成周(真实比 3~30
   // 因人而异),那是「周额度纯靠猜」的病根。没配显式周上限的卡,周维度不再有派生封顶。
@@ -257,20 +805,19 @@ export class AccessKeyStore {
 
   /**
    * Reload cache from disk (e.g., after an admin card edit writes the file).
-   * The per-request window events are no longer persisted (see serializable()),
-   * so they are carried over in memory for cards that still exist by id —
+   * Token window events are no longer persisted to access-keys.json (see
+   * serializable()), so they are carried over in memory for cards that still exist by id —
    * otherwise every admin edit (which triggers reload) would reset all rate-limit
-   * windows. A full process restart still starts cold and rehydrates from the
-   * CardTokenUsage log instead.
+   * windows. Subscription windows survive restarts through Subscription.windowState;
+   * retired file cards retain only this in-process compatibility behavior.
    */
   reload(): void {
     const carry = new Map<string, Pick<AccessKeyRecord,
-      'usageEvents' | 'tokenUsageEvents' | 'weeklyTokenUsageEvents'>>();
+      'tokenUsageEvents' | 'weeklyTokenUsageEvents'>>();
     if (this.cache) {
       for (const k of this.cache.keys) {
         if (!k?.id) continue;
         carry.set(k.id, {
-          usageEvents: k.usageEvents,
           tokenUsageEvents: k.tokenUsageEvents,
           weeklyTokenUsageEvents: k.weeklyTokenUsageEvents,
         });
@@ -281,7 +828,6 @@ export class AccessKeyStore {
     for (const k of this.cache!.keys) {
       const prev = k?.id ? carry.get(k.id) : undefined;
       if (!prev) continue;
-      if (prev.usageEvents) k.usageEvents = prev.usageEvents;
       if (prev.tokenUsageEvents) k.tokenUsageEvents = prev.tokenUsageEvents;
       if (prev.weeklyTokenUsageEvents) k.weeklyTokenUsageEvents = prev.weeklyTokenUsageEvents;
     }
@@ -299,8 +845,68 @@ export class AccessKeyStore {
       const existing = this.subscriptionById.get(rec.id);
       if (existing) {
         // 已存在 → 只刷新配置,保留用量/窗口状态(配置变更绝不能清零限额)。
-        const usage = {
-          usageEvents: existing.usageEvents,
+        const incomingUsd = usesUsdQuota(rec);
+        const existingUsd = usesUsdQuota(existing);
+        const usdManaged = incomingUsd || existingUsd;
+        // Historical records may carry a zero-valued USD placeholder written by
+        // an older reset path. On the one-way legacy → USD transition, the real
+        // source is the current token-event window, never that placeholder.
+        const transitioningToUsd = incomingUsd && !existingUsd;
+        const incomingProductQuotas = rec.usdQuotaByProduct && typeof rec.usdQuotaByProduct === 'object'
+          ? rec.usdQuotaByProduct
+          : null;
+        const trackUsd5h = usdQuotaLimit(rec.usdLimit5h) > 0;
+        const trackUsdWeekly = usdQuotaLimit(rec.usdLimitWeekly) > 0;
+        const keepLegacy = hasLegacyQuotaProduct(rec);
+        const legacyUsdWindowFallback = !Array.isArray(existing.usdQuotaProducts);
+        const productUsage = incomingProductQuotas
+          ? existing.usdUsageByProduct
+            ? Object.fromEntries(Object.keys(incomingProductQuotas).map((product) => [
+              product,
+              existing.usdUsageByProduct?.[product] || {},
+            ]))
+            : splitLegacyUsdUsage(existing, incomingProductQuotas)
+          : undefined;
+        if (productUsage) {
+          for (const product of Object.keys(productUsage)) {
+            const previousAccountId = this.boundAccountIdFor(existing, product);
+            const incomingAccountId = this.boundAccountIdFor(rec as AccessKeyRecord, product);
+            if (previousAccountId !== incomingAccountId) {
+              resetUpstreamObservation({
+                ...existing,
+                usdUsageByProduct: productUsage,
+              }, product);
+            }
+          }
+        }
+        const usage = usdManaged ? {
+          tokenUsageEvents: keepLegacy ? existing.tokenUsageEvents : [],
+          weeklyTokenUsageEvents: keepLegacy ? existing.weeklyTokenUsageEvents : [],
+          usdUsageByProduct: productUsage,
+          usdUsed5h: incomingProductQuotas ? undefined : trackUsd5h
+            ? transitioningToUsd
+              ? apiValueUsdForEvents(existing.tokenUsageEvents)
+              : usedUsd5h(existing)
+            : undefined,
+          usdUsedWeekly: incomingProductQuotas ? undefined : trackUsdWeekly
+            ? transitioningToUsd
+              ? apiValueUsdForEvents(existing.weeklyTokenUsageEvents)
+              : usedUsdWeekly(existing)
+            : undefined,
+          usdWindowStartedAt5h: incomingProductQuotas ? undefined : trackUsd5h
+            ? transitioningToUsd || legacyUsdWindowFallback
+              ? existing.windowStartedAt
+              : existing.usdWindowStartedAt5h
+            : undefined,
+          usdWindowStartedAtWeekly: incomingProductQuotas ? undefined : trackUsdWeekly
+            ? transitioningToUsd || legacyUsdWindowFallback
+              ? existing.weeklyWindowStartedAt
+              : existing.usdWindowStartedAtWeekly
+            : undefined,
+          windowStartedAt: keepLegacy ? existing.windowStartedAt : undefined,
+          weeklyWindowStartedAt: keepLegacy ? existing.weeklyWindowStartedAt : undefined,
+          firstUsedAt: existing.firstUsedAt,
+        } : {
           tokenUsageEvents: existing.tokenUsageEvents,
           weeklyTokenUsageEvents: existing.weeklyTokenUsageEvents,
           windowStartedAt: existing.windowStartedAt,
@@ -331,38 +937,165 @@ export class AccessKeyStore {
     let s: any;
     try { s = JSON.parse(stateJson); } catch { return; }
     if (!s || typeof s !== "object") return;
-    rec.windowStartedAt = Number(s.windowStartedAt || 0) || undefined;
-    rec.weeklyWindowStartedAt = Number(s.weeklyWindowStartedAt || 0) || undefined;
-    rec.tokenUsageEvents = Array.isArray(s.tokenUsageEvents) ? s.tokenUsageEvents : [];
-    rec.weeklyTokenUsageEvents = Array.isArray(s.weeklyTokenUsageEvents) ? s.weeklyTokenUsageEvents : [];
+    const keepLegacy = !usesUsdQuota(rec) || hasLegacyQuotaProduct(rec);
+    rec.windowStartedAt = keepLegacy ? Number(s.windowStartedAt || 0) || undefined : undefined;
+    rec.weeklyWindowStartedAt = keepLegacy ? Number(s.weeklyWindowStartedAt || 0) || undefined : undefined;
+    if (usesUsdQuota(rec)) {
+      if (rec.usdQuotaByProduct) {
+        if (s.usdUsageByProduct && typeof s.usdUsageByProduct === 'object') {
+          rec.usdUsageByProduct = Object.fromEntries(Object.keys(rec.usdQuotaByProduct).map((product) => [
+            product,
+            s.usdUsageByProduct[product] && typeof s.usdUsageByProduct[product] === 'object'
+              ? s.usdUsageByProduct[product]
+              : {},
+          ]));
+          for (const product of Object.keys(rec.usdQuotaByProduct)) {
+            const usage = rec.usdUsageByProduct[product];
+            const persistedAccountId = Number(usage?.upstreamAccountId || 0);
+            const boundAccountId = this.boundAccountIdFor(rec, product);
+            if (persistedAccountId > 0 && persistedAccountId !== boundAccountId) {
+              resetUpstreamObservation(rec, product);
+            }
+          }
+        } else {
+          const legacySnapshot = {
+            ...rec,
+            usdUsed5h: Number.isFinite(Number(s.usdUsed5h)) ? Math.max(0, Number(s.usdUsed5h)) : apiValueUsdForEvents(s.tokenUsageEvents),
+            usdUsedWeekly: Number.isFinite(Number(s.usdUsedWeekly)) ? Math.max(0, Number(s.usdUsedWeekly)) : apiValueUsdForEvents(s.weeklyTokenUsageEvents),
+            usdWindowStartedAt5h: Number(s.usdWindowStartedAt5h || s.windowStartedAt || 0) || undefined,
+            usdWindowStartedAtWeekly: Number(s.usdWindowStartedAtWeekly || s.weeklyWindowStartedAt || 0) || undefined,
+          };
+          rec.usdUsageByProduct = splitLegacyUsdUsage(
+            legacySnapshot, rec.usdQuotaByProduct, s.tokenUsageEvents, s.weeklyTokenUsageEvents);
+        }
+        rec.usdWindowStartedAt5h = undefined;
+        rec.usdUsed5h = undefined;
+        rec.usdWindowStartedAtWeekly = undefined;
+        rec.usdUsedWeekly = undefined;
+      } else if (usdQuotaLimit(rec.usdLimit5h) > 0) {
+        rec.usdWindowStartedAt5h = Number(s.usdWindowStartedAt5h || s.windowStartedAt || 0) || undefined;
+        rec.usdUsed5h = Number.isFinite(Number(s.usdUsed5h)) ? Math.max(0, Number(s.usdUsed5h)) : apiValueUsdForEvents(s.tokenUsageEvents);
+      } else {
+        rec.usdWindowStartedAt5h = undefined;
+        rec.usdUsed5h = undefined;
+      }
+      if (!rec.usdQuotaByProduct && usdQuotaLimit(rec.usdLimitWeekly) > 0) {
+        rec.usdWindowStartedAtWeekly = Number(s.usdWindowStartedAtWeekly || s.weeklyWindowStartedAt || 0) || undefined;
+        rec.usdUsedWeekly = Number.isFinite(Number(s.usdUsedWeekly)) ? Math.max(0, Number(s.usdUsedWeekly)) : apiValueUsdForEvents(s.weeklyTokenUsageEvents);
+      } else {
+        rec.usdWindowStartedAtWeekly = undefined;
+        rec.usdUsedWeekly = undefined;
+      }
+      rec.tokenUsageEvents = keepLegacy && Array.isArray(s.tokenUsageEvents) ? s.tokenUsageEvents : [];
+      rec.weeklyTokenUsageEvents = keepLegacy && Array.isArray(s.weeklyTokenUsageEvents) ? s.weeklyTokenUsageEvents : [];
+    } else {
+      rec.tokenUsageEvents = Array.isArray(s.tokenUsageEvents) ? s.tokenUsageEvents : [];
+      rec.weeklyTokenUsageEvents = Array.isArray(s.weeklyTokenUsageEvents) ? s.weeklyTokenUsageEvents : [];
+    }
   }
 
   /**
    * 快照所有订阅 record 的实时 5h/周窗口,供 token-server 定时 + 关机持久化到
    * Subscription.windowState。只输出有窗口活动的订阅(无活动的不写,省 DB)。
-   * 行数据小:事件数组本就裁剪在周窗(≤7 天)内。
+   * 美元额度订阅按产品保存紧凑累计值；旧算法仍保存窗口内事件以兼容 Antigravity。
    */
-  serializeSubscriptionWindows(): Array<{ id: string; windowState: string }> {
+  serializeSubscriptionWindows(options: { includeUsd?: boolean } = { includeUsd: true }): Array<{ id: string; windowState: string }> {
     const out: Array<{ id: string; windowState: string }> = [];
     for (const rec of this.subscriptionById.values()) {
       if (!rec?.id) continue;
+      if (options.includeUsd === false && usesUsdQuota(rec) && !hasLegacyQuotaProduct(rec)) continue;
       const hasActivity =
         Number(rec.windowStartedAt || 0) > 0 ||
         Number(rec.weeklyWindowStartedAt || 0) > 0 ||
+        Number(rec.usdWindowStartedAt5h || 0) > 0 ||
+        Number(rec.usdWindowStartedAtWeekly || 0) > 0 ||
+        Number(rec.usdUsed5h || 0) > 0 ||
+        Number(rec.usdUsedWeekly || 0) > 0 ||
+        Object.values(rec.usdUsageByProduct || {}).some((usage) =>
+          Number(usage.windowStartedAt5h || 0) > 0
+          || Number(usage.windowStartedAtWeekly || 0) > 0
+          || Number(usage.used5h || 0) > 0
+          || Number(usage.usedWeekly || 0) > 0
+          || Boolean(usage.upstreamFiveHour)
+          || Boolean(usage.upstreamWeekly)
+        ) ||
         (rec.tokenUsageEvents?.length || 0) > 0 ||
         (rec.weeklyTokenUsageEvents?.length || 0) > 0;
       if (!hasActivity) continue;
-      out.push({
-        id: rec.id,
-        windowState: JSON.stringify({
+      const keepLegacy = !usesUsdQuota(rec) || hasLegacyQuotaProduct(rec);
+      const state = {
+        ...(keepLegacy ? {
           windowStartedAt: rec.windowStartedAt || 0,
           weeklyWindowStartedAt: rec.weeklyWindowStartedAt || 0,
           tokenUsageEvents: rec.tokenUsageEvents || [],
           weeklyTokenUsageEvents: rec.weeklyTokenUsageEvents || [],
-        }),
-      });
+        } : {}),
+        ...(rec.usdQuotaByProduct ? { usdUsageByProduct: rec.usdUsageByProduct || {} } : {}),
+        ...(usdQuotaLimit(rec.usdLimit5h) > 0 ? {
+          usdWindowStartedAt5h: rec.usdWindowStartedAt5h || 0,
+          usdUsed5h: usedUsd5h(rec),
+        } : {}),
+        ...(usdQuotaLimit(rec.usdLimitWeekly) > 0 ? {
+          usdWindowStartedAtWeekly: rec.usdWindowStartedAtWeekly || 0,
+          usdUsedWeekly: usedUsdWeekly(rec),
+        } : {}),
+      };
+      out.push({ id: rec.id, windowState: JSON.stringify(state) });
     }
     return out;
+  }
+
+  snapshotSubscriptionUsage(id: string): string {
+    const record = this.subscriptionById.get(id);
+    if (!record) return "";
+    return JSON.stringify({
+      usdUsageByProduct: record.usdUsageByProduct,
+      usdWindowStartedAt5h: record.usdWindowStartedAt5h,
+      usdUsed5h: record.usdUsed5h,
+      usdWindowStartedAtWeekly: record.usdWindowStartedAtWeekly,
+      usdUsedWeekly: record.usdUsedWeekly,
+      tokenUsageEvents: record.tokenUsageEvents,
+      weeklyTokenUsageEvents: record.weeklyTokenUsageEvents,
+      lastUsedAt: record.lastUsedAt,
+    });
+  }
+
+  restoreSubscriptionUsage(id: string, snapshot: string): void {
+    const record = this.subscriptionById.get(id);
+    if (!record || !snapshot) return;
+    const state = JSON.parse(snapshot);
+    // JSON omits undefined properties. Clear the complete mutable usage surface
+    // before restoring, otherwise a failed first report can leave a newly-created
+    // usdUsageByProduct/window field behind and still consume quota after rollback.
+    for (const key of [
+      'usdUsageByProduct', 'usdWindowStartedAt5h', 'usdUsed5h',
+      'usdWindowStartedAtWeekly', 'usdUsedWeekly', 'tokenUsageEvents',
+      'weeklyTokenUsageEvents', 'lastUsedAt',
+    ] as const) delete (record as any)[key];
+    Object.assign(record, state);
+  }
+
+  /** Snapshot every subscription whose USD state can be changed by one report:
+   * the reporting subscription plus all active subscriptions following the same
+   * mother account's reset epochs. */
+  snapshotUsdMutationScope(cardId: string, accountId: number, product: string): Array<{ id: string; snapshot: string }> {
+    const ids = new Set<string>([cardId, ...this.subscriptionsBoundToAccount(accountId, usdProductKey(product))]);
+    return [...ids]
+      .map((id) => ({ id, snapshot: this.snapshotSubscriptionUsage(id) }))
+      .filter((item) => Boolean(item.snapshot));
+  }
+
+  restoreSubscriptionUsages(snapshots: Array<{ id: string; snapshot: string }>): void {
+    for (const item of snapshots) this.restoreSubscriptionUsage(item.id, item.snapshot);
+  }
+
+  serializeSubscriptionWindowsFor(ids: Iterable<string>): Array<{ id: string; windowState: string }> {
+    const serialized = new Map(this.serializeSubscriptionWindows().map((item) => [item.id, item.windowState]));
+    return [...new Set(ids)].map((id) => ({ id, windowState: serialized.get(id) || '{}' }));
+  }
+
+  forgetUsageReport(cardId: string, reportId: string): void {
+    if (reportId) this.reportDedup.get(cardId)?.delete(reportId);
   }
 
   /**
@@ -385,7 +1118,6 @@ export class AccessKeyStore {
     const sub = this.subscriptionById.get(id);
     const file = this.byId.get(id);
     if (sub && file) {
-      sub.usageEvents = file.usageEvents;
       sub.tokenUsageEvents = file.tokenUsageEvents;
       sub.weeklyTokenUsageEvents = file.weeklyTokenUsageEvents;
       sub.windowStartedAt = file.windowStartedAt;
@@ -461,15 +1193,12 @@ export class AccessKeyStore {
     if (!this.dirty || !this.cache) return;
     this.dirty = false;
     try {
-      const now = Date.now();
+      const now = this.now();
       for (const key of this.cache.keys) {
         if (!key) continue;
         resetWindowIfExpired(key, now);
         const windowStart = Number(key.windowStartedAt || 0);
         if (windowStart > 0) {
-          if (Array.isArray(key.usageEvents)) {
-            key.usageEvents = key.usageEvents.filter((e: any) => e.at >= windowStart);
-          }
           if (Array.isArray(key.tokenUsageEvents)) {
             key.tokenUsageEvents = key.tokenUsageEvents.filter((e: any) => e.at >= windowStart);
           }
@@ -490,8 +1219,8 @@ export class AccessKeyStore {
 
   /**
    * Disk view of the cache: card metadata + counters, WITHOUT the per-request
-   * window event arrays. Those are live rate-limit state kept only in memory —
-   * preserved across reload() and rebuilt from the CardTokenUsage log on boot.
+   * window event arrays. Subscription windows persist in Subscription.windowState;
+   * legacy file-card windows remain process-local until those cards retire.
    * Omitting them keeps access-keys.json small and, critically, avoids
    * JSON.stringify hitting V8's max-string-length on busy cards.
    */
@@ -501,6 +1230,8 @@ export class AccessKeyStore {
       updatedAt: this.cache.updatedAt,
       keys: this.cache.keys.map((k) => {
         if (!k) return k;
+        // Strip all historical per-request arrays if an old access-keys file
+        // still contains them. Runtime quota state lives in DB-backed windows.
         const { usageEvents, tokenUsageEvents, weeklyTokenUsageEvents, ...rest } = k as any;
         return rest as AccessKeyRecord;
       }),
@@ -514,6 +1245,29 @@ export class AccessKeyStore {
     this.readAll();
     // 文件卡(byId)优先,其次订阅 record(subscriptionById)。
     return this.byId.get(cardId) || this.subscriptionById.get(cardId) || null;
+  }
+
+  /**
+   * Console-only corrective action for a DB-backed subscription. Clears one
+   * product window's consumed USD without touching its sibling window, quota
+   * limit, or upstream reset observation. File cards are intentionally excluded.
+   */
+  resetSubscriptionUsdUsage(
+    subscriptionId: string,
+    product: string,
+    scope: 'fiveHour' | 'weekly',
+  ): { previousUsed: number; limit: number } | null {
+    const record = this.subscriptionById.get(subscriptionId);
+    const productKey = usdProductKey(product);
+    if (!record || !productKey || !record.usdQuotaByProduct?.[productKey]) return null;
+    const quota = usdQuotaForProduct(record, productKey);
+    const limit = scope === 'fiveHour' ? quota.fiveHour : quota.weekly;
+    if (!(limit > 0)) return null;
+    const previousUsed = scope === 'fiveHour'
+      ? usedUsd5hForProduct(record, productKey)
+      : usedUsdWeeklyForProduct(record, productKey);
+    clearUsdScopeUsage(record, productKey, scope);
+    return { previousUsed, limit };
   }
 
   findByKey(keyValue: string): AccessKeyRecord | null {
@@ -568,6 +1322,66 @@ export class AccessKeyStore {
       if (this.boundAccountIdFor(rec, providerId) === accountId) out.push(rec.id);
     }
     return out;
+  }
+
+  /**
+   * Synchronize reset epochs from one trusted mother-account snapshot into every
+   * active USD subscription bound to that account. Quota amounts remain fixed;
+   * only the independent 5h/weekly epoch state is updated.
+   */
+  applyUpstreamUsdQuotaSnapshot(
+    accountId: number,
+    product: string,
+    inputs: ProviderQuotaSnapshotInput[] | null | undefined,
+    meta: UpstreamUsdQuotaSnapshotMeta = {},
+  ): number {
+    const quotaProduct = usdProductKey(product);
+    if (accountId <= 0 || !supportsApiUsdProduct(quotaProduct) || !Array.isArray(inputs)) return 0;
+    const input = inputs.find((candidate) => candidate && typeof candidate === 'object');
+    if (!input) return 0;
+
+    const arrivedAt = normalizeObservedAt(meta.arrivedAt, this.now());
+    // Client timestamps may be stale but must never move our ordering clock
+    // into the future and suppress every subsequent legitimate snapshot.
+    const observedAt = Math.min(arrivedAt, normalizeObservedAt(meta.observedAt, arrivedAt));
+    const snapshotId = String(meta.snapshotId || '');
+    const hourlyFraction = normalizeRemainingFraction(input.hourlyPercent);
+    const weeklyFraction = normalizeRemainingFraction(input.weeklyPercent);
+    const hourlyResetAt = resetAtMs(input.hourlyResetAt);
+    const weeklyResetAt = resetAtMs(input.weeklyResetAt);
+    const hasHourly = input.hourlyPresent !== undefined || hourlyFraction !== null || hourlyResetAt !== undefined;
+    const hasWeekly = input.weeklyPresent !== undefined || weeklyFraction !== null || weeklyResetAt !== undefined;
+    if (!hasHourly && !hasWeekly) return 0;
+
+    let touched = 0;
+    for (const subscriptionId of this.subscriptionsBoundToAccount(accountId, quotaProduct)) {
+      const record = this.subscriptionById.get(subscriptionId);
+      if (!record || !usesUsdQuotaForProduct(record, quotaProduct)) continue;
+      const usage = usdProductUsage(record, quotaProduct, true)!;
+      if (Number(usage.upstreamAccountId || 0) !== accountId) {
+        // First observation after rollout or rebind is baseline-only. Existing
+        // personal usage is deliberately preserved.
+        resetUpstreamObservation(record, quotaProduct);
+        usage.upstreamAccountId = accountId;
+      }
+      let changed = false;
+      if (hasHourly) {
+        changed = applyUpstreamWindowSnapshot(record, quotaProduct, 'fiveHour', {
+          present: input.hourlyPresent,
+          fraction: hourlyFraction,
+          resetAt: hourlyResetAt,
+        }, { observedAt, snapshotId }) || changed;
+      }
+      if (hasWeekly) {
+        changed = applyUpstreamWindowSnapshot(record, quotaProduct, 'weekly', {
+          present: input.weeklyPresent,
+          fraction: weeklyFraction,
+          resetAt: weeklyResetAt,
+        }, { observedAt, snapshotId }) || changed;
+      }
+      if (changed) touched += 1;
+    }
+    return touched;
   }
 
   /**
@@ -633,6 +1447,10 @@ export class AccessKeyStore {
     const out: Array<{ cardId: string; weight: number }> = [];
     for (const r of this.getRecordsBoundTo(accountId, providerId)) {
       if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
+      // USD-managed subscriptions keep their hard binding for routing/seat
+      // reservation, but their quota is subscription-local and must not dilute
+      // the legacy fair-share denominator or become a window participant.
+      if (usesUsdQuotaForProduct(r, providerId)) continue;
       const w = Math.floor(Number((r as any).weights?.[providerId] || 0) || Number((r as any).weight ?? 1));
       out.push({ cardId: r.id, weight: Number.isFinite(w) && w >= 1 ? w : 1 });
     }
@@ -640,14 +1458,18 @@ export class AccessKeyStore {
   }
 
   /**
-   * fair-share 保底席位数 N:取该号硬绑主人 config 里的 salesSeatCapacity[product](拼车销售容量,
-   * 目录默认 10);无则回退 ACCOUNT_SHARE_CAPACITY。N 只影响欠卖时的保底/预留(D=max(N,Σw))。
+   * Antigravity 旧算法的固定席位分母：优先读统一 quotaSeatCapacity；
+   * 兼容读取历史 salesSeatCapacity[product]，最后回退默认容量。
    */
   getSeatCapacityFor(accountId: number, providerId: string): number {
     let cap = 0;
     for (const r of this.getRecordsBoundTo(accountId, providerId)) {
       if (isSoftAssignmentPolicy((r as any).assignmentPolicy)) continue;
-      const c = Math.floor(Number((r as any).salesSeatCapacity?.[providerId] || 0));
+      const c = Math.floor(Number(
+        (r as any).quotaSeatCapacity
+        || (r as any).salesSeatCapacity?.[providerId]
+        || 0,
+      ));
       if (Number.isFinite(c) && c > cap) cap = c;
     }
     return cap > 0 ? cap : ACCOUNT_SHARE_CAPACITY;
@@ -750,7 +1572,7 @@ export class AccessKeyStore {
       return { key: keyValue, record: null, error: 'Access key disabled' };
     }
 
-    const now = Date.now();
+    const now = this.now();
     if (!record.firstUsedAt && options.activate) {
       record.firstUsedAt = new Date(now).toISOString();
     }
@@ -766,7 +1588,29 @@ export class AccessKeyStore {
     const aligned = typeof options.alignedResetAt === 'function'
       ? (Number(options.alignedResetAt(record)) || 0)
       : (Number(options.alignedResetAt) || 0);
-    if (aligned <= 0) resetWindowIfExpired(record, now);
+    const productUsdQuota = usdQuotaForProduct(record, options.product);
+    const usd5hLimit = productUsdQuota.fiveHour;
+    const usdWeeklyLimit = productUsdQuota.weekly;
+    const usdManaged = usesUsdQuotaForProduct(record, options.product);
+    const usd5hActive = usd5hLimit > 0 && isUsdScopeActive(record, options.product, 'fiveHour');
+    const usdWeeklyActive = usdWeeklyLimit > 0 && isUsdScopeActive(record, options.product, 'weekly');
+    // USD-managed subscriptions follow their bound upstream epoch when known;
+    // legacy token caps keep the historical account-aligned behavior.
+    if (usdManaged) {
+      if (usd5hLimit > 0) expireUsd5hWindow(record, now, options.product);
+      if (usdWeeklyLimit > 0) expireUsdWeeklyWindow(record, now, options.product);
+    } else if (aligned <= 0) resetWindowIfExpired(record, now);
+
+    if (options.enforceLimit && usd5hActive) {
+      const usedUsd = usedUsd5hForProduct(record, options.product);
+      if (usedUsd + 1e-9 >= usd5hLimit) {
+        return {
+          key: keyValue, record: null, limitExceeded: true,
+          resetMs: usd5hResetMs(record, now, options.product),
+          error: `Access key API-equivalent USD limit exceeded ($${usedUsd.toFixed(2)}/$${usd5hLimit.toFixed(2)}/5h)`,
+        };
+      }
+    }
 
     // 每卡封顶的唯一来源:bucketLimits(按复合桶 `<产品>-<家族>` 设的每模型上限)。
     const hasBucketCaps =
@@ -774,7 +1618,7 @@ export class AccessKeyStore {
       typeof record.bucketLimits === 'object' &&
       Object.values(record.bucketLimits).some((v) => Number(v) > 0);
 
-    if (options.enforceLimit && hasBucketCaps) {
+    if (options.enforceLimit && hasBucketCaps && !usdManaged) {
       const modelKeyStr = String(options.modelKey || '').trim();
 
       if (modelKeyStr) {
@@ -804,9 +1648,19 @@ export class AccessKeyStore {
     // ── Weekly window check (second tier) ──────────────────────────────────
     // 周上限【只认显式配置】(QUOTA-REDESIGN 决策5):weeklyTokenLimit / weeklyBucketLimits。
     // 「cap5h × R 自动派生」已删除(R 无法正确换算 5h→周)。没配显式周上限 → 周维度不拦。
-    resetWeeklyWindowIfExpired(record, now);
+    if (!usdManaged) resetWeeklyWindowIfExpired(record, now);
     if (options.enforceLimit) {
-      const modelKeyStr = String(options.modelKey || '').trim();
+      if (usdWeeklyActive) {
+        const usedUsd = usedUsdWeeklyForProduct(record, options.product);
+        if (usedUsd + 1e-9 >= usdWeeklyLimit) {
+          return {
+            key: keyValue, record: null, limitExceeded: true,
+            resetMs: usdWeeklyResetMs(record, now, options.product),
+            error: `Access key weekly USD limit exceeded ($${usedUsd.toFixed(2)}/$${usdWeeklyLimit.toFixed(2)}/week)`,
+          };
+        }
+      }
+      const modelKeyStr = usdManaged ? '' : String(options.modelKey || '').trim();
       // 无 modelKey(预热/探活)不消费具体桶 → 不拦截(理由同 5h 窗口)。
       if (modelKeyStr) {
         const bucket = requestBucket(options.product, modelKeyStr);
@@ -866,19 +1720,55 @@ export class AccessKeyStore {
    * already seen within the current usage window is NOT counted again, and the
    * method returns false. Returns true when this report was newly counted.
    *
-   * Dedup uses an in-memory ring (reportDedup) keyed by card+reportId, so it
-   * survives lease expiry (a retried/late report for a long-gone lease is still
-   * deduplicated) WITHOUT bloating access-keys.json. Reports without a reportId
-   * (legacy clients) cannot be deduped here; the caller handles their
-   * once-per-success semantics via lease.successfulReportSeen.
+   * This in-memory ring is the compatibility deduper for direct/legacy callers.
+   * The production durable quota path additionally commits QuotaReportReceipt,
+   * window state and CardUsageHourly in one DB transaction, so restart retries
+   * are exactly-once. Reports without a reportId cannot be deduped here; callers
+   * must enforce once-per-success semantics.
    */
-  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = '', serviceTier = ''): boolean {
+  // applyUsdConsumption gates the in-memory USD 5h/weekly increment. USD windows
+  // are persisted ONLY by the per-report durable checkpoint (checkpointUsdReport);
+  // the interval timer + shutdown snapshot deliberately skip USD subs to avoid
+  // clobbering that newer durable head. So an increment applied here for a report
+  // that will NOT be durably checkpointed (no lease → accountId 0, or no
+  // modelKey → empty bucket) is memory-only and silently evaporates on the next
+  // restart — resetting the customer's used-USD to the last checkpoint. Callers
+  // pass false for such reports so we never book un-persistable consumption. This
+  // matches the existing invariant that account-scoped state is not mutated
+  // without a verified lease.
+  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = '', serviceTier = '', applyUsdConsumption = true): boolean {
     if (!cardId) return false;
     const record = this.findById(cardId);
     if (!record) return false;
 
-    const now = Date.now();
-    resetWindowIfExpired(record, now);
+    const now = this.now();
+    const usdManaged = usesUsdQuotaForProduct(record, product);
+    const productQuota = usdQuotaForProduct(record, product);
+    const rawOccurredAt = Number(usage?.occurredAt);
+    const occurredAt = Number.isFinite(rawOccurredAt) && rawOccurredAt > 0
+      ? Math.min(now, rawOccurredAt)
+      : now;
+    if (!usdManaged) resetWindowIfExpired(record, now);
+    else {
+      if (productQuota.fiveHour > 0) expireUsd5hWindow(record, now, product);
+      if (productQuota.weekly > 0) expireUsdWeeklyWindow(record, now, product);
+    }
+    const usd5hActive = productQuota.fiveHour > 0 && isUsdScopeActive(record, product, 'fiveHour');
+    const usdWeeklyActive = productQuota.weekly > 0 && isUsdScopeActive(record, product, 'weekly');
+    const trackUsd5h = usd5hActive
+      && usdEventBelongsToCurrentScope(record, product, 'fiveHour', occurredAt, now);
+    const trackUsdWeekly = usdWeeklyActive
+      && usdEventBelongsToCurrentScope(record, product, 'weekly', occurredAt, now);
+    if (usdManaged && !usd5hActive) {
+      const state = usdProductUsage(record, product);
+      if (state) {
+        state.windowStartedAt5h = undefined;
+        state.used5h = undefined;
+      } else {
+        record.usdWindowStartedAt5h = undefined;
+        record.usdUsed5h = undefined;
+      }
+    }
 
     if (reportId) {
       let seen = this.reportDedup.get(cardId);
@@ -893,35 +1783,62 @@ export class AccessKeyStore {
       }
     }
 
-    const { inputTokens, outputTokens, cachedInputTokens, rawTotalTokens, totalTokens } =
+    const { inputTokens, outputTokens, cachedInputTokens, cacheCreationTokens, rawTotalTokens, totalTokens } =
       this.computeUsageDetail(usage, modelKey, product);
 
     // 累计用量计数已下线:权威用量在 CardUsageHourly(DB)。这里只更新限流窗口事件
     // (下方)+ lastUsedAt;后台单卡「总Token/请求数」改读 CardUsageHourly。
     record.lastUsedAt = new Date(now).toISOString();
-
-    if (!record.usageEvents) record.usageEvents = [];
-    record.usageEvents.push({ at: now, status: Number(status || 0) });
-
     if (totalTokens > 0) {
-      if (!record.tokenUsageEvents) record.tokenUsageEvents = [];
-      record.tokenUsageEvents.push({
-        at: now, status: Number(status || 0),
-        inputTokens, outputTokens, cachedInputTokens,
+      const event = {
+        at: occurredAt, occurredAt, status: Number(status || 0),
+        inputTokens, outputTokens, cachedInputTokens, cacheCreationTokens,
+        cacheWrite5mTokens: Number(usage?.cacheWrite5mTokens ?? cacheCreationTokens ?? 0) || 0,
+        cacheWrite1hTokens: Number(usage?.cacheWrite1hTokens ?? 0) || 0,
+        contextTokens: Number(usage?.contextTokens ?? 0) || 0,
         rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
         // 快速档:让 eventWeightedCost 对本次计费 ×1.5(fast 更快消耗卡额度);空=标准档。
         ...(serviceTier ? { serviceTier } : {}),
-      });
-
-      // Weekly window: dual-write the same event into the weekly array.
-      resetWeeklyWindowIfExpired(record, now);
-      if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
-      record.weeklyTokenUsageEvents.push({
-        at: now, status: Number(status || 0),
-        inputTokens, outputTokens, cachedInputTokens,
-        rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
-        ...(serviceTier ? { serviceTier } : {}),
-      });
+      };
+      if (usdManaged && applyUsdConsumption) {
+        let usd: number;
+        try {
+          usd = apiValueUsdForEvent(event);
+        } catch (error) {
+          // Valuation failures must be retryable: no quota was applied yet.
+          this.forgetUsageReport(cardId, reportId);
+          throw error;
+        }
+        if (trackUsd5h) {
+          const usedBefore = usedUsd5hForProduct(record, product);
+          openUsd5hWindow(record, occurredAt, product);
+          const state = usdProductUsage(record, product, true);
+          if (state) state.used5h = usedBefore + usd;
+          else record.usdUsed5h = usedBefore + usd;
+        }
+        if (trackUsdWeekly) {
+          const usedBefore = usedUsdWeeklyForProduct(record, product);
+          openUsdWeeklyWindow(record, occurredAt, product);
+          const state = usdProductUsage(record, product, true);
+          if (state) state.usedWeekly = usedBefore + usd;
+          else record.usdUsedWeekly = usedBefore + usd;
+        } else if (!usdWeeklyActive) {
+          const state = usdProductUsage(record, product);
+          if (state) {
+            state.windowStartedAtWeekly = undefined;
+            state.usedWeekly = undefined;
+          } else {
+            record.usdWindowStartedAtWeekly = undefined;
+            record.usdUsedWeekly = undefined;
+          }
+        }
+      } else if (!usdManaged) {
+        resetWeeklyWindowIfExpired(record, now);
+        if (!record.tokenUsageEvents) record.tokenUsageEvents = [];
+        record.tokenUsageEvents.push(event);
+        if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
+        record.weeklyTokenUsageEvents.push(event);
+      }
     }
 
     // 用量上报【一律不落 access-keys.json】(运行时不写文件):
@@ -941,20 +1858,54 @@ export class AccessKeyStore {
 
   /** Get public-safe status for an access key. 周数据仅来自显式 weeklyTokenLimit/weeklyBucketLimits
    *  (决策5:cap5h×R 派生已删)。 */
-  publicStatus(record: AccessKeyRecord, alignedResetAt = 0): any {
+  publicStatus(record: AccessKeyRecord, alignedResetAt = 0, product = ''): any {
     if (!record) return null;
-    const now = Date.now();
+    const now = this.now();
     const aligned = Number(alignedResetAt || 0) > 0;
-    if (!aligned) resetWindowIfExpired(record, now);
-    const recentTokens = aligned ? null : recentTokenUsage(record, now);
+    const configuredUsdProducts = record.usdQuotaByProduct
+      ? Object.keys(record.usdQuotaByProduct).filter((key) => usesUsdQuotaForProduct(record, key))
+      : Array.isArray(record.usdQuotaProducts)
+        ? record.usdQuotaProducts.filter((key) => usesUsdQuotaForProduct(record, key))
+        : [];
+    const legacyAggregateUsd = !record.usdQuotaByProduct
+      && !Array.isArray(record.usdQuotaProducts)
+      && usesUsdQuota(record);
+    const selectedUsdProduct = usdProductKey(product || (configuredUsdProducts.length === 1
+      ? configuredUsdProducts[0]
+      : legacyAggregateUsd ? '__legacy__' : ''));
+    const selectedQuota = selectedUsdProduct === '__legacy__'
+      ? { fiveHour: usdQuotaLimit(record.usdLimit5h), weekly: usdQuotaLimit(record.usdLimitWeekly) }
+      : selectedUsdProduct
+      ? usdQuotaForProduct(record, selectedUsdProduct)
+      : { fiveHour: 0, weekly: 0 };
+    const usd5hLimit = selectedQuota.fiveHour;
+    const usdWeeklyLimit = selectedQuota.weekly;
+    const usdManaged = product ? usesUsdQuotaForProduct(record, product) : usesUsdQuota(record);
+    if (record.usdQuotaByProduct) {
+      for (const quotaProduct of configuredUsdProducts) {
+        const quota = usdQuotaForProduct(record, quotaProduct);
+        if (quota.fiveHour > 0) expireUsd5hWindow(record, now, quotaProduct);
+        if (quota.weekly > 0) expireUsdWeeklyWindow(record, now, quotaProduct);
+      }
+    } else if (usdManaged) {
+      if (usd5hLimit > 0) expireUsd5hWindow(record, now, selectedUsdProduct);
+      if (usdWeeklyLimit > 0) expireUsdWeeklyWindow(record, now, selectedUsdProduct);
+    } else if (!aligned) {
+      resetWindowIfExpired(record, now);
+    }
+    const recentTokens = aligned || usdManaged ? null : recentTokenUsage(record, now);
     // Bound cards align their window to the account's upstream reset; the client
     // back-derives its local-quota window end from this, so it must match the
     // server's aligned window rather than the global fixed-period one.
-    const resetMs = alignedResetAt > 0 ? Math.max(0, alignedResetAt - now) : tokenWindowResetMs(record, now);
+    const resetMs = usdManaged
+      ? usd5hResetMs(record, now, selectedUsdProduct)
+      : alignedResetAt > 0
+        ? Math.max(0, alignedResetAt - now)
+        : tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
     // Weekly window【只认显式 weeklyTokenLimit / weeklyBucketLimits】(决策5);cap5h×R 派生已删。
-    resetWeeklyWindowIfExpired(record, now);
+    if (!usdManaged) resetWeeklyWindowIfExpired(record, now);
     const wkLimit = weeklyTokenLimit(record);
     const weeklyCapFor = (bucket: string): number => {
       return this.weeklyBucketCap(record, bucket);
@@ -976,12 +1927,14 @@ export class AccessKeyStore {
     //   static    — card has per-model caps (bucketLimits), use localQuota
     //   dynamic   — bound card without caps, fair-share + upstream controls quota
     //   unlimited — no caps, no binding
-    const quotaMode = hasBucketCaps ? 'static' : (this.hasAnyBinding(record) ? 'dynamic' : 'unlimited');
+    const quotaMode = usdManaged ? 'usd' : hasBucketCaps ? 'static' : (this.hasAnyBinding(record) ? 'dynamic' : 'unlimited');
 
     // Composite product-family buckets this card can use. Sum usage by family for
     // the legacy flat fields below (kept until clients consume `buckets` directly).
     const enumBuckets = bucketsForProducts(products);
-    const bucketUsage = aligned
+    const bucketUsage = usdManaged
+      ? new Map(enumBuckets.map((bucket) => [bucket, 0]))
+      : aligned
       ? new Map(enumBuckets.map((bucket) => [bucket, bucketUsageInWindowReadonly(record, bucket, now, alignedResetAt)]))
       : recentBucketUsage(record, now);
     const recentTotalTokens = [...bucketUsage.values()].reduce((sum, v) => sum + v, 0);
@@ -1003,7 +1956,7 @@ export class AccessKeyStore {
     };
 
     // 周桶(显式或派生);任一桶有周上限即视为有周窗口,据此算用量与 reset。
-    const weeklyBucketsOut = enumBuckets
+    const weeklyBucketsOut = (usdManaged ? [] : enumBuckets)
       .map((bucket) => ({ bucket, limit: weeklyCapFor(bucket) }))
       .filter((b) => b.limit > 0);
     const hasWeekly = weeklyBucketsOut.length > 0;
@@ -1015,13 +1968,45 @@ export class AccessKeyStore {
       name: record.name || '',
       status: record.status || 'active',
       quotaMode,
+      usdQuotaByProduct: Object.fromEntries(configuredUsdProducts.map((quotaProduct) => {
+        const quota = usdQuotaForProduct(record, quotaProduct);
+        const reset5h = usd5hResetMs(record, now, quotaProduct);
+        const resetWeekly = usdWeeklyResetMs(record, now, quotaProduct);
+        return [quotaProduct, {
+          fiveHour: quota.fiveHour > 0 && isUsdScopeActive(record, quotaProduct, 'fiveHour') ? {
+            used: usedUsd5hForProduct(record, quotaProduct), limit: quota.fiveHour,
+            resetMs: reset5h,
+            resetAt: reset5h > 0 ? new Date(now + reset5h).toISOString() : '',
+          } : null,
+          weekly: quota.weekly > 0 && isUsdScopeActive(record, quotaProduct, 'weekly') ? {
+            used: usedUsdWeeklyForProduct(record, quotaProduct), limit: quota.weekly,
+            resetMs: resetWeekly,
+            resetAt: resetWeekly > 0 ? new Date(now + resetWeekly).toISOString() : '',
+          } : null,
+        }];
+      })),
+      // Single-product compatibility for older internal consumers. Multi-product
+      // subscriptions intentionally have no aggregate shared pool.
+      usdQuota: selectedUsdProduct ? {
+        fiveHour: usd5hLimit > 0 && isUsdScopeActive(record, selectedUsdProduct, 'fiveHour') ? {
+          used: usedUsd5hForProduct(record, selectedUsdProduct), limit: usd5hLimit,
+          resetMs, resetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',
+        } : null,
+        weekly: usdWeeklyLimit > 0 && isUsdScopeActive(record, selectedUsdProduct, 'weekly') ? {
+          used: usedUsdWeeklyForProduct(record, selectedUsdProduct), limit: usdWeeklyLimit,
+          resetMs: usdWeeklyResetMs(record, now, selectedUsdProduct),
+          resetAt: usdWeeklyResetMs(record, now, selectedUsdProduct) > 0
+            ? new Date(now + usdWeeklyResetMs(record, now, selectedUsdProduct)).toISOString()
+            : '',
+        } : null,
+      } : null,
       products,
       firstUsedAt: record.firstUsedAt || '',
       expiresAt,
       remainingMs: expiresAt ? Math.max(0, Date.parse(expiresAt) - now) : 0,
       // 累计计数已下线(权威用量在 CardUsageHourly)。recentWindowTokens 仍是限流窗口
       // 的当前用量(内存),客户端额度展示与限流判断都靠它,保留。
-      recentWindowTokens: aligned ? recentTotalTokens : recentTokens!.totalTokens,
+      recentWindowTokens: usdManaged ? 0 : aligned ? recentTotalTokens : recentTokens!.totalTokens,
       // Legacy flat fields (older client contract). Each is the sum across the
       // composite buckets of that family — kept until clients read `buckets`
       // directly. opus≈claude family, gemini, codex≈gpt family.

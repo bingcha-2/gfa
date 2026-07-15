@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func withCodexAPIBase(t *testing.T, base string) {
@@ -12,6 +13,31 @@ func withCodexAPIBase(t *testing.T, base string) {
 	old := CODEX_API_BASE
 	CODEX_API_BASE = base
 	t.Cleanup(func() { CODEX_API_BASE = old })
+}
+
+func TestCodexReportCarriesContextTokens(t *testing.T) {
+	received := make(chan map[string]interface{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		received <- body
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	}))
+	defer srv.Close()
+	withCodexAPIBase(t, srv.URL)
+	l := &CodexLeaser{}
+	l.ReportUsage("card-1", "dev-1", ReportDetails{
+		StatusCode: 200, ModelKey: "gpt-5.6-sol", InputTokens: 300_000,
+		ContextTokens: 300_000, RawTotalTokens: 300_000, BillableTotalTokens: 300_000,
+	}, "", &CodexTokenLease{LeaseId: "lease-context", AccountId: 1})
+	select {
+	case body := <-received:
+		if body["contextTokens"] != float64(300_000) {
+			t.Fatalf("context payload = %#v", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for report")
+	}
 }
 
 // codex 硬额度 429(token limit exceeded)→ 结构化 *QuotaExhaustedError,不重试、不挡路。
@@ -75,7 +101,7 @@ func TestCodexLeaseTokenParsesEgressInfo(t *testing.T) {
 	}
 }
 
-func TestApplyCodexReportResponseRefreshesWeeklyFairShare(t *testing.T) {
+func TestApplyCodexReportResponseIgnoresLegacyFairShare(t *testing.T) {
 	clearBoundFractionsForTest()
 	body, _ := json.Marshal(map[string]interface{}{
 		"ok": true,
@@ -87,12 +113,8 @@ func TestApplyCodexReportResponseRefreshesWeeklyFairShare(t *testing.T) {
 		},
 	})
 	applyCodexReportResponse(body)
-
-	if got := snapshotMyWeeklyFractions()["codex-gpt"]; got != 0.37 {
-		t.Fatalf("weekly fair-share fraction = %v, want 0.37", got)
-	}
-	if got := snapshotAccountFractions()["codex-gpt"]; got != 0.29 {
-		t.Fatalf("account fraction = %v, want 0.29", got)
+	if fairShareCacheHasForTest("codex-gpt") {
+		t.Fatal("Codex legacy fair-share response must not enter local enforcement")
 	}
 }
 

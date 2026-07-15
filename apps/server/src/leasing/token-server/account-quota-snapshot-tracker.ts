@@ -9,9 +9,13 @@
  * 失败静默丢弃 —— 这是可观测历史,非关键计费。
  */
 
+import { ApiWriteQueue } from "./api-write-queue";
+
 const FLUSH_INTERVAL_MS = 10_000; // 10 秒
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const RETENTION_MS = 72 * 60 * 60 * 1000;
+const PRUNE_BATCH = 500;
+const PRUNE_MAX_BATCHES = 20;
 const CHANGE_THRESHOLD_PCT = 0.1; // 水位变化 ≥0.1% 才记一笔
 
 export interface AccountQuotaSnapshotInput {
@@ -60,12 +64,23 @@ export class AccountQuotaSnapshotTracker {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private readonly now: () => number;
+  private readonly writeQueue: ApiWriteQueue;
+  private flushPromise: Promise<void> | null = null;
+  private prunePromise: Promise<void> | null = null;
 
-  constructor(private readonly prisma: any, opts: { now?: () => number; autoStart?: boolean } = {}) {
+  constructor(
+    private readonly prisma: any,
+    opts: { now?: () => number; autoStart?: boolean; writeQueue?: ApiWriteQueue } = {},
+  ) {
     this.now = opts.now || Date.now;
+    this.writeQueue = opts.writeQueue ?? new ApiWriteQueue();
     if (opts.autoStart !== false) {
-      this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
-      this.pruneTimer = setInterval(() => this.pruneOld(), PRUNE_INTERVAL_MS);
+      this.flushTimer = setInterval(() => {
+        if (!this.flushPromise) void this.flush();
+      }, FLUSH_INTERVAL_MS);
+      this.pruneTimer = setInterval(() => {
+        if (!this.prunePromise) void this.pruneOld();
+      }, PRUNE_INTERVAL_MS);
     }
   }
 
@@ -105,6 +120,15 @@ export class AccountQuotaSnapshotTracker {
 
   /** 单批写库。错误捕获不抛 —— 分析数据。 */
   async flush(): Promise<void> {
+    if (this.flushPromise) return this.flushPromise;
+    const pending = this.writeQueue.enqueue(() => this.flushOnce()).finally(() => {
+      this.flushPromise = null;
+    });
+    this.flushPromise = pending;
+    return pending;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
     try {
@@ -115,15 +139,24 @@ export class AccountQuotaSnapshotTracker {
   }
 
   async pruneOld(): Promise<void> {
+    if (this.prunePromise) return this.prunePromise;
+    const pending = this.writeQueue.enqueue(() => this.pruneOldOnce()).finally(() => {
+      this.prunePromise = null;
+    });
+    this.prunePromise = pending;
+    return pending;
+  }
+
+  private async pruneOldOnce(): Promise<void> {
     try {
-      for (let batch = 0; batch < 20; batch++) {
+      for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
         const rows = await this.prisma.accountQuotaSnapshot.findMany({
           where: { timestamp: { lt: new Date(this.now() - RETENTION_MS) } },
-          orderBy: { timestamp: "asc" }, take: 500, select: { id: true },
+          orderBy: { timestamp: "asc" }, take: PRUNE_BATCH, select: { id: true },
         });
         if (rows.length === 0) break;
         await this.prisma.accountQuotaSnapshot.deleteMany({ where: { id: { in: rows.map((row: any) => row.id) } } });
-        if (rows.length < 500) break;
+        if (rows.length < PRUNE_BATCH) break;
       }
     } catch (err) {
       console.error("[account-quota-snapshot-tracker] prune failed:", err);

@@ -38,13 +38,21 @@ describe("API-equivalent pricing", () => {
 
   it("selects long context per request rather than after aggregation", () => {
     expect(calculateApiValue(usage({ inputTokens: 1_000_000, contextTokens: 271_999 })).usd).toBe(5);
-    expect(calculateApiValue(usage({ inputTokens: 1_000_000, contextTokens: 272_000 })).usd).toBe(10);
+    expect(calculateApiValue(usage({ inputTokens: 1_000_000, contextTokens: 272_000 })).usd).toBe(5);
+    expect(calculateApiValue(usage({ inputTokens: 1_000_000, contextTokens: 272_001 })).usd).toBe(10);
   });
 
   it("uses real Standard prices for different GPT models", () => {
     expect(calculateApiValue(usage({ modelId: "gpt-5.6-terra", inputTokens: 1_000_000 })).usd).toBe(2.5);
     expect(calculateApiValue(usage({ modelId: "gpt-5.6-luna", inputTokens: 1_000_000 })).usd).toBe(1);
     expect(calculateApiValue(usage({ modelId: "gpt-5.4-mini-2026-03-17", outputTokens: 1_000_000 })).usd).toBe(4.5);
+    expect(calculateApiValue(usage({ modelId: "gpt-5.4-mini", contextTokens: 1_000_000, inputTokens: 1_000_000 })))
+      .toMatchObject({ usd: 0.75, contextTier: "short", quality: "exact" });
+    expect(calculateApiValue(usage({ modelId: "gpt-5.3-codex", outputTokens: 1_000_000 })).usd).toBe(14);
+    expect(calculateApiValue(usage({ modelId: "gpt-5.2-codex", inputTokens: 1_000_000 })).usd).toBe(1.75);
+    expect(calculateApiValue(usage({ modelId: "gpt-5.1-codex-max", inputTokens: 1_000_000 })).usd).toBe(1.25);
+    expect(calculateApiValue(usage({ modelId: "gpt-5-codex-mini", outputTokens: 1_000_000 })).usd).toBe(2);
+    expect(calculateApiValue(usage({ modelId: "codex-mini-latest", cachedInputTokens: 1_000_000 })).usd).toBe(0.375);
   });
 
   it("uses the published Priority table instead of a global multiplier", () => {
@@ -59,10 +67,37 @@ describe("API-equivalent pricing", () => {
       contextTokens: 300_000,
       inputTokens: 1_000_000,
     }))).toMatchObject({
+      // Flagship (gpt-5.6-sol) Priority rate, not another model's higher rate.
       usd: 10,
       contextTier: "unknown",
       quality: "unsupported-context",
     });
+  });
+
+  it("prices an unknown model at the flagship rate, not the highest active legacy rate", () => {
+    // Unknown Anthropic id → flagship opus-4-8 ($5 in / $25 out), NOT the still-
+    // active legacy opus-4-1 ($15/$75) that the old max-across-active fallback used.
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-9-preview",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 5, quality: "conservative-fallback" });
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-9-preview",
+      outputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 25, quality: "conservative-fallback" });
+    // Unknown Codex id → flagship gpt-5.6-sol short ($5 in / $30 out).
+    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", inputTokens: 1_000_000 })).usd).toBe(5);
+    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", outputTokens: 1_000_000 })).usd).toBe(30);
+  });
+
+  it("marks an unpublished model/mode pairing as conservative", () => {
+    expect(calculateApiValue(usage({
+      modelId: "gpt-5.3-codex",
+      pricingMode: "priority",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ canonicalModelId: "gpt-5.3-codex", quality: "conservative-fallback" });
   });
 
   it("separates Claude cache read, 5m creation, and 1h creation", () => {
@@ -85,7 +120,47 @@ describe("API-equivalent pricing", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       inputTokens: 1_000_000,
-    }))).toMatchObject({ usd: 3, canonicalModelId: "claude-sonnet-5", quality: "exact" });
+      occurredAt: Date.parse("2026-06-01T00:00:00Z"),
+    }))).toMatchObject({ usd: 3, canonicalModelId: "claude-sonnet-4", quality: "exact" });
+  });
+
+  it("uses the current Sonnet 5 introductory price without rewriting the post-promotion price", () => {
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 2, quality: "exact" });
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      inputTokens: 1_000_000,
+      occurredAt: Date.parse("2026-09-01T00:00:00Z"),
+    }))).toMatchObject({ usd: 3, quality: "exact" });
+  });
+
+  it("keeps expensive historical Opus models separate from current Opus", () => {
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-4-1-20250805",
+      outputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 75, canonicalModelId: "claude-opus-4-1", quality: "exact" });
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-opus-4-6-thinking",
+      outputTokens: 1_000_000,
+    }))).toMatchObject({ usd: 25, canonicalModelId: "claude-opus-4-6", quality: "exact" });
+  });
+
+  it("does not mislabel an unpublished product variant as an exact snapshot", () => {
+    expect(calculateApiValue(usage({
+      modelId: "gpt-5.3-codex-spark",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ canonicalModelId: "codex-unknown-conservative", quality: "conservative-fallback" });
+    expect(calculateApiValue(usage({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20990101",
+      inputTokens: 1_000_000,
+    }))).toMatchObject({ canonicalModelId: "anthropic-unknown-conservative", quality: "conservative-fallback" });
   });
 
   it("marks unknown models instead of presenting fallback as exact", () => {

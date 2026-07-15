@@ -2,7 +2,8 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
-import { AccessKeyStore } from "../token-server/access-key-store";
+import { AccessKeyStore, type ResolveResult } from "../token-server/access-key-store";
+import { apiValueUsdForEvent, supportsApiUsdProduct, usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker, fairShareCostMultiplierForServiceTier } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
@@ -47,10 +48,16 @@ export type TokenUsageTracker = {
     outputTokens?: number;
     cachedInputTokens?: number;
     cacheCreationTokens?: number;
+    cacheWrite5mTokens?: number;
+    cacheWrite1hTokens?: number;
+    apiValueUsd?: number;
+    apiPriced?: boolean;
     rawTotalTokens?: number;
     totalTokens?: number;
     reverseProxy?: boolean;
     serviceTier?: string;
+    /** Request occurrence time, used to place delayed reports in the correct hour. */
+    occurredAt?: number;
   }) => void;
 };
 
@@ -325,10 +332,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.accessKeyStore = options.accessKeyStore || new AccessKeyStore(
       options.accessKeysFilePath || `${dataDir}/access-keys.json`,
       provider.billing,
+      options.now || Date.now,
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "13.5.3";
+    this.minClientVersion = options.minClientVersion ?? "13.5.5";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.maxRetainedLeaseRecords = Math.max(
@@ -641,7 +649,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
-    if (hardPinnedAccountId > 0 && this.fairShareTracker) {
+    if (hardPinnedAccountId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(auth.record, this.provider.id)) {
       const bucket = bucketKey(this.provider.id, modelKey);
       const check = this.fairShareTracker.checkFairShare(hardPinnedAccountId, auth.record.id, bucket);
       if (!check.allowed) {
@@ -759,7 +767,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     // Pre-compute account-level and per-card fair-share quota fractions.
     const accountBucketsData = this.accountBucketQuotas(account);
-    const rawFairShare = (hardPinnedAccountId > 0 && this.fairShareTracker)
+    const rawFairShare = (hardPinnedAccountId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(auth.record, this.provider.id))
       ? this.fairShareTracker.getCardQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
     // When fair-share tracker has no data for this card yet (first activation /
@@ -769,13 +777,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // is bypassed.
     const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && hardPinnedAccountId > 0)
       ? Object.fromEntries(
-          Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: Date.now() + 5 * 60 * 60 * 1000 }]),
+          Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: this.now() + 5 * 60 * 60 * 1000 }]),
         )
       : rawFairShare;
 
-    // 周血条:仅启用周窗口的线(codex/anthropic)下发,结构与 fairShareQuota 平行(同 bucket 键)。
-    // 空数据(首次激活/重启/半途加入)保持省略,不能伪造 100%,否则客户端会把未知周份额画成满血。
-    const weeklyTracked = hardPinnedAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
+    // Legacy weekly fair-share is only emitted for non-USD bound products.
+    // Empty data stays omitted rather than pretending an unknown window is full.
+    const weeklyTracked = hardPinnedAccountId > 0 && !usesUsdQuotaForProduct(auth.record, this.provider.id) && this.fairShareTracker?.isWeeklyTracked() === true;
     const rawWeeklyFairShare = weeklyTracked
       ? this.fairShareTracker!.getCardWeeklyQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
@@ -828,7 +836,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
       fairShareQuota,
-      // 周窗口的每卡 fraction(「周血条」),仅 codex/anthropic 绑卡;undefined → JSON 中省略。
+      // Legacy weekly per-card fraction; undefined is omitted.
       ...(weeklyFairShareQuota ? { weeklyFairShareQuota } : {}),
     };
   }
@@ -871,6 +879,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return this.accessKeyStore.publicStatus(
       record,
       this.boundAccountResetAt(record, modelKey),
+      this.provider.id,
     );
   }
 
@@ -885,7 +894,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       : null);
     const accountBucketsData = resolvedAccount ? this.accountBucketQuotas(resolvedAccount) : {};
     const accessKeyStatus = this.publicAccessKeyStatus(record, modelKey);
-    const rawFairShare = (boundAccountId > 0 && this.fairShareTracker)
+    const rawFairShare = (boundAccountId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(record, this.provider.id))
       ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, record.id)
       : undefined;
     const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && boundAccountId > 0)
@@ -894,7 +903,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 5 * 60 * 60 * 1000, share: 1 }]),
         )
       : rawFairShare;
-    const weeklyTracked = boundAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
+    const weeklyTracked = boundAccountId > 0 && !usesUsdQuotaForProduct(record, this.provider.id) && this.fairShareTracker?.isWeeklyTracked() === true;
     const rawWeeklyFairShare = weeklyTracked
       ? this.fairShareTracker!.getCardWeeklyQuotaFractions(boundAccountId, record.id)
       : undefined;
@@ -1104,6 +1113,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
   }
 
+  /**
+   * Seed every fixed-USD subscription with the reset epochs already known by
+   * its bound mother account. Quota reports keep these epochs fresh during
+   * normal traffic, but a subscription that has not made a request since a
+   * restart otherwise falls back to its own use-anchored window. That fallback
+   * can make the customer page say "1 day" while the mother account correctly
+   * says "4 days".
+   *
+   * This runs only after the shared subscription readiness barrier opens, so
+   * subscriptionsBoundToAccount() sees the complete DB-backed membership.
+   * applyUpstreamUsdQuotaSnapshot() treats a first observation as a baseline and
+   * therefore preserves existing customer usage while adopting the real reset.
+   */
+  private syncUsdQuotaSnapshotsFromAccounts(): void {
+    if (!this.provider.quotaSnapshotInputs) return;
+    const arrivedAt = this.now();
+    for (const account of this.readAccounts()) {
+      const inputs = this.provider.quotaSnapshotInputs(account);
+      if (inputs.length === 0) continue;
+      this.accessKeyStore.applyUpstreamUsdQuotaSnapshot(
+        account.id,
+        this.provider.id,
+        inputs,
+        {
+          observedAt: arrivedAt,
+          arrivedAt,
+          snapshotId: `startup:${this.provider.id}:${account.id}:${arrivedAt}`,
+        },
+      );
+    }
+  }
+
   private clampEventTime(value: unknown, minimum: number, maximum: number): number {
     const parsed = typeof value === "number" ? value : Date.parse(String(value || ""));
     if (!Number.isFinite(parsed)) return maximum;
@@ -1118,10 +1159,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async reportResult(req: any, payload: any) {
+    const rawAuthorization = req?.headers?.authorization ?? req?.headers?.Authorization ?? payload?.card ?? '';
+    const credential = Array.isArray(rawAuthorization) ? String(rawAuthorization[0] || '') : String(rawAuthorization || '');
+    // Resolve once before entering the mutation critical section. A customer can
+    // have several valid device JWTs for the same subscription; locking by the
+    // raw JWT would therefore allow those devices to race the same quota state.
+    const auth = await this.accessKeyStore.resolveFromRequest(req, payload, { product: this.provider.id });
+    const reportLeaseId = String(payload?.leaseId || "").trim();
+    const reportLease = reportLeaseId ? this.leases.get(reportLeaseId) : undefined;
+    // A trusted upstream reset snapshot mutates every USD subscription bound to
+    // the served mother account. Subscription-level locks are therefore too
+    // narrow: two customers on the same account could overwrite each other's
+    // reset/usage checkpoint or a failed writer could roll the other one back.
+    // Keep different products/accounts concurrent while serializing the complete
+    // mother-account mutation scope.
+    const usdAccountLock = auth.record
+      && reportLease?.accessKeyId === auth.record.id
+      && usesUsdQuotaForProduct(auth.record, this.provider.id)
+      && reportLease.accountId > 0
+      ? `usd:${this.provider.id}:account:${reportLease.accountId}`
+      : "";
+    return this.accessKeyStore.withUsageReportLock(
+      usdAccountLock || auth.record?.id || credential,
+      () => this.reportResultUnlocked(req, payload, auth),
+    );
+  }
+
+  private async reportResultUnlocked(req: any, payload: any, preResolvedAuth?: ResolveResult) {
     // 多订阅修复:report 也按本线固定 product 解析订阅(与 leaseToken 同口径)。否则 product-less
     // 解析会在「同一账户持多产品订阅」时选成全局最长寿订阅 → 与 lease 记录的订阅 mismatch、
     // 用量记到错订阅甚至 403 上报失败(部分产品白嫖 + 统计错乱)。
-    const auth = await this.accessKeyStore.resolveFromRequest(req, payload, { product: this.provider.id });
+    const auth = preResolvedAuth
+      ?? await this.accessKeyStore.resolveFromRequest(req, payload, { product: this.provider.id });
     // Same machine-code contract as leaseToken for session-JWT failures.
     if (auth.sessionError) {
       throw this.fail(auth.sessionError.statusCode, auth.error || "Unauthorized", {
@@ -1164,12 +1233,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const status = Number(payload?.status || 0);
     const success = status >= 200 && status < 400;
     const reportId = String(payload?.reportId || "").trim();
-    // Dedup key for exactly-once billing. Modern clients send a unique reportId.
-    // Legacy clients (no reportId) still send a leaseId — use it as a stable key so
-    // retried/late reports are deduped via the reportDedup ring even after the
-    // in-memory lease is gone (the lease.successfulReportSeen guard below can only
-    // fire while the lease object is still alive, so without this a no-reportId
-    // retry past lease cleanup would re-bill the card).
+    // Stable idempotency key. Modern clients send a unique reportId; legacy
+    // clients fall back to leaseId. Durable quota algorithms persist this key in
+    // QuotaReportReceipt in the same transaction as quota + hourly accounting;
+    // the in-memory reportDedup ring remains a fallback for legacy algorithms.
     const dedupId = reportId || (leaseId ? `lease:${leaseId}` : "");
     const modelKey = String(payload?.modelKey || lease?.modelKey || "").trim();
     // Account-state mutations (quota snapshot, exhaustion/cooldown, success, stats)
@@ -1186,6 +1253,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const hardBound = !this.isPreferredDynamic(auth.record)
       && this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id) === accountId
       && accountId > 0;
+    const usdManaged = usesUsdQuotaForProduct(auth.record, this.provider.id);
 
     if (!reportId && success && lease?.successfulReportSeen) {
       return acknowledge({
@@ -1193,7 +1261,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       });
     }
-    const usage = this.usageForBilling(payload);
+    const reportArrivedAt = this.now();
+    const requestStartedAt = this.clampEventTime(payload?.requestStartedAt, lease?.createdAt ?? 0, reportArrivedAt);
+    const occurredAt = this.clampEventTime(payload?.upstreamCompletedAt, requestStartedAt, reportArrivedAt);
+    const usage = { ...this.usageForBilling(payload), occurredAt };
     const usageDetail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
     const quotaBucket = modelKey ? bucketKey(this.provider.id, modelKey) : "";
     if (dedupId && this.accessKeyStore.hasUsageReport(cardId, dedupId)) {
@@ -1204,7 +1275,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
     if (
       dedupId
-      && this.fairShareTracker?.isWindowCuEnabled()
+      && this.fairShareTracker
       && await this.fairShareTracker.hasPersistedReport(dedupId)
     ) {
       return acknowledge({
@@ -1212,14 +1283,51 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       });
     }
+
+    const durableUsdReport = Boolean(
+      usdManaged && this.fairShareTracker && dedupId && accountId > 0 && quotaBucket
+      && (success || usageDetail.totalTokens > 0 || (payload?.accountQuota && typeof payload.accountQuota === "object")),
+    );
+    const usdUsageBefore = durableUsdReport
+      ? this.accessKeyStore.snapshotUsdMutationScope(cardId, accountId, this.provider.id)
+      : [];
     if (staleLeaseReport) {
       return acknowledge({
         ok: true, ignored: true, reason: "report_expired",
         accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       });
     }
+
+    // Fixed-USD subscriptions consume the new mother-account epoch before this
+    // report's tokens are billed. Otherwise the first request of a fresh epoch
+    // would be added to the old window and immediately erased by the reset.
+    // Legacy fair-share keeps its historical usage-first ordering below.
+    let accountQuotaSnapshotHandled = false;
+    if (usdManaged && accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
+      accountQuotaSnapshotHandled = true;
+      const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
+      if (accepted) {
+        const account = this.readAccounts().find((candidate) => candidate.id === accountId);
+        if (account) {
+          const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account)
+            ?? this.provider.quotaSnapshotInputs?.(account)
+            ?? [];
+          this.accessKeyStore.applyUpstreamUsdQuotaSnapshot(
+            accountId,
+            this.provider.id,
+            rawInputs,
+            {
+              observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
+              arrivedAt: this.now(),
+              snapshotId: dedupId || String(payload?.traceId || ""),
+            },
+          );
+        }
+      }
+    }
     const durableQuotaReport = Boolean(
       hardBound
+      && !usdManaged
       && dedupId
       && quotaBucket
       && this.fairShareTracker?.isWindowCuEnabled()
@@ -1228,9 +1336,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // In window-cu-v1 the card counters are committed only after the quota
     // checkpoint. If SQLite fails, a retry can replay the same reportId without
     // being trapped by the in-memory dedup ring.
+    // USD consumption is applied in-memory here but persisted ONLY by the durable
+    // checkpoint below (durableUsdReport). A USD report that can't be checkpointed
+    // (no lease / no bucket) must NOT book quota, or that consumption evaporates on
+    // the next restart and hands the customer a free quota reset. Non-USD subs are
+    // unaffected (applyUsdConsumption stays true).
+    const applyUsdConsumption = !usdManaged || durableUsdReport;
     let wasNew = durableQuotaReport
       ? true
-      : this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""));
+      : this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""), applyUsdConsumption);
     if (!wasNew) {
       return acknowledge({
         ok: true, ignored: true, reason: "already_reported",
@@ -1241,16 +1355,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // Fair-share: record weighted usage FIRST (accumulate u_i), gated to hard-bound
     // cards only — pool/universal cards record elsewhere (accessKeyStore + tokenUsage)
     // but never into the per-account fraction-share window.
-    if (hardBound && this.fairShareTracker) {
+    if (hardBound && this.fairShareTracker && !usdManaged) {
       const detail = usageDetail;
       if (detail.totalTokens > 0) {
         const bucket = quotaBucket;
         // Codex 快速档(service_tier=priority)按乘数多扣份额,反映其占用稀缺的共享快速容量。
         const tierMult = fairShareCostMultiplierForServiceTier(String(payload?.serviceTier || ""));
         if (this.fairShareTracker.isWindowCuEnabled()) {
-          const arrivedAt = this.now();
-          const requestStartedAt = this.clampEventTime(payload?.requestStartedAt, lease?.createdAt ?? 0, arrivedAt);
-          const upstreamCompletedAt = this.clampEventTime(payload?.upstreamCompletedAt, requestStartedAt, arrivedAt);
+          const arrivedAt = reportArrivedAt;
+          const upstreamCompletedAt = occurredAt;
           const cacheWrite5mTokens = Math.max(0, Number(payload?.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0));
           const cacheWrite1hTokens = Math.max(0, Number(payload?.cacheWrite1hTokens ?? 0));
           this.fairShareTracker.recordUsageEvent(accountId, bucket, {
@@ -1283,9 +1396,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // Account quota snapshot — applied AFTER recordUsage so the just-recorded u_i
     // is attributed into T_i when syncFairShareQuotaSnapshot merges this segment.
     // (applyAccountQuotaSnapshot also mutates the account + feeds the snapshot tracker.)
-    if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
+    if (!accountQuotaSnapshotHandled && accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
-      if (accepted && this.fairShareTracker) {
+      if (accepted && this.fairShareTracker && !usdManaged) {
         const account = this.readAccounts().find((a) => a.id === accountId);
         if (account) {
           const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account);
@@ -1303,7 +1416,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
       const accounting = detail.totalTokens > 0 ? {
         reportId: dedupId,
-        at: new Date(this.now()),
+        at: new Date(occurredAt),
         accessKeyId: cardId,
         accountEmail: (servingAccount as { email?: string } | undefined)?.email || "",
         customerId: String(auth.record?.customerId || ""),
@@ -1314,6 +1427,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         outputTokens: detail.outputTokens,
         cachedInputTokens: detail.cachedInputTokens,
         cacheCreationTokens: detail.cacheCreationTokens,
+        cacheWrite5mTokens: Math.max(0, Number(usage.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0)),
+        cacheWrite1hTokens: Math.max(0, Number(usage.cacheWrite1hTokens ?? 0)),
+        apiValueUsd: supportsApiUsdProduct(this.provider.id) ? apiValueUsdForEvent({
+          product: this.provider.id, modelKey, serviceTier: String(payload?.serviceTier || ""),
+          inputTokens: detail.inputTokens, outputTokens: detail.outputTokens,
+          cachedInputTokens: detail.cachedInputTokens,
+          cacheWrite5mTokens: usage.cacheWrite5mTokens ?? detail.cacheCreationTokens,
+          cacheWrite1hTokens: usage.cacheWrite1hTokens,
+          contextTokens: usage.contextTokens, occurredAt,
+        }) : 0,
+        apiPriced: supportsApiUsdProduct(this.provider.id),
         rawTotalTokens: detail.rawTotalTokens,
         totalTokens: detail.totalTokens,
         reverseProxy: Boolean(payload?.clientFlag),
@@ -1331,13 +1455,52 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
+    if (durableUsdReport) {
+      const detail = usageDetail;
+      const servingAccount = this.readAccounts().find((a) => a.id === accountId);
+      const write5m = Math.max(0, Number(usage.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0));
+      const write1h = Math.max(0, Number(usage.cacheWrite1hTokens ?? 0));
+      const apiValueUsd = detail.totalTokens > 0 ? apiValueUsdForEvent({
+        product: this.provider.id, modelKey, serviceTier: String(payload?.serviceTier || ""),
+        inputTokens: detail.inputTokens, outputTokens: detail.outputTokens,
+        cachedInputTokens: detail.cachedInputTokens, cacheWrite5mTokens: write5m,
+        cacheWrite1hTokens: write1h, contextTokens: usage.contextTokens, occurredAt,
+      }) : 0;
+      const accounting = detail.totalTokens > 0 ? {
+        reportId: dedupId, at: new Date(occurredAt), accessKeyId: cardId,
+        accountEmail: (servingAccount as { email?: string } | undefined)?.email || "",
+        customerId: String(auth.record?.customerId || ""), modelKey: modelKey || "", bucket: detail.bucket,
+        status, inputTokens: detail.inputTokens, outputTokens: detail.outputTokens,
+        cachedInputTokens: detail.cachedInputTokens, cacheCreationTokens: detail.cacheCreationTokens,
+        cacheWrite5mTokens: write5m, cacheWrite1hTokens: write1h, apiValueUsd, apiPriced: true,
+        rawTotalTokens: detail.rawTotalTokens, totalTokens: detail.totalTokens,
+        reverseProxy: Boolean(payload?.clientFlag), serviceTier: String(payload?.serviceTier || ""),
+      } : undefined;
+      try {
+        const committed = await this.fairShareTracker!.checkpointUsdReport(
+          cardId, accountId, quotaBucket, dedupId,
+          this.accessKeyStore.serializeSubscriptionWindowsFor(usdUsageBefore.map((item) => item.id)), accounting,
+        );
+        if (!committed) {
+          this.accessKeyStore.restoreSubscriptionUsages(usdUsageBefore);
+          this.accessKeyStore.forgetUsageReport(cardId, dedupId);
+          return acknowledge({ ok: true, ignored: true, reason: "already_reported",
+            accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey) });
+        }
+      } catch (error) {
+        this.accessKeyStore.restoreSubscriptionUsages(usdUsageBefore);
+        this.accessKeyStore.forgetUsageReport(cardId, dedupId);
+        throw error;
+      }
+    }
+
     // Per-call token usage log (queryable, persisted to Prisma). Runs only for
     // counted (exactly-once) reports — recordUsage above already deduped. We log
     // the same canonical numbers the card counters persist; skip zero-token
     // reports (errors / capacity rejections carry no usage).
     // window-cu reports already aggregate CardUsageHourly atomically with their
     // durable receipt. Other algorithms retain the buffered legacy path.
-    if (this.tokenUsageTracker && !durableQuotaReport) {
+    if (this.tokenUsageTracker && !durableQuotaReport && !durableUsdReport) {
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         // Stamp the STABLE account identity (email) alongside the volatile positional
@@ -1357,6 +1520,21 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           outputTokens: detail.outputTokens,
           cachedInputTokens: detail.cachedInputTokens,
           cacheCreationTokens: detail.cacheCreationTokens,
+          cacheWrite5mTokens: Math.max(0, Number(usage.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0)),
+          cacheWrite1hTokens: Math.max(0, Number(usage.cacheWrite1hTokens ?? 0)),
+          apiValueUsd: supportsApiUsdProduct(this.provider.id) ? apiValueUsdForEvent({
+            product: this.provider.id,
+            modelKey,
+            serviceTier: String(payload?.serviceTier || ""),
+            inputTokens: detail.inputTokens,
+            outputTokens: detail.outputTokens,
+            cachedInputTokens: detail.cachedInputTokens,
+            cacheWrite5mTokens: usage.cacheWrite5mTokens ?? detail.cacheCreationTokens,
+            cacheWrite1hTokens: usage.cacheWrite1hTokens,
+            contextTokens: usage.contextTokens,
+            occurredAt,
+          }) : 0,
+          apiPriced: supportsApiUsdProduct(this.provider.id),
           rawTotalTokens: detail.rawTotalTokens,
           totalTokens: detail.totalTokens,
           // 反代嫌疑(客户端 detectClaudeCodeClient 命中:非真 Claude Code 客户端)。
@@ -1364,6 +1542,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           reverseProxy: Boolean(payload?.clientFlag),
           // Codex 快速档(service_tier=priority)→ 聚合落 CardUsageHourly.priorityTokens,查 fast 用量占比。
           serviceTier: String(payload?.serviceTier || ""),
+          occurredAt,
         });
       }
     }
@@ -1702,6 +1881,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 429 those users until a rebind.
     const reconcile = async () => {
       try {
+        this.syncUsdQuotaSnapshotsFromAccounts();
         this.fairShareTracker?.refreshAllParticipants();
         await this.fairShareTracker?.flush();
       } catch (err) {
@@ -1989,6 +2169,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       outputTokens: payload?.outputTokens,
       cachedInputTokens: payload?.cachedInputTokens,
       cacheCreationTokens: payload?.cacheCreationTokens,
+      cacheWrite5mTokens: payload?.cacheWrite5mTokens,
+      cacheWrite1hTokens: payload?.cacheWrite1hTokens,
+      contextTokens: payload?.contextTokens,
       rawTotalTokens: payload?.rawTotalTokens,
       totalTokens: payload?.totalTokens,
     };

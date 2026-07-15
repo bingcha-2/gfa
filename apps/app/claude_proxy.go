@@ -207,8 +207,8 @@ func (p *ClaudeProxy) doReportProblem(card, deviceId string, d ReportDetails, up
 //
 // 某个窗口的头本次缺失时,如实上报 -1(未知),【绝不】退回 0 假装"已耗尽"——
 // 上游 200 并不保证每次都带 7d 头,一个缺头的成功响应若被当成 weekly=0 上报,
-// 服务端落库后会把健康号打到最后兜底。-1 是全链路统一的"未知"约定(见 bloodbar
-// 的 AccountFraction、服务端 applyQuotaSnapshot),由数据源头如实表达,服务端不猜。
+// 服务端落库后会把健康号打到最后兜底。-1 是全链路统一的"未知"约定，
+// 由数据源头如实表达，服务端不猜。
 func parseClaudeUnifiedWindows(h http.Header) (hourlyPct, weeklyPct float64, hourlyReset, weeklyReset string, ok bool) {
 	hourlyPct, weeklyPct = -1, -1 // -1 = 该窗口的限流头本次缺失(未知),不是 0
 	remPct := func(key string) (float64, bool) {
@@ -342,15 +342,6 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	reportUserID := extractMetadataUserID(body)                                    // metadata.user_id → 服务端数真实用户
 	reportSessionID := strings.TrimSpace(r.Header.Get("X-Claude-Code-Session-Id")) // 每会话 id → 数 session/分
 
-	// 本地 fair-share 拦截:绑定卡缓存 token 期间服务端取号闸不跑,用回灌的份额血条当场拦
-	// (见 quota_enforcement.go)。无份额数据(号池/静态卡)→ 自然放行。
-	if ok, retryMs, reason := checkBoundFairShare(bucketKey("anthropic", modelKey)); !ok {
-		atomic.AddInt64(&p.totalErrors, 1)
-		audit.note = "本地公平限额拦截:" + reason
-		writeQuotaExhausted(w, &QuotaExhaustedError{RetryAfterMs: retryMs, Reason: reason})
-		return
-	}
-
 	lease, err := p.lease()(card, deviceId, true, map[string]interface{}{
 		"modelKey":  modelKey,
 		"bodyBytes": len(body),
@@ -448,7 +439,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
-			audit.note = "流中断(不上报用量):" + copyErr.Error()
+			audit.note = "流中断(已上报已解析用量):" + copyErr.Error()
 			p.doReportProblem(card, deviceId, details, upstreamProxy, lease)
 			// 头和 200 已发出,改不了状态码;补发一个 SSE error 事件,让 Claude Code 明确知道
 			// 是上游中断而非正常结束(否则只看到流被截断、无错误提示)。
@@ -686,6 +677,7 @@ func claudeReportDetailsFromUsage(status int, modelKey string, u claudeUsage) Re
 		CachedInputTokens:   u.CacheReadInputTokens,
 		CacheWrite5mTokens:  u.CacheWrite5mTokens,
 		CacheWrite1hTokens:  u.CacheWrite1hTokens,
+		ContextTokens:       u.InputTokens,
 		RawTotalTokens:      u.rawTotal(),
 		BillableTotalTokens: u.rawTotal(),
 	}

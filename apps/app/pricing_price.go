@@ -80,7 +80,20 @@ func findAPIPriceModel(provider, modelID string, at time.Time) *apiPriceModel {
 		matchLength := 0
 		for _, alias := range append([]string{model.CanonicalModelID}, model.Aliases...) {
 			normalized := strings.ToLower(strings.TrimSpace(alias))
-			if id == normalized || strings.HasPrefix(id, normalized+"-") {
+			isDatedSnapshot := false
+			if strings.HasPrefix(id, normalized+"-") {
+				suffix := strings.TrimPrefix(id, normalized+"-")
+				datePart := suffix
+				if len(datePart) >= 10 && datePart[4] == '-' && datePart[7] == '-' {
+					datePart = datePart[:10]
+				} else if len(datePart) >= 8 {
+					datePart = datePart[:8]
+				}
+				_, compactErr := time.Parse("20060102", datePart)
+				_, dashedErr := time.Parse("2006-01-02", datePart)
+				isDatedSnapshot = compactErr == nil || dashedErr == nil
+			}
+			if id == normalized || isDatedSnapshot {
 				if len(normalized) > matchLength {
 					matchLength = len(normalized)
 				}
@@ -94,36 +107,115 @@ func findAPIPriceModel(provider, modelID string, at time.Time) *apiPriceModel {
 	return found
 }
 
-func conservativeAPIPrice(provider, mode string, at time.Time) apiTokenPrice {
-	var result apiTokenPrice
-	for _, model := range exactAPIPrices.Models {
-		if model.Provider != provider || !apiModelActiveAt(model, at) {
+// fallbackFlagshipModelID mirrors packages/shared/src/api-pricing.ts
+// FALLBACK_MODEL_IDS. An unrecognized/variant model id must price as the
+// provider's current FLAGSHIP model, not the max across every active SKU —
+// a soon-to-expire legacy premium (e.g. claude-opus-4-1 $15/$75) must not
+// punish routine model-id churn (-thinking/-preview suffixes, next-gen ids
+// not yet in the snapshot) with a 3-5x quota burn.
+var fallbackFlagshipModelID = map[string]string{
+	"anthropic": "claude-opus-4-8",
+	"codex":     "gpt-5.6-sol",
+}
+
+// flagshipAPIPrice returns the configured flagship model's own price for mode,
+// picking its short/long tier by contextTokens. Returns ok=false if no
+// flagship is configured, active, or priced for this mode (caller must fall
+// back to the highest-active-rate envelope).
+func flagshipAPIPrice(provider, mode string, at time.Time, contextTokens int64) (apiTokenPrice, bool) {
+	flagshipID, hasFlagship := fallbackFlagshipModelID[provider]
+	if !hasFlagship {
+		return apiTokenPrice{}, false
+	}
+	normalizedFlagship := strings.ToLower(strings.TrimSpace(flagshipID))
+	var model *apiPriceModel
+	for i := range exactAPIPrices.Models {
+		candidate := &exactAPIPrices.Models[i]
+		if candidate.Provider != provider || !apiModelActiveAt(*candidate, at) {
 			continue
 		}
-		prices, ok := model.Modes[mode]
+		for _, alias := range append([]string{candidate.CanonicalModelID}, candidate.Aliases...) {
+			if strings.ToLower(strings.TrimSpace(alias)) == normalizedFlagship {
+				model = candidate
+				break
+			}
+		}
+		if model != nil {
+			break
+		}
+	}
+	if model == nil {
+		return apiTokenPrice{}, false
+	}
+	prices, ok := model.Modes[mode]
+	if !ok {
+		// Anthropic has no Priority tier — fall back to the flagship's Standard rate.
+		if mode == "standard" {
+			return apiTokenPrice{}, false
+		}
+		prices, ok = model.Modes["standard"]
 		if !ok {
-			continue
+			return apiTokenPrice{}, false
 		}
-		for _, price := range []*apiTokenPrice{prices.Short, prices.Long} {
-			if price == nil {
+	}
+	requested := "short"
+	if model.ContextThreshold > 0 && contextTokens > model.ContextThreshold {
+		requested = "long"
+	}
+	selected := prices.Short
+	if requested == "long" && prices.Long != nil {
+		selected = prices.Long
+	}
+	if selected == nil {
+		selected = prices.Long
+	}
+	if selected == nil {
+		return apiTokenPrice{}, false
+	}
+	return *selected, true
+}
+
+func conservativeAPIPrice(provider, mode string, at time.Time, contextTokens int64) apiTokenPrice {
+	if price, ok := flagshipAPIPrice(provider, mode, at, contextTokens); ok {
+		return price
+	}
+	// Defensive: no flagship configured / active / priced for this mode. Never
+	// return a zero price — fall back to the highest active rate as before.
+	var result apiTokenPrice
+	collect := func(candidateMode string) {
+		for _, model := range exactAPIPrices.Models {
+			if model.Provider != provider || !apiModelActiveAt(model, at) {
 				continue
 			}
-			if price.Input > result.Input {
-				result.Input = price.Input
+			prices, ok := model.Modes[candidateMode]
+			if !ok {
+				continue
 			}
-			if price.CacheRead > result.CacheRead {
-				result.CacheRead = price.CacheRead
-			}
-			if price.CacheWrite5m > result.CacheWrite5m {
-				result.CacheWrite5m = price.CacheWrite5m
-			}
-			if price.CacheWrite1h > result.CacheWrite1h {
-				result.CacheWrite1h = price.CacheWrite1h
-			}
-			if price.Output > result.Output {
-				result.Output = price.Output
+			for _, price := range []*apiTokenPrice{prices.Short, prices.Long} {
+				if price == nil {
+					continue
+				}
+				if price.Input > result.Input {
+					result.Input = price.Input
+				}
+				if price.CacheRead > result.CacheRead {
+					result.CacheRead = price.CacheRead
+				}
+				if price.CacheWrite5m > result.CacheWrite5m {
+					result.CacheWrite5m = price.CacheWrite5m
+				}
+				if price.CacheWrite1h > result.CacheWrite1h {
+					result.CacheWrite1h = price.CacheWrite1h
+				}
+				if price.Output > result.Output {
+					result.Output = price.Output
+				}
 			}
 		}
+	}
+	collect(mode)
+	if mode != "standard" && result == (apiTokenPrice{}) {
+		collect("standard")
 	}
 	return result
 }
@@ -144,33 +236,30 @@ func calculateAPIValue(provider, modelID, mode string, contextTokens, input, out
 	canonical := provider + "-unknown-conservative"
 	var price apiTokenPrice
 	if model == nil {
-		price = conservativeAPIPrice(provider, mode, at)
+		price = conservativeAPIPrice(provider, mode, at, contextTokens)
 		quality, contextTier = "conservative-fallback", "unknown"
 	} else {
 		canonical = model.CanonicalModelID
 		requested := "short"
-		if model.ContextThreshold > 0 && contextTokens >= model.ContextThreshold {
+		if model.ContextThreshold > 0 && contextTokens > model.ContextThreshold {
 			requested = "long"
 		}
 		prices, ok := model.Modes[mode]
 		if !ok {
-			prices = model.Modes["standard"]
-		}
-		selected := prices.Short
-		if requested == "long" {
-			selected = prices.Long
-		}
-		if selected == nil {
-			selected = prices.Short
-			if selected == nil {
-				selected = model.Modes["standard"].Short
-			}
-			quality, contextTier = "unsupported-context", "unknown"
+			price = conservativeAPIPrice(provider, mode, at, contextTokens)
+			quality, contextTier = "conservative-fallback", "unknown"
 		} else {
-			contextTier = requested
-		}
-		if selected != nil {
-			price = *selected
+			selected := prices.Short
+			if requested == "long" {
+				selected = prices.Long
+			}
+			if selected == nil {
+				price = conservativeAPIPrice(provider, mode, at, contextTokens)
+				quality, contextTier = "unsupported-context", "unknown"
+			} else {
+				contextTier = requested
+				price = *selected
+			}
 		}
 	}
 	usd := (positiveTokens(input)*price.Input + positiveTokens(output)*price.Output +

@@ -62,7 +62,7 @@ describe("recoverUsageTier", () => {
 });
 
 describe("normalizeSubscription — bind line (catalog card with redesign bugs)", () => {
-  it("flips preferred-dynamic→pinned, strips stale static caps, fills salesSeatCapacity, keeps bindings", () => {
+  it("flips preferred-dynamic→pinned, strips stale static caps, fills quotaSeatCapacity, keeps bindings", () => {
     // 复刻导出里的真实形态:max-20x、shareSeats=2、preferred-dynamic、带 bucketLimits/weeklyBucketLimits。
     const effective = {
       line: "bind",
@@ -85,7 +85,8 @@ describe("normalizeSubscription — bind line (catalog card with redesign bugs)"
     expect(config.assignmentPolicy).toBe("pinned");
     expect(config.bucketLimits).toBeUndefined();
     expect(config.weeklyBucketLimits).toBeUndefined();
-    expect(config.salesSeatCapacity).toEqual({ anthropic: 10 });
+    expect(config.quotaSeatCapacity).toBe(12);
+    expect(config.salesSeatCapacity).toBeUndefined();
     expect(config.shareSeats).toBe(2);
     expect(config.weight).toBe(2);
     expect(config.shareCapacity).toBe(8);
@@ -121,7 +122,7 @@ describe("normalizeSubscription — legacy migrated card (empty config, no level
     expect(config.assignmentPolicy).toBe("pinned");
     expect(config.levels).toEqual({ codex: "pro" }); // catalog 默认档位
     expect(config.bindings).toEqual({ codex: 8 });
-    expect(config.salesSeatCapacity).toEqual({ codex: 10 });
+    expect(config.quotaSeatCapacity).toBe(12);
     expect(selection).toEqual({
       line: "bind",
       items: [{ product: "codex", level: "pro" }],

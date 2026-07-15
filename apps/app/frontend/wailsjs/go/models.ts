@@ -531,35 +531,223 @@ export namespace main {
 	        this.severity = source["severity"];
 	    }
 	}
-	export class ProductQuotaWindow {
-	    hourlyPercent?: number;
-	    weeklyPercent?: number;
-	    hourlyResetAt: string;
-	    weeklyResetAt: string;
-	    myHourlyFraction?: number;
-	    myWeeklyFraction?: number;
-	    myPersonalHourlyFraction?: number;
-	    myPersonalWeeklyFraction?: number;
-	    myShare?: number;
-	    exclusive?: boolean;
+	export class HourlyRecord {
+	    byModel?: Record<string, ModelUsageRecord>;
+	    hour: string;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cachedTokens: number;
+	    cacheWriteTokens: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new ProductQuotaWindow(source);
+	        return new HourlyRecord(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.hourlyPercent = source["hourlyPercent"];
-	        this.weeklyPercent = source["weeklyPercent"];
-	        this.hourlyResetAt = source["hourlyResetAt"];
-	        this.weeklyResetAt = source["weeklyResetAt"];
-	        this.myHourlyFraction = source["myHourlyFraction"];
-	        this.myWeeklyFraction = source["myWeeklyFraction"];
-	        this.myPersonalHourlyFraction = source["myPersonalHourlyFraction"];
-	        this.myPersonalWeeklyFraction = source["myPersonalWeeklyFraction"];
-	        this.myShare = source["myShare"];
-	        this.exclusive = source["exclusive"];
+	        this.byModel = this.convertValues(source["byModel"], ModelUsageRecord, true);
+	        this.hour = source["hour"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cachedTokens = source["cachedTokens"];
+	        this.cacheWriteTokens = source["cacheWriteTokens"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ModelUsageRecord {
+	    modelKey: string;
+	    displayName: string;
+	    family: string;
+	    requests: number;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cachedTokens: number;
+	    cacheWriteTokens: number;
+	    totalTokens: number;
+	    estimatedCostUSD: number;
+	    pricingVersion?: string;
+	    pricingMode?: string;
+	    pricingQuality?: string;
+	    fastTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsageRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.modelKey = source["modelKey"];
+	        this.displayName = source["displayName"];
+	        this.family = source["family"];
+	        this.requests = source["requests"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cachedTokens = source["cachedTokens"];
+	        this.cacheWriteTokens = source["cacheWriteTokens"];
+	        this.totalTokens = source["totalTokens"];
+	        this.estimatedCostUSD = source["estimatedCostUSD"];
+	        this.pricingVersion = source["pricingVersion"];
+	        this.pricingMode = source["pricingMode"];
+	        this.pricingQuality = source["pricingQuality"];
+	        this.fastTokens = source["fastTokens"];
+	    }
+	}
+	export class DailyRecord {
+	    date: string;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cachedTokens: number;
+	    cacheWriteTokens: number;
+	    billableTokens: number;
+	    requests: number;
+	    errors: number;
+	    retries: number;
+	    generations: number;
+	    savedMoneyUSD: number;
+	    byModel?: Record<string, ModelUsageRecord>;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cachedTokens = source["cachedTokens"];
+	        this.cacheWriteTokens = source["cacheWriteTokens"];
+	        this.billableTokens = source["billableTokens"];
+	        this.requests = source["requests"];
+	        this.errors = source["errors"];
+	        this.retries = source["retries"];
+	        this.generations = source["generations"];
+	        this.savedMoneyUSD = source["savedMoneyUSD"];
+	        this.byModel = this.convertValues(source["byModel"], ModelUsageRecord, true);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ServerUsageSummary {
+	    today: DailyRecord;
+	    dailyHistory: DailyRecord[];
+	    hourlyHistory: HourlyRecord[];
+	    chartMode: string;
+	    cumulativeSaving: number;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerUsageSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.today = this.convertValues(source["today"], DailyRecord);
+	        this.dailyHistory = this.convertValues(source["dailyHistory"], DailyRecord);
+	        this.hourlyHistory = this.convertValues(source["hourlyHistory"], HourlyRecord);
+	        this.chartMode = source["chartMode"];
+	        this.cumulativeSaving = source["cumulativeSaving"];
+	        this.source = source["source"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SubscriptionUsdQuotaWindow {
+	    used: number;
+	    limit: number;
+	    resetAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionUsdQuotaWindow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.used = source["used"];
+	        this.limit = source["limit"];
+	        this.resetAt = source["resetAt"];
+	    }
+	}
+	export class SubscriptionProductUsdQuota {
+	    fiveHour?: SubscriptionUsdQuotaWindow;
+	    weekly?: SubscriptionUsdQuotaWindow;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionProductUsdQuota(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fiveHour = this.convertValues(source["fiveHour"], SubscriptionUsdQuotaWindow);
+	        this.weekly = this.convertValues(source["weekly"], SubscriptionUsdQuotaWindow);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SubscriptionSnapshot {
 	    id: string;
@@ -569,8 +757,9 @@ export namespace main {
 	    priority: number;
 	    products: string[];
 	    levels: Record<string, string>;
-	    remainFraction?: number;
-	    productQuota?: Record<string, ProductQuotaWindow>;
+	    usdQuotaByProduct?: Record<string, SubscriptionProductUsdQuota>;
+	    exclusive: boolean;
+	    shareSeats: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SubscriptionSnapshot(source);
@@ -585,8 +774,9 @@ export namespace main {
 	        this.priority = source["priority"];
 	        this.products = source["products"];
 	        this.levels = source["levels"];
-	        this.remainFraction = source["remainFraction"];
-	        this.productQuota = this.convertValues(source["productQuota"], ProductQuotaWindow, true);
+	        this.usdQuotaByProduct = this.convertValues(source["usdQuotaByProduct"], SubscriptionProductUsdQuota, true);
+	        this.exclusive = source["exclusive"];
+	        this.shareSeats = source["shareSeats"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -619,11 +809,13 @@ export namespace main {
 	    userToken: string;
 	    userTokenExpiry: string;
 	    userEmail: string;
+	    userId: string;
 	    planName: string;
 	    planExpiry: string;
 	    planDeviceMax: number;
 	    deviceName: string;
 	    subscriptions: SubscriptionSnapshot[];
+	    serverUsage?: ServerUsageSummary;
 	    codexMode: string;
 	    codexRelayBase: string;
 	    codexRelayKey: string;
@@ -648,11 +840,13 @@ export namespace main {
 	        this.userToken = source["userToken"];
 	        this.userTokenExpiry = source["userTokenExpiry"];
 	        this.userEmail = source["userEmail"];
+	        this.userId = source["userId"];
 	        this.planName = source["planName"];
 	        this.planExpiry = source["planExpiry"];
 	        this.planDeviceMax = source["planDeviceMax"];
 	        this.deviceName = source["deviceName"];
 	        this.subscriptions = this.convertValues(source["subscriptions"], SubscriptionSnapshot);
+	        this.serverUsage = this.convertValues(source["serverUsage"], ServerUsageSummary);
 	        this.codexMode = source["codexMode"];
 	        this.codexRelayBase = source["codexRelayBase"];
 	        this.codexRelayKey = source["codexRelayKey"];
@@ -679,6 +873,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class DetectedPaths {
 	    idePath: string;
 	    hubPath: string;
@@ -775,6 +970,7 @@ export namespace main {
 	        this.lastError = source["lastError"];
 	    }
 	}
+	
 	export class IDEProduct {
 	    id: string;
 	    name: string;
@@ -924,6 +1120,9 @@ export namespace main {
 	        this.note = source["note"];
 	    }
 	}
+	
+	
+	
 	
 	export class UpdateStatus {
 	    status: string;

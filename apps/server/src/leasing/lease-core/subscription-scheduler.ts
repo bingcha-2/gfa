@@ -9,6 +9,7 @@
  * 无副作用:预检全只读(precheckRecord 用 dryRun、checkFairShare 本就只读)。
  */
 import type { AccessKeyRecord, AccessKeyStore } from "../token-server/access-key-store";
+import { usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
 
 type FairShareLike = { checkFairShare(accountId: number, cardId: string, bucket: string): { allowed: boolean } };
 
@@ -51,7 +52,7 @@ export class SubscriptionScheduler {
         (Array.isArray((cand as any).products) && (cand as any).products.includes(q.providerId));
       if (!serves) continue;
       // 闸①② bucketLimits + weekly(只读预检)
-      const pre = this.store.precheckRecord(cand, { ...q.precheckOptions, enforceLimit: true });
+      const pre = this.store.precheckRecord(cand, { ...q.precheckOptions, product: q.providerId, enforceLimit: true });
       if (!pre.allowed) {
         const r = Number(pre.resetMs || 0);
         if (r > 0 && (earliestReset === 0 || r < earliestReset)) earliestReset = r;
@@ -59,7 +60,7 @@ export class SubscriptionScheduler {
       }
       // 闸③ fair-share —— 仅当该订阅绑了上游母号(各订阅用各自的 boundAccountId)
       const boundId = this.store.boundAccountIdFor(cand, q.providerId);
-      if (boundId > 0 && this.fairShareTracker) {
+      if (boundId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(cand, q.providerId)) {
         const fs = this.fairShareTracker.checkFairShare(boundId, cand.id, q.bucket);
         if (!fs.allowed) {
           // 闸③ 也要累加恢复时间,否则纯 fair-share 触发的 429 不带 retryAfterMs,

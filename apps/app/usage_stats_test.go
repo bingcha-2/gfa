@@ -28,6 +28,49 @@ func TestAtomicWriteFileReplacesWholeFile(t *testing.T) {
 	}
 }
 
+func TestUsageStatsNamespacesAreIsolatedByServerUserID(t *testing.T) {
+	origConfigDir = t.TempDir()
+	defer func() { origConfigDir = "" }()
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+	s.SwitchNamespace("customer-a")
+	s.AddTokens("gpt", 123, 0, 0, 123)
+	s.Save()
+	s.SwitchNamespace("customer-b")
+	if got := s.GetTodayRecord().InputTokens; got != 0 {
+		t.Fatalf("customer-b inherited customer-a local usage: %d", got)
+	}
+	s.AddTokens("gpt", 456, 0, 0, 456)
+	s.Save()
+	s.SwitchNamespace("customer-a")
+	if got := s.GetTodayRecord().InputTokens; got != 123 {
+		t.Fatalf("customer-a usage = %d, want 123", got)
+	}
+	if _, err := os.Stat(filepath.Join(origConfigDir, "usage_stats.customer-a.json")); err != nil {
+		t.Fatalf("missing customer-a file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(origConfigDir, "usage_stats.customer-b.json")); err != nil {
+		t.Fatalf("missing customer-b file: %v", err)
+	}
+}
+
+func TestUsageStatsLegacyFileMigratesOnlyOnce(t *testing.T) {
+	origConfigDir = t.TempDir()
+	defer func() { origConfigDir = "" }()
+	legacy := `{"records":{"2026-07-14":{"date":"2026-07-14","inputTokens":77}},"hourlyRecords":{}}`
+	if err := os.WriteFile(filepath.Join(origConfigDir, "usage_stats.json"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+	s.SwitchNamespace("customer-first")
+	if s.Records["2026-07-14"].InputTokens != 77 {
+		t.Fatal("first user did not receive legacy history")
+	}
+	s.SwitchNamespace("customer-second")
+	if len(s.Records) != 0 {
+		t.Fatal("legacy history was copied into a second user")
+	}
+}
+
 func TestSyncParentDirectorySkipsUnsupportedWindowsDirectoryFsync(t *testing.T) {
 	// The path deliberately does not exist. Windows must not try to open/sync it:
 	// os.File.Sync on a directory returns ERROR_ACCESS_DENIED there even after the
@@ -50,7 +93,7 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 	if row.EstimatedCostUSD < 18.27885-1e-9 || row.EstimatedCostUSD > 18.27885+1e-9 {
 		t.Fatalf("recalculated cost = %v", row.EstimatedCostUSD)
 	}
-	if row.PricingVersion != "api-pricing-2026-07-11" || row.PricingQuality != "recalculated-aggregate" {
+	if row.PricingVersion != "api-pricing-2026-07-14" || row.PricingQuality != "recalculated-aggregate" {
 		t.Fatalf("migration metadata = %+v", row)
 	}
 	if repriceModelUsage(row, mustUsageDate("2026-07-11")) {
@@ -60,28 +103,29 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 
 func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
-	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的保守最高价。
-	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 1M*10 + 0.2M*50 = 20
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 20 {
-		t.Fatalf("claude saved = %v, want 20", got)
+	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的主力模型价
+	// (不是全部在用型号里最贵的那个,避免临期旧型号把回退价顶得虚高)。
+	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 主力 Opus 4.8:1M*5 + 0.2M*25 = 10
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 10 {
+		t.Fatalf("claude saved = %v, want 10", got)
 	}
-	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 22
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 22 {
-		t.Fatalf("after gemini saved = %v, want 22", got)
+	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 12
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 12 {
+		t.Fatalf("after gemini saved = %v, want 12", got)
 	}
 }
 
 func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
 
-	s.AddModelTokens("claude", "claude-sonnet-4-20250514", 100, 260, 3000, 42360, false)
+	s.AddModelTokens("claude", "claude-sonnet-4-6", 100, 260, 3000, 42360, false)
 
 	rec := s.GetTodayRecord()
-	row := rec.ByModel["claude-sonnet-4-20250514"]
+	row := rec.ByModel["claude-sonnet-4-6"]
 	if row == nil {
 		t.Fatalf("missing model breakdown: %+v", rec.ByModel)
 	}
-	if row.ModelKey != "claude-sonnet-4-20250514" || row.Family != "claude" || row.DisplayName != "Claude Sonnet" {
+	if row.ModelKey != "claude-sonnet-4-6" || row.Family != "claude" || row.DisplayName != "Claude Sonnet" {
 		t.Fatalf("model identity = %+v", row)
 	}
 	if row.Requests != 1 {
@@ -99,14 +143,14 @@ func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
 	}
 
 	days := s.GetDailyRecords(1)
-	if got := days[0].ByModel["claude-sonnet-4-20250514"]; got == nil || got.TotalTokens != 42360 {
+	if got := days[0].ByModel["claude-sonnet-4-6"]; got == nil || got.TotalTokens != 42360 {
 		t.Fatalf("daily history did not include model breakdown: %+v", days[0].ByModel)
 	}
 	hour := s.HourlyRecords[hourKey()]
 	if hour == nil {
 		t.Fatalf("missing current hourly record")
 	}
-	hourlyRow := hour.ByModel["claude-sonnet-4-20250514"]
+	hourlyRow := hour.ByModel["claude-sonnet-4-6"]
 	if hourlyRow == nil || hourlyRow.TotalTokens != 42360 {
 		t.Fatalf("hourly model breakdown = %+v", hour.ByModel)
 	}
@@ -196,11 +240,12 @@ func TestAddModelTokensFastUsesOfficialPriorityAndTracksFastTokens(t *testing.T)
 		t.Fatalf("标准档 row = %+v, want long-context cost=10 fastTokens=0", std)
 	}
 
-	// Priority 暂未发布 long 档,明确回退其 short 官方价 $12.5/M,累计 $22.5。
+	// Priority 暂未发布 long 档,明确回退主力模型(gpt-5.6-sol)的 short 官方价
+	// $10/M(而非取全部在用型号里最贵的 $12.5/M),累计 $20。
 	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, true)
 	row := s.GetTodayRecord().ByModel["gpt-5.5"]
-	if got := row.EstimatedCostUSD; got < 22.5-1e-9 || got > 22.5+1e-9 {
-		t.Fatalf("fast 后成本 = %v, want 22.5", got)
+	if got := row.EstimatedCostUSD; got < 20-1e-9 || got > 20+1e-9 {
+		t.Fatalf("fast 后成本 = %v, want 20", got)
 	}
 	if row.FastTokens != 1_000_000 {
 		t.Fatalf("FastTokens = %d, want 1000000", row.FastTokens)
@@ -259,9 +304,10 @@ func TestAddTokensBillableAndCacheWrite(t *testing.T) {
 	if rec.BillableTokens != 39660 {
 		t.Fatalf("billable = %d, want 39660", rec.BillableTokens)
 	}
-	// 缺模型 id 时按 api-pricing.json 中 Anthropic 的保守最高价：
-	// net入100*10 + 出260*50 + 缓存读3000*1 + 缓存写39000*12.5 = 0.5045 USD。
-	want := 0.5045
+	// 缺模型 id 时按 api-pricing.json 中 Anthropic 的主力模型价(Opus 4.8,
+	// 不是全部在用型号里最贵的旧 Opus 4.1)：
+	// net入100*5 + 出260*25 + 缓存读3000*0.5 + 缓存写39000*6.25 = 0.25225 USD。
+	want := 0.25225
 	if got := rec.SavedMoneyUSD; got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("saved(含缓存) = %v, want %v", got, want)
 	}

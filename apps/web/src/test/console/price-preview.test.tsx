@@ -28,6 +28,17 @@ const CONFIG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
+      usdQuotaPerSeat: {
+        anthropic: {
+          pro: { fiveHour: 1.5, weekly: 15.833333 },
+          "max-5x": { fiveHour: 7.5, weekly: 79.166667 },
+          "max-20x": { fiveHour: 30, weekly: 158.333333 },
+        },
+        codex: {
+          plus: { fiveHour: 0, weekly: 72.916667 },
+          pro: { fiveHour: 0, weekly: 291.666667 },
+        },
+      },
       share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
@@ -68,6 +79,28 @@ describe("PricePreview unified bind line", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "增加" }));
     expect(total()).toBe("¥63.75");
+  });
+
+  it("shows configured quota totals for the selected level and seats, and follows form edits", () => {
+    const { rerender } = render(<PricePreview form={FORM} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    const group = screen.getByRole("radiogroup", { name: /Codex/ });
+    fireEvent.click(within(group).getByRole("radio", { name: "pro" }));
+    fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));
+
+    let quota = screen.getByTestId("preview-usd-quota");
+    expect(quota).toHaveTextContent("配置额度");
+    expect(quota).toHaveTextContent("2 份合计");
+    expect(quota).toHaveTextContent("5 小时 未启用");
+    expect(quota).toHaveTextContent("每周 $583.333334");
+
+    const edited = structuredClone(FORM);
+    edited.pricing.bind.usdQuotaPerSeat!.codex.pro.weekly = "200";
+    rerender(<PricePreview form={edited} />);
+
+    quota = screen.getByTestId("preview-usd-quota");
+    expect(quota).toHaveTextContent("每周 $400");
   });
 
 });

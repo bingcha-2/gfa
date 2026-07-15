@@ -1,30 +1,30 @@
 {
-  "version": "13.5.3",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.3/BingchaAI-13.5.3.exe",
-  "sha256": "DC7C0A6E8878F29FB694BBDE99E144A30F6BC81005F0BEA0CBFC5EBE7728730D",
-  "size": 54384640,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.3/BingchaAI-13.5.3-setup.exe",
-  "installerSha256": "65933EBDD384F19C67B0D025FA0B0BBAF2E3E135FE584564A7156C5B233C3ACB",
-  "installerSize": 21030510,
-  "changelog": "-修复订阅发放页面兼容性。\\n-修复额度未知状态显示。",
-  "minVersion": "13.5.3",
+  "version": "13.5.5",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.5/BingchaAI-13.5.5.exe",
+  "sha256": "85427F10AF300FAAE719BEF8E47099E29C068D7B8874C6DCA64DF71E033ADF54",
+  "size": 54350848,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.5/BingchaAI-13.5.5-setup.exe",
+  "installerSha256": "720D045E97EAC15745F67DE8465A5F8D966F15DA8B8499E15642BC8AB8FBF508",
+  "installerSize": 21020089,
+  "changelog": "连接稳定性与后台性能优化",
+  "minVersion": "13.5.5",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.3/BingchaAI-13.5.3-arm64.dmg",
-      "sha256": "448D504FF165556A72771580E5815B316204C5CA198C1C4FA9DA8C0791B7BE2B",
-      "size": 20717377
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.5/BingchaAI-13.5.5-arm64.dmg",
+      "sha256": "D6F0DE3045E363F5B677816305FCC1F46D16AAA25790BC9E0ED770AD8ACF53A7",
+      "size": 19881523
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.3/BingchaAI-13.5.3-amd64.dmg",
-      "sha256": "6497333AF809304DECF98C231F3762A2C35F648CBEEF834CF683F73FF8460698",
-      "size": 22881113
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.5/BingchaAI-13.5.5-amd64.dmg",
+      "sha256": "504D15741DE02CAA5F8841AD989C316693D2FB97A7B6C17542E963A18322CEBC",
+      "size": 22863633
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.3/BingchaAI-13.5.3-linux-amd64.tar.gz",
-      "sha256": "73B1E7ED26FBFAD066EC2F77BB94E20DE773F714BECD797754608AF62932E808",
-      "size": 18441710
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.5.5/BingchaAI-13.5.5-linux-amd64.tar.gz",
+      "sha256": "6143A1FE3DC4B66A69036F335A435B54891011BD7089FE153761C2BEA20F189B",
+      "size": 18434568
     }
   }
 }

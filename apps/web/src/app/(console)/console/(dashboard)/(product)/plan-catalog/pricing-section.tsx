@@ -2,8 +2,9 @@
 
 import { Separator } from "@/components/ui/separator";
 
-import { YuanInput } from "./form-bits";
+import { NumberInput, YuanInput } from "./form-bits";
 import { productLabel } from "./catalog-defaults";
+import { QuotaReferencePanel } from "./quota-reference-panel";
 import type {
   BindPricingForm,
   ProductRow,
@@ -18,6 +19,7 @@ function seatLabel(n: number): string {
 export interface PricingSectionProps {
   products: ProductRow[];
   bind: BindPricingForm;
+  oversellFactor?: string;
   onBindChange: (next: BindPricingForm) => void;
   disabled?: boolean;
 }
@@ -25,6 +27,7 @@ export interface PricingSectionProps {
 export function PricingSection({
   products,
   bind,
+  oversellFactor,
   onBindChange,
   disabled,
 }: PricingSectionProps) {
@@ -32,7 +35,12 @@ export function PricingSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <PriceGroup title="等级价格矩阵(产品 x 等级)">
+      <QuotaReferencePanel oversellFactor={oversellFactor} />
+
+      <PriceGroup title="等级价格与每份美元额度">
+        <p className="text-xs text-muted-foreground">
+          订阅总额度 = 每份额度 × 购买份数。超卖比例只控制最大可售份数，不会摊薄个人额度。
+        </p>
         {enabled.length === 0 ? (
           <EmptyHint />
         ) : (
@@ -45,10 +53,17 @@ export function PricingSection({
                 </p>
               ) : (
                 <div className="flex flex-col gap-2">
+                  <div className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem_7rem] gap-2 text-[11px] text-muted-foreground">
+                    <span>等级</span>
+                    <span>价格</span>
+                    <span>每份 · 5 小时</span>
+                    <span>每份 · 周</span>
+                  </div>
                   {row.levels.map((level) => (
-                    <PriceRow key={level} label={level} mono>
+                    <div key={level} className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem_7rem] items-center gap-2">
+                      <span className="font-mono text-xs">{level}</span>
                       <YuanInput
-                        className="w-32"
+                        className="w-28"
                         value={bind.levelPrice[row.product]?.[level] ?? ""}
                         onChange={(v) =>
                           onBindChange({
@@ -65,7 +80,29 @@ export function PricingSection({
                         disabled={disabled}
                         aria-label={`绑定 ${productLabel(row.product)} ${level} 价格`}
                       />
-                    </PriceRow>
+                      {supportsUsdQuota(row.product) ? (
+                        <>
+                          <NumberInput
+                            className="w-28"
+                            value={bind.usdQuotaPerSeat?.[row.product]?.[level]?.fiveHour ?? ""}
+                            onChange={(v) => onBindChange(updateUsdQuota(bind, row.product, level, "fiveHour", v))}
+                            disabled={disabled}
+                            suffix="$ / 5h"
+                            aria-label={`${productLabel(row.product)} ${level} 每份 5 小时美元额度`}
+                          />
+                          <NumberInput
+                            className="w-28"
+                            value={bind.usdQuotaPerSeat?.[row.product]?.[level]?.weekly ?? ""}
+                            onChange={(v) => onBindChange(updateUsdQuota(bind, row.product, level, "weekly", v))}
+                            disabled={disabled}
+                            suffix="$ / 周"
+                            aria-label={`${productLabel(row.product)} ${level} 每份每周美元额度`}
+                          />
+                        </>
+                      ) : (
+                        <span className="col-span-2 text-xs text-muted-foreground">沿用产品固定额度</span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -106,6 +143,30 @@ export function PricingSection({
       </PriceGroup>
     </div>
   );
+}
+
+function supportsUsdQuota(product: string): boolean {
+  return product === "codex" || product === "anthropic";
+}
+
+function updateUsdQuota(
+  bind: BindPricingForm,
+  product: string,
+  level: string,
+  field: "fiveHour" | "weekly",
+  value: string,
+): BindPricingForm {
+  const current = bind.usdQuotaPerSeat?.[product]?.[level] ?? { fiveHour: "", weekly: "" };
+  return {
+    ...bind,
+    usdQuotaPerSeat: {
+      ...(bind.usdQuotaPerSeat ?? {}),
+      [product]: {
+        ...(bind.usdQuotaPerSeat?.[product] ?? {}),
+        [level]: { ...current, [field]: value },
+      },
+    },
+  };
 }
 
 function PriceGroup({ title, children }: { title: string; children: React.ReactNode }) {

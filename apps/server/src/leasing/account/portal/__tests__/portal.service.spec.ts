@@ -53,7 +53,18 @@ function makePrisma(opts: {
     },
     cardUsageHourly: {
       findMany: vi.fn(async () => opts.hourlyRecords ?? []),
+      aggregate: vi.fn(async () => ({
+        _sum: {
+          apiValueUsd: (opts.hourlyRecords ?? []).reduce(
+            (sum, row) => sum + Math.max(0, Number(row.apiValueUsd) || 0),
+            0,
+          ),
+        },
+      })),
     },
+    $queryRaw: vi.fn(async () => (opts.hourlyRecords ?? []).filter(
+      (row) => Math.max(0, Number(row.apiPricedRequests) || 0) < Math.max(0, Number(row.requests) || 0),
+    )),
   };
 }
 
@@ -177,6 +188,38 @@ describe("PortalService.getOverview", () => {
     expect(quota.weeklyTokenLimit).toBe(5000000);
     expect(quota.weeklyWindowResetMs).toBe(86400000);
     expect(quota.totalTokensUsed).toBe(9999);
+  });
+
+  it("keeps Codex and Anthropic dollar windows separate", async () => {
+    const publicStatus = {
+      quotaMode: "usd",
+      usdQuotaByProduct: {
+        codex: {
+          fiveHour: null,
+          weekly: { used: 12, limit: 100, resetMs: 60_000 },
+        },
+        anthropic: {
+          fiveHour: { used: 3, limit: 20, resetMs: 30_000 },
+          weekly: { used: 8, limit: 50, resetMs: 120_000 },
+        },
+      },
+      buckets: [],
+      weeklyBuckets: [],
+    };
+    const prisma = makePrisma({
+      subscriptions: [{
+        id: "sub-mixed", migratedFromKey: null, status: "ACTIVE",
+        productEntitlements: '["codex","anthropic"]', expiresAt: null,
+        deviceLimit: 1, weight: 2, priority: 0,
+      }],
+    });
+    const service = new PortalService(prisma as any, makeStore({
+      "sub-mixed": { _publicStatus: publicStatus },
+    }) as any);
+
+    const quota = (await service.getOverview("cust-1")).subscriptions[0].quota;
+    expect(quota.quotaMode).toBe("usd");
+    expect(quota.usdQuotaByProduct).toEqual(publicStatus.usdQuotaByProduct);
   });
 
   it("weeklyWindowTokens sums the weeklyBuckets.used values (NOT totalTokensUsed)", async () => {
@@ -703,5 +746,46 @@ describe("PortalService.getUsageStats", () => {
     const result = await new PortalService(prisma as any, makeStore() as any).getUsageStats("cust-1", { days: 7 });
     expect(result.totals.savedUSD).toBe(18.2788);
     expect(result.byModel[0].estimatedUSD).toBe(18.2788);
+  });
+
+  it("returns the desktop summary from CardUsageHourly frozen values", async () => {
+    const prisma = makePrisma({ hourlyRecords: [recentRow({
+      bucket: "anthropic-claude", modelKey: "claude-opus-4-8",
+      requests: 2, failedRequests: 1,
+      inputTokens: 1_000, cachedInputTokens: 300,
+      cacheCreationTokens: 0, cacheWrite5mTokens: 200, cacheWrite1hTokens: 100,
+      outputTokens: 50, totalTokens: 650,
+      apiValueUsd: 9.25, apiPricedRequests: 2,
+    })] });
+    const result = await new PortalService(prisma as any, makeStore() as any).getClientUsageSummary("cust-1");
+    expect(result.source).toBe("CardUsageHourly");
+    expect(result.today).toMatchObject({
+      inputTokens: 400, outputTokens: 50, cachedTokens: 300, cacheWriteTokens: 300,
+      requests: 2, errors: 1, generations: 1, savedMoneyUSD: 9.25,
+    });
+    expect(result.cumulativeSaving).toBe(9.25);
+    expect(result.today.byModel["claude-opus-4-8"].estimatedCostUSD).toBe(9.25);
+    expect(prisma.cardUsageHourly.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cardUsageHourly.aggregate).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves frozen request-time value in a mixed legacy/current hour", async () => {
+    const row = recentRow({
+      bucket: "codex-gpt", modelKey: "gpt-5.4",
+      requests: 4,
+      inputTokens: 4_000_000, outputTokens: 0, totalTokens: 4_000_000,
+      apiValueUsd: 7.5, apiPricedRequests: 3,
+    });
+    const prisma = makePrisma({ hourlyRecords: [row] });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const stats = await service.getUsageStats("cust-1", { days: 7 });
+    const summary = await service.getClientUsageSummary("cust-1");
+
+    // gpt-5.4 standard input is $2.50/M: the one legacy request receives
+    // one quarter of the $10 row estimate, while the exact $7.50 stays frozen.
+    expect(stats.totals.savedUSD).toBe(10);
+    expect(summary.cumulativeSaving).toBe(10);
   });
 });

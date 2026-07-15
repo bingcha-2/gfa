@@ -18,9 +18,9 @@ func pendingReportWithID(id, card string, addedAt time.Time) pendingReport {
 	}
 }
 
-// A skipped expired report and a skipped different-card report used to make
-// the failure-path slice offset point at the failed item itself. That duplicated
-// the failed report while requeueing the untouched suffix.
+// A skipped expired report used to make the failure-path slice offset point at
+// the failed item itself. Pending reports are user-namespaced and deliberately
+// use the current renewed session credential, regardless of the stale Card field.
 func TestFlushPendingReportsFailureRequeuesEachReportExactlyOnce(t *testing.T) {
 	now := time.Now()
 	var attemptsMu sync.Mutex
@@ -60,8 +60,8 @@ func TestFlushPendingReportsFailureRequeuesEachReportExactlyOnce(t *testing.T) {
 	attemptsMu.Lock()
 	gotAttempts := append([]string(nil), attempts...)
 	attemptsMu.Unlock()
-	if len(gotAttempts) != 2 || gotAttempts[0] != "failed" || gotAttempts[1] != "failed" {
-		t.Fatalf("attempts = %v, want fallback attempts for failed only", gotAttempts)
+	if len(gotAttempts) != 2 || gotAttempts[0] != "other-card" || gotAttempts[1] != "other-card" {
+		t.Fatalf("attempts = %v, want fallback attempts for first live report only", gotAttempts)
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -80,24 +80,28 @@ func TestCodexAndClaudeFlushKeepOneCopyAfterExpiredPredecessor(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		setBase func(string)
-		flush   func(pending []pendingReport) int
+		flush   func(pending []pendingReport) []pendingReport
 	}{
 		{
 			name:    "codex",
 			setBase: func(base string) { CODEX_API_BASE = base },
-			flush: func(pending []pendingReport) int {
+			flush: func(pending []pendingReport) []pendingReport {
 				l := &CodexLeaser{pendingReports: pending}
 				l.flushCodexPending("current-card", "")
-				return l.pendingCount()
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				return append([]pendingReport(nil), l.pendingReports...)
 			},
 		},
 		{
 			name:    "claude",
 			setBase: func(base string) { ANTHROPIC_REMOTE_BASE = base },
-			flush: func(pending []pendingReport) int {
+			flush: func(pending []pendingReport) []pendingReport {
 				l := &ClaudeLeaser{pendingReports: pending}
 				l.flushClaudePending("current-card", "")
-				return l.pendingCount()
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				return append([]pendingReport(nil), l.pendingReports...)
 			},
 		},
 	} {
@@ -120,15 +124,19 @@ func TestCodexAndClaudeFlushKeepOneCopyAfterExpiredPredecessor(t *testing.T) {
 			})
 
 			now := time.Now()
-			pendingCount := tc.flush([]pendingReport{
+			originalAddedAt := now.Add(-time.Minute)
+			pending := tc.flush([]pendingReport{
 				pendingReportWithID("expired", "old-card", now.Add(-pendingReportMaxAge-time.Second)),
-				pendingReportWithID("failed", "old-card", now),
+				pendingReportWithID("failed", "old-card", originalAddedAt),
 			})
 			if got := attempts.Load(); got != 2 { // direct + transport fallback
 				t.Fatalf("attempts = %d, want 2", got)
 			}
-			if pendingCount != 1 {
-				t.Fatalf("pending count = %d, want exactly one failed report", pendingCount)
+			if len(pending) != 1 {
+				t.Fatalf("pending count = %d, want exactly one failed report", len(pending))
+			}
+			if !pending[0].AddedAt.Equal(originalAddedAt) {
+				t.Fatalf("retry renewed causal deadline: addedAt=%s want=%s", pending[0].AddedAt, originalAddedAt)
 			}
 		})
 	}

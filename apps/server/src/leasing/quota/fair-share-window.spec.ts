@@ -152,6 +152,41 @@ describe("causal current-window reducer", () => {
     expect(state.unattributedShare).toBe(0);
   });
 
+  it("resets an early official weekly rollover when resetAt advances and the mother fraction rebounds", () => {
+    const previousObservedAt = Date.parse("2026-07-13T04:37:10.522Z");
+    const rolloverObservedAt = Date.parse("2026-07-13T04:38:27.708Z");
+    const previousResetAt = Date.parse("2026-07-18T06:02:35.000Z");
+    const rolloverResetAt = Date.parse("2026-07-20T00:06:05.000Z");
+    let state = createCarriedWindowState({
+      scope: "weekly",
+      windowMs: WEEK,
+      windowStart: previousResetAt - WEEK,
+      fraction: 0.72,
+      lastSnapshotAt: previousObservedAt,
+      subjects: [
+        { ...subjects[0], active: true, carriedAttributedShare: 0.2 },
+        { ...subjects[1], active: true, carriedAttributedShare: 0.08 },
+      ],
+    });
+    state = reduceWindow(state, usage("A", previousObservedAt + 1_000));
+
+    state = reduceWindow(state, snapshot(rolloverObservedAt, 0.86, {
+      snapshotId: "official-early-weekly-rollover",
+      resetAt: rolloverResetAt,
+    }));
+
+    expect(rolloverObservedAt).toBeLessThan(previousResetAt);
+    expect(state.resetAt).toBe(rolloverResetAt);
+    expect(state.fraction).toBe(0.86);
+    expect(state.subjects.A.cumulativeCu).toBe(0);
+    expect(state.subjects.A.carriedAttributedShare).toBe(0);
+    expect(state.subjects.B.carriedAttributedShare).toBe(0);
+    expect(state.subjects.A.attributedShare).toBe(0);
+    expect(state.subjects.B.attributedShare).toBe(0);
+    expect(state.assignedBurn).toBe(0);
+    expect(state.unattributedShare).toBe(0);
+  });
+
   it.each([-1, 1.01, Number.NaN, Number.POSITIVE_INFINITY])("ignores an invalid snapshot fraction %s", (fraction) => {
     const before = primed();
     const state = reduceWindow(before, snapshot(T + 10, fraction, { snapshotId: `invalid-${String(fraction)}` }));

@@ -40,6 +40,8 @@ type CodexAccount = {
   shareCapacity: number;
   codexHourlyPercent: number;
   codexWeeklyPercent: number;
+  codexHourlyResetTime: string;
+  codexWeeklyResetTime: string;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
   adspowerProfileId?: string;
@@ -55,6 +57,21 @@ type CodexAccount = {
 
 function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
+}
+
+// 距某个 ISO 重置时间还剩多久。空/已过 → "" / "已重置"。
+function timeUntil(iso: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const diff = t - Date.now();
+  if (diff <= 0) return "已重置";
+  const mins = Math.floor(diff / 60_000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h >= 24) return `${Math.floor(h / 24)}天${h % 24}时后`;
+  if (h >= 1) return `${h}时${m}分后`;
+  return `${m}分后`;
 }
 
 function tokenBadge(account: CodexAccount): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; title: string } {
@@ -858,8 +875,18 @@ export default function CodexAccountsPage() {
                       {a.alias ? <div className="text-xs text-muted-foreground">{a.alias}</div> : null}
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
-                    <TableCell className="text-sm">{pct(a.codexHourlyPercent)}</TableCell>
-                    <TableCell className="text-sm">{pct(a.codexWeeklyPercent)}</TableCell>
+                    <TableCell className="text-sm">
+                      <div>{pct(a.codexHourlyPercent)}</div>
+                      {a.codexHourlyResetTime ? (
+                        <div className="text-[10px] text-muted-foreground">{timeUntil(a.codexHourlyResetTime)}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div>{pct(a.codexWeeklyPercent)}</div>
+                      {a.codexWeeklyResetTime ? (
+                        <div className="text-[10px] text-muted-foreground">{timeUntil(a.codexWeeklyResetTime)}</div>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       {(() => {
                         const badge = tokenBadge(a);

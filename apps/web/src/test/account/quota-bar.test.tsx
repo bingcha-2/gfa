@@ -8,6 +8,7 @@ import { render, screen } from "@testing-library/react";
 
 import {
   quotaPercent,
+  quotaRemainingPercent,
   quotaLevel,
   formatResetText,
   QuotaBar,
@@ -31,19 +32,31 @@ describe("quotaPercent", () => {
   });
 });
 
-describe("quotaLevel — 血条 semantics at 60/85% thresholds", () => {
-  it("is ok below 60%", () => {
+describe("quotaRemainingPercent", () => {
+  it("rounds the remaining ratio directly, matching the desktop client", () => {
+    expect(quotaRemainingPercent(60.4, 100)).toBe(40);
+    expect(quotaRemainingPercent(85.4, 100)).toBe(15);
+    expect(quotaRemainingPercent(105, 100)).toBe(0);
+    expect(quotaRemainingPercent(50, 0)).toBe(100);
+  });
+});
+
+describe("quotaLevel — remaining quota thresholds", () => {
+  it("is green at 40-100% remaining", () => {
     expect(quotaLevel(0, 100)).toBe("ok");
-    expect(quotaLevel(59, 100)).toBe("ok");
+    expect(quotaLevel(60, 100)).toBe("ok");
+    expect(quotaLevel(60.4, 100)).toBe("ok");
   });
 
-  it("is warn from 60% up to 85%", () => {
-    expect(quotaLevel(60, 100)).toBe("warn");
-    expect(quotaLevel(84, 100)).toBe("warn");
+  it("is amber at 15-39% remaining", () => {
+    expect(quotaLevel(61, 100)).toBe("warn");
+    expect(quotaLevel(85, 100)).toBe("warn");
+    expect(quotaLevel(85.4, 100)).toBe("warn");
   });
 
-  it("is critical from 85%", () => {
-    expect(quotaLevel(85, 100)).toBe("critical");
+  it("is red below 15% remaining", () => {
+    expect(quotaLevel(86, 100)).toBe("critical");
+    expect(quotaLevel(85.6, 100)).toBe("critical");
     expect(quotaLevel(100, 100)).toBe("critical");
     expect(quotaLevel(150, 100)).toBe("critical");
   });
@@ -130,5 +143,38 @@ describe("QuotaBar rendering", () => {
 
     expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
     expect(screen.getByText("不限量")).toBeInTheDocument();
+  });
+
+  it("renders independent product 5h and weekly USD quota bars", () => {
+    render(
+      <QuotaBar
+        quota={{
+          ...baseQuota,
+          quotaMode: "usd",
+          buckets: [],
+          usdQuotaByProduct: {
+            codex: {
+              fiveHour: { used: 8.5, limit: 10, resetMs: 60_000 },
+              weekly: { used: 25, limit: 100, resetMs: 24 * 3600_000 },
+            },
+            anthropic: {
+              fiveHour: { used: 1, limit: 20, resetMs: 60_000 },
+              weekly: null,
+            },
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByText("订阅额度")).toBeInTheDocument();
+    expect(screen.getByText("codex")).toBeInTheDocument();
+    expect(screen.getByText("anthropic")).toBeInTheDocument();
+    expect(screen.getAllByText("5 小时额度")).toHaveLength(2);
+    expect(screen.getByText("每周额度")).toBeInTheDocument();
+    expect(screen.getByText("剩余 15%")).toBeInTheDocument();
+    expect(screen.getByText("剩余 75%")).toBeInTheDocument();
+    expect(screen.getByText("剩余 95%")).toBeInTheDocument();
+    expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(3);
   });
 });

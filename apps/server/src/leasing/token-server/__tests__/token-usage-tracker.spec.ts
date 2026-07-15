@@ -32,6 +32,37 @@ describe("TokenUsageTracker — customerId 透传", () => {
     expect(arg.create).toMatchObject({ accessKeyId: "sub-1", customerId: "cust-1" });
     tracker.destroy();
   });
+
+  it("前一次 flush 未结束时不会追加第二个写任务", async () => {
+    let resolveUpsert!: (value: object) => void;
+    const upsert = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveUpsert = resolve;
+      }))
+      .mockResolvedValue({});
+    const tracker = new TokenUsageTracker(
+      { cardUsageHourly: { upsert } },
+      { autoStart: false },
+    );
+    const record = (accessKeyId: string) => tracker.record({
+      accessKeyId, modelKey: "gpt-5-codex", bucket: "codex-gpt",
+      status: 200, inputTokens: 1, outputTokens: 1, totalTokens: 2,
+    });
+    record("sub-1");
+
+    const first = tracker.flush();
+    await Promise.resolve();
+    record("sub-2");
+    const second = tracker.flush();
+
+    expect(upsert).toHaveBeenCalledOnce();
+    resolveUpsert({});
+    await Promise.all([first, second]);
+    expect(tracker.getQueueForTesting()).toHaveLength(1);
+
+    await tracker.flush();
+    expect(upsert).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
@@ -135,6 +166,20 @@ describe("TokenUsageTracker — 小时聚合 (CardUsageHourly)", () => {
     await tracker.flush();
     const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
     expect(arg.create.reverseProxyHits).toBe(1);
+    tracker.destroy();
+  });
+
+  it("按请求完成时间而不是延迟上报时间归入小时桶", async () => {
+    const prisma = makePrisma();
+    const tracker = new TokenUsageTracker(prisma);
+    const occurredAt = Date.parse("2026-06-10T03:59:59Z");
+    tracker.record({
+      accessKeyId: "sub-time", modelKey: "gpt-5-codex", bucket: "codex-gpt",
+      status: 200, inputTokens: 1, outputTokens: 1, totalTokens: 2, occurredAt,
+    });
+    await tracker.flush();
+    const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
+    expect(arg.create.hourStart.toISOString()).toBe("2026-06-10T03:00:00.000Z");
     tracker.destroy();
   });
 

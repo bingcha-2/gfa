@@ -6,6 +6,19 @@ import (
 	"strings"
 )
 
+// redactToken 仅保留类型前缀，日志中绝不输出可还原的访问令牌。
+func redactToken(tok string) string {
+	if tok == "" {
+		return ""
+	}
+	r := []rune(tok)
+	prefix := 6
+	if len(r) < prefix {
+		prefix = len(r)
+	}
+	return string(r[:prefix]) + "••••••(已隐藏)"
+}
+
 // ─── 代理审计:每个被代理的请求只输出【一条】日志 ───────────────────────────
 //
 // 目标(产品要求):所有被接管/代理的请求都要能看到,但「一次代理只输出一条」——
@@ -40,21 +53,21 @@ func (t *auditTee) captured() []byte { return nil }
 
 // proxyAudit 累积一次被代理请求的全部信息,在 defer emit() 时一次性输出成一条日志。
 type proxyAudit struct {
-	product   string // claude / codex / antigravity
-	reqID     int64
-	kind      string // 生成 / 辅助 / 中转 …
-	method    string
-	path      string
-	target    string // 实际转发到的上游地址(发送到哪里)
-	model     string
+	product string // claude / codex / antigravity
+	reqID   int64
+	kind    string // 生成 / 辅助 / 中转 …
+	method  string
+	path    string
+	target  string // 实际转发到的上游地址(发送到哪里)
+	model   string
 	// serviceTier 是真正发往上游的服务档(codex):"priority"=放行了快速;空=标准/已被门控剥回。
 	// 打进审计行,方便确认"开了 fast 到底有没有生效"(没生效多半是服务端授权闸没开)。
 	serviceTier string
 	accountID   int
-	token     string // access token(emit 时打码)
-	status    int
-	inTokens  int64
-	outTokens int64
+	token       string // access token(emit 时打码)
+	status      int
+	inTokens    int64
+	outTokens   int64
 	// cachedTokens/billableTokens 仅用于日志显示真实口径(尤其 claude 命中缓存时,
 	// in 只是 net 新增、计费按缓存 1/10 折后)。0 时不显示,不影响上报。
 	cachedTokens   int64

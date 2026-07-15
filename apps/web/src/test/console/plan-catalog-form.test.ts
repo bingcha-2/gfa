@@ -18,6 +18,10 @@ import {
   type PlanCatalogForm,
 } from "@/lib/console/plan-catalog-form";
 import { computePurchase, type CatalogConfig } from "@/lib/account/catalog-pricing";
+import {
+  API_USD_QUOTA_PER_SEAT_DEFAULTS,
+  DEFAULT_CONFIG,
+} from "@/app/(console)/console/(dashboard)/(product)/plan-catalog/catalog-defaults";
 
 const CATALOG: CatalogConfig = {
   products: ["anthropic", "codex", "antigravity"],
@@ -71,6 +75,24 @@ describe("yuanToCents / centsToYuan — 元↔分", () => {
   });
 });
 
+describe("新目录美元额度默认值", () => {
+  it("uses fixed per-share defaults and keeps temporary promotions out", () => {
+    expect(API_USD_QUOTA_PER_SEAT_DEFAULTS).toEqual({
+      codex: {
+        plus: { fiveHour: 0, weekly: 72.916667 },
+        pro: { fiveHour: 0, weekly: 291.666667 },
+      },
+      anthropic: {
+        pro: { fiveHour: 1.5, weekly: 15.833333 },
+        "max-5x": { fiveHour: 7.5, weekly: 79.166667 },
+        "max-20x": { fiveHour: 30, weekly: 158.333333 },
+      },
+    });
+    expect(DEFAULT_CONFIG.pricing.bind.usdQuotaPerSeat).toEqual(API_USD_QUOTA_PER_SEAT_DEFAULTS);
+    expect(DEFAULT_CONFIG.oversellFactor).toBe(1.5);
+  });
+});
+
 describe("configToForm — 拆解 + ÷100", () => {
   const form = configToForm(CATALOG);
 
@@ -95,6 +117,53 @@ describe("configToForm — 拆解 + ÷100", () => {
     expect(form.pricing.bind.share["2"]).toBe("-20");
   });
 
+  it("旧目录没有美元额度字段时自动预填运营默认值", () => {
+    expect(form.pricing.bind.usdQuotaPerSeat).toEqual({
+      codex: {
+        plus: { fiveHour: "0", weekly: "72.916667" },
+        pro: { fiveHour: "0", weekly: "291.666667" },
+      },
+      anthropic: {
+        pro: { fiveHour: "1.5", weekly: "15.833333" },
+        "max-5x": { fiveHour: "7.5", weekly: "79.166667" },
+        "max-20x": { fiveHour: "30", weekly: "158.333333" },
+      },
+      antigravity: {
+        pro: { fiveHour: "0", weekly: "0" },
+        ultra: { fiveHour: "0", weekly: "0" },
+      },
+    });
+  });
+
+  it("绑定等级的每份 5h/周美元额度可编辑并 round-trip", () => {
+    const source = structuredClone(CATALOG) as any;
+    source.pricing.bind.usdQuotaPerSeat = {
+      anthropic: { "max-20x": { fiveHour: 32.5, weekly: 200 } },
+    };
+
+    const quotaForm = configToForm(source);
+    expect(quotaForm.pricing.bind.usdQuotaPerSeat?.anthropic["max-20x"]).toEqual({
+      fiveHour: "32.5",
+      weekly: "200",
+    });
+    expect(formToConfig(quotaForm).pricing.bind.usdQuotaPerSeat).toEqual(source.pricing.bind.usdQuotaPerSeat);
+  });
+
+  it("旧整号额度按超卖份数换算一次并只写新字段", () => {
+    const source = structuredClone(CATALOG) as any;
+    source.accountCapacity = 8;
+    source.oversellFactor = 1.25;
+    source.pricing.bind.usdQuota = {
+      anthropic: { "max-20x": { fiveHour: 400, weekly: 2000 } },
+    };
+    const back = formToConfig(configToForm(source));
+    expect(back.pricing.bind.usdQuota).toBeUndefined();
+    expect(back.pricing.bind.usdQuotaPerSeat?.anthropic["max-20x"]).toEqual({
+      fiveHour: 40,
+      weekly: 200,
+    });
+  });
+
   it("用量档:token 数原样为字符串,周限额拆出", () => {
     const small = form.usageTiers.find((t) => t.key === "small")!;
     expect(small.bucketLimits["anthropic-claude"]).toBe("50000");
@@ -108,12 +177,28 @@ describe("configToForm — 拆解 + ÷100", () => {
 });
 
 describe("formToConfig — 组装 + ×100", () => {
-  it("round-trip:config → form → config 字节等价", () => {
+  it("旧 config round-trip 时写入预填的美元额度默认值", () => {
     const back = formToConfig(configToForm(CATALOG));
-    expect(back).toEqual(CATALOG);
+    expect(back).toEqual({
+      ...CATALOG,
+      oversellFactor: 1.5,
+      pricing: {
+        ...CATALOG.pricing,
+        bind: {
+          ...CATALOG.pricing.bind,
+          usdQuotaPerSeat: API_USD_QUOTA_PER_SEAT_DEFAULTS,
+        },
+      },
+    });
   });
 
-  it("round-trip preserves supplyPolicies without interpreting nested policy JSON", () => {
+  it("旧目录缺少超卖系数时表单明确回填并保存 1.5", () => {
+    const form = configToForm(CATALOG);
+    expect(form.oversellFactor).toBe("1.5");
+    expect(formToConfig(form).oversellFactor).toBe(1.5);
+  });
+
+  it("round-trip preserves quota sources and discards the retired per-level seat field", () => {
     const supplyPolicies = {
       anthropic: {
         defaultLevel: "max-20x",
@@ -137,11 +222,16 @@ describe("formToConfig — 组装 + ×100", () => {
 
     expect(form.supplyPolicies).toEqual({
       anthropic: {
-        ...supplyPolicies.anthropic,
-        salesSeatsPerAccount: { "max-20x": "10" },
+        defaultLevel: "max-20x",
+        buckets: supplyPolicies.anthropic.buckets,
       },
     });
-    expect(back.supplyPolicies).toEqual(supplyPolicies);
+    expect(back.supplyPolicies).toEqual({
+      anthropic: {
+        defaultLevel: "max-20x",
+        buckets: supplyPolicies.anthropic.buckets,
+      },
+    });
   });
 
   it("round-trip preserves oversellFactor as an editable top-level catalog field", () => {
@@ -162,39 +252,12 @@ describe("formToConfig — 组装 + ×100", () => {
     expect((formToConfig(form) as any).oversellFactor).toBe(1);
   });
 
-  it("converts editable supply policy sales seat strings back to config numbers", () => {
-    const form = configToForm({
-      ...CATALOG,
-      supplyPolicies: {
-        anthropic: {
-          defaultLevel: "max-20x",
-          salesSeatsPerAccount: { "max-20x": 10 },
-          buckets: {
-            "anthropic-claude": {
-              source: "learned",
-              provider: "anthropic",
-              planType: "max-20x",
-              family: "claude",
-            },
-          },
-        },
-      },
-    } as any);
-
-    form.supplyPolicies!.anthropic.salesSeatsPerAccount["max-20x"] = "12" as any;
-
-    expect(
-      formToConfig(form as any).supplyPolicies!.anthropic.salesSeatsPerAccount["max-20x"],
-    ).toBe(12);
-  });
-
   it("round-trip converts editable fixed antigravity quota numbers through string inputs", () => {
     const form = configToForm({
       ...CATALOG,
       supplyPolicies: {
         antigravity: {
           defaultLevel: "ultra",
-          salesSeatsPerAccount: { ultra: 8 },
           buckets: {
             "antigravity-gemini": {
               source: "fixed",

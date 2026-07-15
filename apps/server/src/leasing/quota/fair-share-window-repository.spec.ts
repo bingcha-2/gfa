@@ -112,6 +112,8 @@ describe("FairShareWindowRepository with SQLite", () => {
       bucket TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, failedRequests INTEGER NOT NULL DEFAULT 0,
       inputTokens INTEGER NOT NULL DEFAULT 0, outputTokens INTEGER NOT NULL DEFAULT 0,
       cachedInputTokens INTEGER NOT NULL DEFAULT 0, cacheCreationTokens INTEGER NOT NULL DEFAULT 0,
+      cacheWrite5mTokens INTEGER NOT NULL DEFAULT 0, cacheWrite1hTokens INTEGER NOT NULL DEFAULT 0,
+      apiValueUsd REAL NOT NULL DEFAULT 0, apiPricedRequests INTEGER NOT NULL DEFAULT 0,
       rawTotalTokens INTEGER NOT NULL DEFAULT 0, totalTokens INTEGER NOT NULL DEFAULT 0,
       reverseProxyHits INTEGER NOT NULL DEFAULT 0, priorityTokens INTEGER NOT NULL DEFAULT 0,
       updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -396,6 +398,80 @@ describe("FairShareWindowRepository with SQLite", () => {
     const rows = await prisma.cardUsageHourly.findMany();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+  });
+
+  it("atomically commits receipt + hourly with compact heads but leaves detail rows to the background flush", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const windows = populatedWindows();
+    await repository.checkpointReportAccounting([{
+      accountId: 7, bucket: "codex-gpt", windows, reportIds: ["report-min"], createdAt: new Date(T),
+      accountings: [{
+        reportId: "report-min", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
+        customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
+      }],
+    }]);
+
+    await expect(repository.hasReport("report-min")).resolves.toBe(true);
+    expect(await prisma.cardUsageHourly.count()).toBe(1);
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(windows) });
+    // The hot path writes only the two compact heads. Per-card delete/recreate
+    // remains on the coalesced background flush.
+    expect(await prisma.fairShareWindow.count()).toBe(0);
+  });
+
+  // 热路径同批里一个陈旧 revision 不能连坐回滚兄弟 key 的 head/回执/计费。
+  // 否则协调器会把被回滚的兄弟当已提交 resolve → 回执丢失 → 重放重复计费。
+  it("isolates a stale report-accounting entry so healthy siblings still persist", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    // 账号 7 的持久 head 已经领先(模拟后台 window flush 抢先推进)。
+    const older = populatedWindows();
+    const newer = reduceQuotaWindows(older, { scope: "both", event: usage("newer-state", T + 30) });
+    await repository.checkpointAccount(7, "codex-gpt", newer);
+    // 账号 8 是全新健康的记账条目,带自己的回执。
+    const healthy = populatedWindows();
+
+    await expect(repository.checkpointReportAccounting([
+      { accountId: 7, bucket: "codex-gpt", windows: older, reportIds: ["stale-report"], createdAt: new Date(T) },
+      {
+        accountId: 8, bucket: "codex-gpt", windows: healthy, reportIds: ["healthy-report"], createdAt: new Date(T),
+        accountings: [{
+          reportId: "healthy-report", at: new Date(T + 1234), accessKeyId: "healthy-card",
+          accountEmail: "healthy@x.test", customerId: "healthy-customer", modelKey: "gpt-5.6-luna",
+          bucket: "codex-gpt", status: 200, inputTokens: 10, outputTokens: 2,
+          cachedInputTokens: 3, cacheCreationTokens: 0, rawTotalTokens: 15, totalTokens: 12,
+          reverseProxy: false, serviceTier: "standard",
+        }],
+      },
+    ])).rejects.toMatchObject({ code: "QUOTA_STALE_REVISION", staleKeys: [`7\u0000codex-gpt`] });
+
+    // 陈旧账号 7:head 未被回滚(仍是 newer),回执未确认。
+    await expect(repository.loadAccount(7, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(newer) });
+    await expect(repository.hasReport("stale-report")).resolves.toBe(false);
+    // 健康账号 8:head + 回执 + 计费必须已落库,不被连坐回滚。
+    await expect(repository.loadAccount(8, "codex-gpt")).resolves.toEqual({ ok: true, windows: checkpointed(healthy) });
+    await expect(repository.hasReport("healthy-report")).resolves.toBe(true);
+    await expect(prisma.cardUsageHourly.findFirst({ where: { accessKeyId: "healthy-card" } }))
+      .resolves.toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+  });
+
+  it("does not re-increment hourly usage when the same receipt is replayed", async () => {
+    const repository = new FairShareWindowRepository(prisma, "codex");
+    const entry = {
+      accountId: 7, bucket: "codex-gpt", windows: populatedWindows(), reportIds: ["dup"], createdAt: new Date(T),
+      accountings: [{
+        reportId: "dup", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
+        customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
+      }],
+    };
+    await repository.checkpointReportAccounting([entry]);
+    await repository.checkpointReportAccounting([entry]);
+    const rows = await prisma.cardUsageHourly.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, totalTokens: 12 });
   });
 
   it("prunes only receipts older than three days without touching window state", async () => {

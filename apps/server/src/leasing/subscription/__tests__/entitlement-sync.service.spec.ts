@@ -5,7 +5,7 @@
  * 唯一真相源是订阅(数据库):
  *  - 运行时限额从内存 record(store.listSubscriptionRecords / findById)读,不读文件。
  *  - 号池 vs 绑定靠 config.line 显式区分,不靠 bindings 空不空推断。
- *  - 绑定线座位占用从 DB ACTIVE 订阅的 config count(weight 求和),不从文件数(★避免超卖★)。
+ *  - 绑定线座位占用从 DB ACTIVE 订阅的 config count(weight 求和),不从文件数。
  *
  * Uses a real RosettaService (account pool over a tmp dataDir, for seat
  * selection), the real shared AccessKeyStore, and an in-memory Prisma stub
@@ -137,14 +137,13 @@ describe("EntitlementSyncService(去影子)", () => {
     return sub;
   }
 
-  // ── 拼车超卖封顶:ceil(C × catalog.oversellFactor)传给分配器 ──────────────
-  it("syncBind 把 oversellCeiling=ceil(C×factor) 传给分配器(factor 来自 catalog)", async () => {
-    planCatalog.getPublished.mockResolvedValueOnce({ config: { oversellFactor: 2 } });
+  // quotaSeatCapacity 只是已快照的最大可售份数，不得再次乘超卖系数。
+  it("syncBind 把固定最大可售份数原样传给分配器", async () => {
     const spy = vi.spyOn(rosetta, "assignSeatForProductFromShares");
     await service.syncSubscription(seed(makeSub({ id: "sub-ceiling" })));
     expect(spy).toHaveBeenCalled();
     const opts = spy.mock.calls[0][6] as any;
-    expect(opts?.oversellCeiling).toBe(Math.ceil(CAP * 2));
+    expect(opts?.oversellCeiling).toBe(CAP);
   });
 
   // ── Registration (no file) ────────────────────────────────────────────────
@@ -208,14 +207,15 @@ describe("EntitlementSyncService(去影子)", () => {
     expect((res as any).error).toContain("不存在");
   });
 
-  // QUOTA-REDESIGN §7 / 决策7:超卖放开 —— 即便目标号已占满,rebind 也不再因容量被拒(无需 force)。
-  it("rebindProduct 允许超卖:目标号已占满仍可换绑(无需 force,§7/决策7)", async () => {
+  it("rebindProduct 到达最大可售份数后拒绝，显式 force 才可突破", async () => {
     // subA weight 4 占满 account 7(容量 4)。
     const subA = seed(makeSub({ id: "sub-fill", weight: 4, backingKeyValue: "sub_" + "1".repeat(48) }));
     await service.syncSubscription(subA);
-    // subB(尚未绑)换绑到满号 7 → 超卖,允许成功(不传 force)。
+    // subB(尚未绑)换绑到已达上限的号 7 → 默认拒绝。
     seed(makeSub({ id: "sub-over", weight: 2, config: { line: "bind", products: ["antigravity"], levels: { antigravity: "ultra" }, weight: 2, deviceLimit: 1, windowMs: 18_000_000 } }));
-    const res = await service.rebindProduct("sub-over", "antigravity", 7);
+    const rejected = await service.rebindProduct("sub-over", "antigravity", 7);
+    expect(rejected).toMatchObject({ ok: false });
+    const res = await service.rebindProduct("sub-over", "antigravity", 7, { force: true });
     expect(res).toMatchObject({ ok: true, product: "antigravity", accountId: 7 });
     expect(JSON.parse(subs.get("sub-over").config).bindings).toEqual({ antigravity: 7 });
   });
@@ -245,27 +245,24 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(persisted.bindings).toEqual({ antigravity: 7 });
   });
 
-  // QUOTA-REDESIGN §7 / 决策7:超卖已放开。号满(Σw=N)时新订阅不再 UNBOUND,而是超卖绑到
-  // 该满号(回退最闲号),Σw 因而超过 N —— 使用层 D=max(N,Σw) 自动切薄、永不撞墙。
-  // (旧实现这里断言座位满 → UNBOUND,已按决策7改写为「超卖成功」。)
-  it("绑定线座位满(Σw=N)→ 新订阅超卖绑到该满号(§7/决策7),Σw 超过 N", async () => {
+  it("绑定线达到固定最大可售份数后，新订阅保持 UNBOUND", async () => {
     // subA weight 4 占满 account 7(容量 4)。
     const subA = seed(makeSub({ id: "sub-full", weight: 4, backingKeyValue: "sub_" + "1".repeat(48) }));
     await service.syncSubscription(subA);
     expect(JSON.parse(subs.get("sub-full").config).bindings).toEqual({ antigravity: 7 });
 
-    // subB 需要座位、DB 已满 → 超卖回退到唯一可绑号 7(Σw=4+1=5 > N=4),不再留空。
+    // subB 需要座位、DB 已达固定上限 → 保持 UNBOUND。
     const subB = seed(makeSub({ id: "sub-starved", weight: 1, backingKeyValue: "sub_" + "2".repeat(48) }));
     await service.syncSubscription(subB);
 
     const record = store.findById("sub-starved")!;
-    expect(record.bindings).toEqual({ antigravity: 7 });
+    expect(record.bindings).toEqual({});
     expect(record.requiresBinding).toBe(true);
-    expect(JSON.parse(subs.get("sub-starved").config).bindings).toEqual({ antigravity: 7 });
+    expect(JSON.parse(subs.get("sub-starved").config).bindings).toEqual({});
   });
 
   it("绑定线等级真·无可绑号(等级不存在)→ 仍 UNBOUND(超卖只在「有可绑号」时兜底)", async () => {
-    // 与上一例对照:候选集为空(premium 等级无号)才留空,容量满不再是 UNBOUND 的原因。
+    // 与上一例对照：等级无号同样会保持 UNBOUND。
     const sub = seed(makeSub({ id: "sub-no-acct", config: { line: "bind", products: ["antigravity"], levels: { antigravity: "premium" }, weight: 1, deviceLimit: 1, windowMs: 18_000_000 } }));
     await service.syncSubscription(sub);
     const record = store.findById("sub-no-acct")!;
@@ -273,13 +270,13 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(record.requiresBinding).toBe(true);
   });
 
-  it("绑定线按 config.salesSeatCapacity 快照判断容量,允许同号售出超过默认容量", async () => {
+  it("绑定线按 config.quotaSeatCapacity 快照判断容量,允许同号售出超过默认容量", async () => {
     const config = {
       line: "bind",
       products: ["antigravity"],
       levels: { antigravity: "ultra" },
       weight: 4,
-      salesSeatCapacity: { antigravity: 10 },
+      quotaSeatCapacity: 10,
       deviceLimit: 1,
       windowMs: 18_000_000,
     };
@@ -348,6 +345,28 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(after.tokenUsageEvents?.length).toBe(1);
   });
 
+  it("人工清零持久化失败时回滚内存 USD 用量", async () => {
+    store.loadSubscriptionRecords([{
+      id: "sub-usd-reset",
+      key: "sub-usd-reset-key",
+      status: "active",
+      products: ["codex"],
+      bindings: { codex: 9 },
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 100 } },
+    }] as any);
+    const record = store.findById("sub-usd-reset")!;
+    record.usdUsageByProduct = {
+      codex: { used5h: 4.25, usedWeekly: 18, windowStartedAt5h: Date.now(), windowStartedAtWeekly: Date.now() },
+    };
+    prismaStub.subscription.update.mockRejectedValueOnce(new Error("database busy"));
+
+    await expect(service.resetSubscriptionUsdQuotaUsage("sub-usd-reset", "codex", "fiveHour"))
+      .rejects.toThrow("database busy");
+    expect(store.publicStatus(record, 0, "codex").usdQuotaByProduct.codex.fiveHour.used).toBe(4.25);
+    expect(store.publicStatus(record, 0, "codex").usdQuotaByProduct.codex.weekly.used).toBe(18);
+  });
+
   it("resync 复用 config 里已写的 bindings,不再分配座位(不重复写 DB)", async () => {
     const sub = seed(makeSub());
     await service.syncSubscription(sub);
@@ -398,12 +417,8 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(store.findById("sub-next")!.bindings).toEqual({ antigravity: 7 });
   });
 
-  // ── concurrency: oversell allowed, serialized read-assign-write ────────────
-
-  // QUOTA-REDESIGN §7 / 决策7:超卖已放开。两笔并发购买同号(Σw=6 > N=4)不再「恰一个赢」——
-  // 二者都成功绑到唯一可绑号 7(超卖),写锁仍保证占用计算→回写串行(不重复双读「还剩 N 份」而
-  // 错误判定容量)。(旧实现断言「绝不双占超容量」,已按决策7改写为「都超卖成功」。)
-  it("两个并发绑定线 sync 抢同一号 → 都超卖绑到该号(§7/决策7),写锁仍串行占用回写", async () => {
+  // ── concurrency: serialized read-assign-write ────────────
+  it("两个并发绑定抢同一号时最多一个越过剩余份数", async () => {
     const subA = seed(makeSub({ id: "sub-race-a", weight: 3, backingKeyValue: "sub_" + "a".repeat(48) }));
     const subB = seed(makeSub({ id: "sub-race-b", weight: 3, backingKeyValue: "sub_" + "b".repeat(48) }));
 
@@ -414,8 +429,7 @@ describe("EntitlementSyncService(去影子)", () => {
 
     const boundA = JSON.parse(subs.get("sub-race-a").config).bindings.antigravity === 7;
     const boundB = JSON.parse(subs.get("sub-race-b").config).bindings.antigravity === 7;
-    // 唯一可绑号 7;容量 4 装不下两个 weight-3 → 超卖,二者都绑到 7(Σw=6 > N=4)。
-    expect(boundA).toBe(true);
-    expect(boundB).toBe(true);
+    // 唯一可绑号 7；固定上限 4 装不下两个 weight-3，最多一个成功。
+    expect(Number(boundA) + Number(boundB)).toBe(1);
   });
 });

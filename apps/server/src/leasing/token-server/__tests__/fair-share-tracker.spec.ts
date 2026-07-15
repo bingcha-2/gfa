@@ -74,10 +74,14 @@ describe("window-cu background persistence", () => {
       getSeatCapacity: () => 2,
     }));
     const batches: any[] = [];
-    const commit = vi.fn()
+    // Receipts now travel a dedicated accounting transaction, decoupled from the
+    // window write. The first (hot-path) commit fails; the dirty-tick retry carries it.
+    const accountingCommit = vi.fn()
       .mockRejectedValueOnce(new Error("sqlite busy"))
-      .mockImplementation(async (batch: any[]) => { batches.push(...batch); });
-    (tracker as any).windowRepository.checkpointBatch = commit;
+      .mockImplementation(async (entries: any[]) => { batches.push(...entries); });
+    (tracker as any).windowRepository.checkpointReportAccounting = accountingCommit;
+    // Window flush must not blow up on the stub prisma; it carries no receipts now.
+    (tracker as any).windowRepository.checkpointWindows = vi.fn(async () => {});
 
     tracker.applyAccountQuotaSnapshotAt(1, BK, { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p0" });
     tracker.recordUsageEvent(1, BK, {
@@ -112,6 +116,85 @@ describe("window-cu background persistence", () => {
     await tracker.flush();
     expect(batches.some((b) => (b.reportIds || []).includes("r-1"))).toBe(false);
     expect(batches.some((b) => (b.reportIds || []).includes("r-2"))).toBe(true);
+  });
+
+  it("coalesces many same-key updates into one window checkpoint per flush", async () => {
+    const T0 = 1_800_000_000_000;
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1", provider: "codex", prisma: {} as any, now: () => T0,
+      getCardWeight: () => 1, getBoundCardWeights: () => [{ cardId: "card-a", weight: 1 }], getSeatCapacity: () => 2,
+    }));
+    const windowBatches: any[] = [];
+    (tracker as any).windowRepository.checkpointWindows = vi.fn(async (b: any[]) => { windowBatches.push(...b); });
+    (tracker as any).windowRepository.checkpointReportAccounting = vi.fn(async () => {});
+
+    tracker.applyAccountQuotaSnapshotAt(1, BK, { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p0" });
+    for (let i = 0; i < 100; i++) {
+      tracker.recordUsageEvent(1, BK, {
+        reportId: `r-${i}`, provider: "codex", accountId: 1, quotaSubjectId: "card-a", modelId: "gpt-5.4",
+        inputTokens: 1_000, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+        outputTokens: 0, serviceTier: "standard", requestStartedAt: T0 - 2_000, upstreamCompletedAt: T0 - 1_000, arrivedAt: T0,
+      });
+    }
+    await tracker.flush();
+
+    // 100 mutations on one key → exactly one window checkpoint for that key.
+    const forKey = windowBatches.filter((b) => b.accountId === 1 && b.bucket === BK);
+    expect(forKey).toHaveLength(1);
+    // A second flush with no further change writes nothing (drain is empty).
+    windowBatches.length = 0;
+    await tracker.flush();
+    expect(windowBatches).toHaveLength(0);
+  });
+
+  it("retains the dirty key when a window flush fails, then persists it on retry", async () => {
+    const T0 = 1_800_000_000_000;
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1", provider: "codex", prisma: {} as any, now: () => T0,
+      getCardWeight: () => 1, getBoundCardWeights: () => [{ cardId: "card-a", weight: 1 }], getSeatCapacity: () => 2,
+    }));
+    const windowBatches: any[] = [];
+    const commit = vi.fn()
+      .mockRejectedValueOnce(new Error("sqlite busy"))
+      .mockImplementation(async (b: any[]) => { windowBatches.push(...b); });
+    (tracker as any).windowRepository.checkpointWindows = commit;
+
+    tracker.applyAccountQuotaSnapshotAt(1, BK, { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p0" });
+    // First flush fails; the key must not be dropped.
+    await expect(tracker.flush()).rejects.toThrow("sqlite busy");
+    expect(windowBatches).toHaveLength(0);
+    // Next flush retries the retained key and persists it.
+    await tracker.flush();
+    expect(windowBatches.some((b) => b.accountId === 1 && b.bucket === BK)).toBe(true);
+  });
+
+  it("a shutdown flush racing an in-flight flush still persists the newest dirty key", async () => {
+    const T0 = 1_800_000_000_000;
+    const tracker = track(new FairShareTracker({
+      algorithm: "window-cu-v1", provider: "codex", prisma: {} as any, now: () => T0,
+      getCardWeight: () => 1, getBoundCardWeights: () => [{ cardId: "card-a", weight: 1 }], getSeatCapacity: () => 2,
+    }));
+    const persistedKeys: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let call = 0;
+    (tracker as any).windowRepository.checkpointWindows = vi.fn(async (b: any[]) => {
+      call += 1;
+      if (call === 1) await gate; // hold the first (in-flight) flush open
+      for (const e of b) persistedKeys.push(`${e.accountId}:${e.bucket}`);
+    });
+    (tracker as any).windowRepository.checkpointReportAccounting = vi.fn(async () => {});
+
+    tracker.applyAccountQuotaSnapshotAt(1, "b1", { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p1" });
+    const inFlight = tracker.flush();               // drains {1:b1}, blocks in commit
+    // A new key goes dirty AFTER the in-flight flush already drained.
+    tracker.applyAccountQuotaSnapshotAt(2, "b2", { fraction: 1, resetAt: T0 + 5 * 3_600_000, observedAt: T0 - 5_000, snapshotId: "p2" });
+    const shutdown = tracker.flush();               // must run AFTER inFlight, not no-op
+    release();
+    await Promise.all([inFlight, shutdown]);
+
+    expect(persistedKeys).toContain("1:b1");
+    expect(persistedKeys).toContain("2:b2"); // would be lost under a skip-if-busy guard
   });
 
   it("handles a scheduled flush rejection instead of leaking an unhandled promise", async () => {

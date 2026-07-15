@@ -1,15 +1,9 @@
 import { useAppStore } from '@/stores/useAppStore'
 import { StatusPill } from '@/components/StatusPill'
 import { NotificationBanner } from '@/components/NotificationBanner'
-import { UsageBar } from '@/components/UsageBar'
-import { NestedShareBar } from '@/components/NestedShareBar'
 import { PromoCard } from '@/components/PromoCard'
 import { SubscriptionUsageCarousel } from '@/components/SubscriptionUsageCarousel'
-import { ExclusiveBadge } from '@/components/ExclusiveBadge'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
-import { ProviderLogo } from '@/components/ProviderLogo'
-import { usageBarsForProducts } from '@/lib/usageBars'
-import { buildQuotaSections, shouldUseExclusiveDisplay, type QuotaDisplayBar } from '@/lib/quotaDisplay'
 import { buildModelUsageRows, buildUsageOverview, pricingQualityLabel, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -119,27 +113,24 @@ function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
 export function DashboardPage() {
   const t = useT()
   const {
-    account, boundAccounts,
-    leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, entitledProducts,
-    accountFractions, accountResetMs, accountResetAt, myFractions, myPersonalFractions, myResetMs, myResetAt, myShares, myWeeklyFractions, myPersonalWeeklyFractions, myWeeklyResetMs, myWeeklyResetAt,
-    cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity, cardExclusive,
-    codexQuota, claudeQuota,
+    account,
+    leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
-    fetchStats,
+    localTodayTokens, localTodayApiValueUSD,
+    fetchStats, heartbeat,
   } = useAppStore()
 
-  // 就地刷新远端额度:GetStats 只读缓存快照,故先主动去上游强制拉一次最新余量(并上报服务端),
-  // 再 fetchStats 才能看到新值并重渲染血条。上游刷新失败不致命,照常刷新本地状态。
+  // 个人美元额度来自 app heartbeat，而不是母号上游快照。
   const [refreshingQuota, setRefreshingQuota] = useState(false)
   const handleRefreshQuota = async () => {
     if (refreshingQuota) return
     setRefreshingQuota(true)
     try {
       try {
-        await api.refreshQuota()
+        await heartbeat()
       } catch (err) {
-        console.error('refreshQuota failed:', err)
+        console.error('refresh subscription quota failed:', err)
       }
       await fetchStats()
     } finally {
@@ -147,55 +138,7 @@ export function DashboardPage() {
     }
   }
 
-  // 显示「每个已订阅产品」一张用量卡:优先用订阅授权并集(跨所有生效订阅,故 codex+anthropic
-  // 都显示);冷启动授权未知时回退到单卡 products(保持现有行为,不空屏)。
-  // 注:同产品多订阅(如两个 anthropic)在客户端按产品键控会塌成一张卡 —— 那是更深的架构限制。
-  const visibleBars = usageBarsForProducts(entitledProducts.length ? entitledProducts : cardProducts)
-  // 绑定账号当前不可用(租号报错且非致命):额度数据不可信 → 血条显示「未知」+ 顶部提示,
-  // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
-  // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
-  // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
-  const isQuotaLikeError = /quota|limit|公平|额度|恢复|retry-after|token limit/i.test(leaserError)
-  const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude') && !isQuotaLikeError
-  // 多订阅时逐订阅走 carousel,每张卡自带「尊贵 · 独享」badge(跟 quota.exclusive,混档如实标注);
-  // 顶部账户级 badge 仅在无订阅回退(单卡视图)时展示,避免用单卡口径误标整个账户。
   const hasSubscriptions = !!(account?.subscriptions && account.subscriptions.length > 0)
-  // 独享卡:整号 100% 归你。展示「尊贵 · 独享」标识。优先用后端权威 cardExclusive;
-  // 缺省(旧服务端)回退到 weight>=capacity 启发式。
-  const exclusiveCard = !hasSubscriptions && shouldUseExclusiveDisplay({ cardWeight: cardShareSeats, cardShareCapacity, exclusive: cardExclusive, accountProblem })
-
-  // 独享订阅(weight≥号总份数,即就你一个人用整个号):此时「号余量」就是「你的卡额度」,
-  // 把号余量条映射成卡额度真实数值/窗口,而不是只给一个 fair-share 百分比。
-  // 去席位:标题只用「产品 · 模型」,不再显示「X/Y 席」。份额几何由 myShares(e_i)承载。
-  const quotaSections = buildQuotaSections({
-    bars: visibleBars.map((bar) => ({ ...bar })),
-    cardBuckets,
-    cardWeeklyBuckets,
-    myFractions,
-    myResetMs,
-    myResetAt,
-    myWeeklyFractions,
-    myWeeklyResetMs,
-    myWeeklyResetAt,
-    myShares,
-    accountFractions,
-    accountResetMs,
-    accountResetAt,
-    codexQuota,
-    claudeQuota,
-    accountProblem,
-  })
-
-  const renderQuotaBar = (bar: QuotaDisplayBar) => (
-    <UsageBar
-      key={`${bar.window}-${bar.label}`}
-      label={bar.label}
-      used={bar.hideValues ? null : (bar.used ?? null)}
-      limit={bar.hideValues ? null : (bar.limit ?? null)}
-      fraction={bar.fraction}
-      resetMs={bar.resetMs}
-    />
-  )
 
   const overview = buildUsageOverview({
     today: {
@@ -216,7 +159,7 @@ export function DashboardPage() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">用量看板</h2>
-          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">订阅余量、本机调用和 API 等价价值放在同一视图</p>
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">订阅余量与个人用量均以服务端为准，本机统计单独标注</p>
         </div>
         <Button size="sm" variant="secondary" disabled={refreshingQuota} onClick={handleRefreshQuota}>
           <RefreshCw size={13} className={cn(refreshingQuota && 'animate-spin')} />{t('account.refresh')}
@@ -242,7 +185,7 @@ export function DashboardPage() {
       <section className="overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--bg-card)]">
         <div className="grid grid-cols-[1.35fr_.85fr]">
           <div className="border-r border-[var(--border-light)] px-5 py-5">
-            <p className="text-[10px] font-medium text-[var(--text-muted)]">今日总 Token</p>
+            <p className="text-[10px] font-medium text-[var(--text-muted)]">个人今日总 Token · 服务端</p>
             <div className="mt-1 font-mono-data text-[30px] font-bold tracking-[-0.04em] text-[var(--text-primary)]">{formatTokens(overview.totalTokens)}</div>
             <div className="mt-4 grid grid-cols-3 gap-5 border-t border-[var(--border-light)] pt-4">
               <Stat label="成功调用" value={overview.successfulCalls.toLocaleString()} />
@@ -259,9 +202,20 @@ export function DashboardPage() {
             <div className="px-5 py-4">
               <p className="text-[10px] text-[var(--text-muted)]">累计 API 等价价值</p>
               <p className="mt-1 font-mono-data text-[22px] font-bold text-[var(--text-primary)]">{formatUSD(overview.cumulativeApiValueUSD)}</p>
-              <p className="mt-1 text-[9px] text-[var(--text-muted)]">从首次使用起，按官方 API 定价累计</p>
+              <p className="mt-1 text-[9px] text-[var(--text-muted)]">从首次服务端计量起，按 CardUsageHourly 累计</p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="flex items-center justify-between gap-6 rounded-[12px] border border-[var(--border-light)] bg-[var(--bg-card)] px-4 py-3">
+        <div>
+          <p className="text-[11px] font-semibold text-[var(--text-primary)]">本机用量</p>
+          <p className="mt-0.5 text-[9px] text-[var(--text-muted)]">仅当前登录用户在此设备上的调用，不参与服务端额度扣减</p>
+        </div>
+        <div className="flex shrink-0 gap-8 text-right">
+          <Stat label="本机今日 Token" value={formatTokens(localTodayTokens)} />
+          <Stat label="本机今日 API 等价价值" value={formatUSD(localTodayApiValueUSD)} />
         </div>
       </section>
 
@@ -269,53 +223,15 @@ export function DashboardPage() {
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <div>
             <CardTitle><BarChart3 size={15} />{t('dashboard.usageTitle')}</CardTitle>
-            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">5h 与周窗口分别计算；“我的剩余”始终受母号当前剩余约束</p>
+            <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">显示你的订阅 5 小时与每周剩余比例</p>
           </div>
-          {exclusiveCard && <ExclusiveBadge />}
         </CardHeader>
         <CardContent>
-          {accountProblem && <div className="mb-3 rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">{t('dashboard.accountProblem', { error: leaserError })}</div>}
           {hasSubscriptions ? (
-            <SubscriptionUsageCarousel subscriptions={account!.subscriptions} boundAccounts={boundAccounts} />
-          ) : (() => {
-            const providers = [
-              { id: 'antigravity', name: 'Antigravity' },
-              { id: 'codex', name: 'Codex' },
-              { id: 'anthropic', name: 'Anthropic' },
-            ]
-            const columns = providers.map((provider) => ({ ...provider, sections: quotaSections.filter((section) => section.bucket.startsWith(provider.id)) })).filter((provider) => provider.sections.length > 0)
-            if (columns.length === 0) return <div className="py-1 text-[12px] text-[var(--text-muted)]">{t('dashboard.noUsageData')}</div>
-            return (
-              <div className="grid items-start gap-3" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-                {columns.map((provider) => (
-                  <div key={provider.id} className="rounded-[12px] border border-[var(--border-light)] p-3.5">
-                    <div className="mb-2.5 flex items-center gap-2"><ProviderLogo provider={provider.id} /><span className="text-[13px] font-semibold text-[var(--text-primary)]">{provider.name}</span></div>
-                    <div className="flex flex-col gap-3">
-                      {provider.sections.map((section) => (
-                        <div key={section.bucket} className="flex flex-col gap-2.5">
-                          <div className="text-[12px] font-semibold text-[var(--text-primary)]">{section.title}</div>
-                          {section.mine.length > 0 ? (
-                            <div className="flex flex-col divide-y divide-[var(--border-light)]">
-                              {section.mine.map((myBar) => {
-                                const accountBar = section.serviceAccount.find((bar) => bar.window === myBar.window)
-                                const resetIdentity = typeof myBar.resetAt === 'number' && myBar.resetAt > Date.now() ? myBar.resetAt : undefined
-                                const personalFraction = myBar.window === '7d'
-                                  ? myPersonalWeeklyFractions[section.bucket]
-                                  : myPersonalFractions[section.bucket]
-                                return <div key={myBar.window} className="py-2 first:pt-0.5 last:pb-0.5"><NestedShareBar label={myBar.label} myFraction={myBar.fraction} personalFraction={personalFraction} accountFraction={accountBar?.fraction ?? -1} shareSeats={cardShareSeats} shareCapacity={cardShareCapacity} exclusive={cardExclusive} resetMs={myBar.resetMs} displayKey={resetIdentity ? `${accountId}:${section.bucket}:${myBar.window}:${resetIdentity}` : undefined} /></div>
-                              })}
-                            </div>
-                          ) : (
-                            <div className="flex flex-col gap-1.5"><div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div><div className="flex flex-col divide-y divide-[var(--border-light)]">{section.serviceAccount.map((bar) => <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>)}</div></div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          })()}
+            <SubscriptionUsageCarousel subscriptions={account!.subscriptions} />
+          ) : (
+            <div className="py-1 text-[12px] text-[var(--text-muted)]">{t('dashboard.noUsageData')}</div>
+          )}
         </CardContent>
       </Card>
 
@@ -324,7 +240,7 @@ export function DashboardPage() {
       <Card className="overflow-hidden">
         <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
           <div><CardTitle><BarChart3 size={15} />今日模型明细</CardTitle><p className="mt-0.5 text-[10px] text-[var(--text-muted)]">输入、输出、缓存、Priority 与计价质量完整保留</p></div>
-          <div className="text-[10px] text-[var(--text-muted)]">本机实时 · API 等价价值（含缓存）</div>
+          <div className="text-[10px] text-[var(--text-muted)]">服务端汇总 · API 等价价值（含缓存）</div>
         </CardHeader>
         <CardContent className="p-0"><ModelUsageTable rows={modelUsageRows} /></CardContent>
       </Card>

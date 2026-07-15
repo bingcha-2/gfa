@@ -7,7 +7,7 @@
  *  - 号池 vs 绑定:读 config.line(显式),不靠 bindings 空不空推断。
  *  - 座位占用:从「DB ACTIVE 订阅的 config」按 weight 求和(occupiedSharesByAccount),
  *    NOT 从文件数 —— 停写文件后文件不含订阅 bindings,从文件数会超卖(★陷阱★)。
- *  - 用量:内存窗口 + CardTokenUsage(本就不在文件)。
+ *  - 用量:内存窗口 + Subscription.windowState(本就不在文件)。
  *
  * 并发(M13b):绑定线的「读 DB 已占份额 → 选号 → 回写 config.bindings」整段在进程级
  * withAccessKeysWriteLock 内串行 —— 两笔并发购买不会都读到「还剩 N 份」而把同一个号
@@ -26,10 +26,10 @@ import { sharedFairShareRegistry } from "../token-server/fair-share-registry";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
-import { oversellFactor } from "../plan-catalog/unified-entitlement";
 import type { CatalogConfig } from "../plan-catalog/pricing";
-import { boundSeatsByAccount, isExclusive, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
+import { boundSeatsByAccount, isExclusive, occupiedSharesByAccount, quotaSeatCapacityForProduct, seatWeight } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
+import { migrateBindSubscriptionToUsd } from "./subscription-usd-migration";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -47,16 +47,6 @@ export class EntitlementSyncService {
     private readonly planCatalog: PlanCatalogService,
   ) {}
 
-  /** 拼车超卖封顶系数(后台 catalog 可配,缺省 1.5)。读 published catalog,缺则 1.5。 */
-  private async oversellFactor(): Promise<number> {
-    try {
-      const published = await this.planCatalog.getPublished();
-      return oversellFactor((published?.config as CatalogConfig) ?? {});
-    } catch {
-      return oversellFactor({});
-    }
-  }
-
   /**
    * 解析某产品下绑定号的展示信息(id + 邮箱),供后台订阅详情内联展示绑定的是哪个号。
    * 池中已删/不存在 → 返回 null(调用方降级为仅 id)。
@@ -64,6 +54,44 @@ export class EntitlementSyncService {
   lookupPoolAccount(product: string, accountId: number): { id: number; email: string | null } | null {
     const acc = this.rosetta.poolAccountById(product, accountId);
     return acc ? { id: acc.id, email: acc.email ?? null } : null;
+  }
+
+  /** Runtime USD windows used by the console. This is the same status object
+   * used by enforcement and the customer client, not a second accounting path. */
+  subscriptionUsdQuotaUsage(subscriptionId: string): Record<string, {
+    fiveHour: { used: number; limit: number; resetAt: string } | null;
+    weekly: { used: number; limit: number; resetAt: string } | null;
+  }> {
+    const record = this.accessKeyStore.findById(subscriptionId);
+    if (!record) return {};
+    return this.accessKeyStore.publicStatus(record)?.usdQuotaByProduct ?? {};
+  }
+
+  /** Clear exactly one runtime USD window and persist the new snapshot now, so
+   * an immediate process restart cannot restore the pre-reset amount. */
+  async resetSubscriptionUsdQuotaUsage(
+    subscriptionId: string,
+    product: string,
+    scope: 'fiveHour' | 'weekly',
+  ): Promise<{ previousUsed: number; limit: number; usageByProduct: Record<string, any> } | null> {
+    const before = this.accessKeyStore.snapshotSubscriptionUsage(subscriptionId);
+    const reset = this.accessKeyStore.resetSubscriptionUsdUsage(subscriptionId, product, scope);
+    if (!reset) return null;
+    const snapshot = this.accessKeyStore.serializeSubscriptionWindows()
+      .find((item) => item.id === subscriptionId)?.windowState ?? null;
+    try {
+      await this.prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: { windowState: snapshot },
+      });
+    } catch (error) {
+      this.accessKeyStore.restoreSubscriptionUsage(subscriptionId, before);
+      throw error;
+    }
+    return {
+      ...reset,
+      usageByProduct: this.subscriptionUsdQuotaUsage(subscriptionId),
+    };
   }
 
   /**
@@ -77,11 +105,31 @@ export class EntitlementSyncService {
     // rowToConfig(非 parseConfig):卡迁移订阅的 config 列为空、绑定在 legacy `bindings` 列。
     // 只读 config 会把它当 line="" → 落进号池分支、丢掉对原账号的绑定;回退 legacy 后它
     // 正确呈现为 line=bind + 原 bindings,syncBind 见其已绑 → 不重新分配 → 保住原账号。
-    const config = rowToConfig(sub as any);
+    let config = rowToConfig(sub as any);
+    let catalog: Partial<CatalogConfig> | null = null;
+    let catalogVersion: number | undefined;
+    try {
+      const published = await this.planCatalog.getPublished();
+      catalog = published?.config as Partial<CatalogConfig> | null;
+      catalogVersion = Number.isFinite(Number(published?.version)) ? Number(published?.version) : undefined;
+    } catch {
+      catalog = null;
+    }
+    const migration = migrateBindSubscriptionToUsd(config, catalog, { catalogVersion });
+    if (migration.changed) {
+      config = migration.config;
+      // A later renewal/reactivation of an old row gets the same one-way upgrade
+      // as boot-active subscriptions. Fail closed: do not register a migrated
+      // in-memory record unless its source-of-truth config is durable.
+      await this.prisma.subscription.update({
+        where: { id: sub.id },
+        data: { config: JSON.stringify(config) },
+      });
+    }
     const line = String(config.line || "");
 
     if (line === "bind") {
-      await this.syncBind(sub, config);
+      await this.syncBind(sub, config, catalog);
     } else {
       // 号池(及任何非 bind):不占座位,直接注册限额 record。
       this.registerRecord(sub, config);
@@ -93,7 +141,11 @@ export class EntitlementSyncService {
    * 已绑(config.bindings 已有真实 accountId)的产品不重复分配 —— resync(续期)
    * 直接复用,不再写 DB、不再占新份额。
    */
-  private async syncBind(sub: Subscription, config: Record<string, any>): Promise<void> {
+  private async syncBind(
+    sub: Subscription,
+    config: Record<string, any>,
+    catalog: Partial<CatalogConfig> | null,
+  ): Promise<void> {
     const products: string[] = Array.isArray(config.products) ? config.products : [];
     const weight = seatWeight(config);
     const levels: Record<string, string> = (config.levels && typeof config.levels === "object") ? config.levels : {};
@@ -105,8 +157,6 @@ export class EntitlementSyncService {
     const unbound = products.filter((p) => !(Number(existingBindings[p]) > 0));
 
     if (unbound.length > 0) {
-      // 超卖封顶系数(后台可配)在锁外取一次,避免临界区内 await 额外 DB。
-      const factor = await this.oversellFactor();
       const exclusive = isExclusive(config);
       // Read DB shares → assign → persist, serialized so two concurrent purchases
       // can't both read "free" and double-book past capacity.
@@ -121,10 +171,10 @@ export class EntitlementSyncService {
             continue;
           }
           const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
-          const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
+          const salesCapacity = quotaSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
           const accountId = this.rosetta.assignSeatForProductFromShares(
             product, weight, level, shares, counts, salesCapacity,
-            { exclusive, oversellCeiling: Math.ceil(salesCapacity * factor) },
+            { exclusive, oversellCeiling: salesCapacity },
           );
           if (!accountId) {
             this.logger.error(
@@ -192,16 +242,17 @@ export class EntitlementSyncService {
       if (!acc) return { ok: false, error: `「${product}」池中不存在账号 #${acctId}` };
       if (!force && acc.enabled === false) return { ok: false, error: `账号 #${acctId} 已停用(可加 force 强制)` };
 
-      // 容量「闸门」已放开(QUOTA-REDESIGN §7 / 决策7):不再硬禁超卖(Σw>N)。`N`(salesCapacity)
-      // 退化为「保底席位数」而非硬上限 —— 使用层按 D=max(N,Σw) 自动切薄,超卖只让每席变薄、永不撞墙。
-      // 故绑定层只「记录」超卖(telemetry),不再拒绝;force 仍保留(用于停用号等其它校验)。
+      // 自动绑定和手工换绑共用同一最大可售份数。只有管理员显式 force 才能突破。
       {
         const { shares } = await this.seatOccupancyFromDb(product, subscriptionId);
-        const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
+        const salesCapacity = quotaSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
         const free = salesCapacity - (shares.get(acctId) || 0);
         if (free < weight) {
+          if (!force) {
+            return { ok: false, error: `账号 #${acctId} 已达到最大可售份数 ${salesCapacity}` };
+          }
           this.logger.warn(
-            `[rebind] sub ${subscriptionId} product ${product} → account #${acctId} 超卖(oversell):剩余份额 ${free} < 需要 ${weight}(允许,使用层 D=max(N,Σw) 自动切薄,见 §7/决策7)`,
+            `[rebind] sub ${subscriptionId} product ${product} → account #${acctId} 超过最大可售份数 ${salesCapacity}(force)`,
           );
         }
       }

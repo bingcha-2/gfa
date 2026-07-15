@@ -49,7 +49,7 @@ describe("Codex 额度 E2E 场景", () => {
     }));
   }
   const acct = (id: number, extra: any = {}) => ({ id, email: `a${id}@x.com`, refreshToken: `rt-${id}`, enabled: true, planType: "pro", ...extra });
-  const card = (id: number, accountId: number, weight = 1) => ({ id: `card-${id}`, key: `secret-${id}`, status: "active", durationMs: HOUR, bindings: { codex: accountId }, weight });
+  const card = (id: number, accountId: number, weight = 1) => ({ id: `card-${id}`, key: `secret-${id}`, status: "active", durationMs: DAY, bindings: { codex: accountId }, weight });
 
   // 租号 + 上报(可带 accountQuota)。
   async function lease(svc: any, cardId: string, modelKey = "gpt-5-codex") {
@@ -68,6 +68,112 @@ describe("Codex 额度 E2E 场景", () => {
     codexQuota: { hourlyPercent: h, weeklyPercent: w, ...(hReset ? { hourlyResetTime: hReset } : {}), ...(wReset ? { weeklyResetTime: wReset } : {}), ...presence },
   });
   const fair = (svc: any, accountId: number, bucket = BK) => svc.fairShareTracker.getBucketStateForTesting(accountId, bucket);
+
+  function setupUsdSubscription(initial: { used5h?: number; usedWeekly?: number } = {}) {
+    const svc = setup([acct(11)], []);
+    const wallNow = now;
+    svc.accessKeyStore.loadSubscriptionRecords([{
+      id: "usd-sub", key: "usd-secret", customerId: "cust-usd", status: "active",
+      products: ["codex"], bindings: { codex: 11 }, requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 100, weekly: 1_000 } },
+      usdUsageByProduct: {
+        codex: {
+          used5h: initial.used5h ?? 80,
+          usedWeekly: initial.usedWeekly ?? 800,
+          windowStartedAt5h: wallNow - HOUR,
+          windowStartedAtWeekly: wallNow - DAY,
+        },
+      },
+    }]);
+    return svc;
+  }
+
+  it("USD订阅·真实链路:新 resetAt 先清旧5h再计本次用量,周窗口不受影响", async () => {
+    const svc = setupUsdSubscription();
+    const wallNow = now;
+    const old5hReset = wallNow + HOUR;
+    const weeklyReset = wallNow + 4 * DAY;
+    let l = await lease(svc, "usd-sub");
+    let result = await report(svc, "usd-sub", l.leaseId, {
+      input: 100_000,
+      accountQuota: {
+        ...quota(11, 40, 40, new Date(old5hReset).toISOString(), new Date(weeklyReset).toISOString()),
+        observedAt: now + 1,
+      },
+    });
+    const afterBaseline = result.accessKeyStatus.usdQuotaByProduct.codex;
+    expect(afterBaseline.fiveHour.used).toBeGreaterThan(80);
+    expect(afterBaseline.weekly.used).toBeGreaterThan(800);
+
+    now += 1_000;
+    l = await lease(svc, "usd-sub");
+    result = await report(svc, "usd-sub", l.leaseId, {
+      input: 100_000,
+      accountQuota: {
+        ...quota(11, 99, 40, new Date(wallNow + 5 * HOUR).toISOString(), new Date(weeklyReset).toISOString()),
+        observedAt: now + 1,
+      },
+    });
+    const afterReset = result.accessKeyStatus.usdQuotaByProduct.codex;
+    // Current report survives because upstream epoch processing happens before billing.
+    expect(afterReset.fiveHour.used).toBeGreaterThan(0);
+    expect(afterReset.fiveHour.used).toBeCloseTo(afterBaseline.fiveHour.used - 80, 6);
+    expect(afterReset.weekly.used).toBeGreaterThan(afterBaseline.weekly.used);
+  });
+
+  it("USD订阅·真实链路:无 resetAt 的 80→99 相对回升需连续两次才重置", async () => {
+    const svc = setupUsdSubscription({ used5h: 80, usedWeekly: 0 });
+    let l = await lease(svc, "usd-sub");
+    await report(svc, "usd-sub", l.leaseId, {
+      accountQuota: { ...quota(11, 80, -1), observedAt: now + 1 },
+    });
+
+    now += 1_000;
+    l = await lease(svc, "usd-sub");
+    let result = await report(svc, "usd-sub", l.leaseId, {
+      accountQuota: { ...quota(11, 99, -1), observedAt: now + 1 },
+    });
+    expect(result.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBe(80);
+
+    now += 1_000;
+    l = await lease(svc, "usd-sub");
+    result = await report(svc, "usd-sub", l.leaseId, {
+      accountQuota: { ...quota(11, 99, -1), observedAt: now + 1 },
+    });
+    expect(result.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBe(0);
+  });
+
+  it("同一母号的不同 USD 订阅串行提交完整重置范围", async () => {
+    const svc = setup([acct(11)], []);
+    svc.accessKeyStore.loadSubscriptionRecords(["usd-a", "usd-b"].map((id) => ({
+      id, key: `${id}-secret`, customerId: `${id}-customer`, status: "active",
+      products: ["codex"], bindings: { codex: 11 }, requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 100, weekly: 1_000 } },
+    })));
+    const leaseA = await lease(svc, "usd-a");
+    const leaseB = await lease(svc, "usd-b");
+    const original = svc.fairShareTracker.checkpointUsdReport.bind(svc.fairShareTracker);
+    let active = 0;
+    let maxActive = 0;
+    vi.spyOn(svc.fairShareTracker, "checkpointUsdReport").mockImplementation(async (...args: any[]) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      try {
+        return await original(...args);
+      } finally {
+        active -= 1;
+      }
+    });
+
+    await Promise.all([
+      report(svc, "usd-a", leaseA.leaseId, { accountQuota: quota(11, 80, 80) }),
+      report(svc, "usd-b", leaseB.leaseId, { accountQuota: quota(11, 79, 79) }),
+    ]);
+    expect(maxActive).toBe(1);
+  });
 
   // ── 上报额度变化 / 远程刷新 ────────────────────────────────────────────────
   it("上报额度变化:5h/周低水位随真实上报下降", async () => {

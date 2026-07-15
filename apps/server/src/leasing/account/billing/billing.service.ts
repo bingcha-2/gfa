@@ -20,9 +20,9 @@ import {
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
-import { buildFixedEntitlements, salesSeatCapacityFor } from "../../plan-catalog/unified-entitlement";
+import { buildFixedEntitlements, oversellCeiling } from "../../plan-catalog/unified-entitlement";
 import { RosettaService } from "../../rosetta/rosetta.service";
-import { occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight, type SubConfig } from "../../subscription/seat";
+import { occupiedSharesByAccount, quotaSeatCapacityForProduct, seatWeight, type SubConfig } from "../../subscription/seat";
 import { rowToConfig } from "../../subscription/subscription-config";
 import { signParams } from "./epay.sign";
 import { EpayCallbackService } from "./epay-callback.service";
@@ -466,12 +466,8 @@ export class BillingService {
     const products = Array.isArray(config.products) ? config.products : [];
     const levels = config.levels || {};
     const shareCapacity = Number(config.shareCapacity || 8);
-    const salesSeatCapacity = Object.fromEntries(
-      products.map((product: string) => [
-        product,
-        salesSeatCapacityFor(catalog, product, String(levels[product] || ""), shareCapacity),
-      ]),
-    );
+    const sellCapacity = oversellCeiling(catalog, shareCapacity);
+    const fixedSeatCapacity = config.exclusive === true ? shareCapacity : sellCapacity;
     const antigravityOnly = products.length === 1 && products[0] === "antigravity";
     const staticEntitlements = antigravityOnly
       ? buildFixedEntitlements(catalog, {
@@ -481,12 +477,13 @@ export class BillingService {
         })
       : {};
 
-    // Codex/Anthropic bind lines stay pinned and fair-share governed.
+    // Codex/Anthropic bind lines stay pinned. Their personal USD quota is
+    // per-share and independent of this sales-capacity snapshot.
     // Antigravity is display-bound only: static token buckets govern
     // customer quota while runtime supply rotates through pro/premium accounts.
     return {
       ...config,
-      salesSeatCapacity,
+      quotaSeatCapacity: fixedSeatCapacity,
       ...staticEntitlements,
       assignmentPolicy: antigravityOnly ? "display-bound-pool" : "pinned",
     };
@@ -533,8 +530,11 @@ export class BillingService {
         throw new BadRequestException(`绑定线缺少 ${product} 的会员等级,无法下单`);
       }
       const occupied = occupiedSharesByAccount(configs, product);
-      const salesCapacity = salesSeatCapacityForProduct(config as SubConfig, product, Number(config.shareCapacity || 8));
-      if (!this.rosetta.hasAvailableSeatFromShares(product, weight, level, occupied, salesCapacity)) {
+      const salesCapacity = quotaSeatCapacityForProduct(config as SubConfig, product, Number(config.shareCapacity || 8));
+      if (!this.rosetta.hasAvailableSeatFromShares(product, weight, level, occupied, salesCapacity, {
+        exclusive: config.exclusive === true,
+        oversellCeiling: salesCapacity,
+      })) {
         throw new BadRequestException(
           `${product}(${level})暂无可用座位(无配额充足且份额足够的号),请稍后重试或联系客服`,
         );
@@ -742,8 +742,8 @@ export class BillingService {
     }
 
     // 使用检测:订单支付后产生过 token 用量 → 不允许退款(防「买了用完再退」)。
-    // 查小时聚合表(CardUsageHourly,保留 ~60 天,覆盖任意订阅期);原始流水只留 2 天、
-    // 不能用来判老订单。下界按 paidAt 所在整点向下取整(保守:含该小时全部用量 → 宁可拦)。
+    // 查永久保留的小时聚合表 CardUsageHourly；请求级流水已经退役。
+    // 下界按 paidAt 所在整点向下取整(保守:含该小时全部用量 → 宁可拦)。
     const since = order.paidAt ?? order.createdAt;
     const hourFloor = new Date(Math.floor(since.getTime() / 3_600_000) * 3_600_000);
     const usageCount = await this.prisma.cardUsageHourly.count({

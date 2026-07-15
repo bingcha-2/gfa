@@ -17,7 +17,7 @@ function formatUSD(n: number): string {
 /**
  * 按模型汇总表:把所选时间窗内的用量按模型逐行列出
  * (请求数 / 输入·输出·缓存 token / 合计 / 官方 API 价估算 / 占比)。
- * 数据来自服务端 getUsageStats 的 byModel(源:CardTokenUsage,按 modelKey 聚合)。
+ * 数据来自服务端 getUsageStats 的 byModel（源：CardUsageHourly，按 modelKey 聚合）。
  */
 export function UsageModelTable({ days = 7 }: { days?: UsageDays }) {
   const u = useDict().portalApp.usage;

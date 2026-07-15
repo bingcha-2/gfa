@@ -29,25 +29,20 @@ type CodexTokenLease struct {
 }
 
 type codexLeaseTokenResp struct {
-	Success      *bool           `json:"success"`
-	Ok           *bool           `json:"ok"`
-	Code         string          `json:"code"`
-	Message      string          `json:"message"`
-	Error        string          `json:"error"`
-	AccessToken  string          `json:"accessToken"`
-	AccountId    json.RawMessage `json:"accountId"`
-	LeaseId      string          `json:"leaseId"`
-	EmailHint    string          `json:"emailHint"`
-	PlanType     string          `json:"planType"`
-	FastAllowed  bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
-	ExpiresAt    string          `json:"expiresAt"`
-	BoundAccount *struct {
-		Id       int     `json:"id"`
-		Fraction float64 `json:"fraction"`
-		ResetAt  int64   `json:"resetAt"`
-	} `json:"boundAccount"`
-	// 服务端把绑定/被租 codex 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
-	// 客户端据此渲染两条 codex 血条,无需自己抓上游。
+	Success     *bool           `json:"success"`
+	Ok          *bool           `json:"ok"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+	Error       string          `json:"error"`
+	AccessToken string          `json:"accessToken"`
+	AccountId   json.RawMessage `json:"accountId"`
+	LeaseId     string          `json:"leaseId"`
+	EmailHint   string          `json:"emailHint"`
+	PlanType    string          `json:"planType"`
+	FastAllowed bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
+	ExpiresAt   string          `json:"expiresAt"`
+	// 服务端把被租 codex 号的上游窗口带回，仅用于后续上报同步重置时机；
+	// 客户端订阅血条始终读取 heartbeat 的个人美元额度。
 	CodexWindows *CodexQuotaWindow `json:"codexWindows"`
 	// 通用出口策略:该账号绑定的粘性出口代理 + 是否强制经代理出站(codex 恒 false)。
 	AccountProxyUrl string `json:"accountProxyUrl"`
@@ -66,7 +61,7 @@ type CodexLeaser struct {
 	pendingReports   []pendingReport            // 失败上报队列(对齐 Gemini,防丢用量)
 }
 
-// LatestCodexQuota 返回最近一次抓到的 codex 5h/周限额(供血条显示),无则 nil。
+// LatestCodexQuota 返回最近一次抓到的 codex 上游窗口(供后续上报同步),无则 nil。
 func (l *CodexLeaser) LatestCodexQuota() *CodexQuotaWindow {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -128,7 +123,6 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 
 	body, status, err := postCodexBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
-		recordAccountBuckets(body)
 		recordFairShareQuota(body)
 		// 不熔断、不重试:额度超限如实返回。硬额度(token limit exceeded)→ 结构化
 		// QuotaExhaustedError,让 proxy 转 429 + Retry-After 给 IDE(而非 502 让它狂试)。
@@ -180,13 +174,6 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
 	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
-	if leaseResp.BoundAccount != nil {
-		mk, _ := options["modelKey"].(string)
-		if mk == "" {
-			mk = "gpt-5-codex"
-		}
-		recordBoundFractionForModel("codex", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
-	}
 	syncQuotaStateFromBody(GetLeaser(), body)
 	l.mu.Lock()
 	l.lastLease = lease
@@ -261,6 +248,7 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 		"inputTokens":       details.InputTokens,
 		"outputTokens":      details.OutputTokens,
 		"cachedInputTokens": details.CachedInputTokens,
+		"contextTokens":     details.ContextTokens,
 		"rawTotalTokens":    details.RawTotalTokens,
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
@@ -300,10 +288,8 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 // doCodexReportWithRetry 带退避重试上报;最终失败入队列,下次成功时补发(对齐 Gemini)。
 func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, card, upstreamProxy string) {
 	var err error
-	var body []byte
 	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
-		if b, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
-			body = b
+		if _, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
 			err = nil
 			break
 		} else {
@@ -318,10 +304,7 @@ func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, car
 		l.queueCodexReport(payload, card, upstreamProxy)
 		return
 	}
-	// 服务端 report-result 响应同样带回 fairShareQuota/weeklyFairShareQuota(与 lease 同形),
-	// 立即刷新血条 —— 每次上报后即时更新,不必等下一次租号。
-	recordAccountBuckets(body)
-	recordFairShareQuota(body)
+	// Codex 订阅按产品美元窗口限流；旧 fair-share 响应不进入本地状态。
 	// 成功不再单独打日志:代理层(codex_proxy.go)已打过含 in/out/total 的成功行,
 	// 这里再打一条「上报成功」属重复噪音。失败仍由上面的 ✗ 行记录。
 	l.flushCodexPending(card, upstreamProxy)
@@ -336,6 +319,7 @@ func (l *CodexLeaser) queueCodexReport(payload map[string]interface{}, card, ups
 	l.pendingReports = append(l.pendingReports, pendingReport{
 		Payload: payload, Card: card, UpstreamProxy: upstreamProxy, AddedAt: time.Now(),
 	})
+	persistPendingReports(GetUsageStats().Namespace(), "codex", l.pendingReports)
 	Log("[codex-leaser] queued failed report (%d pending)", len(l.pendingReports))
 }
 
@@ -345,13 +329,24 @@ func (l *CodexLeaser) flushCodexPending(card, upstreamProxy string) {
 	pending := l.pendingReports
 	l.pendingReports = nil
 	l.mu.Unlock()
+	persistPendingReports(GetUsageStats().Namespace(), "codex", nil)
 
+	var requeue []pendingReport
 	for _, r := range pending {
-		if time.Since(r.AddedAt) > 30*time.Minute {
+		if time.Since(r.AddedAt) > pendingReportMaxAge {
 			continue // 过期丢弃
 		}
-		if _, _, err := postCodexBcai("/report-result", r.Payload, r.Card, r.UpstreamProxy); err != nil {
-			l.queueCodexReport(r.Payload, r.Card, r.UpstreamProxy) // 仍失败,重新入队
+		if _, _, err := postCodexBcai("/report-result", r.Payload, card, r.UpstreamProxy); err != nil {
+			// Preserve the original causal deadline. Calling queueCodexReport here
+			// would stamp time.Now() and let an unauthenticatable old report live forever.
+			r.Card = card
+			requeue = append(requeue, r)
 		}
+	}
+	if len(requeue) > 0 {
+		l.mu.Lock()
+		l.pendingReports = append(requeue, l.pendingReports...)
+		persistPendingReports(GetUsageStats().Namespace(), "codex", l.pendingReports)
+		l.mu.Unlock()
 	}
 }

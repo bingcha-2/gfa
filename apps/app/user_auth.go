@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,24 @@ import (
 	"strings"
 	"time"
 )
+
+func customerIDFromSessionToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var payload struct {
+		CustomerId string `json:"customerId"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.CustomerId)
+}
 
 // authBaseURL is the machine-API base URL for account-session calls
 // (/app/login, /app/heartbeat, /app/logout) and other client API fetches.
@@ -36,6 +55,7 @@ type loginResponse struct {
 	Token          string `json:"token"`
 	TokenExpiresAt string `json:"tokenExpiresAt"`
 	Account        struct {
+		Id          string `json:"id"`
 		Email       string `json:"email"`
 		DisplayName string `json:"displayName"`
 	} `json:"account"`
@@ -48,16 +68,18 @@ type loginResponse struct {
 	} `json:"subscription"`
 	// Subscriptions 是全部生效订阅(服务端按 priority 升序),驱动客户端多订阅展示。
 	Subscriptions []struct {
-		Id             string                        `json:"id"`
-		Status         string                        `json:"status"`
-		ExpiresAt      string                        `json:"expiresAt"`
-		DeviceLimit    int                           `json:"deviceLimit"`
-		Priority       int                           `json:"priority"`
-		Products       []string                      `json:"products"`
-		Levels         map[string]string             `json:"levels"`
-		RemainFraction *float64                      `json:"remainFraction"`
-		ProductQuota   map[string]ProductQuotaWindow `json:"productQuota"`
+		Id                string                                 `json:"id"`
+		Status            string                                 `json:"status"`
+		ExpiresAt         string                                 `json:"expiresAt"`
+		DeviceLimit       int                                    `json:"deviceLimit"`
+		Priority          int                                    `json:"priority"`
+		Products          []string                               `json:"products"`
+		Levels            map[string]string                      `json:"levels"`
+		UsdQuotaByProduct map[string]SubscriptionProductUsdQuota `json:"usdQuotaByProduct"`
+		Exclusive         bool                                   `json:"exclusive"`
+		ShareSeats        int                                    `json:"shareSeats"`
 	} `json:"subscriptions"`
+	UsageSummary *ServerUsageSummary `json:"usageSummary"`
 }
 
 // snapshots 把 /app/login 响应的订阅数组转成可持久化快照(供多订阅展示)。
@@ -65,15 +87,16 @@ func (r loginResponse) snapshots() []SubscriptionSnapshot {
 	out := make([]SubscriptionSnapshot, 0, len(r.Subscriptions))
 	for _, s := range r.Subscriptions {
 		out = append(out, SubscriptionSnapshot{
-			Id:             s.Id,
-			Status:         s.Status,
-			ExpiresAt:      s.ExpiresAt,
-			DeviceLimit:    s.DeviceLimit,
-			Priority:       s.Priority,
-			Products:       s.Products,
-			Levels:         s.Levels,
-			RemainFraction: s.RemainFraction,
-			ProductQuota:   s.ProductQuota,
+			Id:                s.Id,
+			Status:            s.Status,
+			ExpiresAt:         s.ExpiresAt,
+			DeviceLimit:       s.DeviceLimit,
+			Priority:          s.Priority,
+			Products:          s.Products,
+			Levels:            s.Levels,
+			UsdQuotaByProduct: s.UsdQuotaByProduct,
+			Exclusive:         s.Exclusive,
+			ShareSeats:        s.ShareSeats,
 		})
 	}
 	return out
@@ -159,6 +182,11 @@ func startServicesForUser(cfg Config) {
 	// leaser passes it to postJSONWithSecretToBase which now sets Bearer.
 	token := cfg.UserToken
 	deviceId := cfg.DeviceId
+	// Retry reports recovered from this user's permission-restricted local namespace even if
+	// no new generation occurs after a restart.
+	go GetLeaser().flushPendingReports(token, "")
+	go GetCodexLeaser().flushCodexPending(token, "")
+	go GetClaudeLeaser().flushClaudePending(token, "")
 
 	// Start auto-lease (antigravity path). Session accounts lease directly with
 	// the JWT — the old card /api/activate handshake is gone (server stubbed it
@@ -208,10 +236,12 @@ func clearUserSession(cfg *Config) {
 	cfg.UserToken = ""
 	cfg.UserTokenExpiry = ""
 	cfg.UserEmail = ""
+	cfg.UserId = ""
 	cfg.PlanName = ""
 	cfg.PlanExpiry = ""
 	cfg.PlanDeviceMax = 0
 	cfg.Subscriptions = nil
+	cfg.ServerUsage = nil
 }
 
 func ensureConfigDeviceId(cfg *Config) (bool, error) {
@@ -292,6 +322,8 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 	cfg.UserToken = resp.Token
 	cfg.UserTokenExpiry = resp.TokenExpiresAt
 	cfg.UserEmail = resp.Account.Email
+	cfg.UserId = resp.Account.Id
+	cfg.ServerUsage = resp.UsageSummary
 	cfg.DeviceName = deviceName
 	if resp.Subscription != nil {
 		cfg.PlanName = resp.Subscription.PlanName
@@ -310,6 +342,7 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 	// 首个 lease 应答前会串显旧账号的独享个人血条(「不继承旧卡血条」)。
 	// 注:走 App.SaveConfig 的换 token 路径已有同样清理,这里覆盖直接登录路径。
 	clearLocalCardState()
+	GetUsageStats().SwitchNamespace(cfg.UserId)
 
 	// Start services with the new token.
 	startServicesForUser(cfg)
@@ -349,6 +382,7 @@ func (a *App) UserLogout() error {
 
 	// 清空会话级本地状态(血条缓存、授权、本地额度),防止下一个登录账号串显。
 	clearLocalCardState()
+	GetUsageStats().SwitchNamespace("")
 
 	// Clear account-session fields from config (DeviceName is intentionally
 	// kept — it's device identity, not session state).
@@ -584,71 +618,53 @@ func parseHeartbeatSubscriptions(result map[string]interface{}) ([]SubscriptionS
 				}
 			}
 		}
-		if v, ok := m["remainFraction"].(float64); ok {
-			f := v
-			snap.RemainFraction = &f
+		if v, ok := m["usdQuotaByProduct"].(map[string]interface{}); ok {
+			snap.UsdQuotaByProduct = parseSubscriptionUsdQuotaByProduct(v)
 		}
-		if v, ok := m["productQuota"].(map[string]interface{}); ok {
-			snap.ProductQuota = parseProductQuota(v)
+		if v, ok := m["exclusive"].(bool); ok {
+			snap.Exclusive = v
+		}
+		if v, ok := m["shareSeats"].(float64); ok && v > 0 {
+			snap.ShareSeats = int(v)
 		}
 		out = append(out, snap)
 	}
 	return out, true
 }
 
-// parseProductQuota 从心跳订阅项的 productQuota map 解析逐产品整号 5h/周剩余(供逐订阅按产品画血条)。
-func parseProductQuota(raw map[string]interface{}) map[string]ProductQuotaWindow {
-	out := map[string]ProductQuotaWindow{}
-	for product, v := range raw {
-		m, ok := v.(map[string]interface{})
+func parseSubscriptionUsdQuotaByProduct(raw map[string]interface{}) map[string]SubscriptionProductUsdQuota {
+	parseWindow := func(value interface{}) *SubscriptionUsdQuotaWindow {
+		m, ok := value.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		limit, _ := m["limit"].(float64)
+		if limit <= 0 {
+			return nil
+		}
+		used, _ := m["used"].(float64)
+		if used < 0 {
+			used = 0
+		}
+		resetAt, _ := m["resetAt"].(string)
+		return &SubscriptionUsdQuotaWindow{Used: used, Limit: limit, ResetAt: resetAt}
+	}
+	out := map[string]SubscriptionProductUsdQuota{}
+	for product, value := range raw {
+		quota, ok := value.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		var w ProductQuotaWindow
-		if f, ok := m["hourlyPercent"].(float64); ok {
-			ff := f
-			w.HourlyPercent = &ff
+		fiveHour := parseWindow(quota["fiveHour"])
+		weekly := parseWindow(quota["weekly"])
+		if fiveHour != nil || weekly != nil {
+			out[product] = SubscriptionProductUsdQuota{FiveHour: fiveHour, Weekly: weekly}
 		}
-		if f, ok := m["weeklyPercent"].(float64); ok {
-			ff := f
-			w.WeeklyPercent = &ff
-		}
-		if s, ok := m["hourlyResetAt"].(string); ok {
-			w.HourlyResetAt = s
-		}
-		if s, ok := m["weeklyResetAt"].(string); ok {
-			w.WeeklyResetAt = s
-		}
-		if f, ok := m["myHourlyFraction"].(float64); ok {
-			ff := f
-			w.MyHourlyFraction = &ff
-		}
-		if f, ok := m["myWeeklyFraction"].(float64); ok {
-			ff := f
-			w.MyWeeklyFraction = &ff
-		}
-		if f, ok := m["myPersonalHourlyFraction"].(float64); ok {
-			ff := f
-			w.MyPersonalHourlyFraction = &ff
-		}
-		if f, ok := m["myPersonalWeeklyFraction"].(float64); ok {
-			ff := f
-			w.MyPersonalWeeklyFraction = &ff
-		}
-		if f, ok := m["myShare"].(float64); ok {
-			ff := f
-			w.MyShare = &ff
-		}
-		if b, ok := m["exclusive"].(bool); ok {
-			bb := b
-			w.Exclusive = &bb
-		}
-		out[product] = w
 	}
 	return out
 }
 
-// HeartbeatCheck sends a heartbeat to the server (frontend polls ~60s),
+// HeartbeatCheck sends a heartbeat to the server (frontend polls ~20min),
 // persists refreshed subscription info, and handles fatal session classes:
 //   - SESSION_INVALID / DEVICE_REVOKED / DEVICE_LIMIT_EXCEEDED → the session is
 //     dead server-side: stop services and clear the local session so the UI
@@ -695,6 +711,7 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 				Log("[auth] Heartbeat fatal (%s): clearing local session", errCode)
 				stopServicesForUser()
 				clearLocalCardState()
+				GetUsageStats().SwitchNamespace("")
 				clearUserSession(&cfg)
 				if saveErr := SaveConfig(cfg); saveErr != nil {
 					Log("[auth] Failed to clear session after %s: %v", errCode, saveErr)
@@ -742,6 +759,21 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 	// checks; the full `subscriptions` array drives the multi-sub list. Both are
 	// folded into one `changed` flag → at most one SaveConfig per heartbeat.
 	changed := false
+	if customerID, ok := result["customerId"].(string); ok && customerID != "" && customerID != cfg.UserId {
+		cfg.UserId = customerID
+		GetUsageStats().SwitchNamespace(customerID)
+		changed = true
+	}
+	if raw, ok := result["usageSummary"]; ok {
+		encoded, marshalErr := json.Marshal(raw)
+		if marshalErr == nil {
+			var summary ServerUsageSummary
+			if json.Unmarshal(encoded, &summary) == nil {
+				cfg.ServerUsage = &summary
+				changed = true
+			}
+		}
+	}
 
 	subVal, hasSubKey := result["subscription"]
 	if sub, ok := subVal.(map[string]interface{}); ok {

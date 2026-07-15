@@ -62,7 +62,7 @@ beforeEach(() => {
   accessKeysFilePath = path.join(tempDir, "access-keys.json");
   clock = 1_000_000;
   writeJson(accessKeysFilePath, {
-    keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, windowLimit: 1e9 }],
+    keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 30 * 24 * 60 * 60 * 1000, windowLimit: 1e9 }],
   });
   writeJson(accountsFilePath, {
     accounts: [{ id: 1, email: "a@x.com", refreshToken: "rt-1", enabled: true }],

@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   compactWindowForCheckpoint,
   createCarriedWindowState,
@@ -40,6 +40,10 @@ export interface HourlyUsageAccounting {
   outputTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  cacheWrite5mTokens?: number;
+  cacheWrite1hTokens?: number;
+  apiValueUsd?: number;
+  apiPriced?: boolean;
   rawTotalTokens: number;
   totalTokens: number;
   reverseProxy: boolean;
@@ -62,6 +66,50 @@ export class QuotaStaleRevisionError extends Error {
     this.name = "QuotaStaleRevisionError";
     this.staleKeys = keys;
   }
+}
+
+type ReportAccountingEntry = {
+  accountId: number;
+  bucket: string;
+  windows: QuotaWindowsState;
+  reportIds?: string[];
+  accountings?: HourlyUsageAccounting[];
+  createdAt?: Date;
+};
+
+/** Split entries into groups of at most maxReports reportIds per group, slicing
+ *  an oversized entry (post-outage backlog) into sub-entries when needed. */
+function chunkAccountingEntries(entries: ReportAccountingEntry[], maxReports: number): ReportAccountingEntry[][] {
+  const groups: ReportAccountingEntry[][] = [];
+  let current: ReportAccountingEntry[] = [];
+  let count = 0;
+  const push = (entry: ReportAccountingEntry, reports: number) => {
+    if (current.length > 0 && count + reports > maxReports) {
+      groups.push(current);
+      current = [];
+      count = 0;
+    }
+    current.push(entry);
+    count += reports;
+  };
+  for (const entry of entries) {
+    const reportIds = [...new Set(entry.reportIds || [])].filter(Boolean);
+    if (reportIds.length <= maxReports) {
+      push(entry, Math.max(1, reportIds.length));
+      continue;
+    }
+    const accountings = new Map((entry.accountings || []).map((value) => [value.reportId, value]));
+    for (let i = 0; i < reportIds.length; i += maxReports) {
+      const slice = reportIds.slice(i, i + maxReports);
+      push({
+        ...entry,
+        reportIds: slice,
+        accountings: slice.map((id) => accountings.get(id)).filter((value): value is HourlyUsageAccounting => value != null),
+      }, slice.length);
+    }
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
 }
 
 function storedBucket(bucket: string, scope: QuotaScope): string {
@@ -160,8 +208,19 @@ export class FairShareWindowRepository {
     await this.checkpointBatch([{ accountId, bucket, windows }]);
   }
 
-  /** One short SQLite transaction for up to one coordinator micro-batch. */
+  /** Window-only checkpoint for the background dirty-key flush. Never writes a
+   *  receipt or hourly row — those are the request path's job. */
+  async checkpointWindows(checkpoints: WindowCheckpoint[]): Promise<void> {
+    await this.runWithStaleRetry(checkpoints, false);
+  }
+
+  /** One short SQLite transaction for up to one coordinator micro-batch. Writes
+   *  windows and, atomically, any attached receipt + hourly aggregate. */
   async checkpointBatch(checkpoints: WindowCheckpoint[]): Promise<void> {
+    await this.runWithStaleRetry(checkpoints, true);
+  }
+
+  private async runWithStaleRetry(checkpoints: WindowCheckpoint[], writeAccounting: boolean): Promise<void> {
     const ordered = [...checkpoints].sort((a, b) => {
       const keyA = checkpointKey(a.accountId, a.bucket);
       const keyB = checkpointKey(b.accountId, b.bucket);
@@ -178,7 +237,7 @@ export class FairShareWindowRepository {
     const stale = new Map<string, { accountId: number; bucket: string }>();
     while (remaining.length > 0) {
       try {
-        await this.checkpointTransaction(remaining);
+        await this.checkpointTransaction(remaining, writeAccounting);
         break;
       } catch (error) {
         if (!(error instanceof QuotaStaleRevisionError)) throw error;
@@ -207,7 +266,7 @@ export class FairShareWindowRepository {
     }
   }
 
-  private async checkpointTransaction(ordered: WindowCheckpoint[]): Promise<void> {
+  private async checkpointTransaction(ordered: WindowCheckpoint[], writeAccounting: boolean): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       for (const checkpoint of ordered) {
         const { accountId, bucket, windows } = checkpoint;
@@ -254,60 +313,171 @@ export class FairShareWindowRepository {
         if (!fullyAccepted) {
           throw new QuotaStaleRevisionError(this.provider, [{ accountId, bucket }]);
         }
-        const revision = BigInt(Math.max(windows.primary.revision, windows.weekly.revision));
-        const accountings = new Map((checkpoint.accountings || []).map((value) => [value.reportId, value]));
-        for (const reportId of new Set(checkpoint.reportIds || [])) {
-          if (!reportId) continue;
-          const accounting = accountings.get(reportId);
-          if (!accounting) {
-            await tx.quotaReportReceipt.upsert({
-              where: { provider_reportId: { provider: this.provider, reportId } },
-              create: { provider: this.provider, reportId, accountId, bucket, revision, createdAt: checkpoint.createdAt },
-              update: {},
-            });
-            continue;
-          }
-          // The receipt is the idempotency gate for the aggregate. Both writes
-          // live in this same SQLite transaction: either quota + billing exist,
-          // or neither does. Retrying a committed report increments nothing.
-          const inserted = await tx.$executeRawUnsafe(
-            `INSERT OR IGNORE INTO QuotaReportReceipt
-              (provider, reportId, accountId, bucket, revision, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            this.provider, reportId, accountId, bucket, revision, checkpoint.createdAt || accounting.at,
-          );
-          if (Number(inserted) === 0) continue;
-          const hourStart = new Date(Math.floor(accounting.at.getTime() / 3_600_000) * 3_600_000);
-          const failed = accounting.status >= 200 && accounting.status < 300 ? 0 : 1;
-          const reverseProxyHits = accounting.reverseProxy ? 1 : 0;
-          const priorityTokens = accounting.serviceTier === "priority" ? accounting.totalTokens : 0;
-          const sums = {
-            requests: 1, failedRequests: failed,
-            inputTokens: accounting.inputTokens, outputTokens: accounting.outputTokens,
-            cachedInputTokens: accounting.cachedInputTokens, cacheCreationTokens: accounting.cacheCreationTokens,
-            rawTotalTokens: accounting.rawTotalTokens, totalTokens: accounting.totalTokens,
-            reverseProxyHits, priorityTokens,
-          };
-          await tx.cardUsageHourly.upsert({
-            where: { hourStart_accessKeyId_accountEmail_customerId_modelKey_bucket: {
-              hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
-              customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket,
-            } },
-            create: {
-              hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
-              customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket, ...sums,
-            },
-            update: {
-              requests: { increment: sums.requests }, failedRequests: { increment: sums.failedRequests },
-              inputTokens: { increment: sums.inputTokens }, outputTokens: { increment: sums.outputTokens },
-              cachedInputTokens: { increment: sums.cachedInputTokens }, cacheCreationTokens: { increment: sums.cacheCreationTokens },
-              rawTotalTokens: { increment: sums.rawTotalTokens }, totalTokens: { increment: sums.totalTokens },
-              reverseProxyHits: { increment: sums.reverseProxyHits }, priorityTokens: { increment: sums.priorityTokens },
-            },
-          });
+        // Combined path keeps receipt + hourly atomic with the window head. The
+        // window-only flush passes writeAccounting=false and never touches them.
+        if (writeAccounting) {
+          const revision = BigInt(Math.max(windows.primary.revision, windows.weekly.revision));
+          await this.applyReportAccounting(tx, checkpoint, revision);
         }
       }
     });
+  }
+
+  /**
+   * Exactly-once compact heads + receipt + hourly aggregate. The request hot
+   * path must keep these atomic: a durable receipt without its window would
+   * turn a crash into forgiven CU, while a window without its receipt would
+   * double-count a retry. Per-card detail remains on the background flush.
+   */
+  async checkpointReportAccounting(entries: ReportAccountingEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    // Bound the statements per interactive transaction. A post-outage backlog
+    // merges every pending receipt of a key into one entry; committing thousands
+    // of reports in a single transaction would exceed Prisma's 5s default and
+    // livelock (P2028 rolls back, the retained backlog retries identically).
+    // Receipt + hourly stay atomic PER REPORT, so splitting across transactions
+    // is safe: committed chunks are absorbed by INSERT OR IGNORE on retry.
+    const MAX_REPORTS_PER_TRANSACTION = 200;
+    const stale = new Map<string, { accountId: number; bucket: string }>();
+    for (const group of chunkAccountingEntries(entries, MAX_REPORTS_PER_TRANSACTION)) {
+      // Isolate a stale key exactly like runWithStaleRetry. SQLite rolls the
+      // whole interactive transaction back atomically, so one stale sibling must
+      // not strand healthy entries' receipt + hourly: the coordinator treats
+      // every key NOT in staleKeys as durably committed, so a silent rollback
+      // there loses billing rows and lets a replayed reportId double-count.
+      // Drop only the identified key and retry the healthy remainder.
+      let remaining = group;
+      while (remaining.length > 0) {
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            for (const entry of remaining) {
+              const revision = await this.applyCompactHeads(tx, entry);
+              await this.applyReportAccounting(tx, entry, revision);
+            }
+          });
+          break;
+        } catch (error) {
+          if (!(error instanceof QuotaStaleRevisionError)) throw error;
+          const rejected = new Set(error.staleKeys);
+          const survivors: ReportAccountingEntry[] = [];
+          let removed = 0;
+          for (const entry of remaining) {
+            const key = checkpointKey(entry.accountId, entry.bucket);
+            if (rejected.has(key)) {
+              stale.set(key, { accountId: entry.accountId, bucket: entry.bucket });
+              removed += 1;
+            } else {
+              survivors.push(entry);
+            }
+          }
+          // A malformed error must never loop forever or falsely acknowledge a
+          // record whose durable outcome is unknown.
+          if (removed === 0) throw error;
+          remaining = survivors;
+        }
+      }
+    }
+    if (stale.size > 0) {
+      // Healthy survivors are durable now. The coordinator uses staleKeys to
+      // reject only those callers while acknowledging every committed sibling.
+      throw new QuotaStaleRevisionError(this.provider, [...stale.values()]);
+    }
+  }
+
+  /** Upsert only the two compact authoritative heads. The coalesced background
+   * path owns FairShareWindow detail replacement, avoiding its write amplification
+   * on every report while preserving crash-safe quota accounting. */
+  private async applyCompactHeads(tx: Prisma.TransactionClient, entry: ReportAccountingEntry): Promise<bigint> {
+    let fullyAccepted = true;
+    for (const scope of ["primary", "weekly"] as const) {
+      const state = compactWindowForCheckpoint(entry.windows[scope]);
+      const accepted = await tx.$executeRawUnsafe(
+        `INSERT INTO FairShareWindowHead
+          (provider, accountId, bucket, scope, stateJson, revision, algorithm, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(provider, accountId, bucket, scope) DO UPDATE SET
+           stateJson = excluded.stateJson,
+           revision = excluded.revision,
+           algorithm = excluded.algorithm,
+           updatedAt = excluded.updatedAt
+         WHERE excluded.revision >= FairShareWindowHead.revision`,
+        this.provider, entry.accountId, entry.bucket, scope, JSON.stringify(state),
+        BigInt(state.revision), ALGORITHM, new Date(),
+      );
+      if (Number(accepted) === 0) fullyAccepted = false;
+    }
+    if (!fullyAccepted) {
+      throw new QuotaStaleRevisionError(this.provider, [{ accountId: entry.accountId, bucket: entry.bucket }]);
+    }
+    return BigInt(Math.max(entry.windows.primary.revision, entry.windows.weekly.revision));
+  }
+
+  /** Write receipt (idempotency gate) and, only on first insert, the hourly
+   *  aggregate. Shared by the combined and the minimal accounting transactions. */
+  private async applyReportAccounting(
+    tx: Prisma.TransactionClient,
+    entry: ReportAccountingEntry,
+    revision: bigint,
+  ): Promise<void> {
+    const { accountId, bucket } = entry;
+    const accountings = new Map((entry.accountings || []).map((value) => [value.reportId, value]));
+    for (const reportId of new Set(entry.reportIds || [])) {
+      if (!reportId) continue;
+      const accounting = accountings.get(reportId);
+      if (!accounting) {
+        // Same idempotent write as below in one statement; the model upsert
+        // costs an extra SELECT round trip inside the request-blocking transaction.
+        await tx.$executeRawUnsafe(
+          `INSERT OR IGNORE INTO QuotaReportReceipt
+            (provider, reportId, accountId, bucket, revision, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          this.provider, reportId, accountId, bucket, revision, entry.createdAt || new Date(),
+        );
+        continue;
+      }
+      // The receipt is the idempotency gate for the aggregate. Both writes
+      // live in this same SQLite transaction: either quota + billing exist,
+      // or neither does. Retrying a committed report increments nothing.
+      const inserted = await tx.$executeRawUnsafe(
+        `INSERT OR IGNORE INTO QuotaReportReceipt
+          (provider, reportId, accountId, bucket, revision, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        this.provider, reportId, accountId, bucket, revision, entry.createdAt || accounting.at,
+      );
+      if (Number(inserted) === 0) continue;
+      const hourStart = new Date(Math.floor(accounting.at.getTime() / 3_600_000) * 3_600_000);
+      const failed = accounting.status >= 200 && accounting.status < 300 ? 0 : 1;
+      const reverseProxyHits = accounting.reverseProxy ? 1 : 0;
+      const priorityTokens = accounting.serviceTier === "priority" ? accounting.totalTokens : 0;
+      const sums = {
+        requests: 1, failedRequests: failed,
+        inputTokens: accounting.inputTokens, outputTokens: accounting.outputTokens,
+        cachedInputTokens: accounting.cachedInputTokens, cacheCreationTokens: accounting.cacheCreationTokens,
+        cacheWrite5mTokens: Number(accounting.cacheWrite5mTokens || 0), cacheWrite1hTokens: Number(accounting.cacheWrite1hTokens || 0),
+        apiValueUsd: Number(accounting.apiValueUsd || 0), apiPricedRequests: accounting.apiPriced ? 1 : 0,
+        rawTotalTokens: accounting.rawTotalTokens, totalTokens: accounting.totalTokens,
+        reverseProxyHits, priorityTokens,
+      };
+      await tx.cardUsageHourly.upsert({
+        where: { hourStart_accessKeyId_accountEmail_customerId_modelKey_bucket: {
+          hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+          customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket,
+        } },
+        create: {
+          hourStart, accessKeyId: accounting.accessKeyId, accountEmail: accounting.accountEmail,
+          customerId: accounting.customerId, modelKey: accounting.modelKey, bucket: accounting.bucket, ...sums,
+        },
+        update: {
+          requests: { increment: sums.requests }, failedRequests: { increment: sums.failedRequests },
+          inputTokens: { increment: sums.inputTokens }, outputTokens: { increment: sums.outputTokens },
+          cachedInputTokens: { increment: sums.cachedInputTokens }, cacheCreationTokens: { increment: sums.cacheCreationTokens },
+          cacheWrite5mTokens: { increment: sums.cacheWrite5mTokens }, cacheWrite1hTokens: { increment: sums.cacheWrite1hTokens },
+          apiValueUsd: { increment: sums.apiValueUsd }, apiPricedRequests: { increment: sums.apiPricedRequests },
+          rawTotalTokens: { increment: sums.rawTotalTokens }, totalTokens: { increment: sums.totalTokens },
+          reverseProxyHits: { increment: sums.reverseProxyHits }, priorityTokens: { increment: sums.priorityTokens },
+        },
+      });
+    }
   }
 
   async hasReport(reportId: string): Promise<boolean> {

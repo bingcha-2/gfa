@@ -5,6 +5,7 @@ import { DeviceModule } from "../../account/device/device.module";
 // TokenServerModule exports SHARED_ACCESS_KEY_STORE — used to read each
 // subscription's remaining quota for the client's multi-sub remain bars.
 import { TokenServerModule } from "../../token-server/token-server.module";
+import { PortalModule } from "../../account/portal/portal.module";
 import { AppAuthService } from "./app-auth.service";
 import { AppAuthController } from "./app-auth.controller";
 
@@ -24,7 +25,7 @@ import { AppAuthController } from "./app-auth.controller";
  * device-limit enforcement at login (403 DEVICE_LIMIT_EXCEEDED).
  */
 @Module({
-  imports: [CustomerAuthModule, DeviceModule, TokenServerModule],
+  imports: [CustomerAuthModule, DeviceModule, TokenServerModule, PortalModule],
   controllers: [AppAuthController],
   providers: [AppAuthService]
 })

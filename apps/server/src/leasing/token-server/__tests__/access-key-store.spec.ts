@@ -239,7 +239,7 @@ describe('AccessKeyStore', () => {
     it('records a usage event into the rate-limit window', async () => {
       const store = makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
-        usageEvents: [], tokenUsageEvents: [],
+        tokenUsageEvents: [],
         windowStartedAt: Date.now(),
       }]);
       store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50 }, '');
@@ -258,10 +258,10 @@ describe('AccessKeyStore', () => {
   // ── Flush to disk ──────────────────────────────────────────────────────
 
   describe('flush', () => {
-    it('recordUsage does NOT persist to disk — usage lives in DB (CardTokenUsage), file untouched', async () => {
+    it('recordUsage does NOT persist to the legacy card file — durable usage lives in CardUsageHourly/windowState', async () => {
       const store = makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
-        totalRequests: 0, usageEvents: [], tokenUsageEvents: [],
+        totalRequests: 0, tokenUsageEvents: [],
         windowStartedAt: Date.now(),
       }]);
       store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50 }, '');
@@ -349,7 +349,6 @@ describe('AccessKeyStore', () => {
           'codex-gpt': 500_000, 'gpt': 500_000,
         },
         windowStartedAt: Date.now(),
-        usageEvents: [],
         tokenUsageEvents: tokenEvents,
       }]);
     }
@@ -374,7 +373,6 @@ describe('AccessKeyStore', () => {
         windowMs: 24 * 60 * 60 * 1000, // 1-day window, not the default 5h
         bucketLimits: { 'anthropic-claude': 500_000 },
         windowStartedAt: Date.now(),
-        usageEvents: [],
         tokenUsageEvents: [
           { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
         ],
@@ -429,7 +427,6 @@ describe('AccessKeyStore', () => {
           'codex-gpt': 1_000,
         },
         windowStartedAt: Date.now(),
-        usageEvents: [],
         // 只有 anthropic-claude 用爆;antigravity / codex 一个 token 都没用(满额)。
         tokenUsageEvents: [
           { at: Date.now(), inputTokens: 80_000, outputTokens: 50_973, modelKey: 'claude-opus-4-8', product: 'anthropic' },
@@ -506,7 +503,7 @@ describe('AccessKeyStore', () => {
     function makeCard(extra: any) {
       return makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
-        windowStartedAt: Date.now(), usageEvents: [], ...extra,
+        windowStartedAt: Date.now(), ...extra,
       }]);
     }
     const claudeReq = sessionReqFor('k1');
@@ -558,6 +555,260 @@ describe('AccessKeyStore', () => {
       const status = store.publicStatus(store.findById('k1')!);
       expect(status.quotaMode).toBe('static');
       expect(status.opusTokenLimit).toBe(500_000);
+    });
+
+    it('enforces one subscription-wide 5h USD cap across model buckets', async () => {
+      const now = Date.now();
+      const store = makeCard({
+        usdLimit5h: 10,
+        windowStartedAt: now,
+        tokenUsageEvents: [
+          { at: now, apiValueUsd: 4, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+          { at: now, apiValueUsd: 6, modelKey: 'gpt-5.6-sol', product: 'codex' },
+        ],
+      });
+
+      const result = await store.resolveFromRequest(claudeReq, {}, opts);
+
+      expect(result.record).toBeNull();
+      expect(result.limitExceeded).toBe(true);
+      expect(result.error).toContain('$10.00/$10.00');
+      expect(Number(result.resetMs)).toBeGreaterThan(0);
+    });
+
+    it('enforces Codex and Anthropic USD windows independently in one subscription', async () => {
+      const now = Date.now();
+      const store = makeCard({
+        quotaAlgorithm: 'usd',
+        usdQuotaByProduct: {
+          anthropic: { fiveHour: 10, weekly: 100 },
+          codex: { fiveHour: 20, weekly: 200 },
+        },
+        usdUsageByProduct: {
+          anthropic: { used5h: 10, usedWeekly: 10, windowStartedAt5h: now, windowStartedAtWeekly: now },
+          codex: { used5h: 3, usedWeekly: 4, windowStartedAt5h: now, windowStartedAtWeekly: now },
+        },
+      });
+
+      const anthropic = await store.resolveFromRequest(claudeReq, {}, opts);
+      const codex = await store.resolveFromRequest(claudeReq, {}, {
+        enforceLimit: true, modelKey: 'gpt-5.6-sol', product: 'codex',
+      });
+      store.recordUsage(
+        'k1', 200, { inputTokens: 100_000, outputTokens: 0 },
+        'gpt-5.6-sol', 'codex-independent', 'codex', '',
+      );
+      const status = store.publicStatus(store.findById('k1')!);
+
+      expect(anthropic.record).toBeNull();
+      expect(codex.record).not.toBeNull();
+      expect(status.usdQuota).toBeNull();
+      expect(status.usdQuotaByProduct).toMatchObject({
+        anthropic: { fiveHour: { used: 10, limit: 10 } },
+        codex: { fiveHour: { used: 3.5, limit: 20 }, weekly: { used: 4.5, limit: 200 } },
+      });
+    });
+
+    it('smoothly splits a legacy shared window by product limit ratio on restore', () => {
+      const now = Date.now();
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{
+        id: 'split-legacy', key: 'secret', status: 'active', quotaAlgorithm: 'usd',
+        usdQuotaByProduct: {
+          codex: { fiveHour: 100, weekly: 200 },
+          anthropic: { fiveHour: 300, weekly: 600 },
+        },
+      }] as any);
+      store.restoreSubscriptionWindow('split-legacy', JSON.stringify({
+        usdUsed5h: 80,
+        usdUsedWeekly: 160,
+        usdWindowStartedAt5h: now,
+        usdWindowStartedAtWeekly: now,
+      }));
+
+      expect(store.publicStatus(store.findById('split-legacy')!).usdQuotaByProduct).toMatchObject({
+        codex: { fiveHour: { used: 20 }, weekly: { used: 40 } },
+        anthropic: { fiveHour: { used: 60 }, weekly: { used: 120 } },
+      });
+    });
+
+    it('splits a legacy shared window by ACTUAL per-product usage when window events survive', () => {
+      const now = Date.now();
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{
+        id: 'split-events', key: 'secret', status: 'active', quotaAlgorithm: 'usd',
+        usdQuotaByProduct: {
+          codex: { fiveHour: 100, weekly: 200 },
+          anthropic: { fiveHour: 300, weekly: 600 },
+        },
+      }] as any);
+      // 5h spend was ENTIRELY on anthropic; weekly was codex $15 + anthropic $45.
+      // The buggy limit-ratio split would have put $20 of phantom Codex usage in the
+      // 5h window (80 * 100/400); the real per-product split must keep Codex at 0.
+      store.restoreSubscriptionWindow('split-events', JSON.stringify({
+        usdWindowStartedAt5h: now,
+        usdWindowStartedAtWeekly: now,
+        tokenUsageEvents: [{ at: now, product: 'anthropic', apiValueUsd: 80 }],
+        weeklyTokenUsageEvents: [
+          { at: now, product: 'codex', apiValueUsd: 15 },
+          { at: now, product: 'anthropic', apiValueUsd: 45 },
+        ],
+      }));
+
+      expect(store.publicStatus(store.findById('split-events')!).usdQuotaByProduct).toMatchObject({
+        codex: { fiveHour: { used: 0 }, weekly: { used: 15 } },
+        anthropic: { fiveHour: { used: 80 }, weekly: { used: 45 } },
+      });
+    });
+
+    it('enforces weekly USD independently and exposes both USD windows', async () => {
+      const now = Date.now();
+      const store = makeCard({
+        usdLimit5h: 20,
+        usdLimitWeekly: 50,
+        windowStartedAt: now,
+        weeklyWindowStartedAt: now,
+        tokenUsageEvents: [{ at: now, apiValueUsd: 3 }],
+        weeklyTokenUsageEvents: [{ at: now, apiValueUsd: 50 }],
+      });
+
+      const result = await store.resolveFromRequest(claudeReq, {}, opts);
+      const status = store.publicStatus(store.findById('k1')!);
+
+      expect(result.record).toBeNull();
+      expect(result.error).toContain('weekly USD limit exceeded');
+      expect(status.quotaMode).toBe('usd');
+      expect(status.usdQuota).toMatchObject({
+        fiveHour: { used: 3, limit: 20 },
+        weekly: { used: 50, limit: 50 },
+      });
+    });
+
+    it('records API-equivalent USD once and preserves it when config reloads', () => {
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{ id: 'usd-sub', key: 'secret', status: 'active', usdLimit5h: 100 }] as any);
+
+      expect(store.recordUsage(
+        'usd-sub', 200,
+        { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 0 },
+        'claude-sonnet-4-6', 'report-1', 'anthropic', '',
+      )).toBe(true);
+      const before = store.publicStatus(store.findById('usd-sub')!).usdQuota.fiveHour.used;
+      const compactBefore = store.findById('usd-sub')! as any;
+      expect(compactBefore.usdUsed5h).toBeCloseTo(3, 6);
+      expect(compactBefore.usdUsedWeekly).toBeUndefined();
+      expect(compactBefore.weeklyWindowStartedAt).toBeUndefined();
+      expect(compactBefore.tokenUsageEvents ?? []).toHaveLength(0);
+      expect(compactBefore.weeklyTokenUsageEvents ?? []).toHaveLength(0);
+      const savedWindow = JSON.parse(store.serializeSubscriptionWindows()[0].windowState);
+      expect(savedWindow).toMatchObject({ usdUsed5h: 3 });
+      expect(savedWindow.usdUsedWeekly).toBeUndefined();
+      expect(savedWindow.weeklyWindowStartedAt).toBeUndefined();
+      expect(savedWindow.tokenUsageEvents).toBeUndefined();
+
+      store.loadSubscriptionRecords([{ id: 'usd-sub', key: 'secret', status: 'active', usdLimit5h: 2 }] as any);
+      const after = store.publicStatus(store.findById('usd-sub')!).usdQuota.fiveHour.used;
+
+      expect(before).toBeCloseTo(3, 6);
+      expect(after).toBeCloseTo(before, 10);
+    });
+
+    it('opens USD windows only on the first billable usage, not on status reads or zero-token reports', () => {
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{
+        id: 'usage-anchored-usd', key: 'secret', status: 'active',
+        quotaAlgorithm: 'usd', usdLimit5h: 10, usdLimitWeekly: 50,
+      }] as any);
+      const record = store.findById('usage-anchored-usd')! as any;
+
+      expect(store.publicStatus(record).usdQuota).toMatchObject({
+        fiveHour: { used: 0, resetMs: 0 },
+        weekly: { used: 0, resetMs: 0 },
+      });
+      expect(record.windowStartedAt).toBeUndefined();
+      expect(record.weeklyWindowStartedAt).toBeUndefined();
+
+      store.recordUsage('usage-anchored-usd', 500, {}, 'gpt-5.6-sol', 'zero', 'codex');
+      expect(record.windowStartedAt).toBeUndefined();
+      expect(record.weeklyWindowStartedAt).toBeUndefined();
+
+      store.recordUsage(
+        'usage-anchored-usd', 200,
+        { inputTokens: 100_000, outputTokens: 0 },
+        'gpt-5.6-sol', 'billable', 'codex',
+      );
+      expect(record.windowStartedAt).toBeGreaterThan(0);
+      expect(record.weeklyWindowStartedAt).toBeGreaterThan(0);
+      expect(store.publicStatus(record).usdQuota).toMatchObject({
+        fiveHour: { used: 0.5 },
+        weekly: { used: 0.5 },
+      });
+    });
+
+    it('converts the current legacy event windows to compact USD totals when an existing sub is edited', () => {
+      const now = Date.now();
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{
+        id: 'legacy-to-usd', key: 'secret', status: 'active',
+        windowStartedAt: now, weeklyWindowStartedAt: now,
+        // Older builds wrote these placeholders even before USD mode existed;
+        // migration must value the event windows instead of trusting the zeros.
+        usdUsed5h: 0, usdUsedWeekly: 0,
+        tokenUsageEvents: [{ at: now, apiValueUsd: 7 }],
+        weeklyTokenUsageEvents: [{ at: now, apiValueUsd: 11 }],
+      }] as any);
+
+      store.loadSubscriptionRecords([{
+        id: 'legacy-to-usd', key: 'secret', status: 'active',
+        quotaAlgorithm: 'usd', usdLimit5h: 20, usdLimitWeekly: 50,
+      }] as any);
+      const record = store.findById('legacy-to-usd')! as any;
+
+      expect(record.usdUsed5h).toBe(7);
+      expect(record.usdUsedWeekly).toBe(11);
+      expect(record.tokenUsageEvents).toEqual([]);
+      expect(record.weeklyTokenUsageEvents).toEqual([]);
+    });
+
+    it('keeps Antigravity legacy limits independent inside a mixed USD subscription', () => {
+      const store = makeStore([]);
+      store.loadSubscriptionRecords([{
+        id: 'mixed-usd', key: 'secret', status: 'active',
+        products: ['codex', 'antigravity'],
+        bindings: { codex: 1, antigravity: 2 },
+        quotaAlgorithm: 'usd', usdQuotaProducts: ['codex'],
+        usdLimitWeekly: 10,
+        bucketLimits: { 'antigravity-gemini': 1 },
+      }] as any);
+      const record = store.findById('mixed-usd')! as any;
+
+      store.recordUsage(
+        'mixed-usd', 200, { inputTokens: 1_000_000, outputTokens: 0 },
+        'gpt-5.6-sol', 'codex-usage', 'codex',
+      );
+      const codexUsd = record.usdUsedWeekly;
+      expect(codexUsd).toBeCloseTo(5, 6);
+      expect(record.weeklyTokenUsageEvents ?? []).toHaveLength(0);
+
+      store.recordUsage(
+        'mixed-usd', 200, { inputTokens: 1, outputTokens: 0 },
+        'gemini-2.5-pro', 'ag-usage', 'antigravity',
+      );
+      expect(record.usdUsedWeekly).toBe(codexUsd);
+      expect(record.weeklyTokenUsageEvents).toHaveLength(1);
+      expect(record.usdWindowStartedAtWeekly).toBeGreaterThan(0);
+      expect(record.weeklyWindowStartedAt).toBeGreaterThan(0);
+
+      expect(store.precheckRecord(record, {
+        product: 'codex', modelKey: 'gpt-5.6-sol', enforceLimit: true,
+      }).allowed).toBe(true);
+      expect(store.precheckRecord(record, {
+        product: 'antigravity', modelKey: 'gemini-2.5-pro', enforceLimit: true,
+      }).allowed).toBe(false);
+
+      const snapshot = JSON.parse(store.serializeSubscriptionWindows()[0].windowState);
+      expect(snapshot).toMatchObject({ usdUsedWeekly: codexUsd });
+      expect(snapshot.weeklyTokenUsageEvents).toHaveLength(1);
     });
 
     it('enforces weeklyBucketLimits as an explicit per-bucket weekly cap', async () => {
@@ -795,7 +1046,6 @@ describe('AccessKeyStore', () => {
         windowStartedAt: now,
         totalRequests: 5,
         totalTokensUsed: 1234,
-        usageEvents: [],
         tokenUsageEvents: [],
       }]);
       const record = store.findById('k1')!;

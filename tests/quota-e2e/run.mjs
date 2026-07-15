@@ -161,6 +161,18 @@ async function waitFor(label, check, timeoutMs = 3_000) {
   }
   throw new Error(`timed out waiting for ${label}: ${JSON.stringify(last)}`);
 }
+// Window heads are now persisted by the background dirty-key flush, not on the
+// request hot path, so a read straight after a report races the 50ms tick. Force
+// the flush first (idempotent) so head assertions stay deterministic.
+let prisma;
+async function headFirst(args) {
+  await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
+  return prisma.fairShareWindowHead.findFirst(args);
+}
+async function headMany(args) {
+  await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
+  return prisma.fairShareWindowHead.findMany(args);
+}
 
 let port = await startServer();
 const now = Date.now();
@@ -175,11 +187,11 @@ try {
     report({ reportId: "smoke-u1", traceId: "smoke-trace", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000 }),
   ]);
   assert(smoke.responses.at(-1).body.ignored === true, "duplicate report was not ignored");
-  const prisma = new PrismaClient({ datasourceUrl: databaseUrl }); await prisma.$connect();
+  prisma = new PrismaClient({ datasourceUrl: databaseUrl }); await prisma.$connect();
   // One-shot segment-v1 -> window-cu cutover happens during real Nest startup.
   // Public blood bars must match the legacy T/e values and imported rows must
   // become restartable heads without inventing post-cutover CU.
-  const cutoverHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 70, bucket: "codex-gpt" } });
+  const cutoverHeads = await headMany({ where: { provider: "codex", accountId: 70, bucket: "codex-gpt" } });
   assert(cutoverHeads.length === 2, "startup cutover did not checkpoint both heads");
   for (const head of cutoverHeads) {
     const state = JSON.parse(head.stateJson);
@@ -192,7 +204,7 @@ try {
     `cutover changed card-70 primary blood bar: ${JSON.stringify(cutoverPrimaryDebug)}`);
   assert(cutoverB.responses[0].status === 200 && Math.abs(cutoverB.responses[0].body.fairShareQuota["codex-gpt"].fraction - 0.8) < 1e-9,
     `cutover changed card-71 primary blood bar: ${JSON.stringify(cutoverPrimaryDebug)}`);
-  const heads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 1, bucket: "codex-gpt" } });
+  const heads = await headMany({ where: { provider: "codex", accountId: 1, bucket: "codex-gpt" } });
   assert(heads.length === 2, "smoke did not persist both windows");
   for (const head of heads) { const state = JSON.parse(head.stateJson); assert(state.subjects["card-1"].cumulativeCu === 1, `smoke ${head.scope} CU=${state.subjects["card-1"].cumulativeCu}`); }
   assert(await prisma.quotaReportReceipt.count({ where: { reportId: "smoke-u1" } }) === 1, "receipt missing");
@@ -202,8 +214,8 @@ try {
   }, join(root, "apps/app"));
   const flush = await fetch(`http://127.0.0.1:${port}/api/__quota-e2e/flush`, { method: "POST" });
   assert(flush.ok, `test fixture flush failed: ${flush.status}`);
-  const codexGoHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 101, bucket: "codex-gpt" } });
-  const claudeGoHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "anthropic", accountId: 102, bucket: "anthropic-claude" } });
+  const codexGoHeads = await headMany({ where: { provider: "codex", accountId: 101, bucket: "codex-gpt" } });
+  const claudeGoHeads = await headMany({ where: { provider: "anthropic", accountId: 102, bucket: "anthropic-claude" } });
   assert(codexGoHeads.length === 2 && claudeGoHeads.length === 2, "production Go leasers did not persist both provider windows");
   const codexPrimary = JSON.parse(codexGoHeads.find((h) => h.scope === "primary").stateJson);
   const codexWeekly = JSON.parse(codexGoHeads.find((h) => h.scope === "weekly").stateJson);
@@ -479,7 +491,7 @@ try {
         lease(`card-${id}`),
       ]);
       assert(partial.responses[2].status === 200, "fraction=-1 falsely blocked the next lease");
-      let primary = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      let primary = JSON.parse((await headFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
       assert(primary.primed === false && primary.fraction === 1 && primary.assignedBurn === 0, "fraction=-1 mutated the primary window");
       await runScenario("invalid-fraction-real", `card-${id}`, [clock(t + 1_000), report({
         leaseId: partial.leaseId, reportId: "invalid-fraction-real", status: 0,
@@ -488,7 +500,7 @@ try {
           hourlyResetTime: new Date(t + 5 * 60 * 60_000).toISOString(),
         } },
       })]);
-      primary = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      primary = JSON.parse((await headFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
       assert(primary.primed === true && primary.fraction === 0.9 && primary.assignedBurn === 0, "first real snapshot was not adopted as baseline");
     }
 
@@ -509,7 +521,7 @@ try {
           } },
         }),
       ]);
-      const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+      const state = JSON.parse((await headFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
       assert(state.resetAt === resetAt, `${mode} resetAt changed the established boundary`);
       assert(state.subjects[`card-${id}`].cumulativeCu === 1, `${mode} resetAt cleared current-window CU`);
       assert(Math.abs(state.assignedBurn - 0.2) < 1e-9, `${mode} resetAt lost the fraction delta`);
@@ -539,7 +551,7 @@ try {
                 accountQuota: eventQuota(id, event === "old" ? 90 : 70, event === "old" ? t + 10_000 : t + 20_000) }));
         }
         await runScenario(`snapshot-order-${ordering.join("-")}`, `card-${id}`, operations);
-        const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
+        const state = JSON.parse((await headFirst({ where: { accountId: id, scope: "primary" } })).stateJson);
         const subject = state.subjects[`card-${id}`];
         materialized.push({ fraction: state.fraction, assignedBurn: state.assignedBurn, unattributedShare: state.unattributedShare,
           cumulativeCu: subject.cumulativeCu, carriedAttributedShare: subject.carriedAttributedShare, attributedShare: subject.attributedShare });
@@ -561,7 +573,7 @@ try {
         report({ reportId: "dated-model-u", status: 200, modelKey: model, inputTokens: 1_000_000, totalTokens: 1_000_000,
           requestStartedAt: t + 400, upstreamCompletedAt: t + 500 }),
       ]);
-      const datedHeads = await prisma.fairShareWindowHead.findMany({ where: { accountId: id, scope: "primary" } });
+      const datedHeads = await headMany({ where: { accountId: id, scope: "primary" } });
       const state = JSON.parse(datedHeads.find((head) => head.bucket === "codex-gpt").stateJson);
       assert(Math.abs(state.subjects[`card-${id}`].cumulativeCu - 0.75) < 1e-9,
         `dated mini model used the wrong quota multiplier: CU=${state.subjects[`card-${id}`].cumulativeCu}, responses=${JSON.stringify(result.responses)}`);
@@ -581,7 +593,7 @@ try {
         claudeReport({ reportId: `claude-model-rate-${id}-u`, status: 200, modelKey: model,
           inputTokens: 1_000_000, totalTokens: 1_000_000, requestStartedAt: t + 400, upstreamCompletedAt: t + 500 }),
       ]);
-      const state = JSON.parse((await prisma.fairShareWindowHead.findFirst({
+      const state = JSON.parse((await headFirst({
         where: { provider: "anthropic", accountId: id, bucket: "anthropic-claude", scope: "primary" },
       })).stateJson);
       assert(Math.abs(state.subjects[`card-${id}`].cumulativeCu - expectedCu) < 1e-9,
@@ -649,7 +661,7 @@ try {
         report({ reportId: "stale-checkpoint-u", status: 200, inputTokens: 1_000_000, totalTokens: 1_000_000,
           requestStartedAt: t + 400, upstreamCompletedAt: t + 500, accountQuota: quota(id, 80, 90, t + 600, 1, t) }),
       ]);
-      const before = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
+      const before = await headMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
       const summarizeRows = (rows) => rows.map((row) => ({
         bucket: row.bucket,
         cardId: row.cardId,
@@ -670,7 +682,7 @@ try {
       await testControl("stale-checkpoint", {
         provider: "codex", accountId: id, bucket: "codex-gpt", reportId: "stale-checkpoint-receipt",
       }, 500);
-      const after = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
+      const after = await headMany({ where: { provider: "codex", accountId: id, bucket: "codex-gpt" }, orderBy: { scope: "asc" } });
       const afterSummary = summarizeRows(await prisma.fairShareWindow.findMany({
         where: { provider: "codex", accountId: id },
         orderBy: [{ bucket: "asc" }, { cardId: "asc" }],
@@ -696,6 +708,22 @@ try {
         "stale batch key wrote a receipt");
       assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-batch-receipt" } }) === 1,
         "healthy batch sibling did not write its receipt");
+
+      // Same isolation guarantee on the request HOT path (checkpointReportAccounting).
+      // Regression guard: a stale sibling there once rolled the whole transaction
+      // back, so the coordinator ack'd the healthy sibling as durable while SQLite
+      // had discarded its receipt+hourly — silent billing loss + replay double-count.
+      const isolatedHot = await testControl("stale-checkpoint-batch", {
+        provider: "codex", staleAccountId: id, healthyAccountId: 998, bucket: "codex-gpt", via: "accounting",
+      });
+      assert(isolatedHot.stale?.status === "rejected" && isolatedHot.stale?.code === "QUOTA_STALE_REVISION",
+        `stale accounting key was not rejected precisely: ${JSON.stringify(isolatedHot)}`);
+      assert(isolatedHot.healthy?.status === "fulfilled",
+        `healthy accounting sibling was rejected with stale key: ${JSON.stringify(isolatedHot)}`);
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "stale-accounting-receipt" } }) === 0,
+        "stale accounting key wrote a receipt");
+      assert(await prisma.quotaReportReceipt.count({ where: { reportId: "healthy-accounting-receipt" } }) === 1,
+        "healthy accounting sibling did not write its receipt");
     }
 
     // A3: fail exactly one scheduled SQLite commit. The rejection must be caught,
@@ -739,18 +767,18 @@ try {
       lease("card-6"),
       report({ reportId: "rr-reset", status: 0, accountQuota: quota(6, 100, 90, now + 600_000 + 5 * 60 * 60_000, 2, now + 600_000) }),
     ]);
-    const resetHeads = await prisma.fairShareWindowHead.findMany({ where: { provider: "codex", accountId: 6, bucket: "codex-gpt" } });
+    const resetHeads = await headMany({ where: { provider: "codex", accountId: 6, bucket: "codex-gpt" } });
     assert(resetHeads.length === 2, "official reset did not retain both scopes");
     const resetPrimary = JSON.parse(resetHeads.find((head) => head.scope === "primary").stateJson);
     const resetWeekly = JSON.parse(resetHeads.find((head) => head.scope === "weekly").stateJson);
     assert(resetPrimary.fraction === 1 && resetPrimary.assignedBurn === 0 && resetPrimary.subjects["card-6"].cumulativeCu === 0,
       `official primary reset mismatch: ${JSON.stringify({ fraction: resetPrimary.fraction, assignedBurn: resetPrimary.assignedBurn, cu: resetPrimary.subjects["card-6"].cumulativeCu, resetAt: resetPrimary.resetAt })}`);
-    assert(resetWeekly.fraction === 0.9 && resetWeekly.assignedBurn > 0 && resetWeekly.subjects["card-6"].cumulativeCu === 1,
+    assert(resetWeekly.fraction === 0.9 && resetWeekly.assignedBurn === 0 && resetWeekly.subjects["card-6"].cumulativeCu === 0,
       `official weekly reset mismatch: ${JSON.stringify({ fraction: resetWeekly.fraction, assignedBurn: resetWeekly.assignedBurn, unattributedShare: resetWeekly.unattributedShare, cu: resetWeekly.subjects["card-6"].cumulativeCu, resetAt: resetWeekly.resetAt, revision: resetWeekly.revision, lastReason: resetWeekly.lastReason, tail: resetWeekly.reorderTail?.length })}`);
     await useRealtimeClock();
     // Cross-account snapshot must not mutate account 7.
     await runScenario("cross-account", "card-7", [lease("card-7"), report({ reportId: "cross", status: 0, accountQuota: quota(8, 0, 0, now + 700_000) })]);
-    const crossHeads = await prisma.fairShareWindowHead.findMany({ where: { accountId: 7 } });
+    const crossHeads = await headMany({ where: { accountId: 7 } });
     assert(crossHeads.length === 2, "cross-account report receipt did not checkpoint current windows");
     for (const head of crossHeads) {
       const state = JSON.parse(head.stateJson);
@@ -760,7 +788,7 @@ try {
     await runScenario("member-base", "card-9", [lease("card-9"), report({ reportId: "m-q0", status: 0, accountQuota: quota(9, 100, 100, now + 710_000) })]);
     cards[9].bindings.codex = 9; cards[9].salesSeatCapacity = { codex: 2 }; await persistKeys();
     await runScenario("member-join", "card-9", [{ method: "POST", path: "/api/app/lease/codex/reload-access-keys", body: {} }]);
-    let memberHead = await prisma.fairShareWindowHead.findFirst({ where: { accountId: 9, scope: "primary" } });
+    let memberHead = await headFirst({ where: { accountId: 9, scope: "primary" } });
     let memberState = JSON.parse(memberHead.stateJson);
     assert(memberState.subjects["card-9"].active && memberState.subjects["card-10"].active, "mid-window join not applied");
     assert(Math.abs(memberState.subjects["card-9"].share + memberState.subjects["card-10"].share - 1) < 1e-9, "join shares invalid");
@@ -768,12 +796,12 @@ try {
     await runScenario("member-renew", "card-10", [{ method: "POST", path: "/api/app/lease/codex/reload-access-keys", body: {} }]);
     cards[8].bindings.codex = 0; await persistKeys();
     await runScenario("member-leave", "card-10", [{ method: "POST", path: "/api/app/lease/codex/reload-access-keys", body: {} }]);
-    memberHead = await prisma.fairShareWindowHead.findFirst({ where: { accountId: 9, scope: "primary" } });
+    memberHead = await headFirst({ where: { accountId: 9, scope: "primary" } });
     memberState = JSON.parse(memberHead.stateJson);
     assert(memberState.subjects["card-9"].active === false, "mid-window leave not retained as inactive evidence");
     cards[9].bindings.codex = 10; await persistKeys();
     await runScenario("member-rebind", "card-10", [{ method: "POST", path: "/api/app/lease/codex/reload-access-keys", body: {} }]);
-    memberHead = await prisma.fairShareWindowHead.findFirst({ where: { accountId: 9, scope: "primary" } });
+    memberHead = await headFirst({ where: { accountId: 9, scope: "primary" } });
     memberState = JSON.parse(memberHead.stateJson);
     assert(memberState.subjects["card-10"].active === false, "rebind left old membership active");
 
@@ -787,7 +815,7 @@ try {
     ]);
     await runScenario("oversell", "card-20", [lease("card-20"), report({ reportId: "over-q0", status: 0, accountQuota: quota(20, 60, 60, now + 730_000) })]);
     for (const accountId of [11, 20]) {
-      const head = await prisma.fairShareWindowHead.findFirst({ where: { accountId, scope: "primary" } });
+      const head = await headFirst({ where: { accountId, scope: "primary" } });
       const state = JSON.parse(head.stateJson); const active = Object.values(state.subjects).filter((s) => s.active);
       const raw = active.reduce((sum, s) => sum + Math.max(0, s.share - s.attributedShare), 0);
       const usable = Math.min(raw, state.fraction);
@@ -800,7 +828,7 @@ try {
       { ...report({ reportId: "sol-q0", status: 0, modelKey: "gpt-5.6-sol", accountQuota: quota(40, 100, 100, now + 740_000) }), body: { leaseId: "$leaseId", reportId: "sol-q0", status: 0, modelKey: "gpt-5.6-sol", accountQuota: quota(40, 100, 100, now + 740_000) } },
       { ...report({}), body: { leaseId: "$leaseId", reportId: "sol-u", status: 200, modelKey: "gpt-5.6-sol", inputTokens: 1_000_000, totalTokens: 1_000_000, upstreamCompletedAt: now + 741_000 } },
     ]);
-    const solHead = await prisma.fairShareWindowHead.findFirst({ where: { accountId: 40, scope: "primary" } });
+    const solHead = await headFirst({ where: { accountId: 40, scope: "primary" } });
     assert(JSON.parse(solHead.stateJson).subjects["card-40"].cumulativeCu === 5, "model CU parity failed");
     // 100 simultaneous reports through the Go process and real HTTP controller.
     await runScenario("concurrency", "card-8", [lease("card-8"),
@@ -834,7 +862,7 @@ try {
         assert(quota && Number.isFinite(quota.fraction) && Number.isFinite(quota.share), `client missing ${field}`);
         return sum + quota.fraction * quota.share;
       }, 0);
-      const head = await prisma.fairShareWindowHead.findFirst({ where: { provider: "anthropic", accountId: 110, bucket: "anthropic-claude", scope } });
+      const head = await headFirst({ where: { provider: "anthropic", accountId: 110, bucket: "anthropic-claude", scope } });
       const motherRemaining = JSON.parse(head.stateJson).fraction;
       assert(absoluteTotal <= motherRemaining + 1e-9, `${scope} clients oversold: ${absoluteTotal} > ${motherRemaining}`);
       assert(Math.abs(absoluteTotal - motherRemaining) < 1e-9, `${scope} public bars did not fully allocate mother remainder`);
@@ -844,13 +872,14 @@ try {
     await runScenario("restart-membership-base", "card-72", [lease("card-72"),
       report({ reportId: "restart-membership-q0", status: 0, accountQuota: quota(72, 80, 90, now + 9_200_000) }),
     ]);
+    await testControl("flush");
     await crashServer();
     cards[71].bindings.codex = 0;
     cards[72].bindings.codex = 72;
     cards[72].salesSeatCapacity = { codex: 2 };
     await persistKeys();
     port = await startServer();
-    const membershipHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 72, bucket: "codex-gpt", scope: "primary" } });
+    const membershipHead = await headFirst({ where: { provider: "codex", accountId: 72, bucket: "codex-gpt", scope: "primary" } });
     assert(membershipHead, "restart did not restore the membership window");
     const membershipState = JSON.parse(membershipHead.stateJson);
     assert(membershipState.subjects["card-72"].active === false && membershipState.subjects["card-73"].active === true,
@@ -880,7 +909,7 @@ try {
           requestStartedAt: t + 500, upstreamCompletedAt: t + 1_000 }),
       ]);
       assert(retryAfterCrash.responses.at(-1).body.ignored === true, "receipt-carry retry was not deduped after crash");
-      const carryHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 61, bucket: "codex-gpt", scope: "primary" } });
+      const carryHead = await headFirst({ where: { provider: "codex", accountId: 61, bucket: "codex-gpt", scope: "primary" } });
       const carryCu = JSON.parse(carryHead.stateJson).subjects["card-61"].cumulativeCu;
       assert(carryCu === 1, `receipt-carry CU=${carryCu}, want exactly 1 (no double count)`);
     }
@@ -900,7 +929,7 @@ try {
           requestStartedAt: t + 1_000, upstreamCompletedAt: t + 90 * 60_000 - 100 }),
       ]);
       await testControl("flush");
-      const streamHead = await prisma.fairShareWindowHead.findFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });
+      const streamHead = await headFirst({ where: { provider: "codex", accountId: 63, bucket: "codex-gpt", scope: "primary" } });
       const streamCu = JSON.parse(streamHead?.stateJson || "{}").subjects?.["card-63"]?.cumulativeCu;
       assert(streamCu === 1, `long-stream usage was not attributed after lease expiry: CU=${streamCu}, want 1`);
     }
@@ -929,14 +958,15 @@ try {
         where: { reportId: { in: ["live-lease-u1", "live-lease-u2"] } },
         orderBy: { reportId: "asc" },
       });
-      const hourly = await prisma.cardUsageHourly.findFirst({
+      const hourly = await prisma.cardUsageHourly.aggregate({
         where: { accessKeyId: `card-${id}`, modelKey: "gpt-5.6-luna" },
+        _sum: { requests: true, totalTokens: true },
       });
       const receiptSummary = receipts.map((receipt) => ({ reportId: receipt.reportId, accountId: receipt.accountId }));
       assert(receipts.length === 2 && receipts.every((receipt) => receipt.accountId === id),
         `reused live lease lost account attribution: receipts=${JSON.stringify(receiptSummary)}, response=${JSON.stringify(second.responses.at(-1))}`);
-      assert(hourly?.requests === 2 && hourly.totalTokens === 2_000_000,
-        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly && { requests: hourly.requests, totalTokens: hourly.totalTokens })}`);
+      assert(hourly._sum.requests === 2 && hourly._sum.totalTokens === 2_000_000,
+        `reused live lease did not bill both reports exactly once: ${JSON.stringify(hourly._sum)}`);
     }
 
     // 启动屏障:订阅表未就绪时放租必须 503(而不是拿残缺成员表算出 429),

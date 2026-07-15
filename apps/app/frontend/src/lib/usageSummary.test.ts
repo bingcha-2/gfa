@@ -39,7 +39,7 @@ describe('usage summary helpers', () => {
         totalTokens: 210,
         estimatedCostUSD: 0.8,
         pricingQuality: 'exact',
-        pricingVersion: 'api-pricing-2026-07-11',
+        pricingVersion: 'api-pricing-2026-07-14',
       },
       'gpt-5-codex': {
         modelKey: 'gpt-5-codex',

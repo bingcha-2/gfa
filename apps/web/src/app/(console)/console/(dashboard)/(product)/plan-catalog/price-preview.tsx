@@ -14,6 +14,12 @@ import { productLabel } from "./catalog-defaults";
 
 const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 const MAX_DEVICES = 20;
+const USD_FORMATTER = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 6,
+});
 
 function chipCls(active: boolean): string {
   return cn(
@@ -55,7 +61,7 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
     deviceLimit,
   };
 
-  let priced: { priceCents: number } | null = null;
+  let priced: ReturnType<typeof computePurchase> | null = null;
   try {
     if (effBindItems.length > 0) priced = computePurchase(config, selection);
   } catch {
@@ -65,6 +71,7 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
   const summary = effBindItems.length
     ? `绑定 · ${effBindItems.map((i) => `${productLabel(i.product)} ${i.level}`).join(" + ")} · ${shareSeats}/${shareCapacity} 席 · ${deviceLimit} 设备`
     : null;
+  const quotaRows = configuredQuotaRows(priced, effBindItems);
 
   function toggleBindProduct(p: string) {
     setBindLevels((prev) => {
@@ -159,6 +166,26 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
             <div className="min-h-4 text-[11px] text-muted-foreground">
               {summary ?? "请为选中的产品各选一个等级"}
             </div>
+            {quotaRows.length > 0 && (
+              <div className="mt-2 border-y py-2" data-testid="preview-usd-quota">
+                <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span className="font-medium text-foreground">配置额度</span>
+                  <span>{shareSeats} 份合计</span>
+                </div>
+                <div className="space-y-1">
+                  {quotaRows.map((row) => (
+                    <div key={row.product} className="flex items-center justify-between gap-3 text-[11px]">
+                      <span className="font-medium">{productLabel(row.product)}</span>
+                      <span className="text-right font-mono tabular-nums text-muted-foreground">
+                        5 小时 {row.fiveHour > 0 ? formatUsd(row.fiveHour) : "未启用"}
+                        <span aria-hidden="true"> · </span>
+                        每周 {row.weekly > 0 ? formatUsd(row.weekly) : "未启用"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="mt-1 flex items-baseline justify-between gap-2">
               <span className="text-xs text-muted-foreground">合计</span>
               <span className="font-mono text-lg font-semibold tabular-nums" data-testid="preview-total">
@@ -171,6 +198,33 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
       )}
     </div>
   );
+}
+
+function configuredQuotaRows(
+  priced: ReturnType<typeof computePurchase> | null,
+  items: Array<{ product: string; level: string }>,
+): Array<{ product: string; fiveHour: number; weekly: number }> {
+  const raw = priced?.config?.usdQuotaByProduct;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const quotas = raw as Record<string, unknown>;
+  return items.flatMap(({ product }) => {
+    const value = quotas[product];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const quota = value as Record<string, unknown>;
+    const fiveHour = nonNegativeAmount(quota.fiveHour);
+    const weekly = nonNegativeAmount(quota.weekly);
+    if (fiveHour <= 0 && weekly <= 0) return [];
+    return [{ product, fiveHour, weekly }];
+  });
+}
+
+function nonNegativeAmount(value: unknown): number {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+function formatUsd(value: number): string {
+  return USD_FORMATTER.format(value);
 }
 
 function Field({

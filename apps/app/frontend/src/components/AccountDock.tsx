@@ -10,6 +10,7 @@ import { ShareModal } from '@/components/ShareModal'
 import * as api from '@/services/wails'
 import { formatDate, cn } from '@/lib/utils'
 import { productLabel } from '@/lib/usageBars'
+import { quotaRemainingPercent } from '@/lib/quotaDisplay'
 import { useT } from '@/i18n'
 import type { PageId, AccountSubscription } from '@/types'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
@@ -341,18 +342,14 @@ export function AccountDock({
                         sub.expiresAt && sub.expiresAt !== 'null'
                           ? formatDate(sub.expiresAt)
                           : t('account.neverExpires')
-                      // 余量条:取最紧复合桶剩余比例,健康度配色(≥40%绿/15-40%橙/<15%红);
-                      // null=无限额/无数据 → 显示「无限额」。两个同产品同到期的订阅靠这条一眼分清。
-                      const remain = sub.remainFraction
-                      const pct = remain == null ? null : Math.round(remain * 100)
-                      const meterColor =
-                        remain == null
-                          ? ''
-                          : remain < 0.15
-                            ? 'var(--danger)'
-                            : remain < 0.4
-                              ? 'var(--warning)'
-                              : 'var(--success)'
+                      const quotaSummaries = Object.entries(sub.usdQuotaByProduct || {}).flatMap(([product, quota]) => [
+                        quota.fiveHour
+                          ? `${productLabel(product)} 5h 剩余 ${quotaRemainingPercent(quota.fiveHour.used, quota.fiveHour.limit)}%`
+                          : '',
+                        quota.weekly
+                          ? `${productLabel(product)} 周剩余 ${quotaRemainingPercent(quota.weekly.used, quota.weekly.limit)}%`
+                          : '',
+                      ]).filter(Boolean)
                       return (
                         <div
                           key={sub.id}
@@ -393,20 +390,10 @@ export function AccountDock({
                                 </span>
                               )}
                             </div>
-                            {remain != null ? (
-                              <div className="flex items-center gap-2 mt-1.5">
-                                <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full transition-[width]"
-                                    style={{ width: `${pct}%`, backgroundColor: meterColor }}
-                                  />
-                                </div>
-                                <span className="text-[10px] font-mono-data shrink-0" style={{ color: meterColor }}>
-                                  {pct}%
-                                </span>
+                            {quotaSummaries.length > 0 && (
+                              <div className="mt-1.5 truncate font-mono-data text-[10px] text-[var(--text-muted)]" title={quotaSummaries.join(' · ')}>
+                                {quotaSummaries.join(' · ')}
                               </div>
-                            ) : (
-                              <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">{t('account.unlimited')}</div>
                             )}
                             <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[var(--text-muted)] font-mono-data">
                               {sub.deviceLimit > 0 && (

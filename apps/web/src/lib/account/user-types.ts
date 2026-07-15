@@ -129,7 +129,7 @@ export type AccountDevice = {
 
 // ─── Overview / quota (Stage 2b — M9 contract A) ──────────────────────────────
 
-export type QuotaMode = "static" | "dynamic" | "unlimited";
+export type QuotaMode = "usd" | "static" | "dynamic" | "unlimited";
 
 export type QuotaBucket = {
   bucket: string;
@@ -140,6 +140,10 @@ export type QuotaBucket = {
 
 export type SubscriptionQuota = {
   quotaMode: QuotaMode;
+  usdQuotaByProduct?: Record<string, {
+    fiveHour: { used: number; limit: number; resetMs: number | null } | null;
+    weekly: { used: number; limit: number; resetMs: number | null } | null;
+  }>;
   buckets: QuotaBucket[];
   weeklyBuckets?: QuotaBucket[];
   recentWindowTokens: number;

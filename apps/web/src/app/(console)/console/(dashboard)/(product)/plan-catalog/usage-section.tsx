@@ -39,12 +39,8 @@ export function SupplyPoliciesSection({
     const existing = value?.[row.product];
     if (existing) return existing;
     const defaultLevel = row.levels[0] ?? "";
-    const salesSeatsPerAccount = Object.fromEntries(
-      row.levels.map((level) => [level, "10"]),
-    );
     return {
       defaultLevel,
-      salesSeatsPerAccount,
       buckets: defaultBucketsForProduct(row.product, defaultLevel),
     };
   }
@@ -56,18 +52,6 @@ export function SupplyPoliciesSection({
     onChange({
       ...(value ?? {}),
       [product]: { ...current, ...patch },
-    });
-  }
-
-  function setSalesSeats(product: string, level: string, raw: string) {
-    const row = products.find((p) => p.product === product);
-    if (!row) return;
-    const current = ensurePolicy(row);
-    setPolicy(product, {
-      salesSeatsPerAccount: {
-        ...current.salesSeatsPerAccount,
-        [level]: raw,
-      },
     });
   }
 
@@ -120,23 +104,6 @@ export function SupplyPoliciesSection({
               <code className="text-[11px] text-muted-foreground">
                 默认 {policy.defaultLevel || "-"}
               </code>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              {row.levels.map((level) => (
-                <label key={level} className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs">{level}</span>
-                  <NumberInput
-                    className="w-32"
-                    value={policy.salesSeatsPerAccount[level] ?? ""}
-                    onChange={(raw) => setSalesSeats(row.product, level, raw)}
-                    disabled={disabled}
-                    placeholder="10"
-                    suffix="席"
-                    aria-label={`${row.product} ${level} 每账号可售席位`}
-                  />
-                </label>
-              ))}
             </div>
 
             {row.product === "antigravity" ? (

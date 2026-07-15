@@ -622,6 +622,10 @@ export const en: DeepPartialDict = {
     quota: {
       unlimited: "Unlimited",
       dynamicBadge: "Dynamic quota",
+      usdBadge: "Subscription quota",
+      usd5hLabel: "5-hour quota",
+      usdWeeklyLabel: "Weekly quota",
+      remainingLabel: "Remaining",
       resetIn: "resets in {time}",
       hoursMinutes: "{h}h {m}m",
       minutesOnly: "{m}m",

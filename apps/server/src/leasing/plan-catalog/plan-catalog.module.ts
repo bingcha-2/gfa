@@ -3,6 +3,7 @@ import { Module } from "@nestjs/common";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { PlanCatalogPublicController } from "./plan-catalog-public.controller";
 import { PlanCatalogAdminController } from "./plan-catalog-admin.controller";
+import { TokenServerModule } from "../token-server/token-server.module";
 
 /**
  * PlanCatalogModule — versioned plan catalog (spec §4.1 / §7).
@@ -13,6 +14,7 @@ import { PlanCatalogAdminController } from "./plan-catalog-admin.controller";
  * when pricing a selection.
  */
 @Module({
+  imports: [TokenServerModule],
   controllers: [PlanCatalogPublicController, PlanCatalogAdminController],
   providers: [PlanCatalogService],
   exports: [PlanCatalogService],

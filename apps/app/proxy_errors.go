@@ -450,6 +450,7 @@ type ReportDetails struct {
 	CachedInputTokens   int64 // 缓存命中的 input token（按 1/10 计费）
 	CacheWrite5mTokens  int64 // Claude 5 分钟缓存创建 token
 	CacheWrite1hTokens  int64 // Claude 1 小时缓存创建 token
+	ContextTokens       int64 // 请求总上下文，用于 Codex 长上下文价格档判断
 	RawTotalTokens      int64 // input + output 原始总量
 	BillableTotalTokens int64 // 折扣后的计费总量
 	ErrorText           string

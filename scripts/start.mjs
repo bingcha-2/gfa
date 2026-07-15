@@ -49,9 +49,22 @@ if (process.argv.includes("--daemon")) {
     try { process.kill(Number(oldPid), 0); isAlive = true; } catch {}
 
     if (isAlive) {
-      console.log(`[daemon] Stopping old instance (PID: ${oldPid})...`);
-      // Use taskkill /T to kill entire process tree (api/web/worker children)
-      // SIGTERM alone only hits parent; children hold Prisma DLL locks
+      console.log(`[daemon] Gracefully stopping old instance (PID: ${oldPid})...`);
+      // 1) Ask for a clean shutdown first, so the server runs onModuleDestroy and
+      //    flushes buffered state (fair-share windows / receipts) before exiting.
+      //    On POSIX this SIGTERM is catchable → graceful. On Windows process.kill
+      //    can't be caught, so this just begins termination; the sweep below still
+      //    guarantees the tree dies.
+      try { process.kill(Number(oldPid), "SIGTERM"); } catch {}
+      // 2) Give an in-flight flush time to finish; break as soon as it exits.
+      const graceDeadline = Date.now() + 15_000;
+      while (Date.now() < graceDeadline) {
+        try { process.kill(Number(oldPid), 0); } catch { isAlive = false; break; }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      if (isAlive) console.log(`[daemon] Grace period elapsed; force-killing PID ${oldPid}...`);
+      // 3) Sweep the whole tree so children (api/web/worker) release Prisma/file
+      //    locks. Harmless no-op if the parent already exited cleanly.
       spawnSync("taskkill", ["/T", "/F", "/PID", oldPid], { shell: false, stdio: "ignore" });
       // Wait for ports and file locks to release
       await new Promise((r) => setTimeout(r, 3000));

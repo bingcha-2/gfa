@@ -14,8 +14,10 @@ function makeService(overrides: Record<string, any> = {}) {
       aggregate: vi.fn().mockResolvedValue({ _max: { version: 0 } }),
       ...overrides.planCatalog,
     },
+    ...(overrides.subscription ? { subscription: overrides.subscription } : {}),
   };
-  return { prisma, service: new PlanCatalogService(prisma as any) };
+  const accessKeyStore = overrides.accessKeyStore;
+  return { prisma, accessKeyStore, service: new PlanCatalogService(prisma as any, accessKeyStore) };
 }
 
 describe("PlanCatalogService.publish", () => {
@@ -36,6 +38,59 @@ describe("PlanCatalogService.publish", () => {
         data: expect.objectContaining({ status: "PUBLISHED" }),
       }),
     );
+  });
+
+  it("发布每份额度后只重算有效订阅，并立即刷新运行时且保留用量窗口", async () => {
+    const subscription = {
+      id: "sub-1", customerId: "c1", priority: 0, backingKeyValue: "key",
+      status: "ACTIVE", expiresAt: null, productEntitlements: JSON.stringify(["codex"]),
+      bucketLimits: null, bindings: JSON.stringify({ codex: 1 }),
+      levels: JSON.stringify({ codex: "pro" }), weight: 2, deviceLimit: 1,
+      weeklyTokenLimit: null, windowMs: 18_000_000,
+      config: JSON.stringify({
+        line: "bind", products: ["codex"], levels: { codex: "pro" },
+        bindings: { codex: 1 }, shareSeats: 2, shareCapacity: 4,
+        usdLimit5h: 1, usdLimitWeekly: 2, usdQuotaMigrationVersion: 3,
+      }),
+    };
+    const updateSubscription = vi.fn().mockResolvedValue({});
+    const loadSubscriptionRecords = vi.fn();
+    const catalog = {
+      pricing: { bind: { usdQuotaPerSeat: { codex: { pro: { fiveHour: 5, weekly: 40 } } } } },
+    };
+    const findSubscriptions = vi.fn().mockResolvedValue([subscription]);
+    const { service } = makeService({
+      planCatalog: {
+        update: vi.fn().mockResolvedValue({
+          id: "cat-2", version: 7, status: "PUBLISHED", config: JSON.stringify(catalog),
+        }),
+      },
+      subscription: { findMany: findSubscriptions, update: updateSubscription },
+      accessKeyStore: { loadSubscriptionRecords },
+    });
+
+    await service.publish("cat-2");
+
+    expect(findSubscriptions).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        status: "ACTIVE",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+      },
+    }));
+
+    const written = JSON.parse(updateSubscription.mock.calls[0][0].data.config);
+    expect(written).toMatchObject({
+      usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 80 } },
+      usdQuotaSource: "catalog",
+      usdQuotaCatalogVersion: 7,
+      usdQuotaMigrationVersion: 5,
+    });
+    expect(loadSubscriptionRecords).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: "sub-1",
+        usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 80 } },
+      }),
+    ]);
   });
 });
 

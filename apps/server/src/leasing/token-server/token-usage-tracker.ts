@@ -7,9 +7,11 @@
  * request count). There is no per-call raw table: analytics/cost/limits all read
  * the hourly aggregate or the persisted window snapshots.
  *
- * If flush fails, events are silently dropped — this is analytics data, not
- * critical business logic (authoritative limit windows live on the records).
+ * If an hourly upsert fails, the error is logged without blocking reportResult —
+ * authoritative limit windows live on the subscription records.
  */
+
+import { ApiWriteQueue } from "./api-write-queue";
 
 interface TokenUsageEvent {
   accessKeyId: string;
@@ -24,6 +26,10 @@ interface TokenUsageEvent {
   outputTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  apiValueUsd: number;
+  apiPriced: boolean;
   rawTotalTokens: number;
   totalTokens: number;
   reverseProxy: boolean; // 本次请求命中反代检测(非真 Claude Code 客户端)
@@ -36,9 +42,19 @@ const FLUSH_INTERVAL_MS = 10_000; // 10 seconds
 export class TokenUsageTracker {
   private queue: TokenUsageEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private flushPromise: Promise<void> | null = null;
+  private readonly writeQueue: ApiWriteQueue;
 
-  constructor(private readonly prisma: any) {
-    this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
+  constructor(
+    private readonly prisma: any,
+    opts: { autoStart?: boolean; writeQueue?: ApiWriteQueue } = {},
+  ) {
+    this.writeQueue = opts.writeQueue ?? new ApiWriteQueue();
+    if (opts.autoStart !== false) {
+      this.flushTimer = setInterval(() => {
+        if (!this.flushPromise) void this.flush();
+      }, FLUSH_INTERVAL_MS);
+    }
   }
 
   /**
@@ -59,10 +75,15 @@ export class TokenUsageTracker {
     outputTokens?: number;
     cachedInputTokens?: number;
     cacheCreationTokens?: number;
+    cacheWrite5mTokens?: number;
+    cacheWrite1hTokens?: number;
+    apiValueUsd?: number;
+    apiPriced?: boolean;
     rawTotalTokens?: number;
     totalTokens?: number;
     reverseProxy?: boolean;
     serviceTier?: string;
+    occurredAt?: number;
   }): void {
     if (!event.accessKeyId) return;
     this.queue.push({
@@ -78,11 +99,17 @@ export class TokenUsageTracker {
       outputTokens: Number(event.outputTokens || 0),
       cachedInputTokens: Number(event.cachedInputTokens || 0),
       cacheCreationTokens: Number(event.cacheCreationTokens || 0),
+      cacheWrite5mTokens: Number(event.cacheWrite5mTokens || 0),
+      cacheWrite1hTokens: Number(event.cacheWrite1hTokens || 0),
+      apiValueUsd: Math.max(0, Number(event.apiValueUsd || 0)),
+      apiPriced: Boolean(event.apiPriced),
       rawTotalTokens: Number(event.rawTotalTokens || 0),
       totalTokens: Number(event.totalTokens || 0),
       reverseProxy: Boolean(event.reverseProxy),
       serviceTier: String(event.serviceTier || ""),
-      timestamp: new Date(),
+      timestamp: new Date(Number.isFinite(Number(event.occurredAt)) && Number(event.occurredAt) > 0
+        ? Number(event.occurredAt)
+        : Date.now()),
     });
   }
 
@@ -92,6 +119,15 @@ export class TokenUsageTracker {
    * blow up the table. Errors are caught and logged — never thrown.
    */
   async flush(): Promise<void> {
+    if (this.flushPromise) return this.flushPromise;
+    const pending = this.writeQueue.enqueue(() => this.flushOnce()).finally(() => {
+      this.flushPromise = null;
+    });
+    this.flushPromise = pending;
+    return pending;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
     await this.flushHourly(batch);
@@ -114,6 +150,7 @@ export class TokenUsageTracker {
       modelKey: string; bucket: string;
       requests: number; failedRequests: number; inputTokens: number; outputTokens: number;
       cachedInputTokens: number; cacheCreationTokens: number; rawTotalTokens: number; totalTokens: number;
+      cacheWrite5mTokens: number; cacheWrite1hTokens: number; apiValueUsd: number; apiPricedRequests: number;
       reverseProxyHits: number; priorityTokens: number;
     }>();
     for (const e of batch) {
@@ -126,7 +163,8 @@ export class TokenUsageTracker {
       let g = groups.get(key);
       if (!g) {
         g = { hourStart, accessKeyId: e.accessKeyId, accountEmail, customerId, modelKey, bucket,
-          requests: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, rawTotalTokens: 0, totalTokens: 0,
+          requests: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0,
+          cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, apiValueUsd: 0, apiPricedRequests: 0, rawTotalTokens: 0, totalTokens: 0,
           reverseProxyHits: 0, priorityTokens: 0 };
         groups.set(key, g);
       }
@@ -139,6 +177,10 @@ export class TokenUsageTracker {
       g.outputTokens += e.outputTokens;
       g.cachedInputTokens += e.cachedInputTokens;
       g.cacheCreationTokens += e.cacheCreationTokens;
+      g.cacheWrite5mTokens += e.cacheWrite5mTokens;
+      g.cacheWrite1hTokens += e.cacheWrite1hTokens;
+      g.apiValueUsd += e.apiValueUsd;
+      if (e.apiPriced) g.apiPricedRequests += 1;
       g.rawTotalTokens += e.rawTotalTokens;
       g.totalTokens += e.totalTokens;
     }
@@ -146,7 +188,10 @@ export class TokenUsageTracker {
     for (const g of groups.values()) {
       const sums = {
         requests: g.requests, failedRequests: g.failedRequests, inputTokens: g.inputTokens, outputTokens: g.outputTokens,
-        cachedInputTokens: g.cachedInputTokens, cacheCreationTokens: g.cacheCreationTokens, rawTotalTokens: g.rawTotalTokens, totalTokens: g.totalTokens,
+        cachedInputTokens: g.cachedInputTokens, cacheCreationTokens: g.cacheCreationTokens,
+        cacheWrite5mTokens: g.cacheWrite5mTokens, cacheWrite1hTokens: g.cacheWrite1hTokens,
+        apiValueUsd: g.apiValueUsd, apiPricedRequests: g.apiPricedRequests,
+        rawTotalTokens: g.rawTotalTokens, totalTokens: g.totalTokens,
         reverseProxyHits: g.reverseProxyHits, priorityTokens: g.priorityTokens,
       };
       try {
@@ -168,6 +213,10 @@ export class TokenUsageTracker {
             outputTokens: { increment: sums.outputTokens },
             cachedInputTokens: { increment: sums.cachedInputTokens },
             cacheCreationTokens: { increment: sums.cacheCreationTokens },
+            cacheWrite5mTokens: { increment: sums.cacheWrite5mTokens },
+            cacheWrite1hTokens: { increment: sums.cacheWrite1hTokens },
+            apiValueUsd: { increment: sums.apiValueUsd },
+            apiPricedRequests: { increment: sums.apiPricedRequests },
             rawTotalTokens: { increment: sums.rawTotalTokens },
             totalTokens: { increment: sums.totalTokens },
             reverseProxyHits: { increment: sums.reverseProxyHits },
@@ -186,6 +235,11 @@ export class TokenUsageTracker {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    this.destroy();
+    await this.flush();
   }
 
   /** Expose queue for testing only. */

@@ -47,6 +47,12 @@ func (a *App) startup(ctx context.Context) {
 
 	// Load or initialize config
 	cfg := LoadConfig()
+	if cfg.UserId == "" && cfg.UserToken != "" {
+		if migratedUserID := customerIDFromSessionToken(cfg.UserToken); migratedUserID != "" {
+			cfg.UserId = migratedUserID
+			_ = SaveConfig(cfg)
+		}
+	}
 	updatedCfg, changed, source := applyPreferredDeviceID(cfg, cfg.UserToken == "")
 	cfg = updatedCfg
 	if changed {
@@ -62,6 +68,9 @@ func (a *App) startup(ctx context.Context) {
 	default:
 		Log("[app] Loaded existing deviceId: %s", cfg.DeviceId)
 	}
+	// Local usage and durable report retries must be in the correct user
+	// namespace before any proxy/leaser goroutine starts.
+	GetUsageStats().SwitchNamespace(cfg.UserId)
 
 	// Auto-start services if user is logged in (has a session token)
 	if cfg.UserToken != "" {
@@ -87,7 +96,6 @@ func (a *App) startup(ctx context.Context) {
 	WarmupConnectionPool("")
 
 	// 加载用量统计并启动自动保存
-	GetUsageStats().Load()
 	GetUsageStats().StartAutoSave()
 
 	// 启动自动更新检查
@@ -136,6 +144,7 @@ func (a *App) SaveConfig(cfg Config) error {
 		// Token changed: clear stale local state
 		if oldCfg.UserToken != cfg.UserToken {
 			clearLocalCardState()
+			GetUsageStats().SwitchNamespace(cfg.UserId)
 		}
 
 		GetLeaser().StopAutoLease()
@@ -166,8 +175,8 @@ func invalidateIDEDetectCacheForInstallPathChange(oldCfg, newCfg Config) {
 
 // clearLocalCardState clears all local quota/session state when the session token changes.
 // Called on every auth transition — SaveConfig token change, UserLogin, UserLogout, and
-// heartbeat forced logout — so no stale blood bars or entitlements leak across sessions.
-// Usage history belongs to this installation rather than the active login, so it is preserved.
+// heartbeat forced logout — so no stale local quota state or entitlements leak across sessions.
+// Local usage history is preserved in the authenticated user's own namespace.
 func clearLocalCardState() {
 	Log("[app] Session token changed: clearing local quota state")
 	GetLeaser().ResetLocalQuota()
@@ -186,38 +195,30 @@ func clearLocalCardState() {
 func (a *App) GetStats() map[string]interface{} {
 	proxyStats := GetProxy().GetStats()
 	leaserStatus := GetLeaser().GetStatus()
-	// 血条两维度:整号上游余量(号余量条)+ 我的 fair-share 份额(我的卡条),各带恢复倒计时。
-	// static 卡的"我的卡"额度来自 localQuota(见下方 accessKeyStatus/localQuota),不在这里。
-	nowMs := time.Now().UnixMilli()
-	leaserStatus["accountFractions"] = snapshotAccountFractions()
-	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
-	leaserStatus["accountResetAt"] = snapshotAccountResetAts()
-	leaserStatus["myFractions"] = snapshotMyFractions()
-	leaserStatus["myPersonalFractions"] = snapshotMyPersonalFractions()
-	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
-	leaserStatus["myResetAt"] = snapshotMyResetAts()
-	// 我的份额占整号比例 e_i(双层血条外层几何:整号里我那一段有多宽)。
-	leaserStatus["myShares"] = snapshotMyShares()
-	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
-	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
-	leaserStatus["myPersonalWeeklyFractions"] = snapshotMyPersonalWeeklyFractions()
-	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)
-	leaserStatus["myWeeklyResetAt"] = snapshotMyWeeklyResetAts()
-	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
-	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
-		leaserStatus["codexQuota"] = cq
+	// 用户端只需产品授权。母号额度、绑定账号与旧 token/fair-share 桶都留在运行时和后台，
+	// 不通过 Wails stats 下发；个人美元额度统一来自 /app/login、/app/heartbeat。
+	if aks, ok := leaserStatus["accessKeyStatus"].(map[string]interface{}); ok {
+		leaserStatus["accessKeyStatus"] = map[string]interface{}{"products": aks["products"]}
 	}
-	if cq := claudeQuotaStatus(GetClaudeLeaser().LatestClaudeQuota(), time.Now().UnixMilli()); cq != nil {
-		leaserStatus["claudeQuota"] = cq
-	}
-	// 绑定卡各产品当前租到的账号信息 + token,供前端「绑定账号信息」面板显示。
-	leaserStatus["boundAccounts"] = collectBoundAccounts()
 	// 订阅授权产品并集(跨所有生效订阅)→ 前端据此显示「每个订阅产品一张用量卡」,而非只显示
 	// 单张卡的产品。冷启动授权未知时为 nil,前端回退单卡 products。
 	leaserStatus["entitledProducts"] = GetLeaser().EntitledProducts()
 
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()
+	cfg := LoadConfig()
+	serverToday := DailyRecord{}
+	serverDaily := []DailyRecord{}
+	serverHourly := []HourlyRecord{}
+	serverChartMode := "hourly"
+	serverCumulative := float64(0)
+	if cfg.ServerUsage != nil {
+		serverToday = cfg.ServerUsage.Today
+		serverDaily = cfg.ServerUsage.DailyHistory
+		serverHourly = cfg.ServerUsage.HourlyHistory
+		serverChartMode = cfg.ServerUsage.ChartMode
+		serverCumulative = cfg.ServerUsage.CumulativeSaving
+	}
 
 	// 统一错误归口:三套 leaser 的 lastError + 派生健康信号(代理未起/上报积压)
 	// 汇成一个 notifications 列表(去重+分类),让 Claude/Codex 的租号错误也能进界面
@@ -244,11 +245,6 @@ func (a *App) GetStats() map[string]interface{} {
 	}
 
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
-	chartMode := "daily"
-	if !usageStats.HasMultipleDays() {
-		chartMode = "hourly"
-	}
-
 	return map[string]interface{}{
 		"proxyRunning":     httpProxyStatus.Running,
 		"proxyPort":        httpProxyStatus.ListenPort,
@@ -256,14 +252,20 @@ func (a *App) GetStats() map[string]interface{} {
 		"leaser":           leaserStatus,
 		"notifications":    notifications,
 		"httpProxy":        httpProxyStatus,
-		"today":            usageStats.GetTodayRecord(),
-		"dailyHistory":     usageStats.GetDailyRecords(30), // 下发 30 天,前端按 3日/周/月 切片
-		"hourlyHistory":    usageStats.GetTodayHourlyRecords(),
-		"chartMode":        chartMode,
-		"cumulativeSaving": usageStats.GetCumulativeSavings(),
-		"appVersion":       AppVersion,
-		"updateStatus":     GetUpdater().GetStatus(),
-		"proxyStartedAt":   a.proxyStartedAt.Format(time.RFC3339),
+		"today":            serverToday,
+		"dailyHistory":     serverDaily,
+		"hourlyHistory":    serverHourly,
+		"chartMode":        serverChartMode,
+		"cumulativeSaving": serverCumulative,
+		"usageSource":      "CardUsageHourly",
+		"localUsage": map[string]interface{}{
+			"today":            usageStats.GetTodayRecord(),
+			"cumulativeSaving": usageStats.GetCumulativeSavings(),
+			"namespaceUserId":  cfg.UserId,
+		},
+		"appVersion":     AppVersion,
+		"updateStatus":   GetUpdater().GetStatus(),
+		"proxyStartedAt": a.proxyStartedAt.Format(time.RFC3339),
 	}
 }
 

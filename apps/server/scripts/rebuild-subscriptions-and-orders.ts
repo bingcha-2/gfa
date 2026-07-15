@@ -4,7 +4,7 @@
  * 需求(本次):
  *   1. 删除非活跃数据:status !== ACTIVE 的 Subscription 直接删除(含其遗留 PlanOrder)。
  *   2. 把保留的 ACTIVE 订阅 config 按现有口径重算规整(现状数据有 bug:绑定卡还是
- *      preferred-dynamic、带残留静态额度、缺 salesSeatCapacity、迁移老卡 config 空)。
+ *      preferred-dynamic、带残留静态额度、缺 quotaSeatCapacity、迁移老卡 config 空)。
  *   3. 全部重新生成 PlanOrder:清掉所有现存 PlanOrder,为每条 ACTIVE 订阅生成且仅生成一条
  *      GRANT/PAID 订单(一订阅一单),并回填 Subscription.activatedFromOrderId。
  *
@@ -12,9 +12,9 @@
  *   - rowToConfig            解析订阅的有效 config(显式 config 优先,空则回退 legacy 列)
  *   - computePurchase        绑定线按 selection 重算 canonical config(line/levels/shareSeats/
  *                            shareCapacity/weight/assignmentPolicy=pinned/deviceLimit/windowMs)
- *   - salesSeatCapacityFor   补 enrichUnifiedBindConfig 那一步的 salesSeatCapacity(per product)
+ *   - oversellCeiling        补统一的固定超卖分母 quotaSeatCapacity
  *   - seatWeight / isExclusive 份额与独享判定
- * 绑定卡因此天然得到新口径:pinned + 无静态 bucketLimits/weeklyBucketLimits + 补齐 salesSeatCapacity。
+ * 绑定卡因此天然得到新口径:pinned + 无静态 bucketLimits/weeklyBucketLimits + 补齐 quotaSeatCapacity。
  *
  * 判断口径(就地决策,见脚本顶部 README 注释 / 汇报):
  *   - 号池线(pool):config 自洽(bucketLimits/weeklyTokenLimit 即解析值,无重构 bug),只清形不重算;
@@ -37,7 +37,7 @@ import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
 
 import { computePurchase, type CatalogConfig, type Selection } from "../src/leasing/plan-catalog/pricing";
-import { mergeSupplyPolicies, salesSeatCapacityFor } from "../src/leasing/plan-catalog/unified-entitlement";
+import { mergeSupplyPolicies, oversellCeiling } from "../src/leasing/plan-catalog/unified-entitlement";
 import { defaultDataDir, readJson } from "../src/leasing/rosetta/lib/store";
 import { isExclusive, seatWeight } from "../src/leasing/subscription/seat";
 import { rowToConfig } from "../src/leasing/subscription/subscription-config";
@@ -165,11 +165,9 @@ export function normalizeSubscription(
       ...(exclusive ? { exclusive: true } : {}),
     };
 
-    // 现有逻辑:computePurchase 出 canonical bind config(pinned、无静态额度、含 exclusive);再补 salesSeatCapacity + 绑定。
+    // computePurchase 出 canonical bind config，再补统一固定超卖分母与历史绑定。
     const { config } = computePurchase(catalog, selection);
-    config.salesSeatCapacity = Object.fromEntries(
-      products.map((product) => [product, salesSeatCapacityFor(catalog, product, String(levels[product] || ""), shareCapacity)]),
-    );
+    config.quotaSeatCapacity = oversellCeiling(catalog, shareCapacity);
     if (Object.keys(bindings).length > 0) config.bindings = bindings;
 
     return { config, selection, bucketLimitsColumn: null, line: "bind" };

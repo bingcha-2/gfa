@@ -64,6 +64,8 @@ describe("causal report-result integration", () => {
       bucket TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, failedRequests INTEGER NOT NULL DEFAULT 0,
       inputTokens INTEGER NOT NULL DEFAULT 0, outputTokens INTEGER NOT NULL DEFAULT 0,
       cachedInputTokens INTEGER NOT NULL DEFAULT 0, cacheCreationTokens INTEGER NOT NULL DEFAULT 0,
+      cacheWrite5mTokens INTEGER NOT NULL DEFAULT 0, cacheWrite1hTokens INTEGER NOT NULL DEFAULT 0,
+      apiValueUsd REAL NOT NULL DEFAULT 0, apiPricedRequests INTEGER NOT NULL DEFAULT 0,
       rawTotalTokens INTEGER NOT NULL DEFAULT 0, totalTokens INTEGER NOT NULL DEFAULT 0,
       reverseProxyHits INTEGER NOT NULL DEFAULT 0, priorityTokens INTEGER NOT NULL DEFAULT 0,
       updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
