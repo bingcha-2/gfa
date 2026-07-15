@@ -306,14 +306,6 @@ export function LocalExportCodexAccountsToFile(arg1) {
   return window['go']['main']['App']['LocalExportCodexAccountsToFile'](arg1);
 }
 
-export function LocalExportAntigravityAccountsToFile(arg1) {
-  return window['go']['main']['App']['LocalExportAntigravityAccountsToFile'](arg1);
-}
-
-export function LocalExportCodexAccountsToFile(arg1) {
-  return window['go']['main']['App']['LocalExportCodexAccountsToFile'](arg1);
-}
-
 export function LocalGatewayConnTest() {
   return window['go']['main']['App']['LocalGatewayConnTest']();
 }

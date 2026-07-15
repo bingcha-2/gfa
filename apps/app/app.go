@@ -462,7 +462,8 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		}
 		msg, err := t.Inject(cfg.ProxyPort)
 		if err != nil {
-			results = append(results, fmt.Sprintf("%s: 接管失败 (%v)", t.Name(), err))
+			// 文件权限错误在这里翻成可执行的修复指引(FILE_PERM: 前缀),其余原样透出。
+			results = append(results, fmt.Sprintf("%s: 接管失败 (%v)", t.Name(), takeoverErrorForUser(err)))
 		} else if msg != "" {
 			results = append(results, msg)
 		}
@@ -481,7 +482,7 @@ func (a *App) RestoreSelected(targets []string) (string, error) {
 		}
 		msg, err := t.Restore()
 		if err != nil {
-			results = append(results, fmt.Sprintf("%s: 恢复失败 (%v)", t.Name(), err))
+			results = append(results, fmt.Sprintf("%s: 恢复失败 (%v)", t.Name(), takeoverErrorForUser(err)))
 		} else if msg != "" {
 			results = append(results, msg)
 		}

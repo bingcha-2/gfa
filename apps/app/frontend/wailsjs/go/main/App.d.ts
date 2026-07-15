@@ -168,10 +168,6 @@ export function LocalExportCodexAccounts(arg1:Array<string>):Promise<string>;
 
 export function LocalExportCodexAccountsToFile(arg1:Array<string>):Promise<string>;
 
-export function LocalExportAntigravityAccountsToFile(arg1:Array<string>):Promise<string>;
-
-export function LocalExportCodexAccountsToFile(arg1:Array<string>):Promise<string>;
-
 export function LocalGatewayConnTest():Promise<gateway.ConnTestResult>;
 
 export function LocalGatewayStart():Promise<hub.GatewayStatus>;

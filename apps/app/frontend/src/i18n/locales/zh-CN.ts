@@ -193,6 +193,8 @@ export const zhCN = {
     storeClaudeBtn: '下载独立版',
     permissionTitle: '需要系统权限',
     permissionBody: '{message}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。',
+    // 文件属主/权限位问题,与系统隐私权限无关:正文直接用后端诊断出的可执行指引。
+    filePermTitle: '需要修复文件权限',
     opFailed: '操作失败',
     egressBlockedTitle: '⚠ 接管已拦截 · 出口未通过',
     needCardTitle: '需要登录账号',
