@@ -16,6 +16,10 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 单连接:SQLite 只允许一个写者,database/sql 默认会开多条连接,并发写就撞
+	// 「database is locked」。限成 1 条后所有访问在 Go 层排队(本地小库、写极快,
+	// 排队无感),调用方可以放心并发(如批量刷额度的有界并发)。
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, err

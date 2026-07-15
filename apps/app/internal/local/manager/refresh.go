@@ -2,6 +2,8 @@ package manager
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 
 	"bcai-wails/internal/local/account"
 	"bcai-wails/internal/local/quota"
@@ -34,25 +36,56 @@ func (m *Manager) RefreshQuota(id string) error {
 	return m.refreshOne(a)
 }
 
-// RefreshAllQuotas 遍历本 provider 的【全部】自有号逐个刷新,返回成功刷新数量。
+// quotaRefreshMaxConcurrent 批量刷额度的并发上限,对齐 cockpit(codex 池 max 5)。
+//
+// 为什么是「有界」而不是两个极端(cockpit 两个坑都踩过,见其 ab84211f):
+//   - 全串行:号一多就是干等,甚至超时(GFA 原来就是这样);
+//   - 无限并发:一次扇出几十个号,把上游打限流、部分失败、抖动。
+//
+// 瓶颈在网络拉额度,不在写库(account.Store 用 database/sql,并发安全、写自动串行)。
+const quotaRefreshMaxConcurrent = 5
+
+// RefreshAllQuotas 刷新本 provider 的【全部】自有号额度,返回成功刷新数量。
 // 不再只刷在池号(对齐 cockpit refresh_all_quotas:全量、逐号独立)——未在池的号
 // 也要能一键刷额度,否则用户得逐个点。API Key 号 refreshOne 会返回错误、不计入成功数。
-// 单号失败不中断。
+// 单号失败不中断;并发上限见 quotaRefreshMaxConcurrent。
 func (m *Manager) RefreshAllQuotas() (int, error) {
 	list, err := m.acc.List(m.provider)
 	if err != nil {
 		return 0, err
 	}
-	ok := 0
+	var (
+		ok  int64
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, quotaRefreshMaxConcurrent)
+	)
 	for _, a := range list {
-		if err := m.refreshOne(a); err == nil {
-			ok++
-		}
+		wg.Add(1)
+		go func(a *account.Account) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := m.refreshOne(a); err == nil {
+				atomic.AddInt64(&ok, 1)
+			}
+		}(a)
 	}
-	return ok, nil
+	wg.Wait()
+	return int(ok), nil
+}
+
+// accountRefreshLock 取该账号的刷新锁(没有就建)。见 Manager.refreshLocks 注释。
+func (m *Manager) accountRefreshLock(id string) *sync.Mutex {
+	v, _ := m.refreshLocks.LoadOrStore(id, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 func (m *Manager) refreshOne(a *account.Account) error {
+	// 每号一把锁:同一账号绝不并发刷(续 token 会轮换 refresh_token,并发会互相作废)。
+	lk := m.accountRefreshLock(a.ID)
+	lk.Lock()
+	defer lk.Unlock()
+
 	if m.refresher == nil {
 		return errors.New("manager: 未配置额度刷新能力")
 	}
