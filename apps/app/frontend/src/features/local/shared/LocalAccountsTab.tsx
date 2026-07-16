@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, RefreshCw, Trash2, ArrowUpRight, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2, Coffee } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Loader2, Download, Upload, Globe, KeyRound, ClipboardPaste, Pencil, ChevronDown, ChevronRight, Gauge, FolderInput, FileUp, MonitorDown, BellRing, Shuffle, CreditCard, Gift, RefreshCcw, ChevronUp, FolderPlus, CheckCircle2, Coffee, CircleAlert, RotateCcw, Search, Users } from 'lucide-react'
 import {
   type LocalAccountView, type ProviderLocalApi,
   type AlertConfig, type SwitchConfig,
@@ -17,8 +17,16 @@ import { Modal, useModal } from '@/components/Modal'
 import { PortalMenu, KebabMenu } from '@/components/PortalMenu'
 import { RewardModal } from '@/components/RewardModal'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
+import { ClipboardGetText } from '../../../../wailsjs/runtime/runtime'
 
 /** 账号 tab(本地主功能):列表 + 登录 + 池/优先/删除 + 导入导出 + 批量多选。 */
+
+type LoginPhase = 'idle' | 'starting' | 'waiting' | 'submitting' | 'success' | 'error'
+type AccountViewFilter = 'all' | 'pool' | 'attention'
 
 function planBadgeClass(plan: string): string {
   if (/pro/i.test(plan)) return 'bg-[var(--primary-light)] text-[var(--primary-strong)]'
@@ -42,14 +50,12 @@ function statusLabel(s: string): { text: string; cls: string } {
  */
 function QuotaBar({ label, percent }: { label: string; percent: number }) {
   const p = Math.max(0, Math.min(100, percent))
-  const barColor = p <= 10 ? 'var(--danger)' : p <= 25 ? 'var(--warning)' : 'var(--success-strong)'
+  const indicatorClass = p <= 10 ? 'bg-[var(--danger)]' : p <= 25 ? 'bg-[var(--warning)]' : 'bg-[var(--success-strong)]'
   const numColor = p <= 10 ? 'var(--danger)' : p <= 25 ? 'var(--warning-deep)' : 'var(--text-secondary)'
   return (
-    <div className="inline-flex items-center gap-2 whitespace-nowrap">
-      <span className="text-[11px] text-[var(--text-muted)]">{label}</span>
-      <div className="w-16 h-[5px] rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
-        <div className="h-full rounded-full transition-[width] duration-300 ease-out" style={{ width: `${p}%`, background: barColor }} />
-      </div>
+    <div className="grid grid-cols-[72px_64px_34px] items-center gap-2 whitespace-nowrap">
+      <span className="text-[11px] text-[var(--text-muted)] truncate">{label}</span>
+      <Progress value={p} aria-label={`${label}剩余 ${p}%`} className="h-[5px]" indicatorClassName={indicatorClass} />
       <span className="text-[11px] font-mono-data tabular-nums" style={{ color: numColor }}>{p}%</span>
     </div>
   )
@@ -112,7 +118,7 @@ function EconomyBar() {
   }
 
   return (
-    <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-[var(--border-light)] px-4 py-2.5">
       {err && <div className="w-full text-[11px] text-[var(--danger)] break-all">{err}</div>}
 
       {/* 超额预警 */}
@@ -218,7 +224,7 @@ function RowExtras({ account }: { account: LocalAccountView }) {
           >
             {busy === 'sub' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />} 刷新订阅
           </button>
-          {sub && <span className="text-[var(--text-muted)]">{sub.PlanType || '—'} · {sub.SubscriptionActiveUntil || '—'}</span>}
+          {sub && <span className="text-[var(--text-muted)]">{sub.PlanType || '-'} / {sub.SubscriptionActiveUntil || '-'}</span>}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[var(--text-secondary)] inline-flex items-center gap-1"><CreditCard size={13} /> 主动重置:可用 {available} 次</span>
@@ -246,7 +252,7 @@ function RowExtras({ account }: { account: LocalAccountView }) {
             {referral.should_show
               ? `可邀请 · 剩余 ${referral.remaining_referrals ?? 0} 个名额`
               : isReferralLimitReached(referral)
-                ? '奖励名额已用完 —— 仍可发送邀请,但本次不再获得奖励/重置名额。'
+                ? '奖励名额已用完，仍可发送邀请，但本次不再获得奖励或重置名额。'
                 : `当前不可邀请${referral.ineligible_reason_code ? ` · ${referral.ineligible_reason_code}` : ''}`}
           </div>
           {canSendReferral(referral) && (
@@ -283,9 +289,13 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  // 进行中的登录会话(用于手动粘贴回调 URL / 取消,防火墙/无浏览器场景)。
+  // OAuth 登录 UI 与 loginId 解耦:失败后弹窗和用户输入必须保留,不能因会话结束而卸载。
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [loginPhase, setLoginPhase] = useState<LoginPhase>('idle')
   const [loginId, setLoginId] = useState<string | null>(null)
   const [callbackURL, setCallbackURL] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const loginAttemptRef = useRef(0)
   // codex 专属经济区:用 importFromLocal 这个 codex 唯一能力作判别(antigravity 无),不污染 antigravity。
   const hasEconomy = !!api.importFromLocal
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -311,6 +321,8 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   const [groups, setGroups] = useState<AccountGroup[]>([])
   const [groupOf, setGroupOf] = useState<Record<string, string>>({})
   const [groupFilter, setGroupFilter] = useState<string>('all')
+  const [viewFilter, setViewFilter] = useState<AccountViewFilter>('all')
+  const [query, setQuery] = useState('')
   const [groupModalOpen, setGroupModalOpen] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   // 破坏性操作确认(删除凭证不可逆)。
@@ -360,38 +372,98 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
   useEffect(() => { void refresh(); void refreshGroups() }, [refresh, refreshGroups])
 
   const onLogin = async () => {
-    setBusy('login')
-    setErr('')
+    const attempt = ++loginAttemptRef.current
+    setLoginOpen(true)
+    setLoginPhase('starting')
+    setLoginId(null)
+    setLoginError('')
+    setCallbackURL('')
     try {
       const id = await api.startLogin()
-      setLoginId(id) // 记录会话:登录期间露出手动回调 / 取消入口
-      // 后台等回调(SDK 自动开浏览器);手动提交回调 URL 也会让它返回。
-      api.waitLogin(id).then(() => { setLoginId(null); setCallbackURL(''); void refresh() })
-        .catch((e) => { setErr(String(e)); setLoginId(null) })
-        .finally(() => setBusy(null))
+      if (attempt !== loginAttemptRef.current) {
+        if (api.cancelLogin) void api.cancelLogin(id).catch(() => {})
+        return
+      }
+      setLoginId(id)
+      setLoginPhase('waiting')
+      // 后台等自动回调。失败时只结束本次会话,弹窗、错误和用户已粘贴的 URL 都保留。
+      api.waitLogin(id).then(async () => {
+        if (attempt !== loginAttemptRef.current) return
+        loginAttemptRef.current += 1
+        setLoginId(null)
+        setLoginPhase('success')
+        setLoginError('')
+        await refresh()
+      }).catch((e) => {
+        if (attempt !== loginAttemptRef.current) return
+        loginAttemptRef.current += 1
+        setLoginId(null)
+        setLoginPhase('error')
+        setLoginError(String(e).replace(/^Error:\s*/, ''))
+      })
     } catch (e) {
-      setErr(String(e))
-      setBusy(null)
+      if (attempt !== loginAttemptRef.current) return
+      setLoginId(null)
+      setLoginPhase('error')
+      setLoginError(String(e).replace(/^Error:\s*/, ''))
     }
   }
 
   const onSubmitCallback = async () => {
     if (!loginId || !callbackURL.trim() || !api.submitLoginCallback) return
+    const attempt = loginAttemptRef.current
+    const id = loginId
+    setLoginPhase('submitting')
+    setLoginError('')
     try {
-      await api.submitLoginCallback(loginId, callbackURL.trim())
+      await api.submitLoginCallback(id, callbackURL.trim())
+      if (attempt !== loginAttemptRef.current) return
+      // 提交只是把 URL 交给后端,真正的 code 换 token 仍由 waitLogin 完成。
+      setLoginPhase('waiting')
+    } catch (e) {
+      if (attempt !== loginAttemptRef.current) return
+      setLoginPhase('error')
+      setLoginError(String(e).replace(/^Error:\s*/, ''))
+    }
+  }
+
+  const closeLogin = async () => {
+    const id = loginId
+    loginAttemptRef.current += 1
+    setLoginOpen(false)
+    setLoginId(null)
+    setLoginPhase('idle')
+    setLoginError('')
+    setCallbackURL('')
+    if (!id || !api.cancelLogin) return
+    try {
+      await api.cancelLogin(id)
     } catch (e) {
       setErr(String(e))
     }
   }
 
-  const onCancelLogin = async () => {
-    if (!loginId) return
+  const onRetryLogin = async () => {
+    const id = loginId
+    if (id && api.cancelLogin) {
+      try { await api.cancelLogin(id) } catch { /* 旧会话可能已经结束,不阻断重试。 */ }
+    }
+    void onLogin()
+  }
+
+  const onPasteCallback = async () => {
+    setLoginError('')
     try {
-      if (api.cancelLogin) await api.cancelLogin(loginId)
-    } catch (e) {
-      setErr(String(e))
-    } finally {
-      setLoginId(null); setCallbackURL(''); setBusy(null)
+      // Wails 原生剪贴板不依赖 WebView 的权限策略;开发预览再回退到浏览器 API。
+      let text = ''
+      try { text = await ClipboardGetText() } catch { text = await navigator.clipboard.readText() }
+      if (!text.trim()) {
+        setLoginError('剪贴板里没有可用文本。')
+        return
+      }
+      setCallbackURL(text.trim())
+    } catch {
+      setLoginError('无法读取剪贴板,请在输入框中手动粘贴。')
     }
   }
 
@@ -635,93 +707,62 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
     }
   }
 
-  // 按当前分组筛选(all=全部;否则只留归属该组的号)。
-  const visible = useMemo(
-    () => (groupFilter === 'all' ? accounts : accounts.filter((a) => groupOf[a.id] === groupFilter)),
+  const scopedAccounts = useMemo(
+    () => groupFilter === 'all' ? accounts : accounts.filter((account) => groupOf[account.id] === groupFilter),
     [accounts, groupFilter, groupOf],
   )
+  const poolCount = useMemo(() => scopedAccounts.filter((a) => a.poolEnabled).length, [scopedAccounts])
+  const attentionCount = useMemo(() => scopedAccounts.filter((a) => a.quotaStatus !== 'ok').length, [scopedAccounts])
+
+  // 分组、工作状态与搜索统一落在一个可预期的视图模型里。
+  const visible = useMemo(
+    () => {
+      const needle = query.trim().toLocaleLowerCase()
+      return scopedAccounts.filter((account) => {
+        if (viewFilter === 'pool' && !account.poolEnabled) return false
+        if (viewFilter === 'attention' && account.quotaStatus === 'ok') return false
+        if (!needle) return true
+        return [account.name, account.email, account.note, account.planType, ...(account.tags || [])]
+          .some((value) => String(value || '').toLocaleLowerCase().includes(needle))
+      })
+    },
+    [query, scopedAccounts, viewFilter],
+  )
+
+  const activeGroupName = groupFilter === 'all'
+    ? '全部账号'
+    : groups.find((group) => group.id === groupFilter)?.name || '账号分组'
+  const allVisibleSelected = visible.length > 0 && visible.every((account) => selected.has(account.id))
+  const toggleAllVisible = () => setSelected((previous) => {
+    const next = new Set(previous)
+    if (allVisibleSelected) visible.forEach((account) => next.delete(account.id))
+    else visible.forEach((account) => next.add(account.id))
+    return next
+  })
 
   return (
     <div className="flex flex-col gap-3">
       {err && <div className="rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)] break-all">{err}</div>}
       {notice && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/10 px-3 py-2 text-[12px] text-[var(--text-secondary)] break-all">{notice}</div>}
       {importInfo && <div className="rounded-[8px] border border-[var(--success)] bg-[var(--success)]/5 px-3 py-2 text-[12px] text-[var(--success)]">{importInfo}</div>}
-      {loginId && (
-        <div className="rounded-[10px] border border-[var(--primary)] bg-[var(--primary-light)] px-3 py-2.5 flex flex-col gap-2">
-          <div className="text-[12px] text-[var(--text-primary)]">已打开浏览器登录,完成后会自动加号。若无法自动回调(防火墙/无浏览器),把浏览器地址栏的回调 URL 粘到这里:</div>
-          <div className="flex items-center gap-2">
-            <input
-              aria-label="OAuth 回调 URL"
-              value={callbackURL}
-              onChange={(e) => setCallbackURL(e.target.value)}
-              placeholder="http://localhost:1455/auth/callback?code=..."
-              className="flex-1 rounded-[7px] border border-[var(--border)] bg-[var(--bg-card)] px-2.5 h-[30px] text-[12px] font-mono-data text-[var(--text-primary)]"
-            />
-            <button onClick={() => void onSubmitCallback()} disabled={!callbackURL.trim()} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] disabled:opacity-50">提交</button>
-            <button onClick={() => void onCancelLogin()} className="text-[12px] font-semibold px-3 h-[30px] rounded-[7px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">取消</button>
-          </div>
-        </div>
-      )}
-
-      {hasEconomy && <EconomyBar />}
-
-      {/* 分组筛选条:全部 + 各分组(显示成员数)+ 新建分组。 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          aria-label="全部账号"
-          aria-pressed={groupFilter === 'all'}
-          onClick={() => setGroupFilter('all')}
-          className={cn('cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border transition-colors', groupFilter === 'all' ? 'border-[var(--primary)] bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}
-        >
-          全部 · {accounts.length}
-        </button>
-        {groups.map((g) => {
-          const count = accounts.filter((a) => groupOf[a.id] === g.id).length
-          const active = groupFilter === g.id
-          return (
-            <button
-              key={g.id}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setGroupFilter(g.id)}
-              className={cn('cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border transition-colors', active ? 'border-[var(--primary)] bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}
-            >
-              {g.name} · {count}
-            </button>
-          )
-        })}
-        <button
-          type="button"
-          onClick={() => { setNewGroupName(''); setGroupModalOpen(true) }}
-          className="cursor-pointer text-[11px] font-semibold px-2.5 h-[26px] rounded-full border border-dashed border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] inline-flex items-center gap-1"
-        >
-          <FolderPlus size={12} /> 新建分组
-        </button>
-      </div>
-
-      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/50">
-          <span className="text-[11px] font-bold text-[var(--text-muted)] tracking-wide">我的 {title} 账号 · {accounts.length}</span>
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => setImportOpen(true)} className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1" title="从 JSON 导入">
-              <Upload size={12} /> 导入
-            </button>
-            <button onClick={onExport} disabled={busy === 'export' || accounts.length === 0} className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 disabled:opacity-40" title="导出全部为 JSON">
-              <Download size={12} /> 导出
-            </button>
-            <button
-              onClick={() => void onRefreshAll()}
-              disabled={busy === 'refresh-all' || accounts.length === 0}
-              className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 disabled:opacity-40"
-              title="去上游重新拉取全部自有号额度(含未在池;API Key 号不支持)"
-            >
-              {busy === 'refresh-all' ? <Loader2 size={12} className="animate-spin" /> : <Gauge size={12} />} 全部刷新额度
-            </button>
-            <div className="relative">
-              <button ref={addBtnRef} onClick={() => setAddMenuOpen((v) => !v)} disabled={busy === 'login'} aria-label="加号" aria-haspopup="menu" aria-expanded={addMenuOpen} className="text-[11px] font-semibold px-2.5 h-[26px] rounded-[7px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1 disabled:opacity-50">
-                {busy === 'login' ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} 加号 <ChevronDown size={11} />
-              </button>
+      <section aria-label={`${activeGroupName}列表`} className="min-w-0 overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)]">
+        <div className="flex flex-col gap-3 border-b border-[var(--border-light)] px-4 py-3.5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[14px] font-semibold text-[var(--text-primary)]">{activeGroupName}</h2>
+              <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                {scopedAccounts.length} 个账号 · {poolCount} 个已入池{attentionCount > 0 ? ` · ${attentionCount} 个需处理` : ''}
+              </p>
+            </div>
+            <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+              <div className="relative min-w-[180px] flex-1 sm:w-[240px] sm:flex-none">
+                <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="搜索账号" placeholder="搜索账号" className="h-8 pl-8 text-[12px]" />
+              </div>
+              <div className="relative">
+                <Button ref={addBtnRef} type="button" size="sm" onClick={() => setAddMenuOpen((v) => !v)} aria-label="加号" aria-haspopup="menu" aria-expanded={addMenuOpen}>
+                  <Plus size={13} data-icon="inline-start" /> 添加账号 <ChevronDown size={12} data-icon="inline-end" />
+                </Button>
               <PortalMenu open={addMenuOpen} anchorRef={addBtnRef} onClose={() => setAddMenuOpen(false)} label="加号菜单">
                 <button role="menuitem" onClick={() => { setAddMenuOpen(false); void onLogin() }} className="w-full text-left text-[12px] px-3 py-2 inline-flex items-center gap-2 text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
                   <Globe size={13} className="text-[var(--text-muted)]" /> 浏览器登录
@@ -762,102 +803,165 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                   onChange={onFilesChosen}
                 />
               )}
+              </div>
+              <Button type="button" size="icon" variant="ghost" onClick={() => void refresh()} title="刷新账号列表" aria-label="刷新账号列表">
+                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              </Button>
+              <KebabMenu
+                label="号池更多操作"
+                items={[
+                  { key: 'import', label: '导入 JSON', icon: <Upload size={14} />, onClick: () => setImportOpen(true) },
+                  { key: 'export', label: '导出账号', icon: <Download size={14} />, disabled: busy === 'export' || accounts.length === 0, onClick: onExport },
+                  { key: 'refresh-all', label: '全部刷新额度', icon: busy === 'refresh-all' ? <Loader2 size={14} className="animate-spin" /> : <Gauge size={14} />, disabled: busy === 'refresh-all' || accounts.length === 0, onClick: () => void onRefreshAll() },
+                ]}
+              />
             </div>
-            <button onClick={() => void refresh()} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] ml-1" title="刷新">
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <nav className="flex max-w-full items-center gap-4 overflow-x-auto" aria-label="分组筛选">
+              <button
+                type="button"
+                aria-label="全部账号"
+                aria-pressed={groupFilter === 'all'}
+                onClick={() => setGroupFilter('all')}
+                className={cn('h-7 shrink-0 border-b-2 px-0.5 text-[11px] font-medium transition-colors', groupFilter === 'all' ? 'border-[var(--primary)] text-[var(--primary-strong)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]')}
+              >
+                全部 <span className="ml-1 font-mono-data text-[10px] text-[var(--text-muted)]">{accounts.length}</span>
+              </button>
+              {groups.map((group) => {
+                const count = accounts.filter((account) => groupOf[account.id] === group.id).length
+                const active = groupFilter === group.id
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setGroupFilter(group.id)}
+                    className={cn('h-7 shrink-0 border-b-2 px-0.5 text-[11px] font-medium transition-colors', active ? 'border-[var(--primary)] text-[var(--primary-strong)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]')}
+                  >
+                    {group.name} <span className="ml-1 font-mono-data text-[10px] text-[var(--text-muted)]">{count}</span>
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() => { setNewGroupName(''); setGroupModalOpen(true) }}
+                aria-label="新建分组"
+                className="inline-flex h-7 shrink-0 items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              >
+                <FolderPlus size={13} /> 新建分组
+              </button>
+            </nav>
+
+            <div className="flex flex-wrap items-center gap-1">
+              <div className="flex items-center gap-0.5" aria-label="账号状态筛选">
+                {([
+                  ['all', '全部', scopedAccounts.length],
+                  ['pool', '已入池', poolCount],
+                  ['attention', '需处理', attentionCount],
+                ] as const).map(([key, label, count]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={viewFilter === key}
+                    onClick={() => setViewFilter(key)}
+                    className={cn('h-7 rounded-[6px] px-2 text-[11px] font-medium transition-colors', viewFilter === key ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]')}
+                  >
+                    {label} <span className="ml-0.5 font-mono-data text-[10px]">{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
+        {hasEconomy && <EconomyBar />}
+
         {selected.size > 0 && (
-          <div className="flex items-center justify-between px-4 py-2 bg-[var(--primary-light)] border-b border-[var(--border-light)] text-[12px]">
-            <span className="text-[var(--primary-strong)] font-semibold">已选 {selected.size}</span>
-            <div className="flex gap-3">
-              <button onClick={() => setSelected(new Set())} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">取消</button>
-              <button onClick={onBatchDelete} disabled={busy === 'batch'} className="text-[var(--danger)] font-semibold hover:underline disabled:opacity-50">批量删除</button>
+          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-[var(--primary-light)] border-b border-[var(--border-light)] text-[12px]">
+            <span className="text-[var(--primary-strong)] font-semibold">已选择 {selected.size} 个账号</span>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setSelected(new Set())}>取消选择</Button>
+              <Button type="button" size="sm" variant="danger" onClick={onBatchDelete} disabled={busy === 'batch'}>删除所选</Button>
             </div>
           </div>
         )}
 
+        {accounts.length > 0 && (
+          <div className="hidden grid-cols-[auto_minmax(220px,1.3fr)_minmax(190px,.8fr)_auto] items-center gap-3 px-4 py-2 text-[10px] font-semibold text-[var(--text-muted)] xl:grid">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} aria-label="选择当前视图全部账号" className="size-3.5 accent-[var(--primary)]" />
+            <span>账号</span>
+            <span>剩余额度</span>
+            <span className="text-right">池状态与操作</span>
+          </div>
+        )}
+
         {loading ? (
-          <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
+          <div className="flex flex-col gap-3 px-4 py-6" role="status" aria-label="正在加载账号">
+            {[0, 1, 2].map((item) => <div key={item} className="h-14 rounded-[8px] bg-[var(--bg-tertiary)] opacity-70" />)}
+          </div>
         ) : accounts.length === 0 ? (
-          <div className="px-4 py-12 text-center">
-            <div className="text-[13px] font-semibold text-[var(--text-primary)] mb-1">还没有本地账号</div>
-            <div className="text-[12px] text-[var(--text-muted)] mb-4">登录你自己的账号,接管本地 {title},凭证只留在本机。</div>
-            <button onClick={onLogin} disabled={busy === 'login'} className="text-[12px] font-semibold px-3 h-[32px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5">
-              <Plus size={14} /> 登录新账号
-            </button>
+          <div className="flex flex-col items-center px-4 py-12 text-center">
+            <span className="inline-flex size-10 items-center justify-center rounded-[10px] bg-[var(--primary-light)] text-[var(--primary-strong)]"><Users size={18} /></span>
+            <div className="mt-3 text-[13px] font-semibold text-[var(--text-primary)]">还没有本地账号</div>
+            <div className="mt-1 max-w-[360px] text-[12px] text-[var(--text-secondary)]">登录自有账号后，可以在这里安排当前出口、入池状态和额度刷新。</div>
+            <Button type="button" size="sm" onClick={onLogin} className="mt-4"><Plus size={14} data-icon="inline-start" /> 登录账号</Button>
           </div>
         ) : visible.length === 0 ? (
-          <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">该分组下还没有账号</div>
+          <div className="flex flex-col items-center px-4 py-10 text-center">
+            <Search size={18} className="text-[var(--text-muted)]" />
+            <div className="mt-2 text-[12px] font-semibold text-[var(--text-primary)]">没有匹配的账号</div>
+            <button type="button" className="mt-1 text-[11px] text-[var(--primary-strong)] hover:underline" onClick={() => { setQuery(''); setViewFilter('all') }}>清除搜索和状态筛选</button>
+          </div>
         ) : (
           visible.map((a) => {
             const st = statusLabel(a.quotaStatus)
-            // 重排序基于整列真实位置;筛选态下顺序不连续,故仅在「全部」视图启用 ↑↓。
             const realIndex = accounts.findIndex((x) => x.id === a.id)
-            const reorderable = groupFilter === 'all'
+            const reorderable = groupFilter === 'all' && viewFilter === 'all' && !query.trim()
             return (
-              <div key={a.id} className={cn('px-4 py-3 border-t border-[var(--border-light)] first:border-t-0', a.priority && 'bg-[var(--primary-light)]')}>
-                <div className="grid grid-cols-[auto_auto_1fr_auto] gap-3 items-center">
-                <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSel(a.id)} className="w-3.5 h-3.5 accent-[var(--primary)] cursor-pointer" aria-label="选择账号" />
-                <div className="flex flex-col -my-1">
-                  <button
-                    onClick={() => onMove(realIndex, -1)}
-                    disabled={!reorderable || realIndex <= 0 || busy === `move-${a.id}`}
-                    aria-label="上移"
-                    title={reorderable ? '上移' : '清除分组筛选后可排序'}
-                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-5 h-5 inline-flex items-center justify-center rounded-[5px] hover:bg-[var(--bg-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronUp size={13} />
-                  </button>
-                  <button
-                    onClick={() => onMove(realIndex, 1)}
-                    disabled={!reorderable || realIndex >= accounts.length - 1 || busy === `move-${a.id}`}
-                    aria-label="下移"
-                    title={reorderable ? '下移' : '清除分组筛选后可排序'}
-                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] w-5 h-5 inline-flex items-center justify-center rounded-[5px] hover:bg-[var(--bg-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronDown size={13} />
-                  </button>
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    {a.priority && <ArrowUpRight size={15} className="text-[var(--primary-strong)] shrink-0" />}
+              <div key={a.id} className={cn('border-t border-[var(--border-light)] first:border-t-0 transition-colors hover:bg-[var(--bg-hover)]', a.priority && 'bg-[var(--primary-light)]/65')}>
+                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-4 py-3 xl:grid-cols-[auto_minmax(220px,1.3fr)_minmax(190px,.8fr)_auto] xl:items-center">
+                  <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSel(a.id)} className="mt-1 size-3.5 accent-[var(--primary)] cursor-pointer xl:mt-0" aria-label="选择账号" />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-semibold text-[13px] text-[var(--text-primary)] truncate">{a.name || a.email || '(未知邮箱)'}</span>
-                    {a.priority && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--primary)] text-[var(--primary-ink)] inline-flex items-center gap-1 shrink-0"><CheckCircle2 size={11} /> 当前号</span>}
-                    {a.name && a.email && <span className="text-[11px] text-[var(--text-muted)] truncate">{a.email}</span>}
-                    {a.planType && <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full', planBadgeClass(a.planType))}>{a.planType}</span>}
-                    <span className="text-[11px] text-[var(--text-muted)]">{a.authKind === 'apikey' ? 'API Key' : 'OAuth'}</span>
-                    <span className={cn('text-[11px] ml-1', st.cls)}>{st.text}</span>
-                  </div>
-                  {a.quotaBuckets && a.quotaBuckets.length > 0 ? (
-                    // antigravity 多桶(gemini/claude × 5h/周):紧凑内联,缺桶不占位,自动换行。
-                    <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2">
-                      {a.quotaBuckets.map((b) => (
-                        <QuotaBar key={b.key} label={b.label} percent={b.percent} />
-                      ))}
+                      {a.priority && <Badge><CheckCircle2 size={11} /> 当前号</Badge>}
+                      <span className={cn('text-[11px]', st.cls)}>{st.text}</span>
                     </div>
-                  ) : (
-                    <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2">
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+                      {a.name && a.email && <span className="truncate">{a.email}</span>}
+                      {a.planType && <span className={cn('rounded-[5px] px-1.5 py-0.5 text-[10px] font-semibold', planBadgeClass(a.planType))}>{a.planType}</span>}
+                      <span>{a.authKind === 'apikey' ? 'API Key' : 'OAuth'}</span>
+                    </div>
+                    {(a.note || (a.tags && a.tags.length > 0)) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {(a.tags || []).map((tag) => <Badge key={tag} variant="muted" className="rounded-[5px] px-1.5 py-0 text-[10px]">{tag}</Badge>)}
+                        {a.note && <span className="truncate text-[11px] text-[var(--text-muted)]">{a.note}</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="col-start-2 flex flex-col gap-1.5 xl:col-start-auto">
+                    {a.quotaBuckets && a.quotaBuckets.length > 0 ? (
+                      <>
+                        {a.quotaBuckets.map((bucket) => (
+                          <QuotaBar key={bucket.key} label={bucket.label} percent={bucket.percent} />
+                        ))}
+                      </>
+                    ) : (
+                      <>
                       {visibleDefaultQuotaWindows(provider, a.hourlyPercent, a.weeklyPercent).map((window) => (
                         <QuotaBar key={window.label} label={window.label} percent={window.percent} />
                       ))}
                       {provider === 'codex' && a.hourlyPercent < 0 && a.weeklyPercent < 0 && (
                         <span className="text-[11px] text-[var(--text-muted)]">额度未知</span>
                       )}
-                    </div>
-                  )}
-                  {(a.note || (a.tags && a.tags.length > 0)) && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                      {(a.tags || []).map((t) => (
-                        <span key={t} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-[5px] bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{t}</span>
-                      ))}
-                      {a.note && <span className="text-[11px] text-[var(--text-muted)] truncate">{a.note}</span>}
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
+                      </>
+                    )}
+                  </div>
+
+                  <div className="col-start-2 flex flex-wrap items-center gap-1.5 xl:col-start-auto xl:justify-end">
                   <button
                     onClick={() => act(`pool-${a.id}`, () => api.setPoolEnabled(a.id, !a.poolEnabled))}
                     disabled={busy === `pool-${a.id}`}
@@ -893,10 +997,26 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
                       {expanded.has(a.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                     </button>
                   )}
-                </div>
+                    {reorderable && <div className="ml-0.5 flex items-center rounded-[7px] border border-[var(--border-light)]">
+                      <button
+                        onClick={() => onMove(realIndex, -1)}
+                        disabled={!reorderable || realIndex <= 0 || busy === `move-${a.id}`}
+                        aria-label="上移"
+                        title={reorderable ? '上移' : '清除筛选后可排序'}
+                        className="inline-flex size-7 items-center justify-center text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-30"
+                      ><ChevronUp size={13} /></button>
+                      <button
+                        onClick={() => onMove(realIndex, 1)}
+                        disabled={!reorderable || realIndex >= accounts.length - 1 || busy === `move-${a.id}`}
+                        aria-label="下移"
+                        title={reorderable ? '下移' : '清除筛选后可排序'}
+                        className="inline-flex size-7 items-center justify-center border-l border-[var(--border-light)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-30"
+                      ><ChevronDown size={13} /></button>
+                    </div>}
+                  </div>
                 </div>
                 {hasEconomy && expanded.has(a.id) && (
-                  <div className="grid grid-cols-[auto_auto_1fr_auto]">
+                  <div className="px-4 pb-3 pl-11">
                     <RowExtras account={a} />
                   </div>
                 )}
@@ -904,20 +1024,127 @@ export function LocalAccountsTab({ title, api }: { title: string; api: ProviderL
             )
           })
         )}
-        {/* 赞赏入口:低调置于号池底部,不挤进功能按钮。 */}
-        <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-[var(--border-light)] text-[12px] text-[var(--text-secondary)]">
-          <Coffee size={14} className="text-[var(--warning-deep)]" />
-          <span>觉得顺手?请作者喝咖啡、吃麦当劳薯条</span>
-          <button
-            onClick={() => setRewardOpen(true)}
-            className="cursor-pointer text-[12px] font-semibold px-3 h-[26px] rounded-[7px] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-          >
-            赞赏
-          </button>
-        </div>
+      </section>
+
+      <div className="flex items-center justify-center gap-2 text-[11px] text-[var(--text-muted)]">
+        <Coffee size={14} className="text-[var(--warning-deep)]" />
+        <span>支持冰茶AI持续维护</span>
+        <button
+          onClick={() => setRewardOpen(true)}
+          className="font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:underline"
+        >
+          赞赏
+        </button>
       </div>
 
       <RewardModal open={rewardOpen} onClose={() => setRewardOpen(false)} />
+
+      <Dialog open={loginOpen} onOpenChange={(open) => { if (!open) void closeLogin() }}>
+        <DialogContent className="max-w-[560px] p-0 overflow-hidden" onEscapeKeyDown={(event) => {
+          if (loginPhase === 'starting' || loginPhase === 'submitting') event.preventDefault()
+        }}>
+          <div className="px-6 pt-6 pb-5 border-b border-[var(--border-light)] bg-[var(--bg-tertiary)]/55">
+            <DialogHeader className="mb-0 pr-8">
+              <DialogTitle>登录 {title} 账号</DialogTitle>
+              <DialogDescription>浏览器授权和手动回调都在这里完成。切到浏览器不会关闭此窗口。</DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 grid grid-cols-2 gap-2" aria-label="登录进度">
+              <div className={cn('flex items-center gap-2 rounded-[10px] px-3 py-2 text-[12px] font-semibold', loginPhase === 'starting' ? 'bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)]')}>
+                <span className="inline-flex size-5 items-center justify-center rounded-full bg-[var(--bg-card)] font-mono-data text-[10px]">1</span>
+                打开浏览器授权
+              </div>
+              <div className={cn('flex items-center gap-2 rounded-[10px] px-3 py-2 text-[12px] font-semibold', loginPhase !== 'starting' && loginPhase !== 'idle' ? 'bg-[var(--primary-light)] text-[var(--primary-strong)]' : 'bg-[var(--bg-secondary)] text-[var(--text-muted)]')}>
+                <span className="inline-flex size-5 items-center justify-center rounded-full bg-[var(--bg-card)] font-mono-data text-[10px]">2</span>
+                等待登录结果
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4 px-6 py-5">
+            {loginPhase === 'success' ? (
+              <div className="flex flex-col items-center gap-3 py-5 text-center" role="status">
+                <span className="inline-flex size-11 items-center justify-center rounded-full bg-[var(--success)]/12 text-[var(--success-strong)]">
+                  <CheckCircle2 size={24} />
+                </span>
+                <div>
+                  <div className="text-[14px] font-semibold text-[var(--text-primary)]">账号已添加</div>
+                  <p className="mt-1 text-[12px] text-[var(--text-secondary)]">本地号池已刷新,现在可以设置当前号或调整入池状态。</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--primary-light)] text-[var(--primary-strong)]">
+                    {loginPhase === 'starting' ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold text-[var(--text-primary)]">
+                      {loginPhase === 'starting' ? '正在发起登录' : loginPhase === 'submitting' ? '正在提交回调' : '请在系统浏览器完成授权'}
+                    </div>
+                    <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                      授权成功会自动返回。如果浏览器停在 localhost 错误页,复制完整地址并粘贴到下方。
+                    </p>
+                  </div>
+                </div>
+
+                <form className="flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); void onSubmitCallback() }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor={`${provider}-oauth-callback`} className="text-[12px] font-semibold text-[var(--text-primary)]">回调地址</label>
+                    <span className="text-[11px] text-[var(--text-muted)]">输入会在失败后保留</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id={`${provider}-oauth-callback`}
+                      aria-label="OAuth 回调 URL"
+                      value={callbackURL}
+                      onChange={(event) => { setCallbackURL(event.target.value); if (loginError) setLoginError('') }}
+                      placeholder="http://localhost:1455/auth/callback?code=..."
+                      className="min-w-0 flex-1 font-mono-data text-[12px]"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <Button type="button" variant="secondary" onClick={() => void onPasteCallback()} disabled={loginPhase === 'submitting'} aria-label="从剪贴板粘贴回调地址">
+                      <ClipboardPaste size={15} />
+                      粘贴
+                    </Button>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">必须包含当前登录生成的 code 和 state。不要粘贴授权页地址。</p>
+                </form>
+
+                {loginError && (
+                  <div className="flex items-start gap-2 rounded-[10px] bg-[var(--danger)]/8 px-3 py-2.5 text-[12px] text-[var(--danger)]" role="alert">
+                    <CircleAlert size={15} className="mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold">本次登录没有完成</div>
+                      <div className="mt-0.5 break-all opacity-90">{loginError}</div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="mt-0 border-t border-[var(--border-light)] px-6 py-4">
+            {loginPhase === 'success' ? (
+              <Button onClick={() => void closeLogin()}>完成</Button>
+            ) : (
+              <>
+                <Button type="button" variant="ghost" onClick={() => void closeLogin()}>取消登录</Button>
+                {(loginPhase === 'error' || !loginId) && loginPhase !== 'starting' && (
+                  <Button type="button" variant="secondary" onClick={() => void onRetryLogin()}>
+                    <RotateCcw size={15} />
+                    重新发起
+                  </Button>
+                )}
+                <Button type="button" onClick={() => void onSubmitCallback()} disabled={!loginId || !callbackURL.trim() || loginPhase === 'starting' || loginPhase === 'submitting'}>
+                  {loginPhase === 'submitting' && <Loader2 size={15} className="animate-spin" />}
+                  提交回调
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={importOpen} onOpenChange={(o) => !o && setImportOpen(false)}>
         <DialogContent className="max-w-[460px]">

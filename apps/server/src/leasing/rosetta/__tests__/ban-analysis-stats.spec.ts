@@ -477,7 +477,7 @@ describe("getRequestLogs — per-request 热表浏览", () => {
       accountQuotaSnapshot: { findMany: vi.fn().mockResolvedValue([{ provider: "codex", accountId: 17, hourlyPercent: 70 }]) },
     };
     const result = await makeService(prisma).getQuotaSupportPackage({ reportId: "r1" });
-    expect(result).toMatchObject({ retentionHours: 72, filters: { reportId: "r1" } });
+    expect(result).toMatchObject({ retentionHours: 48, filters: { reportId: "r1" } });
     expect(result.logs).toHaveLength(1);
     expect(result.windows[0]).toMatchObject({ fraction: 0.7, lastReason: "LATE_USAGE_RECONCILED" });
     expect(result.receipts).toHaveLength(1);
@@ -510,8 +510,8 @@ describe("getRequestLogs — per-request 热表浏览", () => {
   });
 });
 
-describe("getBanEventRequests — 时间线 + 封号前 3 天聚合", () => {
-  it("时间线按 seq 升序 + window3d 从 RequestLog([封号-72h,封号]) 聚合", async () => {
+describe("getBanEventRequests — 时间线 + 封号前 48 小时聚合", () => {
+  it("时间线按 seq 升序 + window48h 从 RequestLog([封号-48h,封号]) 聚合", async () => {
     const banAt = new Date("2026-06-23T12:00:00Z");
     const event = { provider: "anthropic", accountEmail: "a@x.com", createdAt: banAt };
     const reqRows = [{ seq: 0 }, { seq: 1 }];
@@ -529,21 +529,21 @@ describe("getBanEventRequests — 时间线 + 封号前 3 天聚合", () => {
 
     expect(res.requests).toHaveLength(2);
     expect(prisma.banEventRequest.findMany.mock.calls[0][0]).toMatchObject({ where: { banEventId: "e1" }, orderBy: { seq: "asc" } });
-    expect(res.window3d).toMatchObject({
+    expect(res.window48h).toMatchObject({
       requests: 3, reverseProxyHits: 2, distinctSourceIps: 2, distinctDevices: 2, distinctUsers: 2, totalTokens: 35, peakReqPerMin: 2,
     });
-    expect(res.window3d!.reverseProxyRate).toBeCloseTo(2 / 3);
+    expect(res.window48h!.reverseProxyRate).toBeCloseTo(2 / 3);
     const w = prisma.requestLog.findMany.mock.calls[0][0].where;
     expect(w.accountEmail).toBe("a@x.com");
     expect(w.at.lte).toEqual(banAt);
-    expect(w.at.gte.getTime()).toBe(banAt.getTime() - 72 * 3600 * 1000);
+    expect(w.at.gte.getTime()).toBe(banAt.getTime() - 48 * 3600 * 1000);
   });
 
   it("空 id 直接返回空,不查库", async () => {
     const findMany = vi.fn();
     const res = await makeService({ banEventRequest: { findMany } }).getBanEventRequests("");
     expect(res.requests).toEqual([]);
-    expect(res.window3d).toBeNull();
+    expect(res.window48h).toBeNull();
     expect(findMany).not.toHaveBeenCalled();
   });
 });

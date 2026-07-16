@@ -21,6 +21,9 @@ import { AppAuthService } from "../app-auth.service";
 import { CustomerAuthService } from "../../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../../account/device/device.service";
+import { sharedClientUsageSummaryCache } from "../../../account/portal/client-usage-summary-cache";
+
+beforeEach(() => sharedClientUsageSummaryCache.clear());
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -601,6 +604,29 @@ describe("AppAuthService.heartbeat", () => {
     expect(getClientUsageSummary).toHaveBeenCalledOnce();
     expect(first.usageSummary).toEqual(usageSummary);
     expect(second.usageSummary).toEqual(usageSummary);
+  });
+
+  it("bypasses the usage cache for an explicit manual refresh", async () => {
+    const getClientUsageSummary = vi.fn()
+      .mockResolvedValueOnce({ source: "CardUsageHourly", cumulativeSaving: 1 })
+      .mockResolvedValueOnce({ source: "CardUsageHourly", cumulativeSaving: 2 });
+    const device = makeDevice({
+      customerId: "cust-1", deviceId: "device-abc", status: "ACTIVE",
+      sessionJti: "live-jti", lastSeenAt: new Date(),
+    });
+    const { appAuthService } = await makeAppAuthService({
+      devices: [device], portalService: { getClientUsageSummary },
+    });
+    const dto = {
+      customerId: "cust-1", jti: "live-jti", tokenDeviceId: "device-abc", deviceId: "device-abc",
+    };
+
+    const cached = await appAuthService.heartbeat(dto);
+    const refreshed = await appAuthService.heartbeat({ ...dto, refreshUsage: true });
+
+    expect(getClientUsageSummary).toHaveBeenCalledTimes(2);
+    expect(cached.usageSummary.cumulativeSaving).toBe(1);
+    expect(refreshed.usageSummary.cumulativeSaving).toBe(2);
   });
 
   it("stale jti (logged in elsewhere) → DEVICE_REVOKED (403)", async () => {

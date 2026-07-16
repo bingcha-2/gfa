@@ -2,6 +2,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
+import { sharedClientUsageSummaryCache } from "../account/portal/client-usage-summary-cache";
 import { AccessKeyStore, type ResolveResult } from "../token-server/access-key-store";
 import { apiValueUsdForEvent, supportsApiUsdProduct, usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
@@ -1444,6 +1445,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         serviceTier: String(payload?.serviceTier || ""),
       } : undefined;
       await this.fairShareTracker!.checkpointReport(accountId, quotaBucket, dedupId, accounting);
+      if (accounting) sharedClientUsageSummaryCache.invalidate(accounting.customerId);
       wasNew = this.accessKeyStore.recordUsage(
         cardId, status, usage, modelKey, dedupId, this.provider.id, String(payload?.serviceTier || ""),
       );
@@ -1487,6 +1489,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           return acknowledge({ ok: true, ignored: true, reason: "already_reported",
             accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey) });
         }
+        if (accounting) sharedClientUsageSummaryCache.invalidate(accounting.customerId);
       } catch (error) {
         this.accessKeyStore.restoreSubscriptionUsages(usdUsageBefore);
         this.accessKeyStore.forgetUsageReport(cardId, dedupId);

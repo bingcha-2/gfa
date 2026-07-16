@@ -65,4 +65,28 @@ describe("ApiWriteQueue", () => {
     await expect(failed).rejects.toThrow("database busy");
     await expect(next).resolves.toBe("ok");
   });
+
+  it("runs normal writes before the next low-priority cleanup batch", async () => {
+    const writeQueue = new ApiWriteQueue();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+
+    const firstCleanup = writeQueue.enqueueLowPriority(async () => {
+      order.push("cleanup-1");
+      await gate;
+    });
+    const secondCleanup = writeQueue.enqueueLowPriority(async () => {
+      order.push("cleanup-2");
+    });
+    const businessWrite = writeQueue.enqueue(async () => {
+      order.push("business");
+    });
+
+    await Promise.resolve();
+    release();
+    await Promise.all([firstCleanup, secondCleanup, businessWrite]);
+
+    expect(order).toEqual(["cleanup-1", "business", "cleanup-2"]);
+  });
 });

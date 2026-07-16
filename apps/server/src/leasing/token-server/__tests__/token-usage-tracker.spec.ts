@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TokenUsageTracker } from "../token-usage-tracker";
+import { sharedClientUsageSummaryCache } from "../../account/portal/client-usage-summary-cache";
 
 function makePrisma() {
   return {
@@ -30,6 +31,28 @@ describe("TokenUsageTracker — customerId 透传", () => {
     await tracker.flush();
     const arg = (prisma.cardUsageHourly.upsert as any).mock.calls[0][0];
     expect(arg.create).toMatchObject({ accessKeyId: "sub-1", customerId: "cust-1" });
+    tracker.destroy();
+  });
+
+  it("successful hourly upsert invalidates the customer's usage summary", async () => {
+    sharedClientUsageSummaryCache.clear();
+    const load = vi.fn()
+      .mockResolvedValueOnce({ value: "old" })
+      .mockResolvedValueOnce({ value: "fresh" });
+    const options = { ttlMs: 300_000, errorTtlMs: 30_000 };
+    await sharedClientUsageSummaryCache.getOrLoad("cust-invalidate", load, {}, options);
+
+    const tracker = new TokenUsageTracker(makePrisma(), { autoStart: false });
+    tracker.record({
+      accessKeyId: "sub-1", customerId: "cust-invalidate",
+      modelKey: "gpt-5-codex", bucket: "codex-gpt", status: 200,
+      inputTokens: 10, outputTokens: 5, totalTokens: 15,
+    });
+    await tracker.flush();
+
+    const result = await sharedClientUsageSummaryCache.getOrLoad("cust-invalidate", load, {}, options);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ value: "fresh" });
     tracker.destroy();
   });
 

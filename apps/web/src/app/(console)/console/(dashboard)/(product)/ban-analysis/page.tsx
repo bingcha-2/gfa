@@ -64,7 +64,7 @@ type BanReq = {
 };
 type CompMetric = { key: string; label: string; pct: boolean; bannedAvg: number; healthyAvg: number; ratio: number };
 type BanComparison = { days: number; bannedCount: number; healthyCount: number; metrics: CompMetric[] };
-type Window3d = {
+type Window48h = {
   requests: number;
   reverseProxyHits: number;
   reverseProxyRate: number;
@@ -74,7 +74,7 @@ type Window3d = {
   peakReqPerMin: number;
   totalTokens: number;
 };
-type BanEventCtx = { requests: BanReq[]; window3d: Window3d | null };
+type BanEventCtx = { requests: BanReq[]; window48h: Window48h | null };
 type BanAnalysis = { days: number; comparison: BanComparison; accounts: AccountRisk[]; banEvents: BanEvent[] };
 type RequestLogRow = {
   id: string;
@@ -291,9 +291,9 @@ export default function BanAnalysisPage() {
     try {
       const res = await fetch(`/api/console/rosetta/ban-event-requests?id=${encodeURIComponent(id)}`, { cache: "no-store" });
       const json = await res.json();
-      setEventCtx((m) => ({ ...m, [id]: { requests: (json?.requests ?? []) as BanReq[], window3d: (json?.window3d ?? null) as Window3d | null } }));
+      setEventCtx((m) => ({ ...m, [id]: { requests: (json?.requests ?? []) as BanReq[], window48h: (json?.window48h ?? null) as Window48h | null } }));
     } catch {
-      setEventCtx((m) => ({ ...m, [id]: { requests: [], window3d: null } }));
+      setEventCtx((m) => ({ ...m, [id]: { requests: [], window48h: null } }));
     }
   }, [eventCtx]);
 
@@ -448,7 +448,7 @@ export default function BanAnalysisPage() {
                         {e.upstreamBody && (
                           <p className="mb-2 break-all rounded bg-background p-2 font-mono text-xs text-muted-foreground">{e.upstreamBody}</p>
                         )}
-                        <Window3dStrip w={eventCtx[e.id]?.window3d} />
+                        <Window48hStrip w={eventCtx[e.id]?.window48h} />
                         <BanReqTimeline reqs={eventCtx[e.id]?.requests} />
                       </TableCell>
                     </TableRow>
@@ -673,7 +673,7 @@ export default function BanAnalysisPage() {
   );
 }
 
-function Window3dStrip({ w }: { w?: Window3d | null }) {
+function Window48hStrip({ w }: { w?: Window48h | null }) {
   if (w === undefined) return null; // still loading
   if (w === null) return null;
   const cell = (label: string, value: React.ReactNode) => (
@@ -684,7 +684,7 @@ function Window3dStrip({ w }: { w?: Window3d | null }) {
   );
   return (
     <div className="mb-3">
-      <div className="mb-1 text-xs font-medium text-muted-foreground">封号前 3 天</div>
+      <div className="mb-1 text-xs font-medium text-muted-foreground">封号前 48 小时</div>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
         {cell("请求", w.requests)}
         {cell("反代率", `${(w.reverseProxyRate * 100).toFixed(0)}%·${w.reverseProxyHits}`)}

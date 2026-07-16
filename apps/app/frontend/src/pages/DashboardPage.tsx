@@ -128,7 +128,7 @@ export function DashboardPage() {
     setRefreshingQuota(true)
     try {
       try {
-        await heartbeat()
+        await heartbeat(true)
       } catch (err) {
         console.error('refresh subscription quota failed:', err)
       }

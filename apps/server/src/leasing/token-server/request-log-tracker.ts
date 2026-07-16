@@ -20,11 +20,13 @@ const QUEUE_MAX = 10_000;
 const FLUSH_BATCH = 1_000;
 const PRUNE_BATCH = 500;
 const PRUNE_MAX_BATCHES = 200;
+const PRUNE_BATCH_PAUSE_MS = 25;
 
 export const REQUEST_LOG_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 // 体积兜底:即便在保留期内,行数暴涨也封顶。超过就删最旧的多余部分(高量时实际保留 < 48h)。
-// ~1KB/行 → 50 万行约 500MB,SQLite 仍健康。量级变了就改这个数。
+// 这是异常流量兜底而非容量目标。生产实测含索引约 3.3KiB/行，50 万行可接近 1.6GiB；
+// 正常情况下应先由 48h TTL 收敛，达到硬上限时允许实际保留少于 48h。
 export const REQUEST_LOG_MAX_ROWS = 500_000;
 
 const SECRET_KEY = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-access-key|x-token-server-secret|access[-_]?token|refresh[-_]?token|password|secret)$/i;
@@ -168,7 +170,7 @@ export class RequestLogTracker {
   /** 删保留期之前的行;再做体积兜底(超上限删最旧的多余部分)。绝不抛。 */
   async pruneOld(): Promise<void> {
     if (this.prunePromise) return this.prunePromise;
-    const pending = this.writeQueue.enqueue(() => this.pruneOldOnce()).finally(() => {
+    const pending = this.pruneOldOnce().finally(() => {
       this.prunePromise = null;
     });
     this.prunePromise = pending;
@@ -181,12 +183,17 @@ export class RequestLogTracker {
     try {
       for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
         if (this.now() - startedAt >= PRUNE_MAX_DURATION_MS) return;
-        const old = await this.prisma.requestLog.findMany({
-          where: { at: { lt: cutoff } }, orderBy: { at: "asc" }, take: PRUNE_BATCH, select: { id: true },
+        const found = await this.writeQueue.enqueueLowPriority(async () => {
+          const old = await this.prisma.requestLog.findMany({
+            where: { at: { lt: cutoff } }, orderBy: { at: "asc" }, take: PRUNE_BATCH, select: { id: true },
+          });
+          if (old.length > 0) {
+            await this.prisma.requestLog.deleteMany({ where: { id: { in: old.map((row: any) => row.id) } } });
+          }
+          return old.length;
         });
-        if (old.length === 0) break;
-        await this.prisma.requestLog.deleteMany({ where: { id: { in: old.map((row: any) => row.id) } } });
-        if (old.length < PRUNE_BATCH) break;
+        if (found < PRUNE_BATCH) break;
+        await this.pauseBetweenCleanupBatches();
       }
 
       // 体积兜底也只做小批量 ID 删除，避免一次大范围 DELETE 长时间独占写锁。
@@ -197,23 +204,31 @@ export class RequestLogTracker {
         let trimmed = 0;
         for (let batch = 0; batch < PRUNE_MAX_BATCHES && remaining > 0; batch++) {
           if (this.now() - startedAt >= PRUNE_MAX_DURATION_MS) break;
-          const oldest = await this.prisma.requestLog.findMany({
-            orderBy: { at: "asc" }, take: Math.min(PRUNE_BATCH, remaining), select: { id: true },
+          const result = await this.writeQueue.enqueueLowPriority(async () => {
+            const oldest = await this.prisma.requestLog.findMany({
+              orderBy: { at: "asc" }, take: Math.min(PRUNE_BATCH, remaining), select: { id: true },
+            });
+            if (oldest.length === 0) return { found: 0, deleted: 0 };
+            const res = await this.prisma.requestLog.deleteMany({
+              where: { id: { in: oldest.map((row: any) => row.id) } },
+            });
+            return { found: oldest.length, deleted: Number(res?.count ?? oldest.length) };
           });
-          if (oldest.length === 0) break;
-          const res = await this.prisma.requestLog.deleteMany({
-            where: { id: { in: oldest.map((row: any) => row.id) } },
-          });
-          const deleted = Number(res?.count ?? oldest.length);
+          const { found, deleted } = result;
           trimmed += deleted;
           remaining -= deleted;
-          if (oldest.length < PRUNE_BATCH || deleted === 0) break;
+          if (found < PRUNE_BATCH || deleted === 0) break;
+          await this.pauseBetweenCleanupBatches();
         }
         console.warn(`[request-log-tracker] row cap hit (${count} > ${REQUEST_LOG_MAX_ROWS}); trimmed ${trimmed} oldest rows`);
       }
     } catch (err) {
       console.error("[request-log-tracker] prune failed:", err);
     }
+  }
+
+  private async pauseBetweenCleanupBatches(): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, PRUNE_BATCH_PAUSE_MS));
   }
 
   private scheduleNextPrune(): void {

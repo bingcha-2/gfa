@@ -44,6 +44,7 @@ export { bucketFamily };
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 小时
 const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 const WEEKLY_SUFFIX = "::weekly";
+export const QUOTA_REPORT_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Codex 快速档(service_tier=priority)的成本乘数,对齐 OpenAI service_tiers priority 的
@@ -1402,7 +1403,7 @@ export class FairShareTracker {
     const ran = await this.accountingCoordinator.scheduleLowPriority(async () => {
       // Clients do not retry usage reports after 24 hours, so older exactly-once
       // receipts can be removed by the low-priority daily cleanup.
-      const cutoff = new Date(this.nowFn() - 24 * 60 * 60 * 1000);
+      const cutoff = new Date(this.nowFn() - QUOTA_REPORT_RECEIPT_RETENTION_MS);
       deleted = await this.windowRepository!.pruneReceipts(cutoff, batchSize);
     }, RECEIPT_PRUNE_QUIET_WAIT_MS);
     // The deadline lapsed with the coordinator still busy, so nothing was

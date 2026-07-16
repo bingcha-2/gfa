@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ApiWriteQueue } from "../api-write-queue";
 import { RequestLogTracker, REQUEST_LOG_RETENTION_MS, REQUEST_LOG_MAX_ROWS } from "../request-log-tracker";
 
 function makePrisma() {
@@ -178,6 +179,31 @@ describe("RequestLogTracker", () => {
     expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(2);
     expect(prisma.requestLog.deleteMany).toHaveBeenCalledTimes(2);
     expect(prisma.requestLog.count).not.toHaveBeenCalled();
+  });
+
+  it("每个删除批次后释放共享写队列并优先执行业务写入", async () => {
+    const writeQueue = new ApiWriteQueue();
+    const order: string[] = [];
+    let businessWrite: Promise<void> | null = null;
+    const prisma = makePrisma();
+    prisma.requestLog.findMany = vi.fn()
+      .mockResolvedValueOnce(Array.from({ length: 500 }, (_, id) => ({ id })))
+      .mockImplementationOnce(async () => {
+        order.push("cleanup-2-scan");
+        return [];
+      });
+    prisma.requestLog.deleteMany = vi.fn(async () => {
+      order.push("cleanup-1");
+      businessWrite = writeQueue.enqueue(async () => { order.push("business"); });
+      return { count: 500 };
+    });
+    const tracker = new RequestLogTracker(prisma, { autoStart: false, writeQueue });
+
+    await tracker.pruneOld();
+    await businessWrite;
+
+    expect(order).toEqual(["cleanup-1", "business", "cleanup-2-scan"]);
+    expect(prisma.requestLog.findMany).toHaveBeenCalledTimes(2);
   });
 
   it("队列封顶并暴露溢出计数", () => {

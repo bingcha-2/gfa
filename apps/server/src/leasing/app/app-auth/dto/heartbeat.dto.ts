@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength } from "class-validator";
+import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class HeartbeatDto {
   @IsString()
@@ -9,4 +9,8 @@ export class HeartbeatDto {
   @IsString()
   @MaxLength(100)
   clientVersion?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  refreshUsage?: boolean;
 }

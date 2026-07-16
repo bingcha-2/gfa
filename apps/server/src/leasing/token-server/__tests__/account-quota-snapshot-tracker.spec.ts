@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AccountQuotaSnapshotTracker } from "../account-quota-snapshot-tracker";
+import {
+  ACCOUNT_QUOTA_SNAPSHOT_RETENTION_MS,
+  AccountQuotaSnapshotTracker,
+} from "../account-quota-snapshot-tracker";
 
 function makeTracker() {
   const createMany = vi.fn(async () => ({ count: 0 }));
@@ -16,6 +19,20 @@ afterEach(() => {
 });
 
 describe("AccountQuotaSnapshotTracker", () => {
+  it("只安排下一次北京时间 02:00 的每日清理", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-14T17:00:00.000Z")); // Beijing 01:00
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const tracker = new AccountQuotaSnapshotTracker({ accountQuotaSnapshot: {} });
+    active = tracker;
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60 * 60 * 1000);
+    tracker.destroy();
+    active = null;
+    setTimeoutSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("enqueues the first snapshot for a key", () => {
     const { tracker } = makeTracker();
     active = tracker;
@@ -111,14 +128,14 @@ describe("AccountQuotaSnapshotTracker", () => {
     spy.mockRestore();
   });
 
-  it("分批删除 72 小时以前的快照", async () => {
+  it("分批删除 7 天以前的快照", async () => {
     const findMany = vi.fn()
       .mockResolvedValueOnce(Array.from({ length: 500 }, (_, id) => ({ id: `a${id}` })))
       .mockResolvedValueOnce([{ id: "last" }]);
     const deleteMany = vi.fn().mockResolvedValue({ count: 500 });
     const tracker = new AccountQuotaSnapshotTracker(
       { accountQuotaSnapshot: { findMany, deleteMany } },
-      { autoStart: false, now: () => 4 * 24 * 60 * 60 * 1000 },
+      { autoStart: false, now: () => ACCOUNT_QUOTA_SNAPSHOT_RETENTION_MS + 24 * 60 * 60 * 1000 },
     );
     await tracker.pruneOld();
     expect(deleteMany).toHaveBeenCalledTimes(2);

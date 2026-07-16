@@ -638,6 +638,10 @@ export function RefreshQuota() {
   return window['go']['main']['App']['RefreshQuota']();
 }
 
+export function RefreshUsageSummary() {
+  return window['go']['main']['App']['RefreshUsageSummary']();
+}
+
 export function ReleaseHostProtectionTarget(arg1) {
   return window['go']['main']['App']['ReleaseHostProtectionTarget'](arg1);
 }

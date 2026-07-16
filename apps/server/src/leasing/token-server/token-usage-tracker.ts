@@ -12,6 +12,7 @@
  */
 
 import { ApiWriteQueue } from "./api-write-queue";
+import { sharedClientUsageSummaryCache } from "../account/portal/client-usage-summary-cache";
 
 interface TokenUsageEvent {
   accessKeyId: string;
@@ -223,6 +224,7 @@ export class TokenUsageTracker {
             priorityTokens: { increment: sums.priorityTokens },
           },
         });
+        sharedClientUsageSummaryCache.invalidate(g.customerId);
       } catch (err) {
         console.error("[token-usage-tracker] hourly upsert failed:", err);
       }

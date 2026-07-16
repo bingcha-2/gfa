@@ -30,9 +30,8 @@ describe('LocalAccountsTab 导出', () => {
   it('点导出 → 调 LocalExportCodexAccountsToFile 并提示保存路径', async () => {
     const app = installApp()
     render(<LocalAccountsTab title="Codex" api={codexLocalApi} />)
-    const btn = await screen.findByRole('button', { name: /导出/ })
-
-    fireEvent.click(btn)
+    fireEvent.click(await screen.findByRole('button', { name: '号池更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '导出账号' }))
 
     await waitFor(() => expect(app.LocalExportCodexAccountsToFile).toHaveBeenCalledWith([]))
     // 绝不能再用旧的「返回 JSON 字符串给前端自己下载」那条路。
@@ -44,7 +43,8 @@ describe('LocalAccountsTab 导出', () => {
   it('用户取消保存 → 不提示已导出', async () => {
     const app = installApp({ LocalExportCodexAccountsToFile: vi.fn().mockResolvedValue('') })
     render(<LocalAccountsTab title="Codex" api={codexLocalApi} />)
-    fireEvent.click(await screen.findByRole('button', { name: /导出/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '号池更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '导出账号' }))
 
     await waitFor(() => expect(app.LocalExportCodexAccountsToFile).toHaveBeenCalled())
     expect(screen.queryByText(/已导出/)).toBeNull()

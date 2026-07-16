@@ -70,7 +70,8 @@ export class AppAuthController {
       customerId: customer.customerId,
       jti: customer.jti,
       tokenDeviceId: customer.deviceId,
-      deviceId: dto.deviceId
+      deviceId: dto.deviceId,
+      refreshUsage: dto.refreshUsage === true
     });
   }
 

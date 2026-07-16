@@ -334,6 +334,8 @@ export function ProbeHostProtectionStatus(arg1:Array<string>):Promise<main.HostP
 
 export function RefreshQuota():Promise<void>;
 
+export function RefreshUsageSummary():Promise<Record<string, any>>;
+
 export function ReleaseHostProtectionTarget(arg1:string):Promise<main.HostProtectionStatus>;
 
 export function RestartProxy():Promise<void>;

@@ -1,16 +1,26 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import Redis from "ioredis";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { QUEUE_NAMES, REDIS_KEYS, JOB_DEFAULTS } from "@gfa/shared";
+import {
+  pruneTaskLogsBatch,
+  pruneTasksBatch,
+  TASK_LOG_RETENTION_MS,
+  TASK_RETENTION_MS,
+} from "./task-retention";
 
 const SCHEDULER_LOCK_TTL_MS = 30 * 60 * 1000; // 30 min timeout protection
 const TASK_WAIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 min per task
 const TASK_POLL_INTERVAL_MS = 5_000; // poll every 5s
 const TIMEZONE = "Asia/Shanghai";
+const CLEANUP_BATCH_SIZE = 500;
+const CLEANUP_MAX_BATCHES = 200;
+const CLEANUP_MAX_DURATION_MS = 5_000;
+const CLEANUP_BATCH_PAUSE_MS = 25;
 
 const TERMINAL_STATUSES = new Set([
   "SUCCESS",
@@ -178,30 +188,33 @@ export class SchedulerService implements OnModuleInit {
 
   // ─── Cleanup ───────────────────────────────────────────
 
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron("30 3 * * *", { timeZone: TIMEZONE })
   async cleanupOldTasks() {
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-
-    // Delete logs first (FK constraint)
-    await this.prisma.taskLog.deleteMany({
-      where: {
-        task: {
-          source: { in: ["scheduler", "expire-scan"] },
-          createdAt: { lt: threeDaysAgo },
-        },
-      },
-    });
-
-    const deleted = await this.prisma.task.deleteMany({
-      where: {
-        source: { in: ["scheduler", "expire-scan"] },
-        createdAt: { lt: threeDaysAgo },
-      },
-    });
-
-    if (deleted.count > 0) {
-      this.logger.log(`Cleaned up ${deleted.count} old scheduler/expire-scan tasks`);
+    const now = Date.now();
+    try {
+      const deletedLogs = await this.runCleanupBatches((batchSize) =>
+        pruneTaskLogsBatch(this.prisma, new Date(now - TASK_LOG_RETENTION_MS), batchSize));
+      const deletedTasks = await this.runCleanupBatches((batchSize) =>
+        pruneTasksBatch(this.prisma, new Date(now - TASK_RETENTION_MS), batchSize));
+      if (deletedLogs > 0 || deletedTasks > 0) {
+        this.logger.log(`Cleaned up ${deletedLogs} task logs (>24h) and ${deletedTasks} tasks (>15d)`);
+      }
+    } catch (error) {
+      this.logger.error(`Task retention cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private async runCleanupBatches(prune: (batchSize: number) => Promise<number>): Promise<number> {
+    const startedAt = Date.now();
+    let total = 0;
+    for (let batch = 0; batch < CLEANUP_MAX_BATCHES; batch++) {
+      if (Date.now() - startedAt >= CLEANUP_MAX_DURATION_MS) break;
+      const deleted = await prune(CLEANUP_BATCH_SIZE);
+      total += deleted;
+      if (deleted < CLEANUP_BATCH_SIZE) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_BATCH_PAUSE_MS));
+    }
+    return total;
   }
 
   // ─── Cron Heartbeat ────────────────────────────────────

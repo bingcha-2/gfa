@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { CodexSuitePage } from './CodexSuitePage'
@@ -328,7 +328,8 @@ describe('CodexSuitePage', () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: /导入/ }))
+    fireEvent.click(screen.getByRole('button', { name: '号池更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '导入 JSON' }))
     const textarea = await screen.findByPlaceholderText(/you@example.com/)
     fireEvent.change(textarea, { target: { value: '[{"email":"new@x.com","authKind":"oauth"}]' } })
     // 头部与弹窗各有一个「导入」按钮;弹窗确认是最后一个
@@ -355,8 +356,8 @@ describe('CodexSuitePage', () => {
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
     fireEvent.click(screen.getByLabelText('选择账号'))
-    expect(await screen.findByText('已选 1')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '批量删除' }))
+    expect(await screen.findByText('已选择 1 个账号')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '删除所选' }))
     // 破坏性操作先弹确认,点「确认删除」才真正删。
     fireEvent.click(await screen.findByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(app.LocalDeleteAccounts).toHaveBeenCalledWith(['a1']))
@@ -467,8 +468,8 @@ describe('CodexSuitePage', () => {
     await waitFor(() => expect(app.LocalStartCodexLogin).toHaveBeenCalled())
   })
 
-  it('登录进行中露出手动回调:粘贴 URL 提交调 submitLoginCallback', async () => {
-    // waitLogin 永不 resolve → 登录会话保持进行中,手动回调面板出现。
+  it('登录弹窗始终露出手动回调:粘贴 URL 提交调 submitLoginCallback', async () => {
+    // waitLogin 永不 resolve → 登录会话保持进行中,手动回调输入始终可用。
     const app = installApp({
       LocalWaitCodexLogin: vi.fn().mockImplementation(() => new Promise(() => {})),
       LocalSubmitCodexLoginCallback: vi.fn().mockResolvedValue(undefined),
@@ -479,8 +480,90 @@ describe('CodexSuitePage', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
     const input = await screen.findByLabelText('OAuth 回调 URL')
     fireEvent.change(input, { target: { value: 'http://localhost:1455/cb?code=xyz' } })
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交回调' }))
     await waitFor(() => expect(app.LocalSubmitCodexLoginCallback).toHaveBeenCalledWith('login-1', 'http://localhost:1455/cb?code=xyz'))
+    expect(screen.getByLabelText('OAuth 回调 URL')).toHaveValue('http://localhost:1455/cb?code=xyz')
+  })
+
+  it('手动回调提交失败时保留弹窗和输入,允许原地修正', async () => {
+    const app = installApp({
+      LocalWaitCodexLogin: vi.fn().mockImplementation(() => new Promise(() => {})),
+      LocalSubmitCodexLoginCallback: vi.fn().mockRejectedValue(new Error('callback state mismatch')),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+
+    const input = await screen.findByLabelText('OAuth 回调 URL')
+    fireEvent.change(input, { target: { value: 'http://localhost:1455/cb?code=old&state=wrong' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交回调' }))
+
+    expect(await screen.findByText('callback state mismatch')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '登录 Codex 账号' })).toBeInTheDocument()
+    expect(screen.getByLabelText('OAuth 回调 URL')).toHaveValue('http://localhost:1455/cb?code=old&state=wrong')
+  })
+
+  it('waitLogin 已成功时忽略稍后完成的手动回调提交', async () => {
+    let resolveWait!: (account: LocalAccountView) => void
+    let resolveSubmit!: () => void
+    const app = installApp({
+      LocalWaitCodexLogin: vi.fn().mockImplementation(() => new Promise<LocalAccountView>((resolve) => { resolveWait = resolve })),
+      LocalSubmitCodexLoginCallback: vi.fn().mockImplementation(() => new Promise<void>((resolve) => { resolveSubmit = resolve })),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+
+    fireEvent.change(await screen.findByLabelText('OAuth 回调 URL'), { target: { value: 'http://localhost:1455/cb?code=xyz&state=ok' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交回调' }))
+    await waitFor(() => expect(app.LocalSubmitCodexLoginCallback).toHaveBeenCalled())
+
+    await act(async () => { resolveWait(fakeAccount()) })
+    expect(await screen.findByText('账号已添加')).toBeInTheDocument()
+
+    await act(async () => { resolveSubmit() })
+    expect(screen.getByText('账号已添加')).toBeInTheDocument()
+  })
+
+  it('waitLogin 失败不卸载输入框,可重新发起新的登录会话', async () => {
+    const wait = vi.fn()
+      .mockRejectedValueOnce(new Error('authentication timed out'))
+      .mockImplementationOnce(() => new Promise(() => {}))
+    const app = installApp({
+      LocalStartCodexLogin: vi.fn().mockResolvedValueOnce('login-1').mockResolvedValueOnce('login-2'),
+      LocalWaitCodexLogin: wait,
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+
+    expect(await screen.findByText('authentication timed out')).toBeInTheDocument()
+    const input = screen.getByLabelText('OAuth 回调 URL')
+    fireEvent.change(input, { target: { value: 'http://localhost/callback?code=kept' } })
+    expect(input).toHaveValue('http://localhost/callback?code=kept')
+
+    fireEvent.click(screen.getByRole('button', { name: '重新发起' }))
+    await waitFor(() => expect(app.LocalStartCodexLogin).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(wait).toHaveBeenCalledWith('login-2'))
+    expect(screen.getByRole('dialog', { name: '登录 Codex 账号' })).toBeInTheDocument()
+  })
+
+  it('取消登录会取消后端会话并关闭弹窗', async () => {
+    const app = installApp({
+      LocalWaitCodexLogin: vi.fn().mockImplementation(() => new Promise(() => {})),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('yifan@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /加号/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /浏览器登录/ }))
+    await screen.findByRole('dialog', { name: '登录 Codex 账号' })
+
+    fireEvent.click(screen.getByRole('button', { name: '取消登录' }))
+    await waitFor(() => expect(app.LocalCancelCodexLogin).toHaveBeenCalledWith('login-1'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '登录 Codex 账号' })).not.toBeInTheDocument())
   })
 
   it('账号行有 name 时标题显示 name', async () => {
@@ -535,7 +618,8 @@ describe('CodexSuitePage', () => {
     const app = installApp()
     render(<CodexSuitePage />)
     await screen.findByText('yifan@example.com')
-    fireEvent.click(screen.getByRole('button', { name: /全部刷新额度/ }))
+    fireEvent.click(screen.getByRole('button', { name: '号池更多操作' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '全部刷新额度' }))
     await waitFor(() => expect(app.LocalRefreshAllQuotas).toHaveBeenCalledWith('codex'))
   })
 
@@ -850,6 +934,36 @@ describe('CodexSuitePage', () => {
     expect(screen.getByText('in-group@x.com')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '全部账号' }))
     expect(await screen.findByText('no-group@x.com')).toBeInTheDocument()
+  })
+
+  it('账号工作区可搜索名称、邮箱和标签', async () => {
+    installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a1', name: '主力开发', email: 'primary@x.com', tags: ['日常'] }),
+        fakeAccount({ id: 'a2', name: '备用账号', email: 'backup@x.com', tags: ['灾备'], priority: false }),
+      ]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('主力开发')
+    fireEvent.change(screen.getByLabelText('搜索账号'), { target: { value: '灾备' } })
+    await waitFor(() => expect(screen.queryByText('主力开发')).toBeNull())
+    expect(screen.getByText('备用账号')).toBeInTheDocument()
+  })
+
+  it('需处理筛选只显示非正常账号,并支持选择当前视图全部账号', async () => {
+    installApp({
+      LocalListCodexAccounts: vi.fn().mockResolvedValue([
+        fakeAccount({ id: 'a1', email: 'healthy@x.com', quotaStatus: 'ok' }),
+        fakeAccount({ id: 'a2', email: 'expired@x.com', quotaStatus: 'error', priority: false }),
+      ]),
+    })
+    render(<CodexSuitePage />)
+    await screen.findByText('healthy@x.com')
+    fireEvent.click(screen.getByRole('button', { name: /需处理/ }))
+    await waitFor(() => expect(screen.queryByText('healthy@x.com')).toBeNull())
+    expect(screen.getByText('expired@x.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('选择当前视图全部账号'))
+    expect(await screen.findByText('已选择 1 个账号')).toBeInTheDocument()
   })
 
   it('编辑账号弹窗可选所属分组,改组调 assignAccountsToGroup', async () => {

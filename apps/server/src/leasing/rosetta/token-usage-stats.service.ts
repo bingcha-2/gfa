@@ -351,7 +351,7 @@ export class TokenUsageStatsService {
 
   // ── 母号封号分析:按母号(account)聚合用量/反代/扇出 ────────────────────
 
-  // RequestLog 是逐请求热表(保留 5 天,行数上限 300 万)。把整窗口全捞进内存会 OOM /
+  // RequestLog 是逐请求热表(保留 48 小时,行数上限 50 万)。把整窗口全捞进内存会 OOM /
   // 阻塞事件循环 → 拖停发号服务。这里硬封顶扫描行数,并按 at 倒序只取最近 N 条:低量时即全量
   // (精确),高量时退化为"最近 N 条请求"的近似(峰值/IP/用户仍足够指示),且绝不爆内存。
   // cap 定在 10 万而非 20 万:20 万行物化(Prisma 引擎缓冲 + Node 反序列化 + JS 对象/Set/Map)
@@ -606,13 +606,11 @@ export class TokenUsageStatsService {
   }
 
   /**
-   * 单条封号事件下钻:封号前请求时间线(BanEventRequest)+ 该母号【封号前 3 天】的聚合
-   * (从 RequestLog 取 [封号时刻-72h, 封号时刻]):请求数、反代率、不同来源 IP / 设备数
-   * (≈ 多少端/会话在用)、峰值 req/min、token 量。供页面"封之前 3 天计算"。
+   * 单条封号事件下钻:封号前请求时间线(BanEventRequest)+ 该母号【封号前 48h】的聚合。
    */
   async getBanEventRequests(banEventId: string) {
     const id = String(banEventId || "").trim();
-    if (!id) return { banEventId: id, requests: [], window3d: null };
+    if (!id) return { banEventId: id, requests: [], window48h: null };
 
     const event = await this.prisma.accountBanEvent.findUnique({
       where: { id },
@@ -622,10 +620,10 @@ export class TokenUsageStatsService {
       where: { banEventId: id },
       orderBy: { seq: "asc" },
     });
-    if (!event) return { banEventId: id, requests, window3d: null };
+    if (!event) return { banEventId: id, requests, window48h: null };
 
     const banAt = new Date(event.createdAt);
-    const since = new Date(banAt.getTime() - 72 * 60 * 60 * 1000);
+    const since = new Date(banAt.getTime() - 48 * 60 * 60 * 1000);
     const logs = await this.prisma.requestLog.findMany({
       where: { provider: event.provider, accountEmail: event.accountEmail, at: { gte: since, lte: banAt } },
       select: { reverseProxy: true, sourceIp: true, deviceId: true, userId: true, totalTokens: true, at: true },
@@ -645,7 +643,7 @@ export class TokenUsageStatsService {
       const m = Math.floor(new Date(r.at).getTime() / 60000);
       minutes.set(m, (minutes.get(m) || 0) + 1);
     }
-    const window3d = {
+    const window48h = {
       requests: logs.length,
       reverseProxyHits,
       reverseProxyRate: logs.length ? reverseProxyHits / logs.length : 0,
@@ -655,11 +653,11 @@ export class TokenUsageStatsService {
       peakReqPerMin: minutes.size ? Math.max(...minutes.values()) : 0,
       totalTokens,
     };
-    return { banEventId: id, requests, window3d };
+    return { banEventId: id, requests, window48h };
   }
 
   /**
-   * per-request 热表浏览(近 ≤72h):按 母号/卡/surface/是否反代 过滤,倒序。
+   * per-request 热表浏览(近 ≤48h):按 母号/卡/surface/是否反代 过滤,倒序。
    * 行来自 RequestLog(短保留),含来源 IP / 出口 IP / surface / 过滤后的请求头。
    */
   async getRequestLogs(opts: {
@@ -668,7 +666,7 @@ export class TokenUsageStatsService {
     accountId?: number; quotaSubjectId?: string;
     reverseProxyOnly?: boolean; hours?: number; limit?: number;
   } = {}) {
-    const hours = Math.max(1, Math.min(72, opts.hours || 72));
+    const hours = Math.max(1, Math.min(48, opts.hours || 48));
     const limit = Math.max(1, Math.min(500, opts.limit || 200));
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
@@ -701,7 +699,7 @@ export class TokenUsageStatsService {
   }
 
   /**
-   * 一键额度支持包：从任一因果 id / 母号 / 卡出发，拼出近 72h 请求证据、
+   * 一键额度支持包：从任一因果 id / 母号 / 卡出发，拼出近 48h 请求证据、
    * exactly-once 回执、当前双窗口和母号快照。仅查询已有脱敏/定长表，不读取
    * token、请求 body 或账号凭证；每一组都硬封顶，避免排障本身拖垮 SQLite。
    */
@@ -718,11 +716,11 @@ export class TokenUsageStatsService {
       ...(opts.quotaSubjectId?.trim() ? { quotaSubjectId: opts.quotaSubjectId.trim() } : {}),
     };
     if (Object.keys(filters).length === 0) {
-      return { generatedAt: new Date().toISOString(), retentionHours: 72, filters, logs: [], receipts: [], windows: [], snapshots: [], error: "selector_required" };
+      return { generatedAt: new Date().toISOString(), retentionHours: 48, filters, logs: [], receipts: [], windows: [], snapshots: [], error: "selector_required" };
     }
 
-    const since = new Date(Date.now() - 72 * 60 * 60 * 1000);
-    const logResult = await this.getRequestLogs({ ...filters, hours: 72, limit: 200 });
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const logResult = await this.getRequestLogs({ ...filters, hours: 48, limit: 200 });
     const logs = logResult.logs.map((row: any) => ({
       ...row,
       requestStartedAt: Number(row.requestStartedAt || 0),
@@ -762,7 +760,7 @@ export class TokenUsageStatsService {
     const snapshots = await this.prisma.accountQuotaSnapshot.findMany({
       where: { ...accountWhere, timestamp: { gte: since } }, orderBy: { timestamp: "desc" }, take: 200,
     });
-    return { generatedAt: new Date().toISOString(), retentionHours: 72, filters, logs, receipts, windows, snapshots };
+    return { generatedAt: new Date().toISOString(), retentionHours: 48, filters, logs, receipts, windows, snapshots };
   }
 
   /**

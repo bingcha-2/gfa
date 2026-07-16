@@ -90,7 +90,7 @@ interface AppState {
   fetchIDEStatus: () => Promise<IDEProduct[]>
   fetchAnnouncement: () => Promise<void>
   fetchAccountState: () => Promise<void>
-  heartbeat: () => Promise<void>
+  heartbeat: (refreshUsage?: boolean) => Promise<void>
   saveConfig: (cfg: Config) => Promise<void>
   login: (email: string, password: string) => Promise<Record<string, unknown>>
   logout: () => Promise<void>
@@ -98,7 +98,7 @@ interface AppState {
 
 // 心跳串行守护:usePolling 本身是串行链(上一次完成后才调度下一次),这里再防
 // 多处触发重叠 —— 同一时刻最多一个心跳在途。
-let heartbeatInFlight = false
+let heartbeatInFlight: Promise<void> | null = null
 
 export const useAppStore = create<AppState>((set, get) => ({
   account: null,
@@ -266,26 +266,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().fetchAccountState()
   },
 
-  // 服务端心跳(60s 轮询):校验会话/订阅。致命类由 Go 侧落地 —— SESSION_INVALID /
+  // 服务端心跳(20min 轮询):校验会话/订阅。致命类由 Go 侧落地 —— SESSION_INVALID /
   // DEVICE_REVOKED 清本地会话(随后 fetchAccountState → 登录页),SUBSCRIPTION_EXPIRED
   // 标记 cardUnusable(仪表盘横幅)。瞬时网络错误只记日志,绝不登出。
-  heartbeat: async () => {
-    if (heartbeatInFlight) return
-    heartbeatInFlight = true
-    try {
-      await api.heartbeatCheck()
-    } catch (err) {
-      console.error('heartbeat failed:', err)
-      // 致命会话类(设备被移除 / 会话失效)Go 侧已清本地会话 → 即将回登录页;
-      // 抓出原因码,登录页展示一句解释。SUBSCRIPTION_EXPIRED 不在此列(保留登录态,走横幅)。
-      const msg = String((err as { message?: string } | undefined)?.message ?? err ?? '')
-      const code = msg.match(/DEVICE_REVOKED|SESSION_INVALID|DEVICE_LIMIT_EXCEEDED/)?.[0]
-      if (code) set({ logoutReason: code })
-    } finally {
-      heartbeatInFlight = false
+  heartbeat: async (refreshUsage = false) => {
+    if (heartbeatInFlight) {
+      await heartbeatInFlight
+      if (!refreshUsage) return
     }
-    // 无论成败都从配置重读账号态:致命类已被后端清掉/更新 → UI 跟着落地。
-    await get().fetchAccountState()
-    await get().fetchStats()
+
+    const pending = (async () => {
+      try {
+        if (refreshUsage) await api.refreshUsageSummary()
+        else await api.heartbeatCheck()
+      } catch (err) {
+        console.error('heartbeat failed:', err)
+        // 致命会话类(设备被移除 / 会话失效)Go 侧已清本地会话 → 即将回登录页;
+        // 抓出原因码,登录页展示一句解释。SUBSCRIPTION_EXPIRED 不在此列(保留登录态,走横幅)。
+        const msg = String((err as { message?: string } | undefined)?.message ?? err ?? '')
+        const code = msg.match(/DEVICE_REVOKED|SESSION_INVALID|DEVICE_LIMIT_EXCEEDED/)?.[0]
+        if (code) set({ logoutReason: code })
+      }
+      // 无论成败都从配置重读账号态:致命类已被后端清掉/更新 → UI 跟着落地。
+      await get().fetchAccountState()
+      await get().fetchStats()
+    })()
+    heartbeatInFlight = pending
+    try {
+      await pending
+    } finally {
+      if (heartbeatInFlight === pending) heartbeatInFlight = null
+    }
   },
 }))

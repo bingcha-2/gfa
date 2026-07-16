@@ -676,6 +676,18 @@ func parseSubscriptionUsdQuotaByProduct(raw map[string]interface{}) map[string]S
 // Transient network errors return an error WITHOUT touching local state — a
 // flaky network must never log the user out.
 func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
+	return a.heartbeatCheck(false)
+}
+
+// RefreshUsageSummary performs the same session/subscription refresh as a normal
+// heartbeat but asks the server to bypass its five-minute usage-summary cache.
+// It is intentionally separate from HeartbeatCheck so older callers keep the
+// no-argument Wails contract used by background polling.
+func (a *App) RefreshUsageSummary() (map[string]interface{}, error) {
+	return a.heartbeatCheck(true)
+}
+
+func (a *App) heartbeatCheck(refreshUsage bool) (map[string]interface{}, error) {
 	// Mutates config + service lifecycle on fatal classes → same outermost
 	// App-method serialization as UserLogin/UserLogout/SaveConfig.
 	a.lock.Lock()
@@ -694,6 +706,9 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 	payload := map[string]interface{}{
 		"deviceId":      cfg.DeviceId,
 		"clientVersion": AppVersion,
+	}
+	if refreshUsage {
+		payload["refreshUsage"] = true
 	}
 
 	body, status, err := doAuthPostWithBearer("/app/heartbeat", payload, cfg.UserToken)

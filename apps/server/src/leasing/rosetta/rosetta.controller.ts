@@ -546,7 +546,7 @@ export class RosettaController {
     return this.tokenUsageStats.getBanEventRequests(String(id || ""));
   }
 
-  /** per-request 热表浏览(近 ≤72h):按 母号/卡/surface/反代 过滤。 */
+  /** per-request 热表浏览(近 ≤48h):按 母号/卡/surface/反代 过滤。 */
   @Get("request-logs")
   async getRequestLogs(
     @Query("accountEmail") accountEmail?: string,
@@ -575,7 +575,7 @@ export class RosettaController {
     return res;
   }
 
-  /** 一键导出近 72h 的额度因果链；至少提供一个定位字段。 */
+  /** 一键导出近 48h 的额度因果链；至少提供一个定位字段。 */
   @Get("quota-support-package")
   getQuotaSupportPackage(
     @Query("reportId") reportId?: string,

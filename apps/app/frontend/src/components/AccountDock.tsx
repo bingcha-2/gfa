@@ -133,7 +133,7 @@ export function AccountDock({
     if (refreshing) return
     setRefreshing(true)
     try {
-      await heartbeat()
+      await heartbeat(true)
       // GetStats 只读缓存快照,故先主动去上游拉一次最新余量(并上报服务端),再 fetchStats 才能看到新值。
       try {
         await api.refreshQuota()
