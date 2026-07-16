@@ -118,9 +118,12 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
 
   // 皮肤通道:开关与实际状态不一致(等重启/待关闭)时轮询探测 —— Codex 冷启动可能比
   // 重启按钮的等待窗口慢,起来后状态自动翻转,不需要用户重进页面。
+  // 封顶 ~60s(20 次):若用户迟迟不重启,状态不会收敛,不能无限每 3s 打后端。
   useEffect(() => {
     if (!skin || skin.enabled === skin.live) return
+    let attempts = 0
     const timer = setInterval(() => {
+      if (++attempts > 20) { clearInterval(timer); return }
       getCodexSkinChannel().then(setSkin).catch(() => { /* 探测失败保持现状 */ })
     }, 3000)
     return () => clearInterval(timer)
@@ -471,8 +474,9 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
             </div>
             <div className="text-[11px] text-[var(--text-muted)]">
               把上面的路径丢给任意 Agent(如 Claude Code):「按这个 skill 给我的 Codex 换个皮肤」。冰茶不出预设、不做编辑器,也不写入任何 Agent 的配置。
-              {(phase === 'active' || phase === 'pending') && (
-                <span className="text-[var(--warning-deep)]"> 注意:通道开启期间,本机任何程序都可连接调试端口控制 Codex 界面,不需要时请关闭。</span>
+              {/* 绑到端口真实暴露(live),而非开关意图 —— 关掉开关但端口仍在跑(残留)时才是真有风险的时刻。 */}
+              {skin.live && (
+                <span className="text-[var(--warning-deep)]"> 注意:调试端口正在运行,本机任何程序都可连接控制 Codex 界面,不需要时请关闭并重启 Codex。</span>
               )}
             </div>
           </div>

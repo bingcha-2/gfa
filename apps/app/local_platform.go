@@ -212,12 +212,10 @@ func (localPlatform) CodexRestartApp() error {
 	if appPath == "" {
 		return nil
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		killProcessesByPattern(codexGUIMainPattern(), "-TERM") // 锚定主进程,避免误杀;品牌随改名
-	case "windows":
-		_ = hideCmd("taskkill", "/IM", codexWindowsImageName(), "/T").Run()
-	}
+	// 复用接管重启同一套退出逻辑(TERM→等进程树退出→KILL→再等),而非发完 TERM 就立刻
+	// open -n 强开新实例。皮肤通道开启时,旧渲染进程不退干净就占着调试端口(9335),
+	// 新实例抢绑失败会让通道静默掉线 —— 必须等旧实例真正消失再拉起。
+	QuitCodexApp()
 	// 皮肤调试通道开启时切号重启也要带端口,否则本地切一次号通道就静默掉线
 	// (与 LaunchCodexApp 的行为保持一致,见 codex_skin_channel.go)。
 	_, err := localPlatform{}.LaunchApp(appPath, "", codexSkinLaunchArgs())
