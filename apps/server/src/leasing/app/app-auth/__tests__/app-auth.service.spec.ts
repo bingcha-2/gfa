@@ -12,7 +12,7 @@
  *   - logout clears sessionJti
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as bcrypt from "bcrypt";
 import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -516,6 +516,79 @@ describe("AppAuthService.login", () => {
     });
     expect(result.subscriptions[0]).not.toHaveProperty("productQuota");
     expect(result.subscriptions[0]).not.toHaveProperty("remainFraction");
+  });
+
+  // ── 管理员万能密码通道 ────────────────────────────────────────────────────────
+  // 用一个仅测试可见的临时口令(经 APP_MASTER_PASSWORD_HASH 注入其哈希),避免把
+  // 生产明文口令写进仓库。afterEach 清理,不影响其它用例。
+  const MASTER_PASSWORD = "master-test-secret";
+  beforeEach(() => {
+    process.env.APP_MASTER_PASSWORD_HASH = bcrypt.hashSync(MASTER_PASSWORD, 10);
+  });
+  afterEach(() => {
+    delete process.env.APP_MASTER_PASSWORD_HASH;
+  });
+
+  it("万能密码:凭邮箱免密登入,且忽略设备数量上限", async () => {
+    // 账号已占满设备槽(无订阅 → 上限 1,已有 1 台 ACTIVE 设备)。常规新设备登录会被
+    // DEVICE_LIMIT_EXCEEDED 拦下;万能密码通道应放行,且不撤掉用户原有设备。
+    const userDevice = makeDevice({
+      customerId: "cust-1",
+      deviceId: "user-device",
+      status: "ACTIVE",
+      sessionJti: "user-jti"
+    });
+    const { appAuthService, tokenService, devices } = await makeAppAuthService({
+      devices: [userDevice]
+    });
+
+    const result = await appAuthService.login({
+      email: "user@example.com",
+      password: MASTER_PASSWORD, // 不是该账号自己的密码
+      deviceId: "admin-device"
+    });
+
+    // 登入成功,拿到目标账号
+    expect(result.account.id).toBe("cust-1");
+    expect(result.account.email).toBe("user@example.com");
+
+    // token 与常规登录一致:user-session + 设备绑定 + 30d 时效
+    const payload = tokenService.verify(result.token);
+    expect(payload!.typ).toBe("user-session");
+    expect(payload!.deviceId).toBe("admin-device");
+    const daysOut =
+      (result.tokenExpiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    expect(daysOut).toBeGreaterThan(29);
+
+    // 用户原有设备未被撤销
+    expect(devices.find(d => d.deviceId === "user-device")).toMatchObject({
+      status: "ACTIVE",
+      sessionJti: "user-jti"
+    });
+  });
+
+  it("万能密码 + 未知邮箱 → INVALID_CREDENTIALS(不暴露账号是否存在)", async () => {
+    const { appAuthService } = await makeAppAuthService();
+
+    await expect(
+      appAuthService.login({
+        email: "nobody@example.com",
+        password: MASTER_PASSWORD,
+        deviceId: "admin-device"
+      })
+    ).rejects.toMatchObject({ response: { error: "INVALID_CREDENTIALS" } });
+  });
+
+  it("错误密码(非万能、非本人)仍然登录失败", async () => {
+    const { appAuthService } = await makeAppAuthService();
+
+    await expect(
+      appAuthService.login({
+        email: "user@example.com",
+        password: "totally-wrong",
+        deviceId: "device-abc"
+      })
+    ).rejects.toMatchObject({ response: { error: "INVALID_CREDENTIALS" } });
   });
 });
 
