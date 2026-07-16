@@ -233,7 +233,12 @@ describe("RosettaService", () => {
 
     const r = await svc.refreshClaudeAccountQuota({ accountId: 1 });
     // 5h updates to 94; weekly stays at the prior good 98 — NOT 0 (Opus sub-cap), NOT 100.
-    expect(r).toMatchObject({ ok: true, hourlyPercent: 94, weeklyPercent: 98 });
+    expect(r).toMatchObject({
+      ok: true,
+      hourlyPercent: 94,
+      weeklyPercent: 98,
+      previousWeeklyResetTime: "2026-06-16T14:00:00.000Z",
+    });
 
     const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
     const acc = stored.accounts[0];

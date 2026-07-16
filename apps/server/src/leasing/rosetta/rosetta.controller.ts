@@ -375,8 +375,27 @@ export class RosettaController {
     // 鉴权失效/连续报错/需验证),顺手清掉死号判决并放回候选池 —— 免得还要再点一次「恢复」。
     // 只清 error 态,不动「额度恢复中」(exhausted/cooling):刷 token 不代表额度已回。
     if (result?.ok) {
-      const { reactivated } = this.remoteAnthropic.reactivateIfAuthDead(Number(body?.accountId));
-      return { ...result, reactivated };
+      const accountId = Number(body?.accountId);
+      let quotaSyncedSubscriptions = 0;
+      if (!result.quotaError) {
+        const sync = this.remoteAnthropic.syncPersistedAccountQuotaSnapshot(accountId, {
+          previousHourlyResetAt: result.previousHourlyResetTime,
+          previousWeeklyResetAt: result.previousWeeklyResetTime,
+          observedAt: result.quotaObservedAt,
+          snapshotId: `console-refresh:anthropic:${accountId}:${result.quotaObservedAt || Date.now()}`,
+        });
+        quotaSyncedSubscriptions = sync.subscriptionsTouched;
+        if (quotaSyncedSubscriptions > 0) {
+          try {
+            await this.tokenServer.persistSubscriptionWindowsFor(sync.subscriptionIds);
+          } catch (error) {
+            sync.rollback();
+            throw error;
+          }
+        }
+      }
+      const { reactivated } = this.remoteAnthropic.reactivateIfAuthDead(accountId);
+      return { ...result, reactivated, quotaSyncedSubscriptions };
     }
     return result;
   }

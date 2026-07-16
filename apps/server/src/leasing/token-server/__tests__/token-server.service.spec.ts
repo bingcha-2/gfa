@@ -246,6 +246,32 @@ describe("TokenServerService", () => {
     expect(JSON.parse(arg.data.windowState).tokenUsageEvents).toHaveLength(1);
   });
 
+  it("persistSubscriptionWindowsFor 只在事务中写入指定订阅", async () => {
+    const update = vi.fn(({ where }: any) => Promise.resolve({ id: where.id }));
+    const transaction = vi.fn(async (updates: Array<Promise<any>>) => Promise.all(updates));
+    const prisma = {
+      subscription: { findMany: vi.fn(async () => []), update },
+      $transaction: transaction,
+    };
+    const service = withSessionResolver(new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "targeted", minClientVersion: "", prisma,
+    }));
+    const store = (service as any).accessKeyStore;
+    store.loadSubscriptionRecords([
+      { id: "sub-a", status: "active", windowMs: 18_000_000 },
+      { id: "sub-b", status: "active", windowMs: 18_000_000 },
+    ]);
+    store.findById("sub-a").windowStartedAt = 1_000;
+    store.findById("sub-b").windowStartedAt = 2_000;
+
+    await service.persistSubscriptionWindowsFor(["sub-a"]);
+
+    expect(transaction).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0].where).toEqual({ id: "sub-a" });
+  });
+
   it("onModuleInit prefers Subscription.config so bind quota snapshots survive restart", async () => {
     const sub = {
       id: "sub-bind",

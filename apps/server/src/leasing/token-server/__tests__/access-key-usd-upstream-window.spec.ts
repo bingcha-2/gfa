@@ -87,6 +87,70 @@ describe('AccessKeyStore upstream-driven USD windows', () => {
     expect(usage().upstreamWeekly?.lowFraction).toBeCloseTo(0.5);
   });
 
+  it('a first snapshot with trusted proof of a weekly rollover clears stale weekly usage only', () => {
+    const anthropic = usage('anthropic');
+    anthropic.used5h = 71.56;
+    anthropic.usedWeekly = 1_336.24;
+    anthropic.upstreamFiveHour = undefined;
+    anthropic.upstreamWeekly = undefined;
+
+    store.applyUpstreamUsdQuotaSnapshot(22, 'anthropic', input({
+      h: 90,
+      w: 98,
+      hReset: T0 + 4 * HOUR,
+      wReset: T0 + 8 * DAY,
+    }), {
+      observedAt: T0 + 1,
+      arrivedAt: T0 + 1,
+      snapshotId: 'manual-refresh-after-weekly-rollover',
+      previousResetAtByScope: { weekly: T0 + DAY },
+    });
+
+    expect(status('anthropic')).toMatchObject({
+      fiveHour: { used: 71.56 },
+      weekly: { used: 0 },
+    });
+    expect(anthropic.upstreamWeekly).toMatchObject({
+      resetAt: T0 + 8 * DAY,
+      lowFraction: 0.98,
+    });
+
+    anthropic.usedWeekly = 5;
+    store.applyUpstreamUsdQuotaSnapshot(22, 'anthropic', input({
+      w: 98,
+      wReset: T0 + 8 * DAY,
+    }), {
+      observedAt: T0 + 2,
+      arrivedAt: T0 + 2,
+      snapshotId: 'manual-refresh-same-weekly-epoch',
+      previousResetAtByScope: { weekly: T0 + DAY },
+    });
+    expect(status('anthropic').weekly.used).toBe(5);
+  });
+
+  it('trusted rollover proof clears a reset-less window that already has a percentage baseline', () => {
+    apply({ w: 40 }, T0 + 1, 'percentage-without-reset', 'anthropic', 22);
+    expect(status('anthropic').weekly.used).toBe(1_200);
+    expect(usage('anthropic').upstreamWeekly).toMatchObject({ lowFraction: 0.4 });
+    expect(usage('anthropic').upstreamWeekly?.resetAt).toBeUndefined();
+
+    store.applyUpstreamUsdQuotaSnapshot(22, 'anthropic', input({
+      w: 98,
+      wReset: T0 + 8 * DAY,
+    }), {
+      observedAt: T0 + 2,
+      arrivedAt: T0 + 2,
+      snapshotId: 'reset-arrived-after-percentage',
+      previousResetAtByScope: { weekly: T0 + DAY },
+    });
+
+    expect(status('anthropic').weekly.used).toBe(0);
+    expect(usage('anthropic').upstreamWeekly).toMatchObject({
+      resetAt: T0 + 8 * DAY,
+      lowFraction: 0.98,
+    });
+  });
+
   it('a new 5h resetAt clears 5h once without touching weekly', () => {
     apply({ h: 40, w: 40, hReset: T0 + HOUR, wReset: T0 + DAY }, T0 + 1, 'old');
     apply({ h: 99, w: 40, hReset: T0 + 6 * HOUR, wReset: T0 + DAY }, T0 + 2, 'new');
@@ -181,11 +245,33 @@ describe('AccessKeyStore upstream-driven USD windows', () => {
     apply({ h: 30, hReset: T0 + HOUR }, T0 + 1, 'mother-11');
     store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
     expect(usage().used5h).toBe(80);
-    expect(usage().upstreamFiveHour).toBeUndefined();
+    expect(usage().upstreamFiveHour).toEqual({ baselineReason: 'rebind' });
 
     apply({ h: 99, hReset: T0 + 6 * HOUR }, T0 + 2, 'mother-12', 'codex', 12);
     expect(status().fiveHour.used).toBe(80);
     expect(usage().upstreamAccountId).toBe(12);
+  });
+
+  it('rebind ignores trusted rollover evidence from before the subscription moved accounts', () => {
+    apply({ h: 30, hReset: T0 + HOUR }, T0 + 1, 'mother-11');
+    store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
+
+    store.applyUpstreamUsdQuotaSnapshot(12, 'codex', input({
+      h: 99,
+      hReset: T0 + 6 * HOUR,
+    }), {
+      observedAt: T0 + 2,
+      arrivedAt: T0 + 2,
+      snapshotId: 'new-mother-after-rebind',
+      previousResetAtByScope: { fiveHour: T0 + HOUR },
+    });
+
+    expect(status().fiveHour.used).toBe(80);
+    expect(usage().upstreamFiveHour).toMatchObject({
+      resetAt: T0 + 6 * HOUR,
+      lowFraction: 0.99,
+    });
+    expect(usage().upstreamFiveHour?.baselineReason).toBeUndefined();
   });
 
   it('explicit 5h cancellation and restoration are isolated from weekly', () => {

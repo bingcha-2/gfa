@@ -1133,6 +1133,12 @@ export class ClaudeAccountService {
     const acc = accounts.find((a: any) => Number(a.id) === accountId);
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    // Keep the pre-refresh epochs as rollover evidence. The write below replaces
+    // them with the new snapshot; without carrying these values to LeaseService,
+    // a subscription receiving its first upstream sample cannot distinguish a
+    // real rollover from a smooth-rollout baseline.
+    const previousHourlyResetTime = String(acc.claudeHourlyResetTime || "");
+    const previousWeeklyResetTime = String(acc.claudeWeeklyResetTime || "");
     try {
       // Carry id + proxyUrl so this probe shares the lease path's per-account
       // single-flight lock (keyed by email) and refreshes through the same exit
@@ -1227,6 +1233,9 @@ export class ClaudeAccountService {
         weeklyPercent: weekly,
         hourlyResetTime: acc.claudeHourlyResetTime || "",
         weeklyResetTime: acc.claudeWeeklyResetTime || "",
+        previousHourlyResetTime,
+        previousWeeklyResetTime,
+        quotaObservedAt: Date.now(),
       };
     } catch (err: any) {
       const msg = String(err?.message || err);

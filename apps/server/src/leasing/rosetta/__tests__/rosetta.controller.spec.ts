@@ -123,6 +123,80 @@ describe("RosettaController Codex quota refresh", () => {
   });
 });
 
+describe("RosettaController Anthropic quota refresh", () => {
+  it("propagates trusted rollover evidence to bound subscriptions and persists the new windows", async () => {
+    const rosetta: any = {
+      refreshClaudeAccountQuota: vi.fn(async () => ({
+        ok: true,
+        hourlyPercent: 90,
+        weeklyPercent: 98,
+        previousHourlyResetTime: "2026-07-16T07:00:00.000Z",
+        previousWeeklyResetTime: "2026-07-16T07:00:00.000Z",
+        quotaObservedAt: 1_784_185_983_688,
+      })),
+    };
+    const tokenServer: any = { persistSubscriptionWindowsFor: vi.fn(async () => undefined) };
+    const rollback = vi.fn();
+    const remoteAnthropic: any = {
+      syncPersistedAccountQuotaSnapshot: vi.fn(() => ({
+        subscriptionsTouched: 1,
+        subscriptionIds: ['sub-1'],
+        rollback,
+      })),
+      reactivateIfAuthDead: vi.fn(() => ({ ok: true, reactivated: false })),
+    };
+    const controller = new RosettaController(
+      rosetta,
+      {} as any,
+      tokenServer,
+      {} as any,
+      remoteAnthropic,
+    );
+
+    const result = await controller.refreshClaudeAccountQuota({ accountId: 21 });
+
+    expect(remoteAnthropic.syncPersistedAccountQuotaSnapshot).toHaveBeenCalledWith(21, {
+      previousHourlyResetAt: "2026-07-16T07:00:00.000Z",
+      previousWeeklyResetAt: "2026-07-16T07:00:00.000Z",
+      observedAt: 1_784_185_983_688,
+      snapshotId: "console-refresh:anthropic:21:1784185983688",
+    });
+    expect(tokenServer.persistSubscriptionWindowsFor).toHaveBeenCalledWith(['sub-1']);
+    expect(rollback).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, quotaSyncedSubscriptions: 1, reactivated: false });
+  });
+
+  it("rolls back live subscription windows when targeted persistence fails", async () => {
+    const rosetta: any = {
+      refreshClaudeAccountQuota: vi.fn(async () => ({ ok: true, weeklyPercent: 98 })),
+    };
+    const persistError = new Error("db unavailable");
+    const tokenServer: any = {
+      persistSubscriptionWindowsFor: vi.fn(async () => { throw persistError; }),
+    };
+    const rollback = vi.fn();
+    const remoteAnthropic: any = {
+      syncPersistedAccountQuotaSnapshot: vi.fn(() => ({
+        subscriptionsTouched: 1,
+        subscriptionIds: ['sub-1'],
+        rollback,
+      })),
+      reactivateIfAuthDead: vi.fn(),
+    };
+    const controller = new RosettaController(
+      rosetta,
+      {} as any,
+      tokenServer,
+      {} as any,
+      remoteAnthropic,
+    );
+
+    await expect(controller.refreshClaudeAccountQuota({ accountId: 21 })).rejects.toBe(persistError);
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(remoteAnthropic.reactivateIfAuthDead).not.toHaveBeenCalled();
+  });
+});
+
 describe("RosettaController Claude verification code", () => {
   it("delegates verification-code requests to RosettaService", async () => {
     const rosetta: any = {

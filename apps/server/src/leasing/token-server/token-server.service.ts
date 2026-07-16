@@ -149,6 +149,23 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
     }
   }
 
+  /** Persist only the subscription windows mutated by one external quota
+   * refresh. Prisma's batch transaction keeps the affected heads atomic and
+   * avoids rewriting every unrelated subscription in the system. */
+  async persistSubscriptionWindowsFor(ids: Iterable<string>): Promise<void> {
+    const prisma = this.bootPrisma;
+    if (!prisma?.subscription?.update) return;
+    const snapshots = this.accessKeyStore.serializeSubscriptionWindowsFor(ids);
+    if (snapshots.length === 0) return;
+    const updates = snapshots.map(({ id, windowState }) =>
+      prisma.subscription.update({ where: { id }, data: { windowState } }));
+    if (typeof prisma.$transaction === 'function') {
+      await prisma.$transaction(updates);
+      return;
+    }
+    await Promise.all(updates);
+  }
+
   /** Persist windows + stop the timer on shutdown, then run the base teardown. */
   async onModuleDestroy(): Promise<void> {
     if (this.windowPersistTimer) {

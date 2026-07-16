@@ -1142,6 +1142,70 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   /**
+   * Propagate a quota snapshot written by an out-of-band account refresh into
+   * the live fair-share and fixed-USD subscription windows. The optional prior
+   * reset epochs are trusted evidence captured before that refresh overwrote
+   * the account file; they let a first subscription snapshot recognize a real
+   * rollover without weakening the normal rollout baseline guard.
+   */
+  syncPersistedAccountQuotaSnapshot(
+    accountId: number,
+    evidence: {
+      previousHourlyResetAt?: unknown;
+      previousWeeklyResetAt?: unknown;
+      observedAt?: unknown;
+      snapshotId?: string;
+    } = {},
+  ): { subscriptionsTouched: number; subscriptionIds: string[]; rollback: () => void } {
+    const empty = { subscriptionsTouched: 0, subscriptionIds: [], rollback: () => undefined };
+    if (!this.provider.quotaSnapshotInputs || accountId <= 0) return empty;
+    const account = this.readAccounts().find((candidate) => candidate.id === accountId);
+    if (!account) return empty;
+    const inputs = this.provider.quotaSnapshotInputs(account);
+    if (inputs.length === 0) return empty;
+
+    const arrivedAt = this.now();
+    const observedAt = this.clampEventTime(evidence.observedAt, 0, arrivedAt);
+    const snapshotId = String(evidence.snapshotId || `external-refresh:${this.provider.id}:${accountId}:${observedAt}`);
+    const resetMs = (value: unknown): number => {
+      const parsed = typeof value === "number" ? value : Date.parse(String(value || ""));
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    };
+    const previousResetAtByScope = {
+      fiveHour: resetMs(evidence.previousHourlyResetAt),
+      weekly: resetMs(evidence.previousWeeklyResetAt),
+    };
+
+    const subscriptionIds = this.accessKeyStore.subscriptionsBoundToAccount(accountId, this.provider.id);
+    const usageBefore = subscriptionIds
+      .map((id) => ({ id, snapshot: this.accessKeyStore.snapshotSubscriptionUsage(id) }))
+      .filter((item) => Boolean(item.snapshot));
+
+    this.syncFairShareQuotaSnapshot(accountId, account, { observedAt, arrivedAt, snapshotId }, inputs);
+    if (this.accountQuotaSnapshotTracker) {
+      for (const input of inputs) {
+        this.accountQuotaSnapshotTracker.record({
+          provider: this.provider.id,
+          accountId,
+          email: account.email || null,
+          ...input,
+        });
+      }
+    }
+    const subscriptionsTouched = this.accessKeyStore.applyUpstreamUsdQuotaSnapshot(
+      accountId,
+      this.provider.id,
+      inputs,
+      { observedAt, arrivedAt, snapshotId, previousResetAtByScope },
+    );
+    return {
+      subscriptionsTouched,
+      subscriptionIds: subscriptionsTouched > 0 ? subscriptionIds : [],
+      rollback: () => this.accessKeyStore.restoreSubscriptionUsages(usageBefore),
+    };
+  }
+
+  /**
    * Seed every fixed-USD subscription with the reset epochs already known by
    * its bound mother account. Quota reports keep these epochs fresh during
    * normal traffic, but a subscription that has not made a request since a

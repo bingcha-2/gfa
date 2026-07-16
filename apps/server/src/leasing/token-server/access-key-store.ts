@@ -158,12 +158,19 @@ export type UsdUpstreamWindowState = {
   reboundCandidateCount?: number;
   /** Natural expiry already opened a new local epoch; next fraction is baseline. */
   baselinePending?: boolean;
+  /** Rebinding must establish one baseline without inheriting a reset that
+   * happened before this subscription moved to the new mother account. */
+  baselineReason?: 'rebind';
 };
 
 export type UpstreamUsdQuotaSnapshotMeta = {
   observedAt?: number;
   arrivedAt?: number;
   snapshotId?: string;
+  /** Trusted reset epochs observed before this snapshot. A forward move from
+   * one of these epochs proves a rollover even when the subscription has not
+   * yet established its own upstream baseline. */
+  previousResetAtByScope?: Partial<Record<'fiveHour' | 'weekly', number>>;
 };
 
 export interface AccessKeysData {
@@ -256,12 +263,16 @@ function startUsdScopeAt(
   else usage.windowStartedAtWeekly = startedAt;
 }
 
-function resetUpstreamObservation(record: AccessKeyRecord, product: unknown): void {
+function resetUpstreamObservation(
+  record: AccessKeyRecord,
+  product: unknown,
+  baselineReason?: 'rebind',
+): void {
   const usage = usdProductUsage(record, product);
   if (!usage) return;
   usage.upstreamAccountId = undefined;
-  usage.upstreamFiveHour = undefined;
-  usage.upstreamWeekly = undefined;
+  usage.upstreamFiveHour = baselineReason ? { baselineReason } : undefined;
+  usage.upstreamWeekly = baselineReason ? { baselineReason } : undefined;
 }
 
 function normalizeObservedAt(value: unknown, fallback: number): number {
@@ -282,7 +293,12 @@ function applyUpstreamWindowSnapshot(
   record: AccessKeyRecord,
   product: string,
   scope: 'fiveHour' | 'weekly',
-  sample: { present?: boolean; fraction: number | null; resetAt?: number },
+  sample: {
+    present?: boolean;
+    fraction: number | null;
+    resetAt?: number;
+    trustedPreviousResetAt?: number;
+  },
   meta: { observedAt: number; snapshotId: string },
 ): boolean {
   const state = upstreamWindowState(record, product, scope, true)!;
@@ -309,6 +325,7 @@ function applyUpstreamWindowSnapshot(
   const baselineFraction = () => {
     state.lowFraction = sample.fraction ?? undefined;
     state.baselinePending = undefined;
+    state.baselineReason = undefined;
     clearCandidate();
   };
 
@@ -319,6 +336,7 @@ function applyUpstreamWindowSnapshot(
     state.appliedResetAt = undefined;
     state.lowFraction = undefined;
     state.baselinePending = undefined;
+    state.baselineReason = undefined;
     clearCandidate();
     commitMeta();
     return true;
@@ -341,6 +359,23 @@ function applyUpstreamWindowSnapshot(
   const firstCredibleSample = previousObservedAt <= 0
     && previousResetAt <= 0
     && state.lowFraction === undefined;
+  const trustedPreviousResetAt = Number(sample.trustedPreviousResetAt || 0);
+  const trustedForwardReset = previousResetAt <= 0
+    && state.baselineReason !== 'rebind'
+    && trustedPreviousResetAt > 0
+    && incomingResetAt > trustedPreviousResetAt + UPSTREAM_RESET_DRIFT_MS;
+  if (trustedForwardReset) {
+    // The subscription has no upstream baseline yet, but the mother-account
+    // refresh observed both sides of the epoch transition. That evidence is
+    // stronger than the rollout guard below: keeping historical usage here
+    // would strand the old epoch under the new resetAt forever.
+    clearUsdScopeUsage(record, product, scope);
+    startUsdScopeAt(record, product, scope, meta.observedAt);
+    state.resetAt = incomingResetAt;
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
   if (firstCredibleSample) {
     // Smooth rollout: establish the mother-account epoch without gifting a
     // reset to subscriptions that already carry historical usage.
@@ -875,7 +910,10 @@ export class AccessKeyStore {
               resetUpstreamObservation({
                 ...existing,
                 usdUsageByProduct: productUsage,
-              }, product);
+              }, product, 'rebind');
+              productUsage[product].upstreamAccountId = incomingAccountId > 0
+                ? incomingAccountId
+                : undefined;
             }
           }
         }
@@ -954,7 +992,8 @@ export class AccessKeyStore {
             const persistedAccountId = Number(usage?.upstreamAccountId || 0);
             const boundAccountId = this.boundAccountIdFor(rec, product);
             if (persistedAccountId > 0 && persistedAccountId !== boundAccountId) {
-              resetUpstreamObservation(rec, product);
+              resetUpstreamObservation(rec, product, 'rebind');
+              usage.upstreamAccountId = boundAccountId > 0 ? boundAccountId : undefined;
             }
           }
         } else {
@@ -1358,10 +1397,15 @@ export class AccessKeyStore {
       const record = this.subscriptionById.get(subscriptionId);
       if (!record || !usesUsdQuotaForProduct(record, quotaProduct)) continue;
       const usage = usdProductUsage(record, quotaProduct, true)!;
-      if (Number(usage.upstreamAccountId || 0) !== accountId) {
+      const previousObservedAccountId = Number(usage.upstreamAccountId || 0);
+      if (previousObservedAccountId !== accountId) {
         // First observation after rollout or rebind is baseline-only. Existing
         // personal usage is deliberately preserved.
-        resetUpstreamObservation(record, quotaProduct);
+        resetUpstreamObservation(
+          record,
+          quotaProduct,
+          previousObservedAccountId > 0 ? 'rebind' : undefined,
+        );
         usage.upstreamAccountId = accountId;
       }
       let changed = false;
@@ -1370,6 +1414,7 @@ export class AccessKeyStore {
           present: input.hourlyPresent,
           fraction: hourlyFraction,
           resetAt: hourlyResetAt,
+          trustedPreviousResetAt: meta.previousResetAtByScope?.fiveHour,
         }, { observedAt, snapshotId }) || changed;
       }
       if (hasWeekly) {
@@ -1377,6 +1422,7 @@ export class AccessKeyStore {
           present: input.weeklyPresent,
           fraction: weeklyFraction,
           resetAt: weeklyResetAt,
+          trustedPreviousResetAt: meta.previousResetAtByScope?.weekly,
         }, { observedAt, snapshotId }) || changed;
       }
       if (changed) touched += 1;
