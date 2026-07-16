@@ -2,7 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { LocalSettingsTab } from './LocalSettingsTab'
-import type { CodexSettings, CodexQuickConfig } from '@/services/localApi'
+import type { CodexSettings, CodexQuickConfig, CodexSkinChannelStatus } from '@/services/localApi'
 
 function fakeSettings(over: Partial<CodexSettings> = {}): CodexSettings {
   return {
@@ -13,6 +13,17 @@ function fakeSettings(over: Partial<CodexSettings> = {}): CodexSettings {
     showApiEntry: true,
     filterMemory: false,
     showCodeReviewQuota: false,
+    skinChannelEnabled: false,
+    ...over,
+  }
+}
+
+function fakeSkin(over: Partial<CodexSkinChannelStatus> = {}): CodexSkinChannelStatus {
+  return {
+    enabled: false,
+    live: false,
+    port: 9335,
+    skillDir: '/home/u/.bingchaai/codex-skin/skill',
     ...over,
   }
 }
@@ -39,6 +50,12 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalBrowseForPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalDetectCodexAppPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalOpenCodexConfigToml: vi.fn().mockResolvedValue(undefined),
+    LocalGetCodexSkinChannel: vi.fn().mockResolvedValue(fakeSkin()),
+    LocalSetCodexSkinChannel: vi.fn().mockImplementation(
+      (enabled: boolean) => Promise.resolve(fakeSkin({ enabled })),
+    ),
+    LocalRestartCodexForSkinChannel: vi.fn().mockResolvedValue(fakeSkin({ enabled: true, live: true })),
+    LocalOpenCodexSkinSkillFolder: vi.fn().mockResolvedValue(undefined),
     ...over,
   }
   ;(window as unknown as { go: { main: { App: typeof base } } }).go = { main: { App: base } }
@@ -202,6 +219,67 @@ describe('LocalSettingsTab', () => {
     installApp({ LocalGetCodexSettings: vi.fn().mockRejectedValue(new Error('boom')) })
     renderTab()
     expect(await screen.findByText(/boom/)).toBeInTheDocument()
+  })
+
+  // ── Codex 皮肤调试通道 ──
+
+  it('皮肤通道开关读取当前值,切换调 setCodexSkinChannel', async () => {
+    const app = installApp()
+    renderTab()
+    const sw = await screen.findByRole('switch', { name: /皮肤调试通道/ })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(sw)
+    await waitFor(() => expect(app.LocalSetCodexSkinChannel).toHaveBeenCalledWith(true))
+  })
+
+  it('开+死 = 等待重启:显示「重启 Codex 生效」并调 restartCodexForSkinChannel', async () => {
+    const app = installApp({
+      LocalGetCodexSkinChannel: vi.fn().mockResolvedValue(fakeSkin({ enabled: true, live: false })),
+    })
+    renderTab()
+    const btn = await screen.findByRole('button', { name: /重启 Codex 生效/ })
+    fireEvent.click(btn)
+    await waitFor(() => expect(app.LocalRestartCodexForSkinChannel).toHaveBeenCalled())
+    // 重启返回 live=true 后状态行进入「通道已开启」。
+    expect(await screen.findByText(/通道已开启/)).toBeInTheDocument()
+  })
+
+  it('开+活 = 通道已开启:无重启按钮', async () => {
+    installApp({
+      LocalGetCodexSkinChannel: vi.fn().mockResolvedValue(fakeSkin({ enabled: true, live: true })),
+    })
+    renderTab()
+    expect(await screen.findByText(/通道已开启/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /重启 Codex 生效/ })).toBeNull()
+  })
+
+  it('关+活 = 残留通道:提示重启后关闭并给「重启关闭」按钮', async () => {
+    installApp({
+      LocalGetCodexSkinChannel: vi.fn().mockResolvedValue(fakeSkin({ enabled: false, live: true })),
+    })
+    renderTab()
+    expect(await screen.findByText(/仍带调试端口运行/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /重启关闭/ })).toBeInTheDocument()
+  })
+
+  it('等待重启时自动轮询,Codex 慢启动完成后状态自动翻绿', async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce(fakeSkin({ enabled: true, live: false }))
+      .mockResolvedValue(fakeSkin({ enabled: true, live: true }))
+    installApp({ LocalGetCodexSkinChannel: get })
+    renderTab()
+    expect(await screen.findByText(/等待重启/)).toBeInTheDocument()
+    // 3s 轮询命中第二次 mock(live=true)后,无需任何操作状态翻转。
+    expect(await screen.findByText(/通道已开启/, undefined, { timeout: 4500 })).toBeInTheDocument()
+    expect(get.mock.calls.length).toBeGreaterThanOrEqual(2)
+  }, 8000)
+
+  it('skill 路径常驻可见(与通道状态无关),「打开文件夹」调 openCodexSkinSkillFolder', async () => {
+    const app = installApp()
+    renderTab()
+    expect(await screen.findByText('/home/u/.bingchaai/codex-skin/skill')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /打开文件夹/ }))
+    await waitFor(() => expect(app.LocalOpenCodexSkinSkillFolder).toHaveBeenCalled())
   })
 
   it('不渲染 OpenClaw / OpenCode 覆盖开关(明确不做)', async () => {

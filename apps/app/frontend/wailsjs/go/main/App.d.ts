@@ -186,6 +186,8 @@ export function LocalGetCodexResetCredits(arg1:string):Promise<codexbiz.ResetCre
 
 export function LocalGetCodexSettings():Promise<codexsettings.Settings>;
 
+export function LocalGetCodexSkinChannel():Promise<main.CodexSkinChannelStatus>;
+
 export function LocalGetCodexSource():Promise<string>;
 
 export function LocalGetGatewayAccessScope():Promise<string>;
@@ -228,6 +230,8 @@ export function LocalMoveCodexSessionsToTrash(arg1:Array<string>):Promise<sessio
 
 export function LocalOpenCodexConfigToml():Promise<void>;
 
+export function LocalOpenCodexSkinSkillFolder():Promise<void>;
+
 export function LocalQueryGatewayLogs(arg1:number,arg2:number,arg3:string):Promise<stats.LogPage>;
 
 export function LocalRefreshAccountQuota(arg1:string):Promise<void>;
@@ -249,6 +253,8 @@ export function LocalReorderCodexAccounts(arg1:Array<string>):Promise<void>;
 export function LocalRepairCodexSessionVisibility():Promise<main.HistoryVisibilitySummary>;
 
 export function LocalResolveAccountGroups():Promise<Record<string, string>>;
+
+export function LocalRestartCodexForSkinChannel():Promise<main.CodexSkinChannelStatus>;
 
 export function LocalRestoreCodexSessionsFromTrash(arg1:Array<string>):Promise<sessionsync.RestoreSummary>;
 
@@ -285,6 +291,8 @@ export function LocalSetAntigravitySource(arg1:string):Promise<void>;
 export function LocalSetAntigravityWakeupConfig(arg1:boolean,arg2:number):Promise<void>;
 
 export function LocalSetCodexPriority(arg1:string):Promise<void>;
+
+export function LocalSetCodexSkinChannel(arg1:boolean):Promise<main.CodexSkinChannelStatus>;
 
 export function LocalSetCodexSource(arg1:string):Promise<void>;
 

@@ -108,7 +108,7 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     // ── Codex 设置面板(Wave H · codex-only)──
     LocalGetCodexSettings: vi.fn().mockResolvedValue({
       codexAppPath: '', launchOnSwitch: false, restartAppOnSwitch: false, restartAppPath: '',
-      showApiEntry: true, filterMemory: false, showCodeReviewQuota: false,
+      showApiEntry: true, filterMemory: false, showCodeReviewQuota: false, skinChannelEnabled: false,
     }),
     LocalSaveCodexSettings: vi.fn().mockImplementation((s: unknown) => Promise.resolve(s)),
     LocalGetCodexQuickConfig: vi.fn().mockResolvedValue({ contextWindow1m: false, autoCompactTokenLimit: 0 }),
@@ -116,6 +116,17 @@ function installApp(over: Record<string, (...a: unknown[]) => Promise<unknown>> 
     LocalBrowseForPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalDetectCodexAppPath: vi.fn().mockResolvedValue('/Applications/Codex.app'),
     LocalOpenCodexConfigToml: vi.fn().mockResolvedValue(undefined),
+    // ── Codex 皮肤调试通道 ──
+    LocalGetCodexSkinChannel: vi.fn().mockResolvedValue({
+      enabled: false, live: false, port: 9335, skillDir: '/home/u/.bingchaai/codex-skin/skill',
+    }),
+    LocalSetCodexSkinChannel: vi.fn().mockImplementation(
+      (enabled: boolean) => Promise.resolve({ enabled, live: false, port: 9335, skillDir: '/home/u/.bingchaai/codex-skin/skill' }),
+    ),
+    LocalRestartCodexForSkinChannel: vi.fn().mockResolvedValue({
+      enabled: true, live: true, port: 9335, skillDir: '/home/u/.bingchaai/codex-skin/skill',
+    }),
+    LocalOpenCodexSkinSkillFolder: vi.fn().mockResolvedValue(undefined),
     // ── 账号组织(分组 + 显式当前号 + 重排序)(Wave I · 共享) ──
     LocalListAccountGroups: vi.fn().mockResolvedValue([
       { id: 'gr1', name: '主力', sortOrder: 0, accountIds: ['a1'], createdAt: 1700000000000 },

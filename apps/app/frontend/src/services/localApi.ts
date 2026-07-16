@@ -621,6 +621,7 @@ export interface CodexSettings {
   showApiEntry: boolean
   filterMemory: boolean
   showCodeReviewQuota: boolean
+  skinChannelEnabled: boolean
 }
 
 /** config.toml 快捷配置视图。 */
@@ -670,6 +671,37 @@ export function detectCodexAppPath(): Promise<string> {
 /** 用系统默认编辑器打开 ~/.codex/config.toml。 */
 export function openCodexConfigToml(): Promise<void> {
   return app().LocalOpenCodexConfigToml() as Promise<void>
+}
+
+// ── Codex 皮肤调试通道 ──
+// 冰茶只管通道(开关/重启/发现文件);皮肤由用户自己的 Agent 按 skill 设计注入。
+
+/** 皮肤通道状态。enabled=开关;live=Codex 当前是否带调试端口在跑。 */
+export interface CodexSkinChannelStatus {
+  enabled: boolean
+  live: boolean
+  port: number
+  skillDir: string
+}
+
+/** 读通道状态(顺带保证 skill 目录已落盘)。 */
+export function getCodexSkinChannel(): Promise<CodexSkinChannelStatus> {
+  return app().LocalGetCodexSkinChannel() as Promise<CodexSkinChannelStatus>
+}
+
+/** 落盘通道开关(只改下次启动行为,不动正在运行的 Codex)。 */
+export function setCodexSkinChannel(enabled: boolean): Promise<CodexSkinChannelStatus> {
+  return app().LocalSetCodexSkinChannel(enabled) as Promise<CodexSkinChannelStatus>
+}
+
+/** 重启 Codex 使通道参数生效;阻塞至探测结果与开关一致或超时,返回实际状态。 */
+export function restartCodexForSkinChannel(): Promise<CodexSkinChannelStatus> {
+  return app().LocalRestartCodexForSkinChannel() as Promise<CodexSkinChannelStatus>
+}
+
+/** 在系统文件管理器中打开 skill 目录。 */
+export function openCodexSkinSkillFolder(): Promise<void> {
+  return app().LocalOpenCodexSkinSkillFolder() as Promise<void>
 }
 
 // ── 账号组织(分组)+ 显式当前号 + 重排序 ──

@@ -268,6 +268,7 @@ export namespace codexsettings {
 	    showApiEntry: boolean;
 	    filterMemory: boolean;
 	    showCodeReviewQuota: boolean;
+	    skinChannelEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -282,6 +283,7 @@ export namespace codexsettings {
 	        this.showApiEntry = source["showApiEntry"];
 	        this.filterMemory = source["filterMemory"];
 	        this.showCodeReviewQuota = source["showCodeReviewQuota"];
+	        this.skinChannelEnabled = source["skinChannelEnabled"];
 	    }
 	}
 
@@ -529,6 +531,24 @@ export namespace main {
 	        this.location = source["location"];
 	        this.detail = source["detail"];
 	        this.severity = source["severity"];
+	    }
+	}
+	export class CodexSkinChannelStatus {
+	    enabled: boolean;
+	    live: boolean;
+	    port: number;
+	    skillDir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodexSkinChannelStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.live = source["live"];
+	        this.port = source["port"];
+	        this.skillDir = source["skillDir"];
 	    }
 	}
 	export class HourlyRecord {

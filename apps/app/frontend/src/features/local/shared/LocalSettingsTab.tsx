@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Settings2, FolderSearch, ScanSearch, FileCog, Gauge, ArrowRight, Loader2,
+  Palette, Copy, FolderOpen, RefreshCw,
 } from 'lucide-react'
 import {
-  type CodexSettings,
+  type CodexSettings, type CodexSkinChannelStatus,
   getCodexSettings, saveCodexSettings,
   getCodexQuickConfig, saveCodexQuickConfig,
   browseForPath, detectCodexAppPath, openCodexConfigToml,
+  getCodexSkinChannel, setCodexSkinChannel, restartCodexForSkinChannel, openCodexSkinSkillFolder,
 } from '@/services/localApi'
 import type { PageId } from '@/types'
 import { cn } from '@/lib/utils'
@@ -86,11 +88,19 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  const [skin, setSkin] = useState<CodexSkinChannelStatus | null>(null)
+  const [skinCopied, setSkinCopied] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const [s, q] = await Promise.all([getCodexSettings(), getCodexQuickConfig()])
+      // 皮肤通道状态失败时优雅降级(卡片不渲染),不拖垮其余设置项。
+      const [s, q, sk] = await Promise.all([
+        getCodexSettings(),
+        getCodexQuickConfig(),
+        getCodexSkinChannel().catch(() => null),
+      ])
       setSettings(s)
+      setSkin(sk)
       setPathDraft(s.codexAppPath)
       const p = resolvePreset(q.detectedModelContextWindow, q.detectedAutoCompactTokenLimit)
       setPreset(p)
@@ -105,6 +115,16 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  // 皮肤通道:开关与实际状态不一致(等重启/待关闭)时轮询探测 —— Codex 冷启动可能比
+  // 重启按钮的等待窗口慢,起来后状态自动翻转,不需要用户重进页面。
+  useEffect(() => {
+    if (!skin || skin.enabled === skin.live) return
+    const timer = setInterval(() => {
+      getCodexSkinChannel().then(setSkin).catch(() => { /* 探测失败保持现状 */ })
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [skin?.enabled, skin?.live]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 合并补丁后落盘,回填以反映 clamp。 */
   const patch = async (next: Partial<CodexSettings>) => {
@@ -185,6 +205,55 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
     const mcw = Number(customCtx) || 0
     const ac = Number(customCompact) || 0
     void writeQuick(mcw > 0 ? mcw : null, ac > 0 ? ac : null)
+  }
+
+  /** 皮肤通道:开关只改「下次启动」行为;重启由用户显式点按钮。 */
+  const onToggleSkin = async () => {
+    if (!skin) return
+    setBusy('skin')
+    try {
+      setSkin(await setCodexSkinChannel(!skin.enabled))
+      setErr('')
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onSkinRestart = async () => {
+    setBusy('skinRestart')
+    try {
+      setSkin(await restartCodexForSkinChannel())
+      setErr('')
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onCopySkillDir = async () => {
+    if (!skin) return
+    try {
+      await navigator.clipboard.writeText(skin.skillDir)
+      setSkinCopied(true)
+      setTimeout(() => setSkinCopied(false), 2000)
+    } catch {
+      /* clipboard 不可用时静默 */
+    }
+  }
+
+  const onOpenSkillFolder = async () => {
+    setBusy('skinOpen')
+    try {
+      await openCodexSkinSkillFolder()
+      setErr('')
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(null)
+    }
   }
 
   if (loading) return <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">加载中…</div>
@@ -333,6 +402,82 @@ export function LocalSettingsTab({ onNavigate }: { onNavigate?: (p: SettingsNavT
           </div>
         )}
       </div>
+
+      {/* Codex 皮肤调试通道:冰茶只管通道(开关/重启/发现文件),皮肤由用户自己的 Agent 按 skill 设计注入 */}
+      {skin && (() => {
+        // 四象限:开+活=生效;开+死=等重启;关+活=重启后关闭;关+死=未开启。
+        const phase = skin.enabled ? (skin.live ? 'active' : 'pending') : (skin.live ? 'draining' : 'off')
+        const statusStyle = {
+          active: 'border-[var(--success)]/40 bg-[var(--success)]/5',
+          pending: 'border-[var(--warning)]/40 bg-[var(--warning)]/5',
+          draining: 'border-[var(--warning)]/40 bg-[var(--warning)]/5',
+          off: 'border-[var(--border-light)] bg-[var(--bg-tertiary)]',
+        }[phase]
+        const dotStyle = {
+          active: 'bg-[var(--success)]',
+          pending: 'bg-[var(--warning)]',
+          draining: 'bg-[var(--warning)]',
+          off: 'bg-[var(--text-muted)]',
+        }[phase]
+        const statusText = {
+          active: <>通道已开启 · <span className="font-mono-data">127.0.0.1:{skin.port}</span> —— 你的 Agent 现在可以注入皮肤</>,
+          pending: <>等待重启 —— 下次启动 Codex 将附加 <span className="font-mono-data">--remote-debugging-port={skin.port}</span></>,
+          draining: <>开关已关闭,但 Codex 仍带调试端口运行 —— 重启后彻底关闭</>,
+          off: <>未开启 —— Codex 以官方默认方式运行</>,
+        }[phase]
+        const showRestart = phase === 'pending' || phase === 'draining'
+        return (
+          <div className="rounded-[12px] border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
+            <Switch
+              label="皮肤调试通道(实验性)"
+              desc="为 Codex 桌面端开启本机 CDP 通道(仅 127.0.0.1),供你自己的 AI Agent 注入自定义皮肤。不修改官方安装包,关闭后重启即还原。"
+              checked={skin.enabled}
+              busy={spin('skin')}
+              onToggle={() => void onToggleSkin()}
+            />
+            <div className={cn('flex items-center gap-2.5 rounded-[8px] border px-3 py-2 text-[12px]', statusStyle)}>
+              <span className={cn('w-2 h-2 rounded-full shrink-0', dotStyle, phase === 'pending' && 'animate-pulse')} />
+              <span className="flex-1 text-[var(--text-secondary)]">{statusText}</span>
+              {showRestart && (
+                <button
+                  type="button"
+                  disabled={!!busy}
+                  onClick={() => void onSkinRestart()}
+                  className="cursor-pointer text-[12px] font-semibold px-2.5 h-[28px] rounded-[8px] bg-[var(--primary)] text-[var(--primary-ink)] hover:bg-[var(--primary-strong)] inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {spin('skinRestart') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  {phase === 'draining' ? '重启关闭' : '重启 Codex 生效'}
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-[var(--text-muted)] inline-flex items-center gap-1"><Palette size={12} /> 皮肤 Skill(给 Agent 的换肤说明书 + 注入脚本):</span>
+              <code className="text-[11px] font-mono-data text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded px-1.5 py-0.5 break-all">{skin.skillDir}</code>
+              <button
+                type="button"
+                onClick={() => void onCopySkillDir()}
+                className="cursor-pointer text-[11px] font-semibold px-2 h-[26px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 shrink-0"
+              >
+                <Copy size={11} /> {skinCopied ? '已复制' : '复制路径'}
+              </button>
+              <button
+                type="button"
+                disabled={spin('skinOpen')}
+                onClick={() => void onOpenSkillFolder()}
+                className="cursor-pointer text-[11px] font-semibold px-2 h-[26px] rounded-[8px] border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] inline-flex items-center gap-1 shrink-0 disabled:opacity-50"
+              >
+                <FolderOpen size={11} /> 打开文件夹
+              </button>
+            </div>
+            <div className="text-[11px] text-[var(--text-muted)]">
+              把上面的路径丢给任意 Agent(如 Claude Code):「按这个 skill 给我的 Codex 换个皮肤」。冰茶不出预设、不做编辑器,也不写入任何 Agent 的配置。
+              {(phase === 'active' || phase === 'pending') && (
+                <span className="text-[var(--warning-deep)]"> 注意:通道开启期间,本机任何程序都可连接调试端口控制 Codex 界面,不需要时请关闭。</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

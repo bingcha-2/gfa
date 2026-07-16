@@ -342,6 +342,10 @@ export function LocalGetCodexSettings() {
   return window['go']['main']['App']['LocalGetCodexSettings']();
 }
 
+export function LocalGetCodexSkinChannel() {
+  return window['go']['main']['App']['LocalGetCodexSkinChannel']();
+}
+
 export function LocalGetCodexSource() {
   return window['go']['main']['App']['LocalGetCodexSource']();
 }
@@ -426,6 +430,10 @@ export function LocalOpenCodexConfigToml() {
   return window['go']['main']['App']['LocalOpenCodexConfigToml']();
 }
 
+export function LocalOpenCodexSkinSkillFolder() {
+  return window['go']['main']['App']['LocalOpenCodexSkinSkillFolder']();
+}
+
 export function LocalQueryGatewayLogs(arg1, arg2, arg3) {
   return window['go']['main']['App']['LocalQueryGatewayLogs'](arg1, arg2, arg3);
 }
@@ -468,6 +476,10 @@ export function LocalRepairCodexSessionVisibility() {
 
 export function LocalResolveAccountGroups() {
   return window['go']['main']['App']['LocalResolveAccountGroups']();
+}
+
+export function LocalRestartCodexForSkinChannel() {
+  return window['go']['main']['App']['LocalRestartCodexForSkinChannel']();
 }
 
 export function LocalRestoreCodexSessionsFromTrash(arg1) {
@@ -540,6 +552,10 @@ export function LocalSetAntigravityWakeupConfig(arg1, arg2) {
 
 export function LocalSetCodexPriority(arg1) {
   return window['go']['main']['App']['LocalSetCodexPriority'](arg1);
+}
+
+export function LocalSetCodexSkinChannel(arg1) {
+  return window['go']['main']['App']['LocalSetCodexSkinChannel'](arg1);
 }
 
 export function LocalSetCodexSource(arg1) {

@@ -38,6 +38,9 @@ type Settings struct {
 	FilterMemory bool `json:"filterMemory"`
 	// ShowCodeReviewQuota:是否显示 Code Review 配额。
 	ShowCodeReviewQuota bool `json:"showCodeReviewQuota"`
+	// SkinChannelEnabled:是否开启「皮肤调试通道」(启动 Codex 时附加
+	// --remote-debugging-port,供用户自己的 AI Agent 注入自定义皮肤)。
+	SkinChannelEnabled bool `json:"skinChannelEnabled"`
 }
 
 // DefaultSettings 返回与 cockpit 默认值一致的设置。
@@ -53,6 +56,7 @@ func DefaultSettings() Settings {
 		ShowApiEntry:        true,
 		FilterMemory:        false,
 		ShowCodeReviewQuota: false,
+		SkinChannelEnabled:  false,
 	}
 }
 

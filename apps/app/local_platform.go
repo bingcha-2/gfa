@@ -218,7 +218,9 @@ func (localPlatform) CodexRestartApp() error {
 	case "windows":
 		_ = hideCmd("taskkill", "/IM", codexWindowsImageName(), "/T").Run()
 	}
-	_, err := localPlatform{}.LaunchApp(appPath, "", nil)
+	// 皮肤调试通道开启时切号重启也要带端口,否则本地切一次号通道就静默掉线
+	// (与 LaunchCodexApp 的行为保持一致,见 codex_skin_channel.go)。
+	_, err := localPlatform{}.LaunchApp(appPath, "", codexSkinLaunchArgs())
 	return err
 }
 

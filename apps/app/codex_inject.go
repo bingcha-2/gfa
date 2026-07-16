@@ -387,6 +387,9 @@ func LaunchCodexApp() {
 		Log("[codex] 未检测到 Codex 安装路径,跳过启动")
 		return
 	}
+	// 皮肤调试通道开启时给 GUI 附加 --remote-debugging-port(见 codex_skin_channel.go);
+	// CLI 分支不附加 —— codex CLI 不认识该参数。
+	skinArgs := codexSkinLaunchArgs()
 	switch runtime.GOOS {
 	case "darwin":
 		// detectCodexAppPath 现在优先返回 chrome-native-hosts.json 里的 codexCliPath,
@@ -395,7 +398,11 @@ func LaunchCodexApp() {
 		// 会直接以子进程方式运行该 CLI(headless),并不会拉起 GUI —— 表现为"无法唤醒 Codex"。
 		// 因此先把路径归一到外层 .app bundle 再 `open`,确保拉起的是 GUI。
 		if bundle := codexAppBundlePath(path); strings.HasSuffix(bundle, ".app") {
-			if err := exec.Command("open", bundle).Start(); err != nil {
+			openArgs := []string{bundle}
+			if len(skinArgs) > 0 {
+				openArgs = append(append(openArgs, "--args"), skinArgs...)
+			}
+			if err := exec.Command("open", openArgs...).Start(); err != nil {
 				Log("[codex] 启动 Codex 失败: %v", err)
 			}
 		} else {
@@ -405,7 +412,7 @@ func LaunchCodexApp() {
 			}
 		}
 	case "windows", "linux":
-		if err := exec.Command(path).Start(); err != nil {
+		if err := exec.Command(path, skinArgs...).Start(); err != nil {
 			Log("[codex] 启动 Codex 失败: %v", err)
 		}
 	}
