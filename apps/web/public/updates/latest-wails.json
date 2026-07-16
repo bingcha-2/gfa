@@ -6,7 +6,7 @@
   "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.6.2/BingchaAI-13.6.2-setup.exe",
   "installerSha256": "E23B244C7038283BB998F1B932EF0056FBDB1E3827A48C590513829009085002",
   "installerSize": 21546787,
-  "changelog": "-优化订阅额度刷新。\\n-改进用量上报与运行稳定性。",
+  "changelog": "- 优化订阅额度刷新。\n- 改进用量上报与运行稳定性。",
   "minVersion": "13.5.5",
   "macOS": {
     "arm64": {
