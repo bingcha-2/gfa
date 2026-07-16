@@ -106,7 +106,8 @@ func (a *App) startup(ctx context.Context) {
 	// 避免一次失败就永久 down、要用户手动重启。(合并自 main,适配账号制凭据)
 	startProxyWatchdog()
 
-	// 启动额度自动刷新:每 30min 拉一次上游真实余量并上报,闲置(不主动发请求)时血条/服务端也保持同步。
+	// 启动额度自动刷新:每30min兜底刷新可独立查询的Codex/Antigravity额度；
+	// Claude额度只来自真实Anthropic响应头，不为空闲展示额外租Token。
 	startQuotaRefreshLoop()
 
 	// 系统托盘(仅 Windows 有实现):配合 HideWindowOnClose 让点 X 缩到托盘、退出走托盘菜单。
@@ -195,10 +196,15 @@ func clearLocalCardState() {
 func (a *App) GetStats() map[string]interface{} {
 	proxyStats := GetProxy().GetStats()
 	leaserStatus := GetLeaser().GetStatus()
-	// 用户端只需产品授权。母号额度、绑定账号与旧 token/fair-share 桶都留在运行时和后台，
-	// 不通过 Wails stats 下发；个人美元额度统一来自 /app/login、/app/heartbeat。
+	// 用户端只下发产品授权与当前订阅自己的美元额度。母号额度、绑定账号与旧
+	// token/fair-share 桶仍留在运行时和后台；report-result 返回的 USD 窗口通过这里
+	// 进入 2s stats poll，使用户额度无需等待 heartbeat。
 	if aks, ok := leaserStatus["accessKeyStatus"].(map[string]interface{}); ok {
-		leaserStatus["accessKeyStatus"] = map[string]interface{}{"products": aks["products"]}
+		leaserStatus["accessKeyStatus"] = map[string]interface{}{
+			"id":                aks["id"],
+			"products":          aks["products"],
+			"usdQuotaByProduct": aks["usdQuotaByProduct"],
+		}
 	}
 	// 订阅授权产品并集(跨所有生效订阅)→ 前端据此显示「每个订阅产品一张用量卡」,而非只显示
 	// 单张卡的产品。冷启动授权未知时为 nil,前端回退单卡 products。

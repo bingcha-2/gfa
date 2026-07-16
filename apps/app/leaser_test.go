@@ -306,3 +306,31 @@ func TestGetStatusExposesBoundAccountResetMs(t *testing.T) {
 		t.Fatalf("boundResetMs 应反映绑定号上游重置剩余, got %v (ok=%v)", v, ok)
 	}
 }
+
+func TestMergeAccessKeyStatusDoesNotRegressUsdUsage(t *testing.T) {
+	window := func(used float64, resetAt string) map[string]interface{} {
+		return map[string]interface{}{"used": used, "limit": 10.0, "resetAt": resetAt}
+	}
+	status := func(used float64, resetAt string) map[string]interface{} {
+		return map[string]interface{}{
+			"id": "sub-1",
+			"usdQuotaByProduct": map[string]interface{}{
+				"codex": map[string]interface{}{"fiveHour": window(used, resetAt)},
+			},
+		}
+	}
+	newer := status(7, "2030-01-01T05:00:00Z")
+	olderResponse := status(4, "2030-01-01T05:00:00Z")
+	merged := mergeAccessKeyStatus(newer, olderResponse)
+	got := merged["usdQuotaByProduct"].(map[string]interface{})["codex"].(map[string]interface{})["fiveHour"].(map[string]interface{})["used"]
+	if got != float64(7) {
+		t.Fatalf("out-of-order response regressed used quota to %v", got)
+	}
+
+	reset := status(1, "2030-01-01T10:00:00Z")
+	merged = mergeAccessKeyStatus(newer, reset)
+	got = merged["usdQuotaByProduct"].(map[string]interface{})["codex"].(map[string]interface{})["fiveHour"].(map[string]interface{})["used"]
+	if got != float64(1) {
+		t.Fatalf("new quota window should accept reset usage, got %v", got)
+	}
+}

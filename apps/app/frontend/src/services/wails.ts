@@ -4,6 +4,7 @@
  */
 
 import type { ModelUsageStats } from '@/lib/usageSummary'
+import type { SubscriptionProductUsdQuota } from '@/types'
 
 import {
   GetConfig,
@@ -183,7 +184,9 @@ export interface StatsResponse {
     activationExpiresAt: string
     entitledProducts?: string[]
     accessKeyStatus: {
+      id?: string
       products?: string[]
+      usdQuotaByProduct?: Record<string, SubscriptionProductUsdQuota>
       opusTokensUsed?: number
       opusTokenLimit?: number
       geminiTokensUsed?: number

@@ -71,6 +71,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 	// 会很快恢复,不当作用尽。
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
+		"leaseProof":        lease.LeaseProof,
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -111,6 +112,7 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 
 	payload := map[string]interface{}{
 		"leaseId":            lease.LeaseId,
+		"leaseProof":         lease.LeaseProof,
 		"accountId":          lease.AccountId,
 		"status":             details.StatusCode,
 		"modelKey":           details.ModelKey,
@@ -284,7 +286,7 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 		// The queue is already scoped to the authenticated server user. Use the
 		// current JWT so session renewal cannot strand a valid report; reportId and
 		// lease ownership still prevent cross-subscription billing.
-		_, _, err := postBcaiWithFallback("/report-result", p.Payload, card, p.UpstreamProxy)
+		body, _, err := postBcaiWithFallback("/report-result", p.Payload, card, p.UpstreamProxy)
 		if err != nil {
 			p.Card = card
 			// 又失败了，全部放回队列，停止重发
@@ -298,6 +300,7 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 			}
 			break
 		}
+		syncQuotaStateFromBody(l, body)
 		sent++
 	}
 

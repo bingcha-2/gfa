@@ -6,9 +6,9 @@ import (
 
 // 纯展示刷新,不上报用量;绑定号唯一,force 重租不会轮换账号。池子卡直接跳过
 // (池子模式血条走本地号池额度,不在此机制内)。错误吞掉 —— 刷新失败不影响接管。
-// force=true(激活/换卡那一下)绕过额度拉取的 5min 节流,立刻拉一次最新的 gemini/claude/codex;
-// force=false(每 90s 定时)走节流,避免高频打上游。
-func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force bool) {
+// force=true 用于激活/换卡/手动刷新，绕过各产品自己的查询节流。Codex/Antigravity
+// 会真实访问上游额度接口；Claude只能从GFA取最近一次真实响应保存的快照。
+func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force, includeClaudeSnapshot bool) {
 	l.mu.RLock()
 	bound := l.cachedToken != nil && l.cachedToken.Bound
 	model := l.lastModelKey
@@ -27,13 +27,11 @@ func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force b
 	l.refreshBoundAntigravityQuota(card, upstreamProxy, force)
 
 	// codex / anthropic 预热 —— 独立于 antigravity 主 token。
-	l.preheatBoundProducts(card, deviceId, upstreamProxy, force)
+	l.preheatBoundProducts(card, deviceId, upstreamProxy, force, includeClaudeSnapshot)
 }
 
-// RefreshQuotaNow 手动强制刷新上游额度并上报(force=true 绕过 5min 节流),供前端「刷新」
-// 按钮调用 —— 让用户在「还没发请求」时也能主动拉到上游真实余量并同步给服务端。等价激活
-// (StartAutoLease)那一下的额度刷新,但不重启租号 ticker。三条都是同步的(antigravity 的
-// fetchAccountQuotaAsync 在此路径下同步执行),返回时血条已写入,前端可直接 GetStats 读到新值。
+// RefreshQuotaNow 是前端「刷新」按钮的额度部分。Codex/Antigravity强制查询真实上游；
+// Claude没有独立额度接口，只重新取得GFA保存的最近快照。返回后前端可用GetStats刷新显示。
 //
 // antigravity 已 bound 的卡走 refreshBoundQuota(force 重租 + 直连上游 per-model + 上报,
 // 内部已含 codex/anthropic 预热);未 bound 的卡(只开 codex/anthropic、或冷启动尚未租到、
@@ -43,17 +41,30 @@ func (l *Leaser) RefreshQuotaNow(card, deviceId, upstreamProxy string) {
 	bound := l.cachedToken != nil && l.cachedToken.Bound
 	l.mu.RUnlock()
 	if bound {
-		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true, true)
 		return
 	}
-	l.preheatBoundProducts(card, deviceId, upstreamProxy, true)
+	l.preheatBoundProducts(card, deviceId, upstreamProxy, true, true)
 }
 
-// preheatBoundProducts 预热 codex / anthropic(claude 模型)绑定号的额度。这两条走各自
-// 独立的 leaser,不依赖 antigravity 主 token,因此 codex-only / anthropic-only 卡也能在
-// 激活时把血条刷出真实余量(否则 StartAutoLease 因「未开通 antigravity」提前 return,
-// 这两个预热永远不执行 → 血条「未知」)。
-func (l *Leaser) preheatBoundProducts(card, deviceId, upstreamProxy string, force bool) {
+// RefreshQuotaInBackground refreshes only providers with a real standalone
+// upstream quota endpoint. Claude quota is observed from real Anthropic response
+// headers; leasing an idle Claude token here would only return the server's old
+// snapshot and create an unnecessary lease.
+func (l *Leaser) RefreshQuotaInBackground(card, deviceId, upstreamProxy string) {
+	l.mu.RLock()
+	bound := l.cachedToken != nil && l.cachedToken.Bound
+	l.mu.RUnlock()
+	if bound {
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true, false)
+		return
+	}
+	l.preheatBoundProducts(card, deviceId, upstreamProxy, true, false)
+}
+
+// preheatBoundProducts 预热独立的 Codex/Claude 租号路径。Codex随后真实查询上游额度；
+// Claude仅在激活或手动刷新时同步GFA已有快照，后台定时任务不会为此空租Token。
+func (l *Leaser) preheatBoundProducts(card, deviceId, upstreamProxy string, force, includeClaudeSnapshot bool) {
 	// 该卡若开通 codex,刷新 codex 5h/周窗口 + bucket(独立 leaser / 独立端点)。
 	if cardCoversProduct(l.CardProducts(), "codex") {
 		if lease, err := GetCodexLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy); err == nil {
@@ -62,7 +73,7 @@ func (l *Leaser) preheatBoundProducts(card, deviceId, upstreamProxy string, forc
 	}
 	// 该卡若开通 anthropic,预热一次 claude 模型租号,让 5h 血条在首个 /v1/messages 之前
 	// 就有数据(服务端把 claudeWindows + accountBuckets 随 lease 带回)。计量在代理请求时进行。
-	if cardCoversProduct(l.CardProducts(), "anthropic") {
+	if includeClaudeSnapshot && cardCoversProduct(l.CardProducts(), "anthropic") {
 		_, _ = GetClaudeLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy)
 	}
 }

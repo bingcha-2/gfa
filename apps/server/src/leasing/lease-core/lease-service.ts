@@ -149,6 +149,8 @@ export type LeaseServiceOptions = {
   affinityTtlMs?: number;
   /** Cap for credential-free lease→account attribution records. */
   maxRetainedLeaseRecords?: number;
+  /** Stable HMAC key for stateless lease attribution recovery after restart. */
+  leaseProofSecret?: string;
   tokenUsageTracker?: TokenUsageTracker;
   /** 封号事件记录器(仅 codex/anthropic 注入;antigravity 不传 → no-op)。 */
   banEventRecorder?: BanEventRecorder;
@@ -183,6 +185,22 @@ type LeaseRecord = {
   requestBodyBytes: number;
   successfulReportSeen: boolean;
   reportedAt?: number;
+};
+
+type LeaseProofPayload = {
+  v: 1;
+  provider: string;
+  leaseId: string;
+  accountId: number;
+  accessKeyId: string;
+  accessKeySessionId: string;
+  clientId: string;
+  modelKey: string;
+  createdAt: number;
+  expiresAt: string;
+  proofExpiresAt: number;
+  isGeneration: boolean;
+  requestBodyBytes: number;
 };
 
 type HttpErrorBody = {
@@ -289,6 +307,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
   private readonly maxRetainedLeaseRecords: number;
+  private readonly leaseProofSecret: string;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly banEventRecorder: BanEventRecorder | null;
   private readonly requestLogRecorder: RequestLogRecorder | null;
@@ -343,6 +362,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.maxRetainedLeaseRecords = Math.max(
       1,
       Math.trunc(Number(options.maxRetainedLeaseRecords || MAX_RETAINED_LEASE_RECORDS)),
+    );
+    this.leaseProofSecret = String(
+      options.leaseProofSecret
+      || process.env.LEASE_PROOF_SECRET
+      || process.env.CUSTOMER_JWT_SECRET
+      || process.env.JWT_SECRET
+      || "",
     );
     this.tokenUsageTracker = options.tokenUsageTracker || null;
     this.banEventRecorder = options.banEventRecorder || null;
@@ -795,6 +821,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return {
       ok: true,
       leaseId: lease.leaseId,
+      leaseProof: this.createLeaseProof(lease),
       activeSubscriptionId: auth.record.id,
       accessKeySessionId,
       sessionId: accessKeySessionId,
@@ -1167,7 +1194,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // raw JWT would therefore allow those devices to race the same quota state.
     const auth = await this.accessKeyStore.resolveFromRequest(req, payload, { product: this.provider.id });
     const reportLeaseId = String(payload?.leaseId || "").trim();
-    const reportLease = reportLeaseId ? this.leases.get(reportLeaseId) : undefined;
+    const reportLease = reportLeaseId
+      ? this.leases.get(reportLeaseId) || this.restoreLeaseFromProof(reportLeaseId, payload?.leaseProof)
+      : undefined;
     // A trusted upstream reset snapshot mutates every USD subscription bound to
     // the served mother account. Subscription-level locks are therefore too
     // narrow: two customers on the same account could overwrite each other's
@@ -1182,11 +1211,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       : "";
     return this.accessKeyStore.withUsageReportLock(
       usdAccountLock || auth.record?.id || credential,
-      () => this.reportResultUnlocked(req, payload, auth),
+      () => this.reportResultUnlocked(req, payload, auth, reportLease || null),
     );
   }
 
-  private async reportResultUnlocked(req: any, payload: any, preResolvedAuth?: ResolveResult) {
+  private async reportResultUnlocked(
+    req: any,
+    payload: any,
+    preResolvedAuth?: ResolveResult,
+    preResolvedLease?: LeaseRecord | null,
+  ) {
     // 多订阅修复:report 也按本线固定 product 解析订阅(与 leaseToken 同口径)。否则 product-less
     // 解析会在「同一账户持多产品订阅」时选成全局最长寿订阅 → 与 lease 记录的订阅 mismatch、
     // 用量记到错订阅甚至 403 上报失败(部分产品白嫖 + 统计错乱)。
@@ -1203,7 +1237,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const cardId = auth.record.id;
 
     const leaseId = String(payload?.leaseId || "").trim();
-    let lease = leaseId ? this.leases.get(leaseId) : undefined;
+    let lease = preResolvedLease === undefined
+      ? (leaseId ? this.leases.get(leaseId) || this.restoreLeaseFromProof(leaseId, payload?.leaseProof) : undefined)
+      : preResolvedLease || undefined;
     if (lease && auth.record.id !== lease.accessKeyId) {
       throw this.fail(403, "Lease/access key mismatch");
     }
@@ -2161,6 +2197,83 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       requestBodyBytes: Math.max(0, Number(payload?.bodyBytes || payload?.requestBodyBytes || 0)),
       successfulReportSeen: false,
     };
+  }
+
+  private createLeaseProof(lease: LeaseRecord): string {
+    if (!this.leaseProofSecret) return "";
+    const proof: LeaseProofPayload = {
+      v: 1,
+      provider: this.provider.id,
+      leaseId: lease.leaseId,
+      accountId: lease.accountId,
+      accessKeyId: lease.accessKeyId,
+      accessKeySessionId: lease.accessKeySessionId,
+      clientId: lease.clientId,
+      modelKey: lease.modelKey,
+      createdAt: lease.createdAt,
+      expiresAt: lease.expiresAt,
+      // Covers a 40min bound lease, long streams, and the client's 30min disk
+      // retry horizon without adding one SQLite write per lease.
+      proofExpiresAt: lease.createdAt + 24 * 60 * 60 * 1000,
+      isGeneration: lease.isGeneration,
+      requestBodyBytes: lease.requestBodyBytes,
+    };
+    const encoded = Buffer.from(JSON.stringify(proof)).toString("base64url");
+    const signature = crypto.createHmac("sha256", this.leaseProofSecret).update(encoded).digest("base64url");
+    return `v1.${encoded}.${signature}`;
+  }
+
+  private restoreLeaseFromProof(leaseId: string, rawProof: unknown): LeaseRecord | undefined {
+    if (!this.leaseProofSecret || typeof rawProof !== "string") return undefined;
+    const [version, encoded, signature, extra] = rawProof.split(".");
+    if (version !== "v1" || !encoded || !signature || extra !== undefined) return undefined;
+    const expected = crypto.createHmac("sha256", this.leaseProofSecret).update(encoded).digest();
+    let actual: Buffer;
+    try {
+      actual = Buffer.from(signature, "base64url");
+    } catch {
+      return undefined;
+    }
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return undefined;
+
+    let proof: LeaseProofPayload;
+    try {
+      proof = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as LeaseProofPayload;
+    } catch {
+      return undefined;
+    }
+    if (
+      proof?.v !== 1
+      || proof.provider !== this.provider.id
+      || proof.leaseId !== leaseId
+      || !Number.isInteger(proof.accountId)
+      || proof.accountId <= 0
+      || !proof.accessKeyId
+      || !Number.isFinite(proof.createdAt)
+      || !Number.isFinite(proof.proofExpiresAt)
+      || proof.proofExpiresAt <= this.now()
+    ) return undefined;
+    const account = this.readAccounts().find((candidate) => candidate.id === proof.accountId);
+    if (!account) return undefined;
+
+    const lease: LeaseRecord = {
+      leaseId: proof.leaseId,
+      accountId: proof.accountId,
+      email: account.email,
+      projectId: String((account as any).projectId || ""),
+      clientId: String(proof.clientId || ""),
+      modelKey: String(proof.modelKey || ""),
+      accessKeyId: proof.accessKeyId,
+      accessKeySessionId: String(proof.accessKeySessionId || ""),
+      createdAt: proof.createdAt,
+      expiresAt: String(proof.expiresAt || ""),
+      released: false,
+      isGeneration: proof.isGeneration !== false,
+      requestBodyBytes: Math.max(0, Number(proof.requestBodyBytes || 0)),
+      successfulReportSeen: false,
+    };
+    this.leases.set(lease.leaseId, lease);
+    return lease;
   }
 
   private usageForBilling(payload: any) {

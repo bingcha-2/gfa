@@ -577,7 +577,7 @@ describe("AppAuthService.heartbeat", () => {
     expect(prisma.device.update).not.toHaveBeenCalled();
   });
 
-  it("caches usage summaries across repeated heartbeats", async () => {
+  it("keeps background heartbeats free of historical usage queries", async () => {
     const usageSummary = { source: "CardUsageHourly", cumulativeSaving: 42 };
     const getClientUsageSummary = vi.fn().mockResolvedValue(usageSummary);
     const device = makeDevice({
@@ -601,9 +601,9 @@ describe("AppAuthService.heartbeat", () => {
     const first = await appAuthService.heartbeat(dto);
     const second = await appAuthService.heartbeat(dto);
 
-    expect(getClientUsageSummary).toHaveBeenCalledOnce();
-    expect(first.usageSummary).toEqual(usageSummary);
-    expect(second.usageSummary).toEqual(usageSummary);
+    expect(getClientUsageSummary).not.toHaveBeenCalled();
+    expect(first.usageSummary).toBeUndefined();
+    expect(second.usageSummary).toBeUndefined();
   });
 
   it("bypasses the usage cache for an explicit manual refresh", async () => {
@@ -621,12 +621,12 @@ describe("AppAuthService.heartbeat", () => {
       customerId: "cust-1", jti: "live-jti", tokenDeviceId: "device-abc", deviceId: "device-abc",
     };
 
-    const cached = await appAuthService.heartbeat(dto);
+    const background = await appAuthService.heartbeat(dto);
     const refreshed = await appAuthService.heartbeat({ ...dto, refreshUsage: true });
 
-    expect(getClientUsageSummary).toHaveBeenCalledTimes(2);
-    expect(cached.usageSummary.cumulativeSaving).toBe(1);
-    expect(refreshed.usageSummary.cumulativeSaving).toBe(2);
+    expect(getClientUsageSummary).toHaveBeenCalledOnce();
+    expect(background.usageSummary).toBeUndefined();
+    expect(refreshed.usageSummary.cumulativeSaving).toBe(1);
   });
 
   it("stale jti (logged in elsewhere) → DEVICE_REVOKED (403)", async () => {

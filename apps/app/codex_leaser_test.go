@@ -118,6 +118,45 @@ func TestApplyCodexReportResponseIgnoresLegacyFairShare(t *testing.T) {
 	}
 }
 
+func TestCodexReportResultSyncsUserUsdQuotaImmediately(t *testing.T) {
+	prev := globalLeaser
+	globalLeaser = &Leaser{}
+	t.Cleanup(func() { globalLeaser = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+			"accessKeyStatus": map[string]interface{}{
+				"id":       "sub-codex",
+				"products": []interface{}{"codex"},
+				"usdQuotaByProduct": map[string]interface{}{
+					"codex": map[string]interface{}{
+						"fiveHour": map[string]interface{}{
+							"used": 3.25, "limit": 10.0, "resetAt": "2030-01-01T05:00:00Z",
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	withCodexAPIBase(t, srv.URL)
+
+	l := &CodexLeaser{}
+	l.doCodexReportWithRetry(map[string]interface{}{
+		"leaseId": "lease-1", "reportId": "report-1", "status": 200, "totalTokens": 1,
+	}, "card-1", "")
+
+	aks, ok := GetLeaser().GetStatus()["accessKeyStatus"].(map[string]interface{})
+	if !ok || aks["id"] != "sub-codex" {
+		t.Fatalf("user quota status not applied: %#v", aks)
+	}
+	quota := aks["usdQuotaByProduct"].(map[string]interface{})["codex"].(map[string]interface{})
+	if got := quota["fiveHour"].(map[string]interface{})["used"]; got != float64(3.25) {
+		t.Fatalf("fiveHour.used = %v, want 3.25", got)
+	}
+}
+
 func TestCodexLeaseSyncsAccessKeyStatusToMainLeaser(t *testing.T) {
 	prev := globalLeaser
 	globalLeaser = &Leaser{}

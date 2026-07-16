@@ -263,6 +263,60 @@ describe("LeaseService (generic core)", () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
+  it("restores lease attribution from a signed proof after a service restart", async () => {
+    const now = Date.parse("2030-01-01T00:00:00Z");
+    const proofSecret = "test-lease-proof-secret-that-is-stable-across-restart";
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active",
+        durationMs: 60 * 60 * 1000, bindings: { fake: 1 },
+      }],
+    });
+    const tracker = () => ({
+      checkFairShare: vi.fn(() => ({ allowed: true })),
+      isWindowCuEnabled: vi.fn(() => true),
+      recordUsageEvent: vi.fn(),
+      checkpointReport: vi.fn(async () => {}),
+      hasPersistedReport: vi.fn(async () => false),
+      getCardQuotaFractions: vi.fn(() => ({})),
+      getCardWeeklyQuotaFractions: vi.fn(() => ({})),
+      isWeeklyTracked: vi.fn(() => true),
+    });
+    const firstTracker = tracker();
+    const first = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, randomId: () => "restart-proof-lease",
+      minClientVersion: "", fairShareTracker: firstTracker as any, leaseProofSecret: proofSecret,
+    }));
+    const lease = await first.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.leaseProof).toMatch(/^v1\./);
+
+    const secondTracker = tracker();
+    const restarted = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+      accessKeysFilePath, now: () => now, randomId: () => "unused-after-restart",
+      minClientVersion: "", fairShareTracker: secondTracker as any, leaseProofSecret: proofSecret,
+    }));
+    const result = await restarted.reportResult(REQ, {
+      leaseId: lease.leaseId,
+      leaseProof: lease.leaseProof,
+      reportId: "restart-proof-report",
+      status: 200,
+      modelKey: "gpt-5-codex",
+      inputTokens: 100,
+      totalTokens: 100,
+      rawTotalTokens: 100,
+      requestStartedAt: now - 1_000,
+      upstreamCompletedAt: now,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const restoredCall = secondTracker.recordUsageEvent.mock.calls.find(
+      (call) => call[2]?.reportId === "restart-proof-report",
+    );
+    expect(restoredCall?.[0]).toBe(1);
+    expect(restoredCall?.[2]).toMatchObject({ accountId: 1 });
+  });
+
   // 未完成上报的长流必须保留归因映射,不能拿 token lease 的到期时间猜请求
   // 已经结束。完成上报后映射立即删除,所以不会靠多小时 TTL 堆内存。
   it("keeps an unreported expired lease attributable and deletes it after completion", async () => {

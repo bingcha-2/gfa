@@ -30,6 +30,7 @@ type TokenLease struct {
 	ProjectId      string                 `json:"projectId"`
 	AccountId      int                    `json:"accountId"`
 	LeaseId        string                 `json:"leaseId"`
+	LeaseProof     string                 `json:"leaseProof"`
 	EmailHint      string                 `json:"emailHint"`
 	PlanType       string                 `json:"planType"`  // 账号会员等级(ultra/premium/...),供前端展示
 	ExpiresAt      int64                  `json:"expiresAt"` // millisecond unix timestamp
@@ -310,6 +311,7 @@ type LeaseTokenResp struct {
 	ProjectId            string          `json:"projectId"`
 	AccountId            json.RawMessage `json:"accountId"` // API may return number or string
 	LeaseId              string          `json:"leaseId"`
+	LeaseProof           string          `json:"leaseProof"`
 	EmailHint            string          `json:"emailHint"`
 	PlanType             string          `json:"planType"`
 	AccessTokenExpiresAt string          `json:"accessTokenExpiresAt"`
@@ -509,6 +511,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		ProjectId:   leaseResp.ProjectId,
 		AccountId:   accountId,
 		LeaseId:     leaseResp.LeaseId,
+		LeaseProof:  leaseResp.LeaseProof,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
@@ -612,7 +615,7 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 常驻自动租号;codex/anthropic 激活时预热一次各自的额度", l.CardProducts())
 		// 即便没有 antigravity 常驻租号,也要在激活时预热 codex/anthropic 的额度,
 		// 否则它们的血条永远「未知」(预热原本只在 antigravity 路径里执行)。
-		go l.preheatBoundProducts(card, deviceId, upstreamProxy, true)
+		go l.preheatBoundProducts(card, deviceId, upstreamProxy, true, true)
 		return
 	}
 
@@ -644,9 +647,8 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 			l.markCardUnusable(err)
 			return
 		}
-		// 激活后立即刷新一次绑定号额度(血条上来就显示真实值,而非空白/100%)。
-		// force=true:激活是用户主动操作,绕过 5min 节流,立刻拉 gemini/claude/codex。
-		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
+		// 激活后立即刷新一次额度。Codex/Antigravity真实查询上游；Claude同步GFA最近快照。
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true, true)
 
 		// 额度刷新改为「按需」:不再定时轮询(消除闲置时的 5min 心跳 + codex usage 401 刷屏)。
 		// 额度改为搭真实用量上报的车 —— antigravity 走 leaser_report.go(ConsumeQuotaSnapshot

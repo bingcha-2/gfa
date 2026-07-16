@@ -355,9 +355,12 @@ export class AppAuthService {
       });
     }
 
+    // A background heartbeat is a cheap session/subscription check. Historical
+    // usage performs three SQLite reads and is loaded only for an explicit
+    // dashboard refresh; login still loads it once for the initial screen.
     const [subs, usageSummary] = await Promise.all([
       this.listActiveSubscriptionsSorted(dto.customerId),
-      this.usageSummary(dto.customerId, dto.refreshUsage === true),
+      dto.refreshUsage === true ? this.usageSummary(dto.customerId, true) : Promise.resolve(undefined),
     ]);
     const subscriptions = subs.map((s) => buildSubscriptionSummary(
       s,
@@ -372,7 +375,7 @@ export class AppAuthService {
       subscription: subscriptions[0] ?? null,
       subscriptions,
       device: { status: "ACTIVE" },
-      usageSummary,
+      ...(usageSummary ? { usageSummary } : {}),
     };
   }
 

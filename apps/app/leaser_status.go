@@ -133,7 +133,7 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.accessKeyStatus = aks
+	l.accessKeyStatus = mergeAccessKeyStatus(l.accessKeyStatus, aks)
 	l.accessKeyStatusAt = time.Now()
 
 	// 读取额度模式
@@ -209,6 +209,60 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	}
 }
 
+// mergeAccessKeyStatus prevents out-of-order concurrent report responses from
+// moving a subscription's displayed USD usage backwards. A later quota window
+// has a later resetAt; within the same window usage is monotonic.
+func mergeAccessKeyStatus(previous, incoming map[string]interface{}) map[string]interface{} {
+	if previous == nil || incoming == nil || previous["id"] != incoming["id"] {
+		return incoming
+	}
+	prevProducts, _ := previous["usdQuotaByProduct"].(map[string]interface{})
+	nextProducts, _ := incoming["usdQuotaByProduct"].(map[string]interface{})
+	if len(prevProducts) == 0 || len(nextProducts) == 0 {
+		return incoming
+	}
+	for product, rawNext := range nextProducts {
+		nextQuota, _ := rawNext.(map[string]interface{})
+		prevQuota, _ := prevProducts[product].(map[string]interface{})
+		if nextQuota == nil || prevQuota == nil {
+			continue
+		}
+		for _, scope := range []string{"fiveHour", "weekly"} {
+			nextWindow, _ := nextQuota[scope].(map[string]interface{})
+			prevWindow, _ := prevQuota[scope].(map[string]interface{})
+			if nextWindow == nil || prevWindow == nil {
+				continue
+			}
+			nextReset, _ := nextWindow["resetAt"].(string)
+			prevReset, _ := prevWindow["resetAt"].(string)
+			nextResetAt, nextResetErr := time.Parse(time.RFC3339, nextReset)
+			prevResetAt, prevResetErr := time.Parse(time.RFC3339, prevReset)
+			if nextResetErr != nil && prevResetErr == nil {
+				nextQuota[scope] = prevWindow
+				continue
+			}
+			if nextResetErr == nil && prevResetErr == nil && nextResetAt.Before(prevResetAt) {
+				nextQuota[scope] = prevWindow
+				continue
+			}
+			sameWindow := nextReset == prevReset
+			if nextResetErr == nil && prevResetErr == nil {
+				sameWindow = nextResetAt.Equal(prevResetAt)
+			} else if nextResetErr != nil && prevResetErr != nil {
+				sameWindow = true
+			}
+			if sameWindow {
+				if prevUsed, ok := prevWindow["used"].(float64); ok {
+					if nextUsed, ok := nextWindow["used"].(float64); !ok || nextUsed < prevUsed {
+						nextWindow["used"] = prevUsed
+					}
+				}
+			}
+		}
+	}
+	return incoming
+}
+
 // recordFairShareQuota only keeps Antigravity's local enforcement cache.
 // Codex/Anthropic dollar quotas are enforced by the server and ignored here.
 func recordFairShareQuota(body []byte) {
@@ -240,6 +294,12 @@ func recordFairShareQuota(body []byte) {
 
 func syncQuotaStateFromBody(l *Leaser, body []byte) {
 	recordFairShareQuota(body)
+	syncAccessKeyStatusFromBody(l, body)
+}
+
+// Codex/Anthropic use subscription USD quotas and must not import legacy
+// fair-share fields into the Antigravity local enforcement cache.
+func syncAccessKeyStatusFromBody(l *Leaser, body []byte) {
 	var raw map[string]interface{}
 	if json.Unmarshal(body, &raw) != nil {
 		return

@@ -15,6 +15,7 @@ type CodexTokenLease struct {
 	AccessToken string `json:"accessToken"`
 	AccountId   int    `json:"accountId"`
 	LeaseId     string `json:"leaseId"`
+	LeaseProof  string `json:"leaseProof"`
 	EmailHint   string `json:"emailHint"`
 	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
 	// FastAllowed 是服务端下发的「快速档授权闸」:该租约是否被允许吃快速(priority)服务档。
@@ -37,6 +38,7 @@ type codexLeaseTokenResp struct {
 	AccessToken string          `json:"accessToken"`
 	AccountId   json.RawMessage `json:"accountId"`
 	LeaseId     string          `json:"leaseId"`
+	LeaseProof  string          `json:"leaseProof"`
 	EmailHint   string          `json:"emailHint"`
 	PlanType    string          `json:"planType"`
 	FastAllowed bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
@@ -166,6 +168,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		AccessToken: leaseResp.AccessToken,
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		LeaseId:     leaseResp.LeaseId,
+		LeaseProof:  leaseResp.LeaseProof,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,
 		FastAllowed: leaseResp.FastAllowed,
@@ -174,7 +177,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
 	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
-	syncQuotaStateFromBody(GetLeaser(), body)
+	syncAccessKeyStatusFromBody(GetLeaser(), body)
 	l.mu.Lock()
 	l.lastLease = lease
 	l.mu.Unlock()
@@ -209,7 +212,7 @@ func (l *CodexLeaser) applyCodexWindows(w *CodexQuotaWindow) {
 }
 
 // RefreshQuotaUpstream 主动拉一次 codex 上游 5h/周额度 → 更新血条 + 上报服务端。
-// 供绑定模式激活/定时刷新调用;fetchCodexQuotaAsync 自带 5min 节流,被跳过则不报。
+// 供绑定模式激活/定时刷新调用;fetchCodexQuotaAsync 自带 30s 节流,被跳过则不报。
 func (l *CodexLeaser) RefreshQuotaUpstream(card, upstreamProxy string, lease *CodexTokenLease, force bool) {
 	if lease == nil {
 		return
@@ -240,6 +243,7 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 	}
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
+		"leaseProof":        lease.LeaseProof,
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -288,8 +292,10 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 // doCodexReportWithRetry 带退避重试上报;最终失败入队列,下次成功时补发(对齐 Gemini)。
 func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, card, upstreamProxy string) {
 	var err error
+	var body []byte
 	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
-		if _, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
+		if b, _, e := postCodexBcai("/report-result", payload, card, upstreamProxy); e == nil {
+			body = b
 			err = nil
 			break
 		} else {
@@ -304,6 +310,10 @@ func (l *CodexLeaser) doCodexReportWithRetry(payload map[string]interface{}, car
 		l.queueCodexReport(payload, card, upstreamProxy)
 		return
 	}
+	// report-result is the authoritative, post-transaction user quota. Keep it in
+	// the runtime status so the 2s Wails stats poll can repaint the subscription
+	// bars immediately instead of waiting for the next 20min heartbeat.
+	syncAccessKeyStatusFromBody(GetLeaser(), body)
 	// Codex 订阅按产品美元窗口限流；旧 fair-share 响应不进入本地状态。
 	// 成功不再单独打日志:代理层(codex_proxy.go)已打过含 in/out/total 的成功行,
 	// 这里再打一条「上报成功」属重复噪音。失败仍由上面的 ✗ 行记录。
@@ -336,11 +346,14 @@ func (l *CodexLeaser) flushCodexPending(card, upstreamProxy string) {
 		if time.Since(r.AddedAt) > pendingReportMaxAge {
 			continue // 过期丢弃
 		}
-		if _, _, err := postCodexBcai("/report-result", r.Payload, card, r.UpstreamProxy); err != nil {
+		body, _, err := postCodexBcai("/report-result", r.Payload, card, r.UpstreamProxy)
+		if err != nil {
 			// Preserve the original causal deadline. Calling queueCodexReport here
 			// would stamp time.Now() and let an unauthenticatable old report live forever.
 			r.Card = card
 			requeue = append(requeue, r)
+		} else {
+			syncAccessKeyStatusFromBody(GetLeaser(), body)
 		}
 	}
 	if len(requeue) > 0 {

@@ -341,6 +341,7 @@ func (l *Leaser) reportQuotaOnly(card, upstreamProxy string, snap *AccountQuotaS
 	}
 	payload := map[string]interface{}{
 		"leaseId":      lease.LeaseId,
+		"leaseProof":   lease.LeaseProof,
 		"reportId":     newReportID(lease.LeaseId) + "-quota",
 		"accountId":    lease.AccountId,
 		"status":       0,

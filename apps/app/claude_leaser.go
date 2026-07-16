@@ -25,6 +25,7 @@ type ClaudeTokenLease struct {
 	AccountId   int    `json:"accountId"`
 	AccountUuid string `json:"accountUuid"` // 母号真实 Anthropic account uuid → 改写 metadata.user_id.account_uuid
 	LeaseId     string `json:"leaseId"`
+	LeaseProof  string `json:"leaseProof"`
 	EmailHint   string `json:"emailHint"`
 	PlanType    string `json:"planType"` // 账号会员等级(max/pro/...),供前端展示
 	ExpiresAt   int64  `json:"expiresAt"`
@@ -45,6 +46,7 @@ type claudeLeaseTokenResp struct {
 	AccountId   json.RawMessage `json:"accountId"`
 	AccountUuid string          `json:"accountUuid"`
 	LeaseId     string          `json:"leaseId"`
+	LeaseProof  string          `json:"leaseProof"`
 	EmailHint   string          `json:"emailHint"`
 	PlanType    string          `json:"planType"`
 	ExpiresAt   string          `json:"expiresAt"`
@@ -180,6 +182,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		AccountUuid: leaseResp.AccountUuid,
 		LeaseId:     leaseResp.LeaseId,
+		LeaseProof:  leaseResp.LeaseProof,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
@@ -187,7 +190,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
 	// 保存绑定号的真实上游剩余，供后续报告同步服务端。
-	syncQuotaStateFromBody(GetLeaser(), body)
+	syncAccessKeyStatusFromBody(GetLeaser(), body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)
 	l.mu.Lock()
 	l.lastLease = lease
@@ -236,6 +239,7 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 	}
 	payload := map[string]interface{}{
 		"leaseId":            lease.LeaseId,
+		"leaseProof":         lease.LeaseProof,
 		"accountId":          lease.AccountId,
 		"status":             details.StatusCode,
 		"modelKey":           details.ModelKey,
@@ -308,6 +312,10 @@ func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, c
 		l.queueClaudeReport(payload, card, upstreamProxy)
 		return
 	}
+	// Apply the post-transaction subscription quota immediately. claudeWindows
+	// below is the separate mother-account snapshot; both can coexist in one
+	// response but drive different UI bars.
+	syncAccessKeyStatusFromBody(GetLeaser(), body)
 	// Anthropic 订阅按产品美元窗口限流；旧 fair-share 响应不进入本地状态。
 	// claudeWindows 仍用于下一次上报时携带最新上游窗口，不进入用户额度展示。
 	l.applyClaudeWindowsFromBody(body)
@@ -342,11 +350,15 @@ func (l *ClaudeLeaser) flushClaudePending(card, upstreamProxy string) {
 		if time.Since(r.AddedAt) > pendingReportMaxAge {
 			continue // 过期丢弃
 		}
-		if _, _, err := postClaudeBcai("/report-result", r.Payload, card, r.UpstreamProxy); err != nil {
+		body, _, err := postClaudeBcai("/report-result", r.Payload, card, r.UpstreamProxy)
+		if err != nil {
 			// Preserve the first enqueue time; the server's lease/account causal
 			// mapping is bounded, so a retry failure must not renew this deadline.
 			r.Card = card
 			requeue = append(requeue, r)
+		} else {
+			syncAccessKeyStatusFromBody(GetLeaser(), body)
+			l.applyClaudeWindowsFromBody(body)
 		}
 	}
 	if len(requeue) > 0 {

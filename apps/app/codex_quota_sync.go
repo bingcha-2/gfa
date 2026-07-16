@@ -86,6 +86,7 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 	}
 	payload := map[string]interface{}{
 		"leaseId":      lease.LeaseId,
+		"leaseProof":   lease.LeaseProof,
 		"reportId":     newReportID(lease.LeaseId) + "-quota",
 		"accountId":    lease.AccountId,
 		"status":       0, // 非生成上报,仅用于刷新额度
@@ -101,8 +102,10 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 }
 
 func applyCodexReportResponse(body []byte) {
-	// The response may still contain legacy fair-share fields during rollout.
-	// Codex uses product-scoped dollar quotas, so the desktop ignores them.
+	// Apply only accessKeyStatus (the user's product-scoped dollar quota).
+	// The access-status-only parser deliberately ignores legacy fair-share, so
+	// mother-account and user quota remain separate.
+	syncAccessKeyStatusFromBody(GetLeaser(), body)
 }
 
 // 上游额度拉取的最小间隔(地板)。拉取由上报触发(reportResult → fetchCodexQuotaAsync),

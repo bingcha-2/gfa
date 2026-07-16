@@ -151,8 +151,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0, savedMoneyUSD: 0, byModel: {} }
       const lq = data.leaser?.localQuota
       const localToday = data.localUsage?.today
+      const quotaStatus = data.leaser?.accessKeyStatus
+      const currentAccount = get().account
+      const account = currentAccount && quotaStatus?.id && quotaStatus.usdQuotaByProduct
+        ? {
+            ...currentAccount,
+            subscriptions: currentAccount.subscriptions.map((subscription) =>
+              subscription.id === quotaStatus.id
+                ? { ...subscription, usdQuotaByProduct: quotaStatus.usdQuotaByProduct }
+                : subscription,
+            ),
+          }
+        : currentAccount
 
       set({
+        account,
         proxyRunning: data.proxyRunning,
         proxyPort: data.proxyPort,
         leaserState: data.leaser?.serviceState || 'unconfigured',
