@@ -150,6 +150,8 @@ describe("RosettaController Anthropic quota refresh", () => {
         weeklyPercent: 98,
         previousHourlyResetTime: "2026-07-16T07:00:00.000Z",
         previousWeeklyResetTime: "2026-07-16T07:00:00.000Z",
+        previousHourlyPercent: 24,
+        previousWeeklyPercent: 17,
         quotaObservedAt: 1_784_185_983_688,
       })),
     };
@@ -176,6 +178,8 @@ describe("RosettaController Anthropic quota refresh", () => {
     expect(remoteAnthropic.syncPersistedAccountQuotaSnapshot).toHaveBeenCalledWith(21, {
       previousHourlyResetAt: "2026-07-16T07:00:00.000Z",
       previousWeeklyResetAt: "2026-07-16T07:00:00.000Z",
+      previousHourlyPercent: 24,
+      previousWeeklyPercent: 17,
       observedAt: 1_784_185_983_688,
       snapshotId: "console-refresh:anthropic:21:1784185983688",
     });

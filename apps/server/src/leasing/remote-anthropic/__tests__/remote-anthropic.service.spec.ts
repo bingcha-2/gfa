@@ -257,6 +257,69 @@ describe("RemoteAnthropicService", () => {
     expect(quotaStatus.weekly.used).toBeLessThan(120);
   });
 
+  it("USD订阅真实链路:Claude 补额后首次只看到 90/99% 且 resetAt 不变时清掉旧窗口", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    const unchangedHourlyReset = currentTime + 4 * 60 * 60 * 1000;
+    const unchangedWeeklyReset = currentTime + 4 * 24 * 60 * 60 * 1000;
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 21,
+        email: "claude-alpha@example.com",
+        refreshToken: "refresh-alpha",
+        enabled: true,
+        planType: "max",
+        claudeHourlyPercent: 76,
+        claudeWeeklyPercent: 24,
+        claudeHourlyResetTime: new Date(unchangedHourlyReset).toISOString(),
+        claudeWeeklyResetTime: new Date(unchangedWeeklyReset).toISOString(),
+      }],
+    });
+    const service = makeService();
+    (service as any).accessKeyStore.loadSubscriptionRecords([{
+      id: "claude-usd-refill", key: "claude-usd-refill-secret", customerId: "cust-refill", status: "active",
+      products: ["anthropic"], bindings: { anthropic: 21 }, requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { anthropic: { fiveHour: 200, weekly: 2_000 } },
+      usdUsageByProduct: {
+        anthropic: {
+          used5h: 71.56,
+          usedWeekly: 1_099.69,
+          windowStartedAt5h: currentTime - 60_000,
+          windowStartedAtWeekly: currentTime - 60_000,
+        },
+      },
+    }]);
+    const lease = await service.leaseToken(
+      sessionReqFor("claude-usd-refill"),
+      { clientId: "claude-refill", modelKey: MODEL },
+    );
+
+    const result = await service.reportResult(sessionReqFor("claude-usd-refill"), {
+      leaseId: lease.leaseId,
+      reportId: "claude-unified-full-refill",
+      status: 200,
+      modelKey: MODEL,
+      inputTokens: 100_000,
+      outputTokens: 0,
+      totalTokens: 100_000,
+      accountQuota: {
+        observedAt: currentTime + 1,
+        claudeQuota: {
+          hourlyPercent: 90,
+          weeklyPercent: 99,
+          hourlyResetTime: new Date(unchangedHourlyReset).toISOString(),
+          weeklyResetTime: new Date(unchangedWeeklyReset).toISOString(),
+        },
+      },
+    });
+
+    const quotaStatus = (result as any).accessKeyStatus.usdQuotaByProduct.anthropic;
+    expect(quotaStatus.fiveHour.used).toBeGreaterThan(0);
+    expect(quotaStatus.fiveHour.used).toBeLessThan(71.56);
+    expect(quotaStatus.weekly.used).toBeGreaterThan(0);
+    expect(quotaStatus.weekly.used).toBeLessThan(1_099.69);
+  });
+
   it("returns claudeWindows + accountBuckets on report so the client refreshes account-total without a fresh lease", async () => {
     tokenProvider.mockResolvedValue("claude-access-token-alpha");
     writeJson(accessKeysFilePath, {

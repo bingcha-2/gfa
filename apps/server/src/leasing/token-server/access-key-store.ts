@@ -155,6 +155,8 @@ export type UsdUpstreamWindowState = {
   lowFraction?: number;
   observedAt?: number;
   lastSnapshotId?: string;
+  /** Last server-proven refill/reset event applied to this local window. */
+  appliedResetEventId?: string;
   reboundCandidateCount?: number;
   /** Natural expiry already opened a new local epoch; next fraction is baseline. */
   baselinePending?: boolean;
@@ -171,6 +173,10 @@ export type UpstreamUsdQuotaSnapshotMeta = {
    * one of these epochs proves a rollover even when the subscription has not
    * yet established its own upstream baseline. */
   previousResetAtByScope?: Partial<Record<'fiveHour' | 'weekly', number>>;
+  /** Remaining fractions captured from the persisted mother account before
+   * this snapshot overwrote it. A sufficiently large recovery of the consumed
+   * share is trusted reset evidence even when resetAt is unchanged. */
+  previousFractionByScope?: Partial<Record<'fiveHour' | 'weekly', number>>;
 };
 
 export interface AccessKeysData {
@@ -298,6 +304,7 @@ function applyUpstreamWindowSnapshot(
     fraction: number | null;
     resetAt?: number;
     trustedPreviousResetAt?: number;
+    trustedResetEventId?: string;
   },
   meta: { observedAt: number; snapshotId: string },
 ): boolean {
@@ -337,6 +344,7 @@ function applyUpstreamWindowSnapshot(
     state.lowFraction = undefined;
     state.baselinePending = undefined;
     state.baselineReason = undefined;
+    state.appliedResetEventId = undefined;
     clearCandidate();
     commitMeta();
     return true;
@@ -351,7 +359,25 @@ function applyUpstreamWindowSnapshot(
     startUsdScopeAt(record, product, scope, meta.observedAt);
     state.resetAt = incomingResetAt || undefined;
     state.appliedResetAt = undefined;
+    state.appliedResetEventId = undefined;
     baselineFraction();
+    commitMeta();
+    return true;
+  }
+
+  const trustedResetEventId = String(sample.trustedResetEventId || '');
+  if (trustedResetEventId && state.appliedResetEventId !== trustedResetEventId) {
+    // Anthropic can refill every account in-place while leaving the next
+    // scheduled resetAt unchanged. The caller only supplies this event after it
+    // observed a sufficiently large recovery from the persisted mother-account
+    // low water mark, so it is safe to bypass both the rollout baseline and the
+    // generic two-sample rebound guard. Persisting the id makes retries idempotent.
+    clearUsdScopeUsage(record, product, scope);
+    startUsdScopeAt(record, product, scope, meta.observedAt);
+    state.resetAt = incomingResetAt || previousResetAt || undefined;
+    state.appliedResetAt = undefined;
+    baselineFraction();
+    state.appliedResetEventId = trustedResetEventId;
     commitMeta();
     return true;
   }
@@ -1388,6 +1414,19 @@ export class AccessKeyStore {
     const weeklyFraction = normalizeRemainingFraction(input.weeklyPercent);
     const hourlyResetAt = resetAtMs(input.hourlyResetAt);
     const weeklyResetAt = resetAtMs(input.weeklyResetAt);
+    const trustedRefillEvent = (
+      scope: 'fiveHour' | 'weekly',
+      fraction: number | null,
+    ): string | undefined => {
+      const previous = Number(meta.previousFractionByScope?.[scope]);
+      if (!snapshotId || fraction === null || !Number.isFinite(previous) || previous < 0) return undefined;
+      if (fraction <= previous + FRACTION_EPSILON) return undefined;
+      const consumed = 1 - previous;
+      const recovered = fraction - previous;
+      const recoveryRatio = consumed > FRACTION_EPSILON ? recovered / consumed : 0;
+      if (recoveryRatio + FRACTION_EPSILON < UPSTREAM_REBOUND_RECOVERY_RATIO) return undefined;
+      return `refill:${quotaProduct}:${accountId}:${scope}:${snapshotId}`;
+    };
     const hasHourly = input.hourlyPresent !== undefined || hourlyFraction !== null || hourlyResetAt !== undefined;
     const hasWeekly = input.weeklyPresent !== undefined || weeklyFraction !== null || weeklyResetAt !== undefined;
     if (!hasHourly && !hasWeekly) return 0;
@@ -1415,6 +1454,7 @@ export class AccessKeyStore {
           fraction: hourlyFraction,
           resetAt: hourlyResetAt,
           trustedPreviousResetAt: meta.previousResetAtByScope?.fiveHour,
+          trustedResetEventId: trustedRefillEvent('fiveHour', hourlyFraction),
         }, { observedAt, snapshotId }) || changed;
       }
       if (hasWeekly) {
@@ -1423,6 +1463,7 @@ export class AccessKeyStore {
           fraction: weeklyFraction,
           resetAt: weeklyResetAt,
           trustedPreviousResetAt: meta.previousResetAtByScope?.weekly,
+          trustedResetEventId: trustedRefillEvent('weekly', weeklyFraction),
         }, { observedAt, snapshotId }) || changed;
       }
       if (changed) touched += 1;

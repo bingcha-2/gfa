@@ -260,6 +260,23 @@ function isExternalModelNotFound(status: number, reason: string): boolean {
     /model.*not found/.test(text);
 }
 
+function previousQuotaFractions(
+  inputs: ProviderQuotaSnapshotInput[] | null | undefined,
+): Partial<Record<'fiveHour' | 'weekly', number>> {
+  const input = Array.isArray(inputs) ? inputs.find((candidate) => candidate && typeof candidate === "object") : null;
+  const fraction = (percent: unknown): number | undefined => {
+    if (percent === null || percent === undefined || percent === "") return undefined;
+    const value = Number(percent);
+    return Number.isFinite(value) && value >= 0
+      ? Math.max(0, Math.min(1, value / 100))
+      : undefined;
+  };
+  return {
+    fiveHour: fraction(input?.hourlyPercent),
+    weekly: fraction(input?.weeklyPercent),
+  };
+}
+
 /** Base HTTP error. Provider-specific services subclass this so controllers can
  * route on `instanceof`. */
 export class LeaseServiceHttpError extends Error {
@@ -1153,6 +1170,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     evidence: {
       previousHourlyResetAt?: unknown;
       previousWeeklyResetAt?: unknown;
+      previousHourlyPercent?: unknown;
+      previousWeeklyPercent?: unknown;
       observedAt?: unknown;
       snapshotId?: string;
     } = {},
@@ -1175,6 +1194,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       fiveHour: resetMs(evidence.previousHourlyResetAt),
       weekly: resetMs(evidence.previousWeeklyResetAt),
     };
+    const previousFraction = (value: unknown): number | undefined => {
+      if (value === null || value === undefined || value === "") return undefined;
+      const percent = Number(value);
+      return Number.isFinite(percent) && percent >= 0
+        ? Math.max(0, Math.min(1, percent / 100))
+        : undefined;
+    };
+    const previousFractionByScope = {
+      fiveHour: previousFraction(evidence.previousHourlyPercent),
+      weekly: previousFraction(evidence.previousWeeklyPercent),
+    };
 
     const subscriptionIds = this.accessKeyStore.subscriptionsBoundToAccount(accountId, this.provider.id);
     const usageBefore = subscriptionIds
@@ -1196,7 +1226,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accountId,
       this.provider.id,
       inputs,
-      { observedAt, arrivedAt, snapshotId, previousResetAtByScope },
+      { observedAt, arrivedAt, snapshotId, previousResetAtByScope, previousFractionByScope },
     );
     return {
       subscriptionsTouched,
@@ -1406,6 +1436,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let accountQuotaSnapshotHandled = false;
     if (usdManaged && accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       accountQuotaSnapshotHandled = true;
+      // Capture the persisted mother-account water levels before the provider
+      // applies this report. A proven recovery of most of the consumed share is
+      // an in-place refill even when Anthropic leaves resetAt unchanged or the
+      // first post-refill request has already moved the value below 100%.
+      const previousAccount = this.readAccounts().find((candidate) => candidate.id === accountId);
+      const previousFractionByScope = previousQuotaFractions(
+        previousAccount ? this.provider.quotaSnapshotInputs?.(previousAccount) : undefined,
+      );
       const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
       if (accepted) {
         const account = this.readAccounts().find((candidate) => candidate.id === accountId);
@@ -1421,6 +1459,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
               observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
               arrivedAt: this.now(),
               snapshotId: dedupId || String(payload?.traceId || ""),
+              previousFractionByScope,
             },
           );
         }

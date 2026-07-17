@@ -397,6 +397,8 @@ export class RosettaController {
         const sync = this.remoteAnthropic.syncPersistedAccountQuotaSnapshot(accountId, {
           previousHourlyResetAt: result.previousHourlyResetTime,
           previousWeeklyResetAt: result.previousWeeklyResetTime,
+          previousHourlyPercent: result.previousHourlyPercent,
+          previousWeeklyPercent: result.previousWeeklyPercent,
           observedAt: result.quotaObservedAt,
           snapshotId: `console-refresh:anthropic:${accountId}:${result.quotaObservedAt || Date.now()}`,
         });

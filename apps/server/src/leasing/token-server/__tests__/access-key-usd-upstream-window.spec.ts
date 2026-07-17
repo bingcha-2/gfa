@@ -128,6 +128,61 @@ describe('AccessKeyStore upstream-driven USD windows', () => {
     expect(status('anthropic').weekly.used).toBe(5);
   });
 
+  it('clears a first subscription baseline on a proven in-place refill below 100% with unchanged resetAt', () => {
+    const anthropic = usage('anthropic');
+    anthropic.used5h = 71.56;
+    anthropic.usedWeekly = 1_099.69;
+    anthropic.upstreamFiveHour = undefined;
+    anthropic.upstreamWeekly = undefined;
+    const unchangedResetAt = T0 + 5 * DAY;
+
+    const applyFullRefill = (snapshotId: string, observedAt: number) => {
+      store.applyUpstreamUsdQuotaSnapshot(22, 'anthropic', input({
+        h: 90,
+        w: 99,
+        hReset: unchangedResetAt,
+        wReset: unchangedResetAt,
+      }), {
+        observedAt,
+        arrivedAt: observedAt,
+        snapshotId,
+        // Cover both a large absolute jump (76 -> 90) and a nearly-full account
+        // whose first post-reset observation already fell from 100 to 99.
+        previousFractionByScope: { fiveHour: 0.76, weekly: 0.98 },
+      });
+    };
+
+    applyFullRefill('anthropic-refill-2026-07-16', T0 + 1);
+    expect(status('anthropic')).toMatchObject({
+      fiveHour: { used: 0 },
+      weekly: { used: 0 },
+    });
+    expect(anthropic.upstreamWeekly).toMatchObject({
+      resetAt: unchangedResetAt,
+      lowFraction: 0.99,
+      appliedResetEventId: 'refill:anthropic:22:weekly:anthropic-refill-2026-07-16',
+    });
+
+    anthropic.used5h = 3;
+    anthropic.usedWeekly = 5;
+    applyFullRefill('anthropic-refill-2026-07-16', T0 + 2);
+    expect(status('anthropic')).toMatchObject({
+      fiveHour: { used: 3 },
+      weekly: { used: 5 },
+    });
+  });
+
+  it('does not treat a small trusted mother-account increase as a reset', () => {
+    store.applyUpstreamUsdQuotaSnapshot(22, 'anthropic', input({ w: 82 }), {
+      observedAt: T0 + 1,
+      arrivedAt: T0 + 1,
+      snapshotId: 'small-correction',
+      previousFractionByScope: { weekly: 0.8 },
+    });
+    expect(status('anthropic').weekly.used).toBe(1_200);
+    expect(usage('anthropic').upstreamWeekly?.appliedResetEventId).toBeUndefined();
+  });
+
   it('trusted rollover proof clears a reset-less window that already has a percentage baseline', () => {
     apply({ w: 40 }, T0 + 1, 'percentage-without-reset', 'anthropic', 22);
     expect(status('anthropic').weekly.used).toBe(1_200);

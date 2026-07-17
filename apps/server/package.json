@@ -11,7 +11,8 @@
     "test:unit": "vitest run",
     "test:watch": "vitest",
     "migrate:bind-pinned": "tsx scripts/migrate-bind-cards-to-pinned.ts",
-    "quota:repair-missed-weekly-reset": "tsx scripts/repair-missed-weekly-reset.ts"
+    "quota:repair-missed-weekly-reset": "tsx scripts/repair-missed-weekly-reset.ts",
+    "quota:repair-anthropic-refill": "tsx scripts/repair-anthropic-refill.ts"
   },
   "dependencies": {
     "@gfa/shared": "workspace:*",

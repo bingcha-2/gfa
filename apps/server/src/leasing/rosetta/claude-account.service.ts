@@ -1139,6 +1139,8 @@ export class ClaudeAccountService {
     // real rollover from a smooth-rollout baseline.
     const previousHourlyResetTime = String(acc.claudeHourlyResetTime || "");
     const previousWeeklyResetTime = String(acc.claudeWeeklyResetTime || "");
+    const previousHourlyPercent = Number(acc.claudeHourlyPercent ?? -1);
+    const previousWeeklyPercent = Number(acc.claudeWeeklyPercent ?? -1);
     try {
       // Carry id + proxyUrl so this probe shares the lease path's per-account
       // single-flight lock (keyed by email) and refreshes through the same exit
@@ -1198,10 +1200,8 @@ export class ClaudeAccountService {
       // 本次探测可能只拿到部分窗口(上游偶发漏返 seven_day,曾把周误报成 0、把健康号
       // 打到最后兜底)。已知窗口(>=0)才覆盖落盘,未知(-1)保留上一次的好值;绑定窗口
       // 也只在已知窗口之间取更严的那个,绝不让一条残缺响应污染调度状态。
-      const prevHourly = Number(acc.claudeHourlyPercent ?? -1);
-      const prevWeekly = Number(acc.claudeWeeklyPercent ?? -1);
-      const hourly = cq.hourlyPercent >= 0 ? cq.hourlyPercent : prevHourly;
-      const weekly = cq.weeklyPercent >= 0 ? cq.weeklyPercent : prevWeekly;
+      const hourly = cq.hourlyPercent >= 0 ? cq.hourlyPercent : previousHourlyPercent;
+      const weekly = cq.weeklyPercent >= 0 ? cq.weeklyPercent : previousWeeklyPercent;
 
       let weeklyBinds: boolean;
       if (hourly < 0) weeklyBinds = true;        // 只有周已知
@@ -1235,6 +1235,8 @@ export class ClaudeAccountService {
         weeklyResetTime: acc.claudeWeeklyResetTime || "",
         previousHourlyResetTime,
         previousWeeklyResetTime,
+        previousHourlyPercent,
+        previousWeeklyPercent,
         quotaObservedAt: Date.now(),
       };
     } catch (err: any) {
