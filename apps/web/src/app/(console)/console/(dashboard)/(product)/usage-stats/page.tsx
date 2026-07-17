@@ -8,6 +8,7 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatTokens } from "@/lib/format";
+import { consoleApiPath } from "@/lib/console/client-api";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -18,6 +19,9 @@ import {
 } from "@/components/ui/chart";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { QuotaPoolOverview } from "@/components/console/leasing/quota-pool-overview";
+import type { QuotaPoolSummary } from "@/components/console/leasing/quota-pool-types";
 import { ProviderSupplyOverview } from "./ProviderSupplyOverview";
 import { BoundCardAccordion } from "./BoundCardAccordion";
 
@@ -140,6 +144,7 @@ export default function UsageStatsPage() {
   const [trend, setTrend] = useState<TrendDay[]>([]);
   const [trendDays, setTrendDays] = useState(7);
   const [dashboard, setDashboard] = useState<DashboardProduct[]>([]);
+  const [quotaPools, setQuotaPools] = useState<QuotaPoolSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -187,15 +192,27 @@ export default function UsageStatsPage() {
     }
   }, []);
 
+  const fetchQuotaPools = useCallback(async () => {
+    try {
+      const res = await fetch(consoleApiPath("rosetta/account-quota-pools"), { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setQuotaPools(Array.isArray(data.pools) ? data.pools : []);
+      }
+    } catch {
+      /* non-critical */
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchStats(true), fetchDashboard()]);
+      await Promise.all([fetchStats(true), fetchDashboard(), fetchQuotaPools()]);
       setLoading(false);
     })();
     const t = setInterval(() => fetchStats(true), 30_000);
     return () => clearInterval(t);
-  }, [fetchStats, fetchDashboard]);
+  }, [fetchStats, fetchDashboard, fetchQuotaPools]);
 
   useEffect(() => {
     fetchTrend(trendDays);
@@ -230,12 +247,19 @@ export default function UsageStatsPage() {
           <h1 className="text-2xl font-semibold tracking-normal">用量与剩余</h1>
           <p className="mt-1 text-sm text-muted-foreground">跨 Provider 看板:账号健康、使用总量、各模型剩余配额。</p>
         </div>
-        <Button variant="outline" onClick={() => { fetchStats(); fetchDashboard(); }} disabled={refreshing} className="cursor-pointer">
+        <Button variant="outline" onClick={() => { fetchStats(); fetchDashboard(); fetchQuotaPools(); }} disabled={refreshing} className="cursor-pointer">
           {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
           刷新
         </Button>
       </div>
 
+      <Tabs defaultValue="usage">
+        <TabsList variant="line">
+          <TabsTrigger value="usage">客户用量</TabsTrigger>
+          <TabsTrigger value="quota-pools">母号额度池</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="usage" className="flex flex-col gap-6 pt-2">
       {/* Cross-provider KPI strip */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiTile icon={<DatabaseIcon className="size-4" />} label="启用账号" value={`${totals.accountsEnabled}/${totals.accountsTotal}`} sub={`健康 ${totals.accountsOk}`} />
@@ -269,6 +293,12 @@ export default function UsageStatsPage() {
           />
         );
       })}
+        </TabsContent>
+
+        <TabsContent value="quota-pools" className="pt-2">
+          <QuotaPoolOverview pools={quotaPools} onChanged={fetchQuotaPools} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

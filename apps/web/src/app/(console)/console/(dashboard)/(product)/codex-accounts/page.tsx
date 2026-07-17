@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, TimerResetIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
+import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
+import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
+import { QuotaPoolCoverageBadge, QuotaPoolScopeCell } from "@/components/console/leasing/quota-pool-summary";
+import type { QuotaPoolSummary, QuotaPoolTarget } from "@/components/console/leasing/quota-pool-types";
 import { consoleApiPath } from "@/lib/console/client-api";
 
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +58,7 @@ type CodexAccount = {
   autoLoginError?: string;
   quotaStatus?: string;
   quotaStatusReason?: string;
+  quotaPool?: QuotaPoolSummary;
 };
 
 function pct(value: number) {
@@ -115,6 +121,8 @@ export default function CodexAccountsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [quotaPoolTarget, setQuotaPoolTarget] = useState<QuotaPoolTarget | null>(null);
+  const [accountSearch, setAccountSearch] = useState("");
 
   const [email, setEmail] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
@@ -655,6 +663,7 @@ export default function CodexAccountsPage() {
   }
 
   const enabledCount = accounts.filter((a) => a.enabled).length;
+  const visibleAccounts = filterAccountPools(accounts, accountSearch);
 
   return (
     <div className="space-y-6">
@@ -839,15 +848,27 @@ export default function CodexAccountsPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
             <BotIcon className="size-4" /> 账号列表
           </CardTitle>
-          <span className="text-sm text-muted-foreground">{enabledCount}/{accounts.length} 启用</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <AccountPoolSearchField
+              value={accountSearch}
+              onValueChange={setAccountSearch}
+              resultCount={visibleAccounts.length}
+              totalCount={accounts.length}
+            />
+            <span className="text-sm text-muted-foreground">{enabledCount}/{accounts.length} 启用</span>
+          </div>
         </CardHeader>
         <CardContent>
           {!accounts.length ? (
             <div className="py-8 text-center text-sm text-muted-foreground">暂无 Codex 账号</div>
+          ) : !visibleAccounts.length ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              未找到匹配的母号或绑定用户邮箱
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -867,22 +888,36 @@ export default function CodexAccountsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {accounts.map((a) => (
+                {visibleAccounts.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">#{a.id}</TableCell>
                     <TableCell>
-                      <div>{a.email}</div>
+                      <button
+                        type="button"
+                        className="text-left underline-offset-2 hover:underline"
+                        title="查看母号额度池与关联订阅"
+                        onClick={() => setQuotaPoolTarget({ provider: "codex", id: a.id, email: a.email })}
+                      >
+                        {a.email}
+                      </button>
                       {a.alias ? <div className="text-xs text-muted-foreground">{a.alias}</div> : null}
+                      <BoundCustomerEmailSearchHit account={a} query={accountSearch} />
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
                     <TableCell className="text-sm">
-                      <div>{pct(a.codexHourlyPercent)}</div>
+                      <QuotaPoolScopeCell
+                        scope={a.quotaPool?.fiveHour}
+                        onOpen={() => setQuotaPoolTarget({ provider: "codex", id: a.id, email: a.email })}
+                      />
                       {a.codexHourlyResetTime ? (
                         <div className="text-[10px] text-muted-foreground">{timeUntil(a.codexHourlyResetTime)}</div>
                       ) : null}
                     </TableCell>
                     <TableCell className="text-sm">
-                      <div>{pct(a.codexWeeklyPercent)}</div>
+                      <QuotaPoolScopeCell
+                        scope={a.quotaPool?.weekly}
+                        onOpen={() => setQuotaPoolTarget({ provider: "codex", id: a.id, email: a.email })}
+                      />
                       {a.codexWeeklyResetTime ? (
                         <div className="text-[10px] text-muted-foreground">{timeUntil(a.codexWeeklyResetTime)}</div>
                       ) : null}
@@ -939,9 +974,12 @@ export default function CodexAccountsPage() {
                       ) : null}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
-                        {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
-                      </Badge>
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
+                          {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
+                        </Badge>
+                        <QuotaPoolCoverageBadge pool={a.quotaPool} />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
@@ -980,6 +1018,12 @@ export default function CodexAccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AccountQuotaPoolSheet
+        target={quotaPoolTarget}
+        onOpenChange={(open) => !open && setQuotaPoolTarget(null)}
+        onChanged={() => fetchAccounts(true)}
+      />
 
       <AlertDialog open={!!resetTarget} onOpenChange={(open) => !open && !resetConsuming && setResetTarget(null)}>
         <AlertDialogContent>

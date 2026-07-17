@@ -19,7 +19,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
-import { AccountSubscriptionsDialog, type AccountSubscriptionsTarget } from "@/components/console/leasing/account-subscriptions-dialog";
+import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
+import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
+import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
+import { QuotaPoolCoverageBadge, QuotaPoolScopeCell } from "@/components/console/leasing/quota-pool-summary";
+import type { QuotaPoolSummary, QuotaPoolTarget } from "@/components/console/leasing/quota-pool-types";
 import { formatAutoOAuthStartError } from "@/lib/console/anthropic-auto-oauth";
 import { consoleApiPath } from "@/lib/console/client-api";
 import { accountStatusLabel } from "@/lib/console/account-status";
@@ -62,6 +66,7 @@ type ClaudeAccount = {
   hasMailPassword?: boolean;
   quotaStatus?: string;
   quotaStatusReason?: string;
+  quotaPool?: QuotaPoolSummary;
 };
 
 type PrechargeStatus =
@@ -180,8 +185,9 @@ export default function ClaudeAccountsPage() {
   // 账号列表状态筛选:tone 口径复用 accountStatusLabel(green=正常/yellow=冷却中/red=失效)。
   // 默认只看正常号,失效/冷却号需显式切换,避免一堆红号淹没日常运维。
   const [statusFilter, setStatusFilter] = useState<"all" | "green" | "yellow" | "red">("green");
-  // 点某个母号 email 弹出的「关联订单/账户」对话框目标。
-  const [subsTarget, setSubsTarget] = useState<AccountSubscriptionsTarget | null>(null);
+  // 点母号 email / 额度打开「整池推算 + 关联订阅」抽屉。
+  const [quotaPoolTarget, setQuotaPoolTarget] = useState<QuotaPoolTarget | null>(null);
+  const [accountSearch, setAccountSearch] = useState("");
 
   const [email, setEmail] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
@@ -925,8 +931,10 @@ export default function ClaudeAccountsPage() {
     },
     { green: 0, yellow: 0, red: 0 } as Record<"green" | "yellow" | "red", number>,
   );
-  const visibleAccounts =
-    statusFilter === "all" ? accounts : accounts.filter((a) => accountTone(a) === statusFilter);
+  const statusAccounts = statusFilter === "all"
+    ? accounts
+    : accounts.filter((a) => accountTone(a) === statusFilter);
+  const visibleAccounts = filterAccountPools(statusAccounts, accountSearch);
 
   return (
     <div className="space-y-6">
@@ -1374,6 +1382,15 @@ export default function ClaudeAccountsPage() {
             <BotIcon className="size-4" /> 账号列表
           </CardTitle>
           <div className="flex flex-wrap items-center gap-3">
+            <AccountPoolSearchField
+              value={accountSearch}
+              onValueChange={(value) => {
+                setAccountSearch(value);
+                if (value.trim()) setStatusFilter("all");
+              }}
+              resultCount={visibleAccounts.length}
+              totalCount={accounts.length}
+            />
             <ToggleGroup
               multiple={false}
               value={[statusFilter]}
@@ -1394,7 +1411,9 @@ export default function ClaudeAccountsPage() {
             <div className="py-8 text-center text-sm text-muted-foreground">暂无 Anthropic 账号</div>
           ) : !visibleAccounts.length ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              当前筛选无账号（共 {accounts.length} 个，点「全部」查看)
+              {accountSearch.trim()
+                ? "未找到匹配的母号或绑定用户邮箱"
+                : `当前筛选无账号（共 ${accounts.length} 个，点「全部」查看)`}
             </div>
           ) : (
             <Table>
@@ -1427,22 +1446,29 @@ export default function ClaudeAccountsPage() {
                       <button
                         type="button"
                         className="text-left underline-offset-2 hover:underline"
-                        title="查看关联订单 / 账户"
-                        onClick={() => setSubsTarget({ id: a.id, email: a.email })}
+                        title="查看母号额度池与关联订阅"
+                        onClick={() => setQuotaPoolTarget({ provider: "anthropic", id: a.id, email: a.email })}
                       >
                         {a.email}
                       </button>
                       {a.alias ? <div className="text-xs text-muted-foreground">{a.alias}</div> : null}
+                      <BoundCustomerEmailSearchHit account={a} query={accountSearch} />
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
                     <TableCell className="text-sm">
-                      <div>{pct(a.claudeHourlyPercent)}</div>
+                      <QuotaPoolScopeCell
+                        scope={a.quotaPool?.fiveHour}
+                        onOpen={() => setQuotaPoolTarget({ provider: "anthropic", id: a.id, email: a.email })}
+                      />
                       {a.claudeHourlyResetTime ? (
                         <div className="text-[10px] text-muted-foreground">{timeUntil(a.claudeHourlyResetTime)}</div>
                       ) : null}
                     </TableCell>
                     <TableCell className="text-sm">
-                      <div>{pct(a.claudeWeeklyPercent)}</div>
+                      <QuotaPoolScopeCell
+                        scope={a.quotaPool?.weekly}
+                        onOpen={() => setQuotaPoolTarget({ provider: "anthropic", id: a.id, email: a.email })}
+                      />
                       {a.claudeWeeklyResetTime ? (
                         <div className="text-[10px] text-muted-foreground">{timeUntil(a.claudeWeeklyResetTime)}</div>
                       ) : null}
@@ -1496,9 +1522,12 @@ export default function ClaudeAccountsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
-                        {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
-                      </Badge>
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
+                          {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
+                        </Badge>
+                        <QuotaPoolCoverageBadge pool={a.quotaPool} />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
@@ -1573,9 +1602,10 @@ export default function ClaudeAccountsPage() {
         </CardContent>
       </Card>
 
-      <AccountSubscriptionsDialog
-        target={subsTarget}
-        onOpenChange={(open) => !open && setSubsTarget(null)}
+      <AccountQuotaPoolSheet
+        target={quotaPoolTarget}
+        onOpenChange={(open) => !open && setQuotaPoolTarget(null)}
+        onChanged={() => fetchAccounts(true)}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

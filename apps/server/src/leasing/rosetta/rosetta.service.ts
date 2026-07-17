@@ -25,6 +25,13 @@ import type { RosettaContext } from "./lib/context";
 import type { AccessKeyStore } from "../token-server/access-key-store";
 import { migrateClaudeProductToAnthropic } from "./lib/migrate";
 import { CachedJsonFile, defaultDataDir, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
+import {
+  estimateQuotaPool,
+  type QuotaPoolAccountInput,
+  type QuotaPoolProvider,
+  type QuotaPoolSubscriptionInput,
+  type QuotaPoolSummary,
+} from "./quota-pool-estimate";
 
 // migrate re-exported so existing importers (tests, bootstrap) keep importing it
 // from this module unchanged.
@@ -63,6 +70,53 @@ export type ClaudeAccountSubscription = {
     paidAt: string | null;
   } | null;
 };
+
+export type AccountQuotaPoolSubscription = ClaudeAccountSubscription & {
+  fiveHour: { used: number; limit: number; remaining: number };
+  weekly: { used: number; limit: number; remaining: number };
+  usdQuotaPerSeatByProduct: Record<string, { fiveHour: number; weekly: number }>;
+  includedInEstimate: boolean;
+};
+
+export type AccountQuotaPoolDetail = QuotaPoolSummary & {
+  subscriptions: AccountQuotaPoolSubscription[];
+};
+
+function parseObject(value: unknown): Record<string, any> {
+  if (value && typeof value === "object") return value as Record<string, any>;
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function nonNegative(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function quotaPoolSubscriptionInput(row: any, provider: QuotaPoolProvider): QuotaPoolSubscriptionInput {
+  const config = rowToConfig(row) as any;
+  const state = parseObject(row.windowState);
+  const usage = state.usdUsageByProduct?.[provider] || {};
+  const quota = config.usdQuotaByProduct?.[provider] || {};
+  return {
+    id: String(row.id || ""),
+    customerEmail: String(row.customer?.email || ""),
+    status: String(row.status || ""),
+    bindingAccountId: Number(config.bindings?.[provider] || 0),
+    weight: seatWeight(config),
+    exclusive: isExclusive(config),
+    fiveHourLimit: nonNegative(quota.fiveHour ?? config.usdLimit5h),
+    weeklyLimit: nonNegative(quota.weekly ?? config.usdLimitWeekly),
+    usedFiveHour: nonNegative(usage.used5h ?? state.usdUsed5h),
+    usedWeekly: nonNegative(usage.usedWeekly ?? state.usdUsedWeekly),
+    upstreamAccountId: Number(usage.upstreamAccountId || 0),
+  };
+}
 
 /**
  * RosettaService is a thin FACADE. The actual logic lives in per-domain services
@@ -190,6 +244,152 @@ export class RosettaService {
     });
     const configs = rows.map((r: any) => ({ id: r.id, ...rowToConfig(r) }));
     return occupiedSharesByAccount(configs, product);
+  }
+
+  private quotaPoolAccounts(provider: QuotaPoolProvider): QuotaPoolAccountInput[] {
+    const rows = provider === "codex"
+      ? this.codexSvc.listCodexAccounts().accounts
+      : this.claudeSvc.listClaudeAccounts().accounts;
+    return rows.map((account: any) => ({
+      id: Number(account.id || 0),
+      email: String(account.email || ""),
+      planType: String(account.planType || ""),
+      hourlyPercent: Number(provider === "codex" ? account.codexHourlyPercent : account.claudeHourlyPercent),
+      weeklyPercent: Number(provider === "codex" ? account.codexWeeklyPercent : account.claudeWeeklyPercent),
+      hourlyResetAt: String(provider === "codex" ? account.codexHourlyResetTime || "" : account.claudeHourlyResetTime || "") || null,
+      weeklyResetAt: String(provider === "codex" ? account.codexWeeklyResetTime || "" : account.claudeWeeklyResetTime || "") || null,
+      refreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+    }));
+  }
+
+  private async quotaPoolSubscriptionRows(): Promise<any[]> {
+    if (!this.prisma) return [];
+    return this.prisma.subscription.findMany({
+      select: {
+        id: true, status: true, startsAt: true, expiresAt: true, activatedFromOrderId: true,
+        config: true, windowState: true,
+        productEntitlements: true, bucketLimits: true, bindings: true, levels: true,
+        weight: true, deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+        customer: { select: { id: true, email: true, displayName: true } },
+      },
+    });
+  }
+
+  private quotaPoolInputs(rows: any[], provider: QuotaPoolProvider): QuotaPoolSubscriptionInput[] {
+    return rows
+      .filter((row) => {
+        const config = rowToConfig(row) as any;
+        const input = quotaPoolSubscriptionInput(row, provider);
+        return config.line === "bind" && (input.bindingAccountId > 0 || input.upstreamAccountId > 0);
+      })
+      .map((row) => quotaPoolSubscriptionInput(row, provider));
+  }
+
+  /** Runtime overview for the admin account tables and the cross-provider pool tab. */
+  async listQuotaPools(provider?: string): Promise<{ ok: true; pools: QuotaPoolSummary[] }> {
+    const normalized = String(provider || "").trim().toLowerCase();
+    const providers: QuotaPoolProvider[] = normalized === "codex" || normalized === "anthropic"
+      ? [normalized]
+      : ["codex", "anthropic"];
+    const rows = await this.quotaPoolSubscriptionRows();
+    const now = Date.now();
+    const pools = providers.flatMap((product) => {
+      const inputs = this.quotaPoolInputs(rows, product);
+      return this.quotaPoolAccounts(product).map((account) => estimateQuotaPool(product, account, inputs, now));
+    });
+    return { ok: true, pools };
+  }
+
+  async quotaPoolSummaries(provider: string): Promise<Map<number, QuotaPoolSummary>> {
+    const result = await this.listQuotaPools(provider);
+    return new Map(result.pools.map((pool) => [pool.accountId, pool]));
+  }
+
+  /** One mother account's inferred USD pool plus its currently bound ACTIVE subscriptions. */
+  async getQuotaPool(provider: string, accountId: number): Promise<{ ok: true; pool: AccountQuotaPoolDetail | null }> {
+    const product = String(provider || "").trim().toLowerCase();
+    const id = Number(accountId);
+    if ((product !== "codex" && product !== "anthropic") || !(id > 0)) return { ok: true, pool: null };
+    const typedProduct = product as QuotaPoolProvider;
+    const rows = await this.quotaPoolSubscriptionRows();
+    const account = this.quotaPoolAccounts(typedProduct).find((candidate) => candidate.id === id);
+    if (!account) return { ok: true, pool: null };
+
+    const inputs = this.quotaPoolInputs(rows, typedProduct);
+    const summary = estimateQuotaPool(typedProduct, account, inputs);
+    const activeRows = rows.filter((row) => {
+      const config = rowToConfig(row) as any;
+      return String(row.status || "") === "ACTIVE"
+        && config.line === "bind"
+        && Number(config.bindings?.[typedProduct]) === id;
+    });
+    const orderIds = [...new Set(
+      activeRows.map((row) => String(row.activatedFromOrderId || "")).filter(Boolean),
+    )];
+    const orders = this.prisma && orderIds.length
+      ? await this.prisma.planOrder.findMany({
+          where: { id: { in: orderIds } },
+          select: { id: true, outTradeNo: true, amountCents: true, payChannel: true, status: true, paidAt: true },
+        })
+      : [];
+    const orderById = new Map<string, any>(orders.map((order: any) => [order.id, order]));
+    const subscriptions: AccountQuotaPoolSubscription[] = activeRows.map((row) => {
+      const input = quotaPoolSubscriptionInput(row, typedProduct);
+      const config = rowToConfig(row) as any;
+      const seats = Math.max(1, Math.floor(Number(config.shareSeats ?? config.weight) || 1));
+      const products: string[] = (Array.isArray(config.products) ? config.products : [typedProduct])
+        .map(String)
+        .filter((candidate: string) => candidate === "codex" || candidate === "anthropic");
+      const usdQuotaPerSeatByProduct = Object.fromEntries(
+        [...new Set<string>(products.length ? products : [typedProduct])].map((quotaProduct) => {
+          const quota = config.usdQuotaByProduct?.[quotaProduct]
+            || (quotaProduct === typedProduct
+              ? { fiveHour: input.fiveHourLimit, weekly: input.weeklyLimit }
+              : {});
+          return [quotaProduct, {
+            fiveHour: nonNegative(quota.fiveHour) / seats,
+            weekly: nonNegative(quota.weekly) / seats,
+          }];
+        }),
+      );
+      const order = orderById.get(String(row.activatedFromOrderId || ""));
+      return {
+        id: input.id,
+        customerId: row.customer?.id ?? "",
+        customerEmail: row.customer?.email ?? "",
+        customerName: row.customer?.displayName ?? "",
+        status: input.status,
+        exclusive: input.exclusive,
+        weight: input.weight,
+        startsAt: row.startsAt ? new Date(row.startsAt).toISOString() : null,
+        expiresAt: row.expiresAt ? new Date(row.expiresAt).toISOString() : null,
+        fiveHour: {
+          used: input.usedFiveHour,
+          limit: input.fiveHourLimit,
+          remaining: Math.max(0, input.fiveHourLimit - input.usedFiveHour),
+        },
+        weekly: {
+          used: input.usedWeekly,
+          limit: input.weeklyLimit,
+          remaining: Math.max(0, input.weeklyLimit - input.usedWeekly),
+        },
+        usdQuotaPerSeatByProduct,
+        includedInEstimate: input.upstreamAccountId > 0
+          ? input.upstreamAccountId === id
+          : input.bindingAccountId === id,
+        order: order
+          ? {
+              id: order.id,
+              outTradeNo: order.outTradeNo ?? "",
+              amountCents: Number(order.amountCents ?? 0),
+              payChannel: order.payChannel ?? "",
+              status: order.status ?? "",
+              paidAt: order.paidAt ? new Date(order.paidAt).toISOString() : null,
+            }
+          : null,
+      };
+    });
+    return { ok: true, pool: { ...summary, subscriptions } };
   }
 
   /**

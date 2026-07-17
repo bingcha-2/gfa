@@ -32,9 +32,15 @@ export class RosettaController {
     res: T,
     product: string,
   ): Promise<T> {
-    const shares = await this.rosetta.occupiedSharesFromSubscriptions(product);
+    const [shares, quotaPools] = await Promise.all([
+      this.rosetta.occupiedSharesFromSubscriptions(product),
+      product === "codex" || product === "anthropic"
+        ? this.rosetta.quotaPoolSummaries(product)
+        : Promise.resolve(new Map()),
+    ]);
     for (const acc of res.accounts) {
       acc.usedShares = shares.get(Number(acc.id)) || 0;
+      if (quotaPools.has(Number(acc.id))) (acc as any).quotaPool = quotaPools.get(Number(acc.id));
     }
     return res;
   }
@@ -222,6 +228,16 @@ export class RosettaController {
   @Get("anthropic-account-subscriptions")
   listClaudeAccountSubscriptions(@Query("accountId") accountId: string) {
     return this.rosetta.listClaudeAccountSubscriptions(Number(accountId));
+  }
+
+  @Get("account-quota-pools")
+  listQuotaPools(@Query("provider") provider?: string) {
+    return this.rosetta.listQuotaPools(provider);
+  }
+
+  @Get("account-quota-pool")
+  getQuotaPool(@Query("provider") provider: string, @Query("accountId") accountId: string) {
+    return this.rosetta.getQuotaPool(provider, Number(accountId));
   }
 
   @Post("anthropic-add-account")

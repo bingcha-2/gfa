@@ -49,16 +49,19 @@ describe("RosettaController — 账号列表 usedShares 改用 DB 订阅口径",
         })),
         // DB 座位真相源:号 1 被订阅占了 5 份,号 2 无订阅占用。
         occupiedSharesFromSubscriptions: vi.fn(async () => new Map<number, number>([[1, 5]])),
+        quotaPoolSummaries: vi.fn(async () => new Map<number, any>(product === "antigravity" ? [] : [[1, { accountId: 1, provider: product }]])),
       };
       const controller = new RosettaController(rosetta, {} as any, {} as any, {} as any, {} as any);
 
       const res = await call(controller);
 
       expect(rosetta.occupiedSharesFromSubscriptions).toHaveBeenCalledWith(product);
+      if (product !== "antigravity") expect(rosetta.quotaPoolSummaries).toHaveBeenCalledWith(product);
       // 订阅占用口径覆盖文件值:号 1 → 5。
       expect(res.accounts.find((a: any) => a.id === 1).usedShares).toBe(5);
       // 无订阅占用的号归 0(覆盖掉残留的文件口径 99,而非保留)。
       expect(res.accounts.find((a: any) => a.id === 2).usedShares).toBe(0);
+      if (product !== "antigravity") expect(res.accounts.find((a: any) => a.id === 1).quotaPool).toEqual({ accountId: 1, provider: product });
     },
   );
 });
@@ -74,6 +77,21 @@ describe("RosettaController — 母号关联订阅(点 email)", () => {
 
     expect(rosetta.listClaudeAccountSubscriptions).toHaveBeenCalledWith(7);
     expect(res).toEqual({ ok: true, accountId: 7, subscriptions: [] });
+  });
+});
+
+describe("RosettaController — 母号额度池", () => {
+  it("支持全局列表和单母号明细查询", async () => {
+    const rosetta: any = {
+      listQuotaPools: vi.fn(async () => ({ ok: true, pools: [] })),
+      getQuotaPool: vi.fn(async () => ({ ok: true, pool: { accountId: 7 } })),
+    };
+    const controller = new RosettaController(rosetta, {} as any, {} as any, {} as any, {} as any);
+
+    await expect(controller.listQuotaPools("anthropic")).resolves.toEqual({ ok: true, pools: [] });
+    await expect(controller.getQuotaPool("anthropic", "7")).resolves.toEqual({ ok: true, pool: { accountId: 7 } });
+    expect(rosetta.listQuotaPools).toHaveBeenCalledWith("anthropic");
+    expect(rosetta.getQuotaPool).toHaveBeenCalledWith("anthropic", 7);
   });
 });
 

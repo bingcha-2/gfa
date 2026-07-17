@@ -118,3 +118,86 @@ describe("RosettaService.listClaudeAccountSubscriptions", () => {
     expect(orderFindMany).not.toHaveBeenCalled();
   });
 });
+
+describe("RosettaService.getQuotaPool", () => {
+  let cleanup: string[] = [];
+  beforeEach(() => { cleanup = []; });
+  afterEach(() => {
+    for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("汇总母号窗口与绑定订阅，返回整池推算、剩余额度和订单明细", async () => {
+    const row = {
+      id: "sub-1",
+      status: "ACTIVE",
+      startsAt: new Date("2026-07-01T00:00:00.000Z"),
+      expiresAt: new Date("2026-08-01T00:00:00.000Z"),
+      activatedFromOrderId: "order-1",
+      config: JSON.stringify({
+        line: "bind",
+        bindings: { anthropic: 7 },
+        weight: 2,
+        usdQuotaByProduct: { anthropic: { fiveHour: 20, weekly: 100 } },
+      }),
+      windowState: {
+        usdUsageByProduct: {
+          anthropic: { used5h: 8, usedWeekly: 30, upstreamAccountId: 7 },
+        },
+      },
+      customer: { id: "cus-1", email: "buyer@example.com", displayName: "Buyer" },
+    };
+    const prisma = {
+      subscription: { findMany: vi.fn(async () => [row]) },
+      planOrder: { findMany: vi.fn(async () => [{
+        id: "order-1",
+        outTradeNo: "OT-1",
+        amountCents: 9900,
+        payChannel: "ALIPAY",
+        status: "PAID",
+        paidAt: new Date("2026-07-01T00:00:00.000Z"),
+      }]) },
+    };
+    const { svc, dataDir } = makeService(prisma);
+    cleanup.push(dataDir);
+    fs.writeFileSync(path.join(dataDir, "anthropic-accounts.json"), JSON.stringify({ accounts: [{
+      id: 7,
+      email: "mother@example.com",
+      planType: "max",
+      claudeHourlyPercent: 60,
+      claudeWeeklyPercent: 70,
+      modelQuotaRefreshedAt: Date.now(),
+    }] }));
+
+    const result = await svc.getQuotaPool("anthropic", 7);
+
+    expect(result.pool).toMatchObject({
+      accountId: 7,
+      email: "mother@example.com",
+      activeSubscriptionCount: 1,
+      totalSeats: 2,
+      fiveHour: {
+        trackedUsedUsd: 8,
+        inferredTotalUsd: 20,
+        inferredRemainingUsd: 12,
+        customerRemainingUsd: 12,
+        coverageRatio: 1,
+      },
+      weekly: {
+        trackedUsedUsd: 30,
+        inferredTotalUsd: 100,
+        inferredRemainingUsd: 70,
+        customerRemainingUsd: 70,
+        coverageRatio: 1,
+      },
+      subscriptions: [{
+        id: "sub-1",
+        customerEmail: "buyer@example.com",
+        fiveHour: { used: 8, limit: 20, remaining: 12 },
+        weekly: { used: 30, limit: 100, remaining: 70 },
+        usdQuotaPerSeatByProduct: { anthropic: { fiveHour: 10, weekly: 50 } },
+        includedInEstimate: true,
+        order: { id: "order-1", outTradeNo: "OT-1" },
+      }],
+    });
+  });
+});
