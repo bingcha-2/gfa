@@ -95,7 +95,8 @@ func TestInjectCodexProvider_RestoreRemovesTable(t *testing.T) {
 	}
 }
 
-// 互斥:先激活厂商,再切远程托管(InjectCodexSettings)→ 厂商表必须被清掉,只剩 openai 重定向。
+// 互斥:先激活本地厂商,再切远程托管→ 本地厂商表必须被清掉,
+// 只剩 bingchaai 远程 provider（本测试无真实 OAuth，因此无需 OpenAI 鉴权）。
 func TestInjectCodexProvider_MutualExclusionWithRemote(t *testing.T) {
 	_, cfgPath := writeSampleConfig(t)
 	if err := InjectCodexProvider(codexProviderSpec{Name: "V", BaseURL: "http://v/v1", APIKey: "k"}); err != nil {
@@ -112,7 +113,10 @@ func TestInjectCodexProvider_MutualExclusionWithRemote(t *testing.T) {
 	if strings.Contains(string(got), "gfa_local_provider") || strings.Contains(string(got), "experimental_bearer_token") {
 		t.Fatalf("切远程后厂商表未清:\n%s", got)
 	}
-	if !strings.Contains(string(got), `model_provider = "openai"`) || !strings.Contains(string(got), `openai_base_url = "http://127.0.0.1:8080/v1"`) {
+	if !strings.Contains(string(got), `model_provider = "bingchaai"`) ||
+		!strings.Contains(string(got), `[model_providers.bingchaai]`) ||
+		!strings.Contains(string(got), `base_url = "http://127.0.0.1:8080/v1"`) ||
+		!strings.Contains(string(got), `requires_openai_auth = false`) {
 		t.Fatalf("远程重定向未生效:\n%s", got)
 	}
 }

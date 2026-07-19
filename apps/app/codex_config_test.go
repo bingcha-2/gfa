@@ -97,8 +97,8 @@ func TestUpsertAndRemoveProviderTable(t *testing.T) {
 	}
 }
 
-// 完整接管→还原:原本无 model_provider/openai_base_url 的场景(对应用户真实配置)。
-// 接管保留内置 openai provider,只覆盖 openai_base_url。
+// 完整接管→还原:原本无 model_provider/openai_base_url 的场景。
+// 没有真实登录态时写 requires_openai_auth=false，仍可直接使用远程 provider。
 func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -115,15 +115,19 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	}
 	injected, _ := os.ReadFile(cfgPath)
 	for _, must := range []string{
-		`model_provider = "openai"`,
-		`openai_base_url = "http://127.0.0.1:8080/v1"`,
+		`model_provider = "bingchaai"`,
+		`[model_providers.bingchaai]`,
+		`base_url = "http://127.0.0.1:8080/v1"`,
+		`wire_api = "responses"`,
+		`requires_openai_auth = false`,
+		`supports_websockets = false`,
 	} {
 		if !strings.Contains(string(injected), must) {
 			t.Fatalf("注入后缺少 %q:\n%s", must, injected)
 		}
 	}
-	if strings.Contains(string(injected), "model_providers.bingchaai") || strings.Contains(string(injected), `model_provider = "bingchaai"`) {
-		t.Fatalf("注入后不应创建自定义 provider:\n%s", injected)
+	if strings.Contains(string(injected), "openai_base_url") {
+		t.Fatalf("远程 provider 不应残留顶层 openai_base_url:\n%s", injected)
 	}
 
 	if err := RestoreCodexSettings(); err != nil {
@@ -139,6 +143,28 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 		if !strings.Contains(string(restored), must) {
 			t.Fatalf("还原后丢失了 %q:\n%s", must, restored)
 		}
+	}
+}
+
+func TestInjectCodexSettingsNeverRequiresOAuth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(sampleConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 即使磁盘上留有看似完整的 OAuth，远程接管也不能依赖它。Desktop 启动会强制
+	// 刷新，refresh token 一旦失效就会把用户直接送回登录页。
+	realLookingAuth := `{"tokens":{"access_token":"access","id_token":"id","refresh_token":"stale-refresh","account_id":"acct"}}`
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(realLookingAuth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(home, "config.toml"))
+	if !strings.Contains(string(got), `requires_openai_auth = false`) {
+		t.Fatalf("远程接管不得要求 OAuth:\n%s", got)
 	}
 }
 
@@ -160,12 +186,13 @@ base_url = "http://127.0.0.1:60670/v1"
 		t.Fatalf("inject: %v", err)
 	}
 	injected, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(injected), `model_provider = "openai"`) ||
-		!strings.Contains(string(injected), `openai_base_url = "http://127.0.0.1:8080/v1"`) {
-		t.Fatalf("注入后未切到内置 openai provider:\n%s", injected)
+	if !strings.Contains(string(injected), `model_provider = "bingchaai"`) ||
+		!strings.Contains(string(injected), `base_url = "http://127.0.0.1:8080/v1"`) ||
+		!strings.Contains(string(injected), `requires_openai_auth = false`) {
+		t.Fatalf("注入后未切到无鉴权远程 provider:\n%s", injected)
 	}
-	if strings.Contains(string(injected), "model_providers.bingchaai") {
-		t.Fatalf("注入后未清理旧自定义 provider:\n%s", injected)
+	if strings.Contains(string(injected), "openai_base_url") {
+		t.Fatalf("注入后未清理顶层 openai_base_url:\n%s", injected)
 	}
 
 	if err := RestoreCodexSettings(); err != nil {

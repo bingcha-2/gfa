@@ -13,22 +13,31 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-// ─── Codex 接管(注入 ~/.codex/config.toml,内置 openai provider 模式)────────
+// ─── Codex 接管(注入 ~/.codex/config.toml,自定义 provider)────────────
 //
-// 保留 Codex 内置 openai provider,只把 openai_base_url 指向本地代理的 /v1
-// (OpenAI 兼容)端点。内置 provider 保留 ChatGPT auth 语义,模型管理器会继续刷新
-// /models;自定义 requires_openai_auth=false provider 则不会刷新远程目录。
+// 远程托管不能伪造 ChatGPT OAuth 登录态。新版 Codex Desktop 启动时会用
+// access_token 直连 chatgpt.com/backend-api/wham/* 和 /settings/user;伪 JWT 一定被
+// 官方验签拒绝,最终反复 account/read + 401 并卡在白屏。
+//
+// 因此远程接管使用自定义 bingchaai provider，只把 Responses API 指向本地代理 /v1，
+// 并固定 requires_openai_auth=false。服务端只下发短期 access token、不下发可轮换的
+// refresh token，不能可靠维持 Desktop 的 OAuth 账号态。真实池号 token 只在
+// CodexProxy 转发到上游的瞬间注入,不落盘到用户机器。
 //
 // 内置 provider 会先尝试 WebSocket;代理对本机 /v1/responses Upgrade 返回 426,
 // Codex 官方 fallback 会立即切到 HTTP POST,再进入现有租号转发链路。
 //
 // 写入策略:行级最小编辑(见 codex_config.go),只动 model_provider/openai_base_url
-// 顶层键并清理旧版 [model_providers.bingchaai],保留用户其余配置/注释/键序原样。
+// 和 [model_providers.bingchaai],保留用户其余配置/注释/键序原样。
 
 // 接管写入的 config.toml 形态:
 //
-//	model_provider = "openai"
-//	openai_base_url = "http://127.0.0.1:<port>/v1"
+//	model_provider = "bingchaai"
+//	[model_providers.bingchaai]
+//	name = "BingchaAI Remote"
+//	base_url = "http://127.0.0.1:<port>/v1"
+//	wire_api = "responses"
+//	requires_openai_auth = false
 const (
 	codexDefaultProvider = "openai"
 	codexProviderID      = "bingchaai"
@@ -164,7 +173,7 @@ func ensureCodexBackup(hadConfig bool) error {
 	return writeFileAtomic(codexBackupPath(), encoded, 0o644)
 }
 
-// InjectCodexSettings 保留内置 openai provider,把它的 base URL 指向本地代理 /v1。
+// InjectCodexSettings 把远程托管 provider 指向本地代理 /v1。
 func InjectCodexSettings(proxyPort int) error {
 	content, had, err := readCodexConfigRaw()
 	if err != nil {
@@ -176,11 +185,19 @@ func InjectCodexSettings(proxyPort int) error {
 		return err
 	}
 
-	// 清掉两代旧接管残留,避免旧路由与内置 openai provider 并存。
+	// 清掉其他接管残留,避免顶层 openai_base_url 或本地厂商表并存。
 	content = stripLegacyLocalCodexBaseURL(content)
 	content = removeProviderTable(content, codexProviderID)
-	content = setTopLevelString(content, codexModelProvider, codexDefaultProvider)
-	content = setTopLevelString(content, codexOpenAIBaseURL, codexProxyBaseURL(proxyPort))
+	content = removeProviderTable(content, codexLocalProviderID)
+	content = removeTopLevelKey(content, codexOpenAIBaseURL)
+	content = setTopLevelString(content, codexModelProvider, codexProviderID)
+	content = upsertProviderTable(content, codexProviderID, [][2]string{
+		{"name", tomlQuote("BingchaAI Remote")},
+		{"base_url", tomlQuote(codexProxyBaseURL(proxyPort))},
+		{"wire_api", tomlQuote("responses")},
+		{"requires_openai_auth", "false"},
+		{"supports_websockets", "false"},
+	})
 	return writeFileAtomic(codexConfigPath(), []byte(content), 0o644)
 }
 
@@ -249,16 +266,18 @@ func readCodexBackupPrev() interface{} {
 	return bk.PrevModelProvider
 }
 
-// IsCodexInjected 判断 config.toml 当前是否已把内置 openai provider 指向本机代理。
+// IsCodexInjected 判断 config.toml 当前是否已把无鉴权远程 provider 指向本机代理。
 func IsCodexInjected(proxyPort int) bool {
 	m, had, err := loadCodexConfig()
 	if err != nil || !had {
 		return false
 	}
-	if mp, _ := m[codexModelProvider].(string); mp != codexDefaultProvider {
+	if mp, _ := m[codexModelProvider].(string); mp != codexProviderID {
 		return false
 	}
-	baseURL, _ := m[codexOpenAIBaseURL].(string)
+	providers, _ := m["model_providers"].(map[string]interface{})
+	provider, _ := providers[codexProviderID].(map[string]interface{})
+	baseURL, _ := provider["base_url"].(string)
 	return baseURL == codexProxyBaseURL(proxyPort)
 }
 
@@ -428,21 +447,25 @@ func codexAppBundlePath(p string) string {
 	return p
 }
 
-// RestartCodexAfterTakeover 退出 → 迁移旧 bingchaai 历史到 targetProvider → 启动。
+// RestartCodexAfterTakeover 退出 → 把历史从 sourceProvider 迁移到 targetProvider → 启动。
 // 串行后台执行,保证修复 SQLite 时 Codex 已退出(数据库未被占用)。
 //
 // provider 模式下 Codex 按 model_provider 给历史分桶展示:接管后当前 provider 是
 // bingchaai,需把历史 retag 到 bingchaai 才在当前视图可见;还原后回到 openai,需
 // retag 回 openai。targetProvider 由调用方按接管/还原传入。
-func RestartCodexAfterTakeover(targetProvider string) {
+func RestartCodexAfterTakeover(sourceProvider, targetProvider string) {
 	defer func() {
 		if r := recover(); r != nil {
 			Log("[codex] 重启编排 panic: %v", r)
 		}
 	}()
 	QuitCodexApp()
-	if _, err := MigrateCodexHistoryProvider(codexHomeDir(), codexProviderID, targetProvider); err != nil {
+	summary, err := MigrateCodexHistoryProvider(codexHomeDir(), sourceProvider, targetProvider)
+	if err != nil {
 		Log("[codex] 对齐历史可见性失败(不致命): %v", err)
+	} else {
+		Log("[codex] 历史 provider 已对齐: %s → %s, rollout=%d sqlite=%d skipped=%v",
+			sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
 	}
 	LaunchCodexApp()
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -162,6 +163,49 @@ func TestFakeCodexAuth_PreservesExisting(t *testing.T) {
 	}
 }
 
+// 旧远程接管期间若用户已切到一份新的本地真号,迁移时只丢弃
+// 过期备份,不能用较早的登录态把用户新选的号覆盖掉。
+func TestRestoreFakeCodexAuth_DoesNotClobberExternallyReplacedAuth(t *testing.T) {
+	isolateCodexHome(t)
+	original := []byte(`{"tokens":{"access_token":"ORIGINAL"}}`)
+	if err := os.WriteFile(codexAuthPath(), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectFakeCodexAuth(); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte(`{"tokens":{"access_token":"NEW-LOCAL-ACCOUNT","account_id":"real-account"}}`)
+	if err := os.WriteFile(codexAuthPath(), replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreFakeCodexAuth(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(replacement) {
+		t.Fatalf("外部新凭证被旧备份覆盖:\nwant %s\ngot  %s", replacement, got)
+	}
+	if _, err := os.Stat(codexCredsBackupPath()); !os.IsNotExist(err) {
+		t.Fatalf("迁移后应删除过期备份, err=%v", err)
+	}
+}
+
+func TestIsFakeCodexKeychainSecretSupportsLegacyRawAndCodexHex(t *testing.T) {
+	fake := buildFakeCodexAuth()
+	if !isFakeCodexKeychainSecret(string(fake)) {
+		t.Fatal("应识别旧版误写的 raw JSON 伪凭证")
+	}
+	if !isFakeCodexKeychainSecret(hex.EncodeToString(fake)) {
+		t.Fatal("应识别 Codex keyring 的 hex(JSON) 伪凭证")
+	}
+	if isFakeCodexKeychainSecret(hex.EncodeToString([]byte(`{"tokens":{"account_id":"real-account"}}`))) {
+		t.Fatal("不应把真账号 keychain 误判为 GFA 伪凭证")
+	}
+}
+
 // 重复注入应幂等：不把自己写的伪凭证当成"用户原值"备份掉，还原后仍能回到真实原值。
 func TestFakeCodexAuth_InjectIdempotent(t *testing.T) {
 	dir := isolateCodexHome(t)
@@ -262,6 +306,44 @@ func TestCodexHasExistingLogin_ExpiredAccessToken(t *testing.T) {
 	writeCodexAuthAccessToken(t, "opaque-non-jwt-token")
 	if !codexHasExistingLogin() {
 		t.Fatalf("opaque token 解不出 exp 时应保守判已登录")
+	}
+}
+
+// 旧版投影器的回归:不能因为旧 token 的 exp 在未来就保留它,
+// 因为服务端可能已 token_invalidated。新远程接管不再调用该投影器。
+func TestFakeCodexAuth_OverwritesUnexpiredExistingLogin(t *testing.T) {
+	isolateCodexHome(t)
+	originalToken := fakeCodexJWT(map[string]interface{}{"exp": time.Now().Add(48 * time.Hour).Unix()})
+	writeCodexAuthAccessToken(t, originalToken)
+	if !codexHasExistingLogin() {
+		t.Fatal("预置 token 本地应看起来未过期")
+	}
+
+	if err := InjectFakeCodexAuth(); err != nil {
+		t.Fatalf("远程接管投影失败: %v", err)
+	}
+	projected := readFakeCodexAuth(t)["tokens"].(map[string]interface{})["access_token"].(string)
+	if projected == originalToken {
+		t.Fatal("未过期旧 token 未被受管登录投影覆盖")
+	}
+
+	if err := RestoreFakeCodexAuth(); err != nil {
+		t.Fatalf("还原失败: %v", err)
+	}
+	var restored struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	raw, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatalf("读取还原 auth.json 失败: %v", err)
+	}
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatalf("解析还原 auth.json 失败: %v", err)
+	}
+	if restored.Tokens.AccessToken != originalToken {
+		t.Fatal("退出接管后未精确还原用户原 token")
 	}
 }
 

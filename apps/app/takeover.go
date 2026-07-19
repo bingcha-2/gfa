@@ -293,16 +293,20 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		Log("[codex] 未识别到 Codex 安装(CLI+GUI 探测均失败);建议用户手动选择 codex 可执行文件")
 		return "Codex: 未检测到安装。若已安装,请在 Codex 设置里手动选择 codex 可执行文件(命令行 `where codex` / `which codex` 可查真实路径)", nil
 	}
+	// 新版 Codex Desktop 会把伪 ChatGPT JWT 拿去官方 wham/settings 验签,
+	// 必然 401 并卡白屏。远程托管现在由 requires_openai_auth=false 的自定义
+	// provider 承载，不再伪造或依赖 OAuth 登录。先迁移/清理旧版遗留的伪凭证备份。
+	if err := RestoreFakeCodexAuth(); err != nil {
+		return "", fmt.Errorf("清理旧版 Codex 登录投影失败: %w", err)
+	}
 	if err := InjectCodexSettings(proxyPort); err != nil {
 		return "", err
 	}
-	// 未登录的 Codex 会卡在登录页、进不到能用自定义 provider 的主界面。仅当本机完全未登录时
-	// 注入伪登录态(签名乱码、exp 远的假 token,真号池 token 由代理转发时替换),让它直接可用;
-	// 已登录则不动,保留用户真账号。失败不致命:config 已生效,已登录用户不受影响。
-	if !codexHasExistingLogin() {
-		if err := InjectFakeCodexAuth(); err != nil {
-			Log("[codex] 注入伪登录态失败(不致命,未登录用户可能仍需手动登录): %v", err)
-		}
+	// 备份里保存的是接管前 provider。接管时迁到 bingchaai，取消时再迁回，
+	// 保证两个状态下同一批历史会话都可见。
+	historySourceProvider := prevProviderFromBackup()
+	if historySourceProvider == "" {
+		historySourceProvider = codexDefaultProvider
 	}
 	// 接管即租号:清掉任何遗留的「中转(relay)」配置,确保生成请求走 bcai 号池租号,
 	// 而不是被旧的中转配置劫持到外部中转站(如 litellm)。热生效,无需重启代理。
@@ -316,19 +320,20 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	if !codexGUIInstalled() {
 		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI 桌面版:保留内置 openai provider,退出后顺手把旧版 bingchaai 历史迁回
-	// openai,再重启让常驻进程重读 openai_base_url。
-	go RestartCodexAfterTakeover(codexDefaultProvider)
+	// GUI 桌面版:退出后对齐 bingchaai 历史分桶,再重启让常驻进程重读 provider。
+	go RestartCodexAfterTakeover(historySourceProvider, codexProviderID)
 	return "Codex: ✓ 已接管,正在重启 Codex...", nil
 }
 
 func (codexTarget) Restore() (string, error) {
+	// 即使接管期间 config.toml 被其它程序改写，也要把 GFA 分桶里的会话迁回用户
+	// 原 provider；不能按当前配置猜来源，否则会把 bingchaai 历史遗留成不可见。
+	historySourceProvider := codexProviderID
 	if err := RestoreCodexSettings(); err != nil {
 		return "", err
 	}
 	restoredProvider := currentCodexModelProvider()
-	// 还原伪登录态:有备份(我们注入过)则精确写回原 auth.json 或删除;无备份(已登录用户接管时
-	// 没注入)则 no-op,真账号原样不动。
+	// 兼容清理旧版伪登录态;新版远程接管不会再创建这份备份。
 	if err := RestoreFakeCodexAuth(); err != nil {
 		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
@@ -337,7 +342,7 @@ func (codexTarget) Restore() (string, error) {
 		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
 	}
 	// GUI:还原后迁回官方 openai 历史分桶并重启。
-	go RestartCodexAfterTakeover(restoredProvider)
+	go RestartCodexAfterTakeover(historySourceProvider, restoredProvider)
 	return "Codex: ✓ 已恢复,正在重启 Codex...", nil
 }
 

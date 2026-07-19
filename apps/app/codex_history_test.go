@@ -194,3 +194,40 @@ func TestMigrateCodexHistoryProviderOnlyChangesLegacySource(t *testing.T) {
 		t.Fatalf("自定义 provider SQLite 被误改为 %q", customProvider)
 	}
 }
+
+func TestRestartCodexAfterTakeoverMigratesHistoryBothDirections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	db, err := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('history','openai')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	RestartCodexAfterTakeover("openai", "bingchaai")
+	assertThreadProvider := func(want string) {
+		t.Helper()
+		db, openErr := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		defer db.Close()
+		var got string
+		if queryErr := db.QueryRow(`SELECT model_provider FROM threads WHERE id='history'`).Scan(&got); queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		if got != want {
+			t.Fatalf("history provider=%q want %q", got, want)
+		}
+	}
+	assertThreadProvider("bingchaai")
+
+	RestartCodexAfterTakeover("bingchaai", "openai")
+	assertThreadProvider("openai")
+}

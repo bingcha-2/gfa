@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +22,11 @@ import (
 // Codex GUI 启动时仍会读 ~/.codex/auth.json 判断登录态:没有有效登录就卡在登录页,进不到
 // 能用自定义 provider 的主界面。本文件在接管时写一份"伪登录态",让它以为已登录、直接可用。
 //
-// 为什么是安全的(脱离代理就废,崩溃/取消也白嫖不了):
+// 注意:以上是旧版设计。新版 Desktop 会把伪 JWT 拿去官方 wham/settings
+// 验签,导致 401 白屏;现在远程接管已改用 requires_openai_auth=false 的自定义
+// provider，不再调用 InjectFakeCodexAuth。本文件只保留迁移/回归能力。
+//
+// 为什么旧伪凭证脱离代理后不可用:
 //   - Codex 不验 JWT 签名(实测 codex-rs login/src/token_data.rs 的 decode_jwt_payload 只
 //     split('.') 取 payload,签名段丢弃),所以这里写"签名是乱码、payload 合法"的假 JWT 即可
 //     骗过本地登录判定 —— 但这种 token 对真 chatgpt.com 天然无效(官方验签)。
@@ -29,12 +38,15 @@ import (
 //   永不触发,故无需把刷新导向代理。env 注入对 `open` 拉起的 GUI 也不可靠。真机若发现仍触发
 //   刷新弹登录,再补 /oauth/token 伪刷新端点 + env 注入。
 //
-// 备份/还原与幂等策略完全对齐 Claude 版:注入前把原 auth.json 状态(存在与否 + 原内容)备份到
-// .bcai-codex-creds-backup.json;取消接管时精确还原;已注入则不重复备份(不把自己写的伪凭证
+// 备份/还原与幂等策略对齐 Cockpit 的受管账号投影:注入前把原 auth.json
+// 状态(存在与否 + 原内容)备份到 .bcai-codex-creds-backup.json;macOS 同时备份
+// Codex Auth keychain。取消接管时精确还原;已注入则不重复备份(不把自己写的伪凭证
 // 当成"用户原值")。
 
 // codexFakeEmail 是伪登录态对外显示的占位邮箱(Codex 主界面"已登录为 xxx")。
 const codexFakeEmail = "codex@bingchaai.app"
+
+const codexKeychainService = "Codex Auth"
 
 var codexCredsMu sync.Mutex
 
@@ -44,14 +56,19 @@ func codexCredsBackupPath() string {
 	return filepath.Join(codexHomeDir(), ".bcai-codex-creds-backup.json")
 }
 
-// codexCredsBackup 记录注入前 auth.json 的状态(供精确还原)。
+// codexCredsBackup 记录注入前 auth.json / macOS keychain 的状态(供精确还原)。
 type codexCredsBackup struct {
-	Injected bool   `json:"injected"`
-	Existed  bool   `json:"existed"`        // 注入前文件是否存在
-	Prev     []byte `json:"prev,omitempty"` // 注入前的原始内容(Existed 时有效)
+	Injected         bool   `json:"injected"`
+	Existed          bool   `json:"existed"`                    // 注入前文件是否存在
+	Prev             []byte `json:"prev,omitempty"`             // 注入前的原始内容(Existed 时有效)
+	KeychainCaptured bool   `json:"keychainCaptured,omitempty"` // 是否已捕获 macOS keychain 原状态
+	KeychainExisted  bool   `json:"keychainExisted,omitempty"`
+	PrevKeychain     string `json:"prevKeychain,omitempty"`
 }
 
-// InjectFakeCodexAuth 写入伪 auth.json,让未登录的 Codex 以为已登录。由 codex 接管流程调用。
+// InjectFakeCodexAuth 写入远程接管专用登录投影。不信任磁盘上现有 token:
+// 它可能 exp 未过但已被服务端 token_invalidated。远程接管必须像 Cockpit 切号一样
+// 主动投影受控凭证。macOS 上 Codex 优先读 Keychain,所以必须与 auth.json 同步。
 // 已注入(备份已存在)则只刷新伪凭证、不重复备份。
 func InjectFakeCodexAuth() error {
 	codexCredsMu.Lock()
@@ -61,22 +78,46 @@ func InjectFakeCodexAuth() error {
 		return err
 	}
 
-	// 首次注入:备份原文件状态(存在与否 + 原内容)。已有备份说明处于接管态,不再覆盖备份。
-	if readCodexCredsBackup() == nil {
-		bk := &codexCredsBackup{Injected: true}
+	// 首次注入:备份原文件状态。已有备份说明处于接管态,不再覆盖备份。
+	bk := readCodexCredsBackup()
+	if bk == nil {
+		bk = &codexCredsBackup{Injected: true}
 		if data, err := os.ReadFile(codexAuthPath()); err == nil {
 			bk.Existed = true
 			bk.Prev = data
 		}
-		if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
-			_ = writeFileAtomic(codexCredsBackupPath(), b, 0o600)
-		}
 	}
-
-	if err := writeFileAtomic(codexAuthPath(), buildFakeCodexAuth(), 0o600); err != nil {
+	// 兼容旧版备份:旧版只备份 auth.json,尚未动 keychain,可在首次升级注入时补捕获。
+	if runtime.GOOS == "darwin" && !appActionsSuppressed() && !bk.KeychainCaptured {
+		secret, existed, err := readCodexKeychainSecret()
+		if err != nil {
+			return err
+		}
+		bk.KeychainCaptured = true
+		bk.KeychainExisted = existed
+		bk.PrevKeychain = secret
+	}
+	encodedBackup, err := json.MarshalIndent(bk, "", "  ")
+	if err != nil {
 		return err
 	}
-	Log("[codex-creds] 已注入伪 auth.json: %s", codexAuthPath())
+	if err := writeFileAtomic(codexCredsBackupPath(), encodedBackup, 0o600); err != nil {
+		return err
+	}
+
+	fakeAuth := buildFakeCodexAuth()
+	if err := writeFileAtomic(codexAuthPath(), fakeAuth, 0o600); err != nil {
+		return err
+	}
+	// Codex/keyring 在 macOS generic-password 中保存的不是原始 JSON,
+	// 而是 JSON bytes 的小写 hex 字符串。写原始 JSON 会被读成
+	// auth_token_missing。虽然新远程接管已不再依赖伪登录,但保留
+	// 正确编码以便旧版迁移/回归测试不再制造损坏的 keychain 项。
+	if err := writeCodexKeychainSecret(hex.EncodeToString(fakeAuth)); err != nil {
+		return err
+	}
+	keychainProjected := runtime.GOOS == "darwin" && !appActionsSuppressed()
+	Log("[codex-creds] 已投影远程接管登录态: auth=%s keychain=%v", codexAuthPath(), keychainProjected)
 	return nil
 }
 
@@ -90,22 +131,120 @@ func RestoreFakeCodexAuth() error {
 	if bk == nil {
 		return nil // 未注入过,无需还原
 	}
-	if bk.Existed {
-		if err := writeFileAtomic(codexAuthPath(), bk.Prev, 0o600); err != nil {
+	currentAuth, _ := os.ReadFile(codexAuthPath())
+	authWasProjected := isFakeCodexAuth(currentAuth)
+	if authWasProjected {
+		if bk.Existed {
+			if err := writeFileAtomic(codexAuthPath(), bk.Prev, 0o600); err != nil {
+				return err
+			}
+		} else {
+			// 原本没有 auth.json → 删除我们写的伪凭证。
+			_ = os.Remove(codexAuthPath())
+		}
+	}
+	keychainWasProjected := false
+	if bk.KeychainCaptured {
+		currentSecret, existed, err := readCodexKeychainSecret()
+		if err != nil {
 			return err
 		}
-	} else {
-		// 原本没有 auth.json → 删除我们写的伪凭证。
-		_ = os.Remove(codexAuthPath())
+		keychainWasProjected = existed && isFakeCodexKeychainSecret(currentSecret)
+		if keychainWasProjected {
+			if bk.KeychainExisted {
+				if err := writeCodexKeychainSecret(bk.PrevKeychain); err != nil {
+					return err
+				}
+			} else if err := deleteCodexKeychainSecret(); err != nil {
+				return err
+			}
+		}
 	}
 	_ = os.Remove(codexCredsBackupPath())
-	Log("[codex-creds] 已还原 auth.json (原本存在=%v)", bk.Existed)
+	Log("[codex-creds] 已清理旧登录投影 (auth 已还原=%v keychain 已还原=%v)", authWasProjected, keychainWasProjected)
 	return nil
 }
 
-// codexHasExistingLogin 判断 ~/.codex/auth.json 是否已有登录态(tokens.access_token 非空)。
-// 已有则接管时不覆盖 —— 保留用户真账号显示与真实刷新流程;仅完全未登录时才注入伪登录态。
-// 不区分真假/是否过期:已有真 token 走 codex 自己的刷新,已有我们的伪 token(exp 远)本就有效。
+// isFakeCodexAuth 只识别 GFA 自己生成的旧伪凭证。如果接管期间用户或
+// Cockpit 已经写入一份新的真凭证,不得用旧备份把它覆盖回去。
+func isFakeCodexAuth(data []byte) bool {
+	var auth struct {
+		Tokens struct {
+			AccountID string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(data, &auth) != nil {
+		return false
+	}
+	return strings.HasPrefix(auth.Tokens.AccountID, "bcai-")
+}
+
+// isFakeCodexKeychainSecret 同时兼容旧 GFA 误写的 raw JSON 和 Codex 正确的
+// hex(JSON) 存储形态。
+func isFakeCodexKeychainSecret(secret string) bool {
+	raw := []byte(secret)
+	if decoded, err := hex.DecodeString(secret); err == nil {
+		raw = decoded
+	}
+	return isFakeCodexAuth(raw)
+}
+
+// codexKeychainAccount 对齐 Cockpit / Codex 官方键名:cli|sha256(canonical CODEX_HOME)[:16]。
+func codexKeychainAccount() string {
+	home := codexHomeDir()
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	} else if absolute, absErr := filepath.Abs(home); absErr == nil {
+		home = absolute
+	}
+	digest := sha256.Sum256([]byte(home))
+	return fmt.Sprintf("cli|%x", digest[:8])
+}
+
+func readCodexKeychainSecret() (string, bool, error) {
+	if runtime.GOOS != "darwin" || appActionsSuppressed() {
+		return "", false, nil
+	}
+	out, err := exec.Command("security", "find-generic-password", "-s", codexKeychainService, "-a", codexKeychainAccount(), "-w").CombinedOutput()
+	if err == nil {
+		return strings.TrimSuffix(strings.TrimSuffix(string(out), "\n"), "\r"), true, nil
+	}
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "could not be found") || strings.Contains(lower, "item not found") {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("读取 Codex keychain 失败: %w: %s", err, strings.TrimSpace(string(out)))
+}
+
+func writeCodexKeychainSecret(secret string) error {
+	if runtime.GOOS != "darwin" || appActionsSuppressed() {
+		return nil
+	}
+	out, err := exec.Command("security", "add-generic-password", "-U", "-s", codexKeychainService, "-a", codexKeychainAccount(), "-w", secret).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("写入 Codex keychain 失败: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func deleteCodexKeychainSecret() error {
+	if runtime.GOOS != "darwin" || appActionsSuppressed() {
+		return nil
+	}
+	out, err := exec.Command("security", "delete-generic-password", "-s", codexKeychainService, "-a", codexKeychainAccount()).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "could not be found") || strings.Contains(lower, "item not found") {
+		return nil
+	}
+	return fmt.Errorf("删除 Codex keychain 失败: %w: %s", err, strings.TrimSpace(string(out)))
+}
+
+// codexHasExistingLogin 只判断 auth.json 在本地看起来是否有登录态。
+// 它无法识别服务端 token_invalidated,因此仅供旧版迁移的诊断/回归测试;
+// 新远程接管不再依赖任何 ChatGPT 登录态。
 func codexHasExistingLogin() bool {
 	data, err := os.ReadFile(codexAuthPath())
 	if err != nil {
