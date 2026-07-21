@@ -122,7 +122,7 @@ describe("Codex 额度 E2E 场景", () => {
     expect(afterReset.weekly.used).toBeGreaterThan(afterBaseline.weekly.used);
   });
 
-  it("USD订阅·真实链路:无 resetAt 的 80→99 相对回升需连续两次才重置", async () => {
+  it("USD订阅·真实链路:母号持久化水位证明无 resetAt 的 80→99 回升时立即重置", async () => {
     const svc = setupUsdSubscription({ used5h: 80, usedWeekly: 0 });
     let l = await lease(svc, "usd-sub");
     await report(svc, "usd-sub", l.leaseId, {
@@ -134,7 +134,10 @@ describe("Codex 额度 E2E 场景", () => {
     let result = await report(svc, "usd-sub", l.leaseId, {
       accountQuota: { ...quota(11, 99, -1), observedAt: now + 1 },
     });
-    expect(result.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBe(80);
+    // reportResult captured the persisted mother-account 80% before applying
+    // this 99% snapshot. That cross-snapshot recovery is trusted reset evidence
+    // and intentionally bypasses the generic two-sample guard.
+    expect(result.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBe(0);
 
     now += 1_000;
     l = await lease(svc, "usd-sub");

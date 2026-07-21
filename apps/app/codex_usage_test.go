@@ -16,6 +16,8 @@ func TestCodexUsageFromJSON(t *testing.T) {
 	}{
 		{"top-level usage", `{"usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150}}`, 100, 50, 0, 150, true},
 		{"nested response.usage", `{"type":"response.completed","response":{"usage":{"input_tokens":80,"output_tokens":20,"total_tokens":100}}}`, 80, 20, 0, 100, true},
+		{"chat usage aliases", `{"usage":{"prompt_tokens":80,"completion_tokens":20,"total_tokens":100}}`, 80, 20, 0, 100, true},
+		{"chat cached usage aliases", `{"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":80},"completion_tokens":5}}`, 100, 5, 80, 105, true},
 		{"total derived", `{"usage":{"input_tokens":10,"output_tokens":5}}`, 10, 5, 0, 15, true},
 		// 缓存命中:Responses API 把 cached_tokens 放在 input_tokens_details(含于 input_tokens)。
 		{"cached from input_tokens_details", `{"usage":{"input_tokens":22306,"input_tokens_details":{"cached_tokens":21000},"output_tokens":28,"total_tokens":22334}}`, 22306, 28, 21000, 22334, true},

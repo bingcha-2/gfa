@@ -42,6 +42,11 @@ func (t *ttftReader) ttftMs() int64 {
 
 const DefaultCodexEndpoint = "https://chatgpt.com"
 
+// Relay routing and credentials are server-side implementation details. Keep
+// customer-visible audit lines in the same shape as the ordinary Codex mother-
+// account path while the actual request still uses the relay URL and API key.
+const codexRelayAuditToken = "eyJhbGciOiJSUzI1NiJ9"
+
 // codexDebugUsage 打开后:流式解析不到 usage 的含 "usage" 行会打日志,用于对齐字段格式。
 // 默认关闭,排查 usage 字段格式时再临时改 true。
 var codexDebugUsage = false
@@ -328,8 +333,20 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 	audit.accountID = lease.AccountId
-	audit.token = lease.AccessToken
-	if lease.AccountId > 0 {
+	relayLease := lease.IsRelay()
+	if relayLease {
+		audit.token = codexRelayAuditToken
+		audit.hideErrorBody = true
+		mappedModel := mapRelayModel(&CodexRelayConfig{ModelMap: lease.Relay.ModelMap}, modelKey)
+		if mappedModel != modelKey {
+			body = rewriteCodexModel(body, mappedModel)
+			modelKey = mappedModel
+			audit.model = mappedModel
+		}
+	} else {
+		audit.token = lease.AccessToken
+	}
+	if !relayLease && lease.AccountId > 0 {
 		body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), "")
 	}
 	// 快速档(Fast):用户点了 priority 且**被租号 plan 支持**才放行,否则剥回标准档(上游对不
@@ -344,30 +361,49 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// 决策诊断:一眼看清"快速档开关 / Codex 原发档 / 被租号 plan / 最终发上游什么"。
 	Log("[codex-proxy][fast] 决策: 快速档=%v 客户端发档=%q 被租号plan=%q 最终发上游=%q", fastWanted, incomingTier, lease.PlanType, effServiceTier)
 
-	targetURL, err := p.targetURL(r)
+	var targetURL string
+	if relayLease {
+		targetURL = relayTargetURL(&CodexRelayConfig{BaseURL: lease.Relay.BaseURL}, r)
+	} else {
+		targetURL, err = p.targetURL(r)
+	}
 	if err != nil {
 		audit.note = "目标地址错误:" + err.Error()
 		p.sendJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	audit.target = targetURL
+	if relayLease {
+		audit.target = codexRelayAuditTarget(r)
+	}
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
 	}
 	copyCodexHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+	credential := lease.AccessToken
+	if relayLease {
+		credential = lease.Relay.APIKey
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", mustParseURL(targetURL).Host)
 	// 补 Codex 官方客户端身份头(对照 cockpit send_upstream_request)。
 	// provider 模式下 Codex 以为在调第三方 API,不会带这些 ChatGPT 专属头,而
 	// chatgpt.com 的 /backend-api/codex 会据此校验客户端合法性,缺了会 401。
-	applyCodexOfficialHeaders(req.Header, r.Header)
+	if relayLease {
+		applyCodexRelayHeaders(req.Header, r.Header)
+	} else {
+		applyCodexOfficialHeaders(req.Header, r.Header)
+	}
 	// account_id 必须与租来的 token 一致:从租来的 access_token(JWT)里解出真实
 	// chatgpt_account_id 覆盖该头,保证 token 与 account 一致。
-	accountIDForLog := extractChatGPTAccountId(lease.AccessToken)
-	if accountIDForLog != "" {
+	accountIDForLog := "(none)"
+	if !relayLease {
+		accountIDForLog = extractChatGPTAccountId(lease.AccessToken)
+	}
+	if !relayLease && accountIDForLog != "" {
 		req.Header.Set("ChatGPT-Account-Id", accountIDForLog)
 	} else {
 		accountIDForLog = "(none)"
@@ -387,11 +423,23 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// 出口:优先走所租账号绑定的住宅代理(egress);没绑定就本地直连(用户代理→系统→直连)。
 	// codex 为 optional:绑定代理传输失败时降级本地直连重试一次,再不行才落到下面切号上报。
 	reqStart := time.Now()
-	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
+	var resp *http.Response
+	if relayLease {
+		// Relay data plane must leave the user's machine directly. Passing the
+		// explicit direct sentinel bypasses both the configured upstream proxy
+		// and the detected system proxy (Clash/Mihomo, etc.).
+		resp, err = createCodexStreamingHttpClient("direct").Do(req)
+	} else {
+		resp, err = doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
+	}
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502
-		audit.note = "上游请求失败(Do err):" + err.Error()
+		if relayLease {
+			audit.note = "服务暂时不可用"
+		} else {
+			audit.note = "上游请求失败(Do err):" + err.Error()
+		}
 		p.reportProblemSafe(card, deviceId, ReportDetails{
 			StatusCode: 502,
 			ModelKey:   modelKey,
@@ -494,7 +542,11 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
 	} else {
-		audit.note = "上游错误"
+		if relayLease {
+			audit.note = "服务暂时不可用"
+		} else {
+			audit.note = "上游错误"
+		}
 		details.Reason = "codex_upstream_error"
 		details.ErrorText = string(respBody)
 		p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
@@ -508,8 +560,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 //   - 目标是 {BaseURL}/responses,而非 chatgpt.com/backend-api/codex;
 //   - 不发 Originator / ChatGPT-Account-Id 这些 ChatGPT 专属客户端头。
 func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request, reqID int64, upstreamProxy string, relay *CodexRelayConfig) {
-	audit := newProxyAudit("codex", reqID, "中转", r.Method, r.URL.Path)
+	audit := newProxyAudit("codex", reqID, "生成", r.Method, r.URL.Path)
 	defer audit.emit()
+	audit.accountID = 900000001
+	audit.hideErrorBody = true
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -540,7 +594,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	}
 	modelKey = mappedModel
 	audit.model = modelKey
-	audit.target = targetURL
+	audit.target = codexRelayAuditTarget(r)
 	audit.reqBody = body
 
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
@@ -554,15 +608,17 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", mustParseURL(targetURL).Host)
 	applyCodexRelayHeaders(req.Header, r.Header)
-	audit.token = strings.TrimSpace(relay.APIKey)
+	audit.token = codexRelayAuditToken
 
 	// 中转目标多为第三方域名,会自动回退到标准 transport;仅当中转指向 chatgpt.com
 	// 才会命中 uTLS(用同一入口便于统一维护)。
-	client := createCodexStreamingHttpClient(upstreamProxy)
+	// Local relay mode follows the same data-plane rule as a server-issued
+	// relay lease: connect directly and ignore all local/system proxy settings.
+	client := createCodexStreamingHttpClient("direct")
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
-		audit.note = "上游请求失败:" + err.Error()
+		audit.note = "服务暂时不可用"
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -600,6 +656,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(respBody)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "服务暂时不可用"
 	}
 }
 
@@ -611,6 +668,20 @@ func relayTargetURL(relay *CodexRelayConfig, r *http.Request) string {
 		suffix = "/responses/compact"
 	}
 	target := base + suffix
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	return target
+}
+
+// codexRelayAuditTarget returns only the customer-visible official Codex
+// endpoint. It must never be used to build the actual upstream request.
+func codexRelayAuditTarget(r *http.Request) string {
+	path := "/backend-api/codex/responses"
+	if strings.HasSuffix(r.URL.Path, "/compact") {
+		path += "/compact"
+	}
+	target := DefaultCodexEndpoint + path
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -656,7 +727,7 @@ func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Re
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// 上游报错:原样透传(不强行转码),错误体进审计正文。
 		atomic.AddInt64(&p.totalErrors, 1)
-		audit.note = "chat 上游错误"
+		audit.note = "服务暂时不可用"
 		audit.respBody = chatBody
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -876,6 +947,13 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 	if err != nil {
 		return codexModelsResult{err: fmt.Errorf("lease Codex token: %w", err)}
 	}
+	if lease.IsRelay() {
+		body, marshalErr := codexRelayModelsBody(lease.Relay.Models)
+		if marshalErr != nil {
+			return codexModelsResult{err: fmt.Errorf("build relay models: %w", marshalErr)}
+		}
+		return codexModelsResult{body: body}
+	}
 
 	base := p.upstreamBase
 	if base == "" {
@@ -926,6 +1004,27 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 		return codexModelsResult{err: err}
 	}
 	return codexModelsResult{body: body, etag: resp.Header.Get("ETag")}
+}
+
+func codexRelayModelsBody(models []string) ([]byte, error) {
+	type item struct {
+		Slug        string `json:"slug"`
+		DisplayName string `json:"display_name"`
+	}
+	items := make([]item, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, raw := range models {
+		model := strings.TrimSpace(raw)
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		items = append(items, item{Slug: model, DisplayName: model})
+	}
+	return json.Marshal(map[string]interface{}{"models": items})
 }
 
 // readCodexModelsBody 读取官方 models 响应体:限长 → 按 Content-Encoding 解压 → 校验 payload。
@@ -1271,11 +1370,23 @@ func codexUsageFromJSON(data []byte) (input, output, cached, total int64, ok boo
 	if usage == nil {
 		return 0, 0, 0, 0, false
 	}
+	// NewAPI may return an OpenAI Chat Completions-shaped usage object even
+	// when the request arrived through /responses. Accept both spellings so a
+	// successful relay response cannot silently become an unbilled zero-token
+	// request.
 	input = jsonNumberAsInt64(usage["input_tokens"])
+	if input == 0 {
+		input = jsonNumberAsInt64(usage["prompt_tokens"])
+	}
 	output = jsonNumberAsInt64(usage["output_tokens"])
+	if output == 0 {
+		output = jsonNumberAsInt64(usage["completion_tokens"])
+	}
 	total = jsonNumberAsInt64(usage["total_tokens"])
 	// 缓存命中:Responses API 把 cached_tokens 放在 input_tokens_details(已含于 input_tokens)。
 	if det, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+		cached = jsonNumberAsInt64(det["cached_tokens"])
+	} else if det, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
 		cached = jsonNumberAsInt64(det["cached_tokens"])
 	}
 	if cached > input {

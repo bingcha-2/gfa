@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,6 +13,7 @@ import (
 var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", buildAPIBase+"/api/app/lease/codex")
 
 type CodexTokenLease struct {
+	Mode        string `json:"mode"`
 	AccessToken string `json:"accessToken"`
 	AccountId   int    `json:"accountId"`
 	LeaseId     string `json:"leaseId"`
@@ -27,6 +29,19 @@ type CodexTokenLease struct {
 	// EgressInfo 是服务端下发的出口策略。codex 为 optional:绑定代理则走它,
 	// 没绑定就本地直连;绑定代理传输失败则降级本地直连再切号(见 doUpstreamWithFallback)。
 	EgressInfo
+	Relay *CodexLeaseRelay `json:"relay,omitempty"`
+}
+
+type CodexLeaseRelay struct {
+	BaseURL  string            `json:"baseUrl"`
+	APIKey   string            `json:"apiKey"`
+	Protocol string            `json:"protocol"`
+	Models   []string          `json:"models"`
+	ModelMap map[string]string `json:"modelMap"`
+}
+
+func (l *CodexTokenLease) IsRelay() bool {
+	return l != nil && strings.EqualFold(strings.TrimSpace(l.Mode), "relay") && l.Relay != nil
 }
 
 type codexLeaseTokenResp struct {
@@ -47,8 +62,10 @@ type codexLeaseTokenResp struct {
 	// 客户端订阅血条始终读取 heartbeat 的个人美元额度。
 	CodexWindows *CodexQuotaWindow `json:"codexWindows"`
 	// 通用出口策略:该账号绑定的粘性出口代理 + 是否强制经代理出站(codex 恒 false)。
-	AccountProxyUrl string `json:"accountProxyUrl"`
-	EgressRequired  bool   `json:"egressRequired"`
+	AccountProxyUrl string           `json:"accountProxyUrl"`
+	EgressRequired  bool             `json:"egressRequired"`
+	Mode            string           `json:"mode"`
+	Relay           *CodexLeaseRelay `json:"relay"`
 }
 
 type CodexLeaser struct {
@@ -154,8 +171,12 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		l.setLastError(message)
 		return nil, errors.New(message)
 	}
-	if leaseResp.AccessToken == "" {
+	if !strings.EqualFold(strings.TrimSpace(leaseResp.Mode), "relay") && leaseResp.AccessToken == "" {
 		return nil, errors.New("empty Codex accessToken returned from server")
+	}
+	if strings.EqualFold(strings.TrimSpace(leaseResp.Mode), "relay") &&
+		(leaseResp.Relay == nil || strings.TrimSpace(leaseResp.Relay.BaseURL) == "" || strings.TrimSpace(leaseResp.Relay.APIKey) == "") {
+		return nil, errors.New("incomplete Codex relay configuration returned from server")
 	}
 
 	expiresAt := time.Now().Add(5 * time.Minute).UnixMilli()
@@ -165,6 +186,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		}
 	}
 	lease := &CodexTokenLease{
+		Mode:        leaseResp.Mode,
 		AccessToken: leaseResp.AccessToken,
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		LeaseId:     leaseResp.LeaseId,
@@ -175,6 +197,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
 		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
+		Relay:       leaseResp.Relay,
 	}
 	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
 	syncAccessKeyStatusFromBody(GetLeaser(), body)
@@ -214,6 +237,9 @@ func (l *CodexLeaser) applyCodexWindows(w *CodexQuotaWindow) {
 // RefreshQuotaUpstream 主动拉一次 codex 上游 5h/周额度 → 更新血条 + 上报服务端。
 // 供绑定模式激活/定时刷新调用;fetchCodexQuotaAsync 自带 30s 节流,被跳过则不报。
 func (l *CodexLeaser) RefreshQuotaUpstream(card, upstreamProxy string, lease *CodexTokenLease, force bool) {
+	if lease.IsRelay() {
+		return
+	}
 	if lease == nil {
 		return
 	}
@@ -279,6 +305,9 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 	}
 	go func() {
 		l.doCodexReportWithRetry(payload, card, upstreamProxy)
+		if lease.IsRelay() {
+			return
+		}
 		// 拉取本账号最新 5h/周限额。拿到后立即用同一个(仍新鲜的)lease 发一条 quota-only
 		// report,让服务端即时更新后台额度 —— 否则 quota 会卡在缓存里,要等下一次生成
 		// report 才上报,单发一条消息时后台永远显示 "—"。

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,13 +21,22 @@ import (
 // session_meta.payload.model_provider,以及 state_5.sqlite 的 threads 表
 // model_provider 列。
 //
-// 新接管模式(只改 chatgpt_base_url、不改 provider)不会再造成历史消失。但**旧版
-// GFA** 曾把 provider 改成 bingchaai,污染了历史元数据,导致升级前接管过的用户历史
-// 在官方视图(provider=openai)下消失。本模块把这些元数据自愈回 openai。
+// 远程接管使用 bingchaai provider,官方/本地账号通常使用 openai。
+// 切换后必须在 Codex 启动前把 rollout 和 SQLite 同时对齐到当前
+// provider,否则旧会话会继续使用切换前的路由/账号。
 
 const codexStateDBFile = "state_5.sqlite"
 
 var codexSessionDirs = []string{"sessions", "archived_sessions"}
+
+// codexStateDBPaths 同时覆盖 Codex 历史版本的根目录布局和新版官方
+// sqlite/ 布局。Cockpit 启动前修复也会同时检查这两个位置。
+func codexStateDBPaths(home string) []string {
+	return []string{
+		filepath.Join(home, "sqlite", codexStateDBFile),
+		filepath.Join(home, codexStateDBFile),
+	}
+}
 
 // HistoryVisibilitySummary 修复结果摘要。
 type HistoryVisibilitySummary struct {
@@ -68,11 +79,13 @@ func AlignCodexHistoryVisibility(home, targetProvider string) (HistoryVisibility
 		target = codexDefaultProvider
 	}
 	summary := HistoryVisibilitySummary{TargetProvider: target}
+	var repairErrors []error
 
 	changed, err := alignRolloutProviders(home, target)
 	summary.ChangedRolloutFile = changed
 	if err != nil {
 		Log("[codex] rollout 可见性修复部分失败: %v", err)
+		repairErrors = append(repairErrors, err)
 	}
 
 	rows, skipped, sqlErr := alignSQLiteProviders(home, target)
@@ -80,12 +93,13 @@ func AlignCodexHistoryVisibility(home, targetProvider string) (HistoryVisibility
 	summary.SkippedSQLite = skipped
 	if sqlErr != nil {
 		Log("[codex] state_5.sqlite 可见性修复失败: %v", sqlErr)
+		repairErrors = append(repairErrors, sqlErr)
 	}
 
-	return summary, nil
+	return summary, errors.Join(repairErrors...)
 }
 
-// alignRolloutProviders 遍历 rollout-*.jsonl,改写首行 session_meta 的 model_provider。
+// alignRolloutProviders 遍历 rollout-*.jsonl,改写所有 session_meta 的 model_provider。
 func alignRolloutProviders(home, target string) (int, error) {
 	return rewriteRolloutProviders(home, "", target)
 }
@@ -126,8 +140,9 @@ func rewriteRolloutProviders(home, source, target string) (int, error) {
 	return changed, firstErr
 }
 
-// retagRolloutFile 读取首行,若 session_meta.payload.model_provider != target 则改写,
-// 保留其余内容与文件 mtime(避免扰动 Codex 的排序)。返回是否发生改写。
+// retagRolloutFile 改写文件中所有 session_meta。Codex 在会话分支/恢复后可能追加
+// 多条 session_meta,只改首行会让旧 provider 在继续会话时再次生效。
+// 保留非 session_meta 行、原换行符与文件 mtime(避免扰动 Codex 排序)。
 func retagRolloutFile(path, target string) (bool, error) {
 	return retagRolloutFileFrom(path, "", target)
 }
@@ -137,46 +152,65 @@ func retagRolloutFileFrom(path, source, target string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	segments := bytes.SplitAfter(data, []byte{'\n'})
+	var out bytes.Buffer
+	out.Grow(len(data))
+	changed := false
+	for _, segment := range segments {
+		if len(segment) == 0 {
+			continue
+		}
+		line := segment
+		ending := []byte(nil)
+		if bytes.HasSuffix(line, []byte("\r\n")) {
+			line = line[:len(line)-2]
+			ending = []byte("\r\n")
+		} else if bytes.HasSuffix(line, []byte("\n")) {
+			line = line[:len(line)-1]
+			ending = []byte("\n")
+		}
 
-	// 切出首行内容、换行符、剩余内容(保留 LF/CRLF 风格)。
-	firstLine, separator, rest := splitFirstLine(data)
-
-	trimmed := strings.TrimSpace(string(firstLine))
-	if trimmed == "" {
+		trimmed := bytes.TrimSpace(line)
+		var rec map[string]interface{}
+		if len(trimmed) == 0 || json.Unmarshal(trimmed, &rec) != nil {
+			out.Write(line)
+			out.Write(ending)
+			continue
+		}
+		if recordType, _ := rec["type"].(string); recordType != "session_meta" {
+			out.Write(line)
+			out.Write(ending)
+			continue
+		}
+		payload, ok := rec["payload"].(map[string]interface{})
+		if !ok {
+			out.Write(line)
+			out.Write(ending)
+			continue
+		}
+		cur, _ := payload["model_provider"].(string)
+		if cur == target || (source != "" && cur != source) {
+			out.Write(line)
+			out.Write(ending)
+			continue
+		}
+		payload["model_provider"] = target
+		rec["payload"] = payload
+		rewritten, marshalErr := json.Marshal(rec)
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		out.Write(rewritten)
+		out.Write(ending)
+		changed = true
+	}
+	if !changed {
 		return false, nil
 	}
-	var rec map[string]interface{}
-	if err := json.Unmarshal([]byte(trimmed), &rec); err != nil {
-		return false, nil // 非 JSON 首行,跳过
-	}
-	if t, _ := rec["type"].(string); t != "session_meta" {
-		return false, nil
-	}
-	payload, ok := rec["payload"].(map[string]interface{})
-	if !ok {
-		return false, nil
-	}
-	cur, _ := payload["model_provider"].(string)
-	if cur == target || (source != "" && cur != source) {
-		return false, nil
-	}
-	payload["model_provider"] = target
-	rec["payload"] = payload
-
-	newFirst, err := json.Marshal(rec)
-	if err != nil {
-		return false, err
-	}
-
-	// 保留 CRLF/LF:沿用原换行风格,后续行原样保留。
-	out := make([]byte, 0, len(newFirst)+len(separator)+len(rest))
-	out = append(out, newFirst...)
-	out = append(out, separator...)
-	out = append(out, rest...)
 
 	// 记录并在写后恢复 mtime,避免改写打乱按修改时间排序的历史列表。
 	mtime := fileModTime(path)
-	if err := writeFileAtomic(path, out, 0o644); err != nil {
+	if err := writeFileAtomic(path, out.Bytes(), 0o644); err != nil {
 		return false, err
 	}
 	if !mtime.IsZero() {
@@ -188,7 +222,21 @@ func retagRolloutFileFrom(path, source, target string) (bool, error) {
 // alignSQLiteProviders 更新 state_5.sqlite 的 threads.model_provider 等列。
 // 返回 (更新行数, 是否跳过无效库, error)。
 func alignSQLiteProviders(home, target string) (int, bool, error) {
-	dbPath := filepath.Join(home, codexStateDBFile)
+	totalRows := 0
+	skippedAny := false
+	var repairErrors []error
+	for _, dbPath := range codexStateDBPaths(home) {
+		rows, skipped, err := alignSQLiteProviderDB(dbPath, target)
+		totalRows += rows
+		skippedAny = skippedAny || skipped
+		if err != nil {
+			repairErrors = append(repairErrors, err)
+		}
+	}
+	return totalRows, skippedAny, errors.Join(repairErrors...)
+}
+
+func alignSQLiteProviderDB(dbPath, target string) (int, bool, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return 0, false, nil // 没有数据库,无需处理
 	}
@@ -240,7 +288,21 @@ func alignSQLiteProviders(home, target string) (int, bool, error) {
 }
 
 func migrateSQLiteProvider(home, source, target string) (int, bool, error) {
-	dbPath := filepath.Join(home, codexStateDBFile)
+	totalRows := 0
+	skippedAny := false
+	var repairErrors []error
+	for _, dbPath := range codexStateDBPaths(home) {
+		rows, skipped, err := migrateSQLiteProviderDB(dbPath, source, target)
+		totalRows += rows
+		skippedAny = skippedAny || skipped
+		if err != nil {
+			repairErrors = append(repairErrors, err)
+		}
+	}
+	return totalRows, skippedAny, errors.Join(repairErrors...)
+}
+
+func migrateSQLiteProviderDB(dbPath, source, target string) (int, bool, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return 0, false, nil
 	}

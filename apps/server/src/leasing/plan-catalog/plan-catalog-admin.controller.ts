@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Request, UseGuards } from "@nestjs/common";
 
 import { ConsoleJwtGuard } from "../../shared/auth/console-jwt.guard";
 import { Roles } from "../../shared/auth/roles.decorator";
@@ -22,6 +22,25 @@ export class PlanCatalogAdminController {
     private readonly planCatalog: PlanCatalogService,
     private readonly auditLog: AuditLogService,
   ) {}
+
+  @Get("codex-relay")
+  async getCodexRelaySettings() {
+    return this.planCatalog.getCodexRelaySettings();
+  }
+
+  @Patch("codex-relay")
+  async updateCodexRelaySettings(@Body() body: any, @Request() req: any) {
+    const settings = await this.planCatalog.updateCodexRelaySettings(body || {});
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "UPDATE_CODEX_RELAY_SETTINGS",
+      targetType: "SiteSetting",
+      targetId: "codex-relay",
+      // Never include the API key (or its submitted body) in audit detail.
+      detail: { enabled: settings.enabled, baseUrl: settings.baseUrl, models: settings.models },
+    });
+    return settings;
+  }
 
   @Post()
   async createDraft(@Body() dto: CreatePlanCatalogDraftDto, @Request() req: any) {

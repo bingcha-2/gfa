@@ -862,6 +862,145 @@ func TestCodexProxyNonGenerationPostSwallowed(t *testing.T) {
 	}
 }
 
+func TestCodexProxyServerLeasedRelayReportsUsage(t *testing.T) {
+	ClearInMemoryLogs()
+	var proxyHit bool
+	configuredProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHit = true
+		http.Error(w, "relay data must not use configured proxy", http.StatusBadGateway)
+	}))
+	defer configuredProxy.Close()
+	var gotAuth, gotOriginator, gotAccountID string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotOriginator = r.Header.Get("Originator")
+		gotAccountID = r.Header.Get("ChatGPT-Account-Id")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, strings.Join([]string{
+			`event: response.completed`,
+			`data: {"type":"response.completed","response":{"model":"gpt-5.5","usage":{"input_tokens":4685,"input_tokens_details":{"cached_tokens":3840},"output_tokens":5,"total_tokens":4690}}}`,
+			``,
+		}, "\n"))
+	}))
+	defer upstream.Close()
+
+	var reported ReportDetails
+	var reportedLease *CodexTokenLease
+	proxy := &CodexProxy{
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{
+				Mode: "relay", AccountId: 900000001, LeaseId: "relay-lease", LeaseProof: "proof",
+				Relay: &CodexLeaseRelay{BaseURL: upstream.URL, APIKey: "server-relay-key", Protocol: "responses"},
+			}, nil
+		},
+		reportResult: func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {
+			reported = details
+			reportedLease = lease
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "customer-session", "device-a", configuredProxy.URL)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "Bearer server-relay-key" || gotOriginator != "" || gotAccountID != "" {
+		t.Fatalf("relay headers auth=%q originator=%q account=%q", gotAuth, gotOriginator, gotAccountID)
+	}
+	if proxyHit {
+		t.Fatal("server-issued relay data request used configured upstream proxy")
+	}
+	if reportedLease == nil || !reportedLease.IsRelay() || reportedLease.AccountId != 900000001 {
+		t.Fatalf("reported lease = %+v", reportedLease)
+	}
+	if reported.InputTokens != 4685 || reported.CachedInputTokens != 3840 || reported.OutputTokens != 5 || reported.RawTotalTokens != 4690 {
+		t.Fatalf("reported usage = %+v", reported)
+	}
+	var auditLine string
+	for _, line := range GetInMemoryLogs() {
+		if strings.Contains(line, "[codex-proxy]") && strings.Contains(line, "POST /v1/responses →") {
+			auditLine = line
+		}
+	}
+	if auditLine == "" {
+		t.Fatal("missing Codex relay audit line")
+	}
+	for _, secret := range []string{upstream.URL, "server-relay-key", "server-"} {
+		if strings.Contains(auditLine, secret) {
+			t.Fatalf("relay audit leaked %q: %s", secret, auditLine)
+		}
+	}
+	for _, visible := range []string{
+		"https://chatgpt.com/backend-api/codex/responses",
+		"acct=900000001",
+		"token=eyJhbG••••••(已隐藏)",
+	} {
+		if !strings.Contains(auditLine, visible) {
+			t.Fatalf("relay audit missing %q: %s", visible, auditLine)
+		}
+	}
+}
+
+func TestCodexProxyServerLeasedRelayHidesProviderErrorDetailsInAudit(t *testing.T) {
+	ClearInMemoryLogs()
+	const privateError = `{"error":{"type":"new_api_error","message":"No available channel under distributor","request_id":"private-request-id"}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, privateError)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{
+				Mode: "relay", AccountId: 900000001, LeaseId: "relay-lease", LeaseProof: "proof",
+				Relay: &CodexLeaseRelay{BaseURL: upstream.URL, APIKey: "private-relay-key", Protocol: "responses"},
+			}, nil
+		},
+		reportProblem: func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "customer-session", "device-a", "")
+
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "new_api_error") {
+		t.Fatalf("downstream must keep real error: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var auditLine string
+	for _, line := range GetInMemoryLogs() {
+		if strings.Contains(line, "[codex-proxy]") && strings.Contains(line, "码=502") {
+			auditLine = line
+		}
+	}
+	if auditLine == "" {
+		t.Fatal("missing relay error audit line")
+	}
+	for _, private := range []string{upstream.URL, "private-relay-key", "new_api_error", "distributor", "private-request-id", "错误正文="} {
+		if strings.Contains(auditLine, private) {
+			t.Fatalf("relay error audit leaked %q: %s", private, auditLine)
+		}
+	}
+	for _, visible := range []string{"https://chatgpt.com/backend-api/codex/responses", "acct=900000001", "码=502", "备注=服务暂时不可用"} {
+		if !strings.Contains(auditLine, visible) {
+			t.Fatalf("relay error audit missing %q: %s", visible, auditLine)
+		}
+	}
+}
+
+func TestCodexRelayModelsBodyKeepsModelsAvailableWithoutMotherAccount(t *testing.T) {
+	body, err := codexRelayModelsBody([]string{"gpt-5.4", "gpt-5.5", "gpt-5.5", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if strings.Count(got, `"slug"`) != 2 || !strings.Contains(got, `"gpt-5.4"`) || !strings.Contains(got, `"gpt-5.5"`) {
+		t.Fatalf("models body = %s", got)
+	}
+}
+
 // ─── 中转(API 卡密)模式 ──────────────────────────────────────────────────────
 // relay 模式:不租号、不要 card、用本地配置的 key 直连第三方中转站。对照 cockpit
 // 的 codex-api-key 路径:POST {base}/responses + Authorization: Bearer <key>,且
@@ -871,6 +1010,12 @@ func TestCodexProxyNonGenerationPostSwallowed(t *testing.T) {
 // 且即便 card 为空也放行(中转模式与号池无关)。
 func TestCodexProxyRelayForwardsWithConfiguredKey(t *testing.T) {
 	var gotAuth, gotOriginator, gotAccountID string
+	var proxyHit bool
+	configuredProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHit = true
+		http.Error(w, "relay data must not use configured proxy", http.StatusBadGateway)
+	}))
+	defer configuredProxy.Close()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
 			t.Fatalf("upstream path = %s, want /responses", r.URL.Path)
@@ -894,10 +1039,13 @@ func TestCodexProxyRelayForwardsWithConfiguredKey(t *testing.T) {
 	// card 故意留空:relay 模式与号池/卡密激活无关,不应被 401 拦。
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
 	rec := httptest.NewRecorder()
-	proxy.ServeHTTP(rec, req, "", "device-a", "")
+	proxy.ServeHTTP(rec, req, "", "device-a", configuredProxy.URL)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if proxyHit {
+		t.Fatal("local relay data request used configured upstream proxy")
 	}
 	if gotAuth != "Bearer relay-key-xyz" {
 		t.Fatalf("Authorization = %q, want Bearer relay-key-xyz", gotAuth)

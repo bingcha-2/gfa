@@ -75,7 +75,10 @@ type proxyAudit struct {
 	reqBody        []byte
 	respBody       []byte
 	note           string // 错误/补充说明(被拒/流中断/lease 失败 …)
-	emitted        bool
+	// hideErrorBody keeps private relay/provider diagnostics out of customer-
+	// visible logs while preserving the real HTTP status and downstream body.
+	hideErrorBody bool
+	emitted       bool
 }
 
 func newProxyAudit(product string, reqID int64, kind, method, path string) *proxyAudit {
@@ -134,7 +137,7 @@ func (a *proxyAudit) emit() {
 		fmt.Fprintf(&b, " 备注=%s", a.note)
 	}
 	// 正常请求只记一行元信息,正文省略;但出错(>=400)时附带上游错误正文(截断),便于定位 400/403/5xx 原因。
-	if a.status >= 400 && len(a.respBody) > 0 {
+	if a.status >= 400 && len(a.respBody) > 0 && !a.hideErrorBody {
 		snippet := strings.ReplaceAll(string(a.respBody), "\n", " ")
 		if rs := []rune(snippet); len(rs) > 500 {
 			snippet = string(rs[:500]) + "…(截断)"

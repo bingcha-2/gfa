@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PlanCatalogService } from "./plan-catalog.service";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
+import {
+  DEFAULT_CODEX_RELAY_MODEL_MAP,
+  DEFAULT_CODEX_RELAY_MODELS,
+} from "../remote-codex/codex-model-defaults";
 
 function makeService(overrides: Record<string, any> = {}) {
+  const settingRows = new Map<string, string>(Object.entries(overrides.siteSettings || {}));
   const prisma = {
     planCatalog: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -14,11 +19,104 @@ function makeService(overrides: Record<string, any> = {}) {
       aggregate: vi.fn().mockResolvedValue({ _max: { version: 0 } }),
       ...overrides.planCatalog,
     },
+    siteSetting: {
+      findMany: vi.fn(async () => [...settingRows].map(([key, value]) => ({ key, value }))),
+      upsert: vi.fn(async ({ where, update, create }: any) => {
+        const value = String((settingRows.has(where.key) ? update : create).value);
+        settingRows.set(where.key, value);
+        return { key: where.key, value };
+      }),
+    },
+    $transaction: vi.fn(async (work: any) => typeof work === "function" ? work(prisma) : Promise.all(work)),
     ...(overrides.subscription ? { subscription: overrides.subscription } : {}),
   };
   const accessKeyStore = overrides.accessKeyStore;
   return { prisma, accessKeyStore, service: new PlanCatalogService(prisma as any, accessKeyStore) };
 }
+
+describe("PlanCatalogService Codex relay settings", () => {
+  it("uses the bcai NewAPI /v1 endpoint by default and reads the initial key from server env", async () => {
+    vi.stubEnv("CODEX_RELAY_API_KEY", "sk-env-only-secret");
+    try {
+      const { service } = makeService();
+
+      const runtime = await service.resolveCodexRelaySettings();
+      const publicSettings = await service.getCodexRelaySettings();
+
+      expect(runtime).toMatchObject({
+        enabled: false,
+        baseUrl: "https://bcai.online/v1",
+        apiKey: "sk-env-only-secret",
+        models: [...DEFAULT_CODEX_RELAY_MODELS],
+        modelMap: { ...DEFAULT_CODEX_RELAY_MODEL_MAP },
+      });
+      expect(publicSettings).toMatchObject({
+        baseUrl: "https://bcai.online/v1",
+        apiKeyConfigured: true,
+        apiKeyHint: "****ecret",
+      });
+      expect(JSON.stringify(publicSettings)).not.toContain("sk-env-only-secret");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("upgrades the initial two-model empty-map defaults to the full GPT catalog", async () => {
+    const { service } = makeService({
+      siteSettings: {
+        codex_relay_models: JSON.stringify(["gpt-5.4", "gpt-5.5"]),
+        codex_relay_model_map: JSON.stringify({}),
+      },
+    });
+
+    const settings = await service.resolveCodexRelaySettings();
+
+    expect(settings.models).toEqual(DEFAULT_CODEX_RELAY_MODELS);
+    expect(settings.modelMap).toEqual(DEFAULT_CODEX_RELAY_MODEL_MAP);
+    expect(settings.modelMap["gpt-5.6-sol"]).toBe("gpt-5.6-sol");
+    expect(settings.modelMap["gpt-5.4-mini"]).toBe("gpt-5.4-mini");
+  });
+
+  it("keeps the API key private and only returns a masked hint", async () => {
+    const { service } = makeService({
+      siteSettings: {
+        codex_relay_enabled: "true",
+        codex_relay_base_url: "https://bcai.online/v1",
+        codex_relay_api_key: "sk-super-secret-value",
+        codex_relay_models: JSON.stringify(["gpt-5.4", "gpt-5.5"]),
+      },
+    });
+
+    const publicSettings = await service.getCodexRelaySettings();
+
+    expect(publicSettings).toMatchObject({
+      enabled: true,
+      baseUrl: "https://bcai.online/v1",
+      apiKeyConfigured: true,
+      apiKeyHint: "****value",
+      models: ["gpt-5.4", "gpt-5.5"],
+    });
+    expect(JSON.stringify(publicSettings)).not.toContain("sk-super-secret-value");
+  });
+
+  it("empty API key preserves the configured secret", async () => {
+    const { service } = makeService({
+      siteSettings: { codex_relay_api_key: "sk-existing" },
+    });
+
+    await service.updateCodexRelaySettings({
+      enabled: true,
+      baseUrl: "https://bcai.online",
+      apiKey: "",
+      models: ["gpt-5.5"],
+    });
+
+    expect(await service.resolveCodexRelaySettings()).toMatchObject({
+      baseUrl: "https://bcai.online/v1",
+      apiKey: "sk-existing",
+    });
+  });
+});
 
 describe("PlanCatalogService.publish", () => {
   it("发布某版 → 该版 PUBLISHED,之前的 PUBLISHED 全部归档为 ARCHIVED(同时至多一个 PUBLISHED)", async () => {

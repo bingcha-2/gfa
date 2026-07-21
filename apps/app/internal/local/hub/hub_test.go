@@ -16,17 +16,19 @@ type fakePlatform struct {
 	codexProviderInjectCount  int
 	codexProviderRestoreCount int
 	codexInjectedProvider     CodexProvider
-	agInjectCount      int
-	agRestoreCount     int
-	agInjectedToken    AntigravityToken
-	appPath            string
-	launchedArgs       []string
-	codexAuthPath      string
-	ideToken           AntigravityToken
-	ideTokenErr        error
+	agInjectCount             int
+	agRestoreCount            int
+	agInjectedToken           AntigravityToken
+	appPath                   string
+	launchedArgs              []string
+	codexAuthPath             string
+	ideToken                  AntigravityToken
+	ideTokenErr               error
 
 	agRunning             bool
+	codexRunning          bool
 	codexRestartCount     int
+	codexStopCount        int
 	restartSpecifiedCount int
 	restartSpecifiedPath  string
 	agAppStarts           []string
@@ -80,6 +82,8 @@ func (f *fakePlatform) LaunchApp(appPath, workingDir string, args []string) (int
 func (f *fakePlatform) StopProcess(pid int) error { return nil }
 
 func (f *fakePlatform) CodexRestartApp() error { f.codexRestartCount++; return nil }
+func (f *fakePlatform) CodexAppRunning() bool  { return f.codexRunning }
+func (f *fakePlatform) CodexStopApp() error    { f.codexStopCount++; return nil }
 func (f *fakePlatform) RestartSpecifiedApp(appPath string) error {
 	f.restartSpecifiedCount++
 	f.restartSpecifiedPath = appPath
@@ -208,7 +212,8 @@ func TestHub_SetAntigravityLocalInjected_InjectsAccountNotGateway(t *testing.T) 
 }
 
 // 切换接管源后重启对应客户端:antigravity 在跑则停+起(重读 state.vscdb);
-// codex 仅当「切换时启动 Codex App」(LaunchOnSwitch)开启才重启 GUI。
+// codex 原本没运行时仅当「切换时启动 Codex App」开启才启动;
+// 原本在运行时则必须先停后起,避免 app-server 锁住/回写旧会话状态。
 func TestHub_RestartOnSwitch(t *testing.T) {
 	h, fp := newHub(t)
 	fp.agRunning = true
@@ -240,6 +245,19 @@ func TestHub_RestartOnSwitch(t *testing.T) {
 	}
 	if fp.codexRestartCount != before {
 		t.Fatalf("LaunchOnSwitch 关时不应重启 codex,got %d (was %d)", fp.codexRestartCount, before)
+	}
+
+	// 即使 LaunchOnSwitch 关闭,原本已运行的 Codex 也要先关闭再恢复,
+	// 不能在 app-server 持有 SQLite/旧 provider 时修复历史。
+	fp.codexRunning = true
+	beforeStops := fp.codexStopCount
+	beforeRestarts := fp.codexRestartCount
+	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
+		t.Fatalf("running codex local: %v", err)
+	}
+	if fp.codexStopCount != beforeStops+1 || fp.codexRestartCount != beforeRestarts+1 {
+		t.Fatalf("已运行 Codex 应先停后起, stops %d→%d restarts %d→%d",
+			beforeStops, fp.codexStopCount, beforeRestarts, fp.codexRestartCount)
 	}
 }
 

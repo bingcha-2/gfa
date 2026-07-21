@@ -24,7 +24,15 @@ type localPlatform struct{}
 // 自定义 provider 重定向 —— 否则 config.toml 还指着远程租号代理,自有号凭证会经远程
 // 代理出口(违反「远程/本地两条数据面互斥、自有号不经远程」)。两种接管互斥,这里强制。
 func (localPlatform) CodexInjectAccount(tok hub.CodexToken) error {
-	_ = RestoreCodexSettings()
+	if err := RestoreCodexSettings(); err != nil {
+		return err
+	}
+	// 从远程 bingchaai 切到本地自有号时不会经过 codexTarget.Restore,
+	// 因此必须在这条直接入口同样把历史对齐到恢复后的 provider。
+	// 否则 config.toml 已回 openai,而旧会话仍在 bingchaai 分桶,侧边栏会全空。
+	if _, err := AlignCodexHistoryVisibility(codexHomeDir(), currentCodexModelProvider()); err != nil {
+		return fmt.Errorf("对齐 Codex 本地接管历史失败: %w", err)
+	}
 	return codexinject.InjectToHome(codexHomeDir(), codexinject.Token{
 		AuthKind:     tok.AuthKind,
 		IDToken:      tok.IDToken,
@@ -220,6 +228,16 @@ func (localPlatform) CodexRestartApp() error {
 	// (与 LaunchCodexApp 的行为保持一致,见 codex_skin_channel.go)。
 	_, err := localPlatform{}.LaunchApp(appPath, "", codexSkinLaunchArgs())
 	return err
+}
+
+func (localPlatform) CodexAppRunning() bool { return IsCodexRunning() }
+
+func (localPlatform) CodexStopApp() error {
+	QuitCodexApp()
+	if isCodexProcessTreeRunning() {
+		return fmt.Errorf("Codex 后台进程未完全退出")
+	}
+	return nil
 }
 
 // RestartSpecifiedApp 杀掉并重启用户在「Codex 设置」里指定的联动应用(切号后调用)。

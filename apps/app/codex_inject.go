@@ -447,25 +447,34 @@ func codexAppBundlePath(p string) string {
 	return p
 }
 
-// RestartCodexAfterTakeover 退出 → 把历史从 sourceProvider 迁移到 targetProvider → 启动。
-// 串行后台执行,保证修复 SQLite 时 Codex 已退出(数据库未被占用)。
+// RestartCodexAfterTakeover 退出 → 把全部历史对齐到 targetProvider → 启动。
 //
-// provider 模式下 Codex 按 model_provider 给历史分桶展示:接管后当前 provider 是
-// bingchaai,需把历史 retag 到 bingchaai 才在当前视图可见;还原后回到 openai,需
-// retag 回 openai。targetProvider 由调用方按接管/还原传入。
-func RestartCodexAfterTakeover(sourceProvider, targetProvider string) {
+// 这个步骤必须同步执行:Codex 退出前的 app-server 会继续持有旧会话的
+// provider/鉴权上下文。如果配置写完就先向 UI 报“接管成功”,用户立即打开
+// 旧会话时仍可能走接管前的账号。
+//
+// 不再只迁移 sourceProvider:旧版接管、其它工具和 Codex 升级都可能留下多个
+// provider 值。Cockpit 的启动前修复也是以“当前配置为目标”全量对齐。
+// sourceProvider 仅保留给日志和旧调用方,不再用它限制修复范围。
+func RestartCodexAfterTakeover(sourceProvider, targetProvider string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			Log("[codex] 重启编排 panic: %v", r)
+			LaunchCodexApp()
+			retErr = fmt.Errorf("Codex 重启编排异常: %v", r)
 		}
 	}()
 	QuitCodexApp()
-	summary, err := MigrateCodexHistoryProvider(codexHomeDir(), sourceProvider, targetProvider)
+	summary, err := AlignCodexHistoryVisibility(codexHomeDir(), targetProvider)
 	if err != nil {
-		Log("[codex] 对齐历史可见性失败(不致命): %v", err)
+		// 即使修复失败也把 Codex 拉起,但把失败返回给接管 UI,绝不再显示
+		// 假的“已接管”。用户重试时全量对齐是幂等的。
+		LaunchCodexApp()
+		return fmt.Errorf("对齐 Codex 旧会话失败: %w", err)
 	} else {
-		Log("[codex] 历史 provider 已对齐: %s → %s, rollout=%d sqlite=%d skipped=%v",
+		Log("[codex] 历史 provider 已全量对齐: %s → %s, rollout=%d sqlite=%d skipped=%v",
 			sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
 	}
 	LaunchCodexApp()
+	return nil
 }

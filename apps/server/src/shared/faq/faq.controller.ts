@@ -64,7 +64,11 @@ export class FaqController {
   @Public()
   @Get('settings')
   async getSettings() {
-    const rows = await this.prisma.siteSetting.findMany();
+    // This endpoint is public. Never return unrelated private SiteSetting rows
+    // such as upstream API credentials.
+    const rows = await this.prisma.siteSetting.findMany({
+      where: { key: { in: ['contact_wechat', 'contact_qrcode_url'] } },
+    });
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
     return map;

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -129,6 +130,63 @@ func TestLocal_CodexTakeoverInjectionEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
 		t.Fatalf("撤接管后 %s 应被还原删除 (err=%v)", authPath, err)
+	}
+}
+
+// 从远程接管直接切本地自有号时,前端走 LocalSetCodexSource("local"),
+// 不会先调 codexTarget.Restore。这条入口也必须恢复 config 并把历史从
+// bingchaai 对齐回 openai,否则本地模式侧边栏为空。
+func TestLocal_CodexRemoteToLocalPreservesHistory(t *testing.T) {
+	codexHome := localTestEnv(t)
+	app := NewApp()
+	if _, err := app.LocalAddCodexToken("rt-local-history", "at-local-history", "history@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(codexHome, "sessions", "2026", "07", "20"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rolloutPath := filepath.Join(codexHome, "sessions", "2026", "07", "20", "rollout-history.jsonl")
+	rollout := `{"type":"session_meta","payload":{"id":"history","model_provider":"bingchaai"}}` + "\n" +
+		`{"type":"session_meta","payload":{"id":"history","model_provider":"bingchaai","forked":true}}` + "\n"
+	if err := os.WriteFile(rolloutPath, []byte(rollout), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(codexHome, codexStateDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('history','bingchaai')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	if err := InjectCodexSettings(60670); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.LocalSetCodexSource("local"); err != nil {
+		t.Fatalf("远程切本地失败: %v", err)
+	}
+	config, _ := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if strings.Contains(string(config), "bingchaai") {
+		t.Fatalf("本地模式仍残留远程 provider:\n%s", config)
+	}
+	rolloutAfter, _ := os.ReadFile(rolloutPath)
+	if strings.Count(string(rolloutAfter), `"model_provider":"openai"`) != 2 {
+		t.Fatalf("本地模式未对齐全部 session_meta:\n%s", rolloutAfter)
+	}
+	db, _ = sql.Open("sqlite", filepath.Join(codexHome, codexStateDBFile))
+	defer db.Close()
+	var provider string
+	if err := db.QueryRow(`SELECT model_provider FROM threads WHERE id='history'`).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	if provider != codexDefaultProvider {
+		t.Fatalf("SQLite provider=%q want %q", provider, codexDefaultProvider)
 	}
 }
 

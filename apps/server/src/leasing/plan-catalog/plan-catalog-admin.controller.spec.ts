@@ -8,6 +8,10 @@ function makeController(overrides: { service?: any; auditLog?: any } = {}) {
   const service = {
     createDraft: vi.fn().mockResolvedValue({ id: "cat-9", version: 4, status: "DRAFT" }),
     publish: vi.fn().mockResolvedValue({ id: "cat-9", version: 4, status: "PUBLISHED" }),
+    getCodexRelaySettings: vi.fn().mockResolvedValue({ enabled: false, apiKeyConfigured: false }),
+    updateCodexRelaySettings: vi.fn().mockResolvedValue({
+      enabled: true, baseUrl: "https://bcai.online/v1", models: ["gpt-5.5"], apiKeyConfigured: true,
+    }),
     ...overrides.service,
   };
   const auditLog = { log: vi.fn().mockResolvedValue(undefined), ...overrides.auditLog };
@@ -61,6 +65,21 @@ describe("PlanCatalogAdminController.publish", () => {
         targetId: "cat-9",
       }),
     );
+  });
+});
+
+describe("PlanCatalogAdminController Codex relay", () => {
+  it("updates private settings without writing API key to the audit detail", async () => {
+    const { controller, service, auditLog } = makeController();
+
+    const result = await controller.updateCodexRelaySettings({
+      enabled: true, baseUrl: "https://bcai.online/v1", apiKey: "sk-never-log-this",
+    }, req);
+
+    expect(service.updateCodexRelaySettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
+    expect(result).toMatchObject({ enabled: true, apiKeyConfigured: true });
+    const audit = auditLog.log.mock.calls[0][0];
+    expect(JSON.stringify(audit)).not.toContain("sk-never-log-this");
   });
 });
 

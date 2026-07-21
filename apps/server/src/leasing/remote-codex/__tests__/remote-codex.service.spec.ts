@@ -115,6 +115,127 @@ describe("RemoteCodexService", () => {
     );
   });
 
+  it("mother-account mode receives, charges, and enforces the subscription USD limits", async () => {
+    tokenProvider.mockResolvedValue("codex-access-token-alpha");
+    const service = makeService();
+    const store = (service as any).accessKeyStore;
+    store.loadSubscriptionRecords([{
+      id: "mother-sub",
+      key: "mother-sub-key",
+      status: "active",
+      customerId: "cust-mother",
+      products: ["codex"],
+      requiresBinding: true,
+      bindings: { codex: 11 },
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0.01, weekly: 1 } },
+    }]);
+
+    const lease = await service.leaseToken(
+      sessionReqFor("mother-sub"),
+      { clientId: "mother-client", modelKey: "gpt-5.5" },
+    );
+    expect(lease).toMatchObject({
+      ok: true,
+      accountId: 11,
+      accessToken: "codex-access-token-alpha",
+      accessKeyStatus: {
+        usdQuotaByProduct: {
+          codex: {
+            fiveHour: { used: 0, limit: 0.01 },
+            weekly: { used: 0, limit: 1 },
+          },
+        },
+      },
+    });
+
+    const report = await service.reportResult(sessionReqFor("mother-sub"), {
+      leaseId: lease.leaseId,
+      reportId: "mother-report-1",
+      status: 200,
+      modelKey: "gpt-5.5",
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      rawTotalTokens: 1_000_000,
+      totalTokens: 1_000_000,
+    });
+    expect(report.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBeGreaterThanOrEqual(5);
+
+    await expect(service.leaseToken(
+      sessionReqFor("mother-sub"),
+      { clientId: "mother-client", modelKey: "gpt-5.5" },
+    )).rejects.toMatchObject({ statusCode: 429 });
+  });
+
+  it("leases accountless relay, records USD usage, then enforces the same subscription limit", async () => {
+    writeJson(accountsFilePath, { accounts: [] });
+    const service = withSessionResolver(new RemoteCodexService({
+      accountsFilePath,
+      accessKeysFilePath,
+      tokenProvider,
+      now: () => currentTime,
+      randomId: () => "codex-relay-lease",
+      minClientVersion: "",
+      relayConfigProvider: async () => ({
+        enabled: true,
+        baseUrl: "https://bcai.online/v1",
+        apiKey: "sk-relay-test",
+        models: ["gpt-5.4", "gpt-5.5"],
+      }),
+    }));
+    const store = (service as any).accessKeyStore;
+    store.loadSubscriptionRecords([{
+      id: "relay-sub",
+      key: "relay-sub-key",
+      status: "active",
+      customerId: "cust-relay",
+      products: ["codex"],
+      requiresBinding: true,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0.01, weekly: 1 } },
+    }]);
+
+    const lease = await service.leaseToken(
+      sessionReqFor("relay-sub"),
+      { clientId: "relay-client", modelKey: "gpt-5.5" },
+    );
+    expect(lease).toMatchObject({
+      ok: true,
+      mode: "relay",
+      accountId: 900000001,
+      accessToken: "",
+      relay: { baseUrl: "https://bcai.online/v1", apiKey: "sk-relay-test" },
+      accessKeyStatus: {
+        usdQuotaByProduct: {
+          codex: {
+            fiveHour: { used: 0, limit: 0.01 },
+            weekly: { used: 0, limit: 1 },
+          },
+        },
+      },
+    });
+    expect(tokenProvider).not.toHaveBeenCalled();
+
+    const report = await service.reportResult(sessionReqFor("relay-sub"), {
+      leaseId: lease.leaseId,
+      reportId: "relay-report-1",
+      status: 200,
+      modelKey: "gpt-5.5",
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      rawTotalTokens: 1_000_000,
+      totalTokens: 1_000_000,
+    });
+    expect(report.accessKeyStatus.usdQuotaByProduct.codex.fiveHour.used).toBeGreaterThanOrEqual(5);
+
+    await expect(service.leaseToken(
+      sessionReqFor("relay-sub"),
+      { clientId: "relay-client", modelKey: "gpt-5.5" },
+    )).rejects.toMatchObject({ statusCode: 429 });
+  });
+
   it("records usage against the codex card", async () => {
     tokenProvider.mockResolvedValue("codex-access-token-alpha");
     const service = makeService();

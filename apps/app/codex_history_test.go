@@ -20,6 +20,7 @@ func TestRetagRolloutFilePreservesRestAndMtime(t *testing.T) {
 	path := filepath.Join(dir, "rollout-test.jsonl")
 	content := `{"type":"session_meta","payload":{"id":"s1","cwd":"/x","model_provider":"openai"}}
 {"type":"event","timestamp":"2026-05-25T11:58:40.668Z"}
+{"type":"session_meta","payload":{"id":"s1","cwd":"/x","model_provider":"openai","forked":true}}
 {"type":"event","data":"keep this 中文"}
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -38,6 +39,12 @@ func TestRetagRolloutFilePreservesRestAndMtime(t *testing.T) {
 	got, _ := os.ReadFile(path)
 	if !strings.Contains(string(got), `"model_provider":"bingchaai"`) {
 		t.Fatalf("provider 未改写:\n%s", got)
+	}
+	if count := strings.Count(string(got), `"model_provider":"bingchaai"`); count != 2 {
+		t.Fatalf("文件内所有 session_meta 都应改写,got count=%d:\n%s", count, got)
+	}
+	if strings.Contains(string(got), `"model_provider":"openai"`) {
+		t.Fatalf("后续 session_meta 仍残留旧 provider:\n%s", got)
 	}
 	// 后续行必须原样保留。
 	if !strings.Contains(string(got), `"keep this 中文"`) {
@@ -143,6 +150,42 @@ func TestAlignSQLiteMissingDB(t *testing.T) {
 	}
 }
 
+func TestAlignSQLiteProvidersCoversOfficialSQLiteSubdir(t *testing.T) {
+	home := t.TempDir()
+	sqliteDir := filepath.Join(home, "sqlite")
+	if err := os.MkdirAll(sqliteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(sqliteDir, codexStateDBFile)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('old-thread','openai')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+
+	rows, skipped, err := alignSQLiteProviders(home, "bingchaai")
+	if err != nil || skipped || rows != 1 {
+		t.Fatalf("official sqlite dir not repaired: rows=%d skipped=%v err=%v", rows, skipped, err)
+	}
+	db, _ = sql.Open("sqlite", dbPath)
+	defer db.Close()
+	var provider string
+	if err := db.QueryRow(`SELECT model_provider FROM threads WHERE id='old-thread'`).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "bingchaai" {
+		t.Fatalf("provider=%q want bingchaai", provider)
+	}
+}
+
 func TestMigrateCodexHistoryProviderOnlyChangesLegacySource(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "sessions", "2026", "07", "10")
@@ -195,7 +238,7 @@ func TestMigrateCodexHistoryProviderOnlyChangesLegacySource(t *testing.T) {
 	}
 }
 
-func TestRestartCodexAfterTakeoverMigratesHistoryBothDirections(t *testing.T) {
+func TestRestartCodexAfterTakeoverAlignsAllHistoryBothDirections(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	db, err := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
@@ -205,12 +248,14 @@ func TestRestartCodexAfterTakeoverMigratesHistoryBothDirections(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO threads VALUES ('history','openai')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('history','openai'),('other-provider','legacy-custom')`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 
-	RestartCodexAfterTakeover("openai", "bingchaai")
+	if err := RestartCodexAfterTakeover("openai", "bingchaai"); err != nil {
+		t.Fatal(err)
+	}
 	assertThreadProvider := func(want string) {
 		t.Helper()
 		db, openErr := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
@@ -227,7 +272,19 @@ func TestRestartCodexAfterTakeoverMigratesHistoryBothDirections(t *testing.T) {
 		}
 	}
 	assertThreadProvider("bingchaai")
+	var otherProvider string
+	db, _ = sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	if err := db.QueryRow(`SELECT model_provider FROM threads WHERE id='other-provider'`).Scan(&otherProvider); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	if otherProvider != "bingchaai" {
+		t.Fatalf("all old providers must align before launch, got %q", otherProvider)
+	}
 
-	RestartCodexAfterTakeover("bingchaai", "openai")
+	if err := RestartCodexAfterTakeover("bingchaai", "openai"); err != nil {
+		t.Fatal(err)
+	}
 	assertThreadProvider("openai")
 }

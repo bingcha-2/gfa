@@ -81,6 +81,63 @@ func TestCodexServeImagesTranslatesToResponses(t *testing.T) {
 	}
 }
 
+// 套餐中转模式没有母号 token。生图仍应使用租约下发的 URL/API Key，并兼容
+// NewAPI 已返回可用 partial_image、随后又错误发送 response.failed 的实际行为。
+func TestCodexServeImagesUsesServerRelayAndKeepsLastPartial(t *testing.T) {
+	var gotPath, gotAuth, gotAccountID, gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAccountID = r.Header.Get("ChatGPT-Account-Id")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "event: response.image_generation_call.partial_image\n")
+		_, _ = io.WriteString(w, `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"iVBOR-relay-partial","partial_image_index":0}`+"\n\n")
+		_, _ = io.WriteString(w, "event: response.failed\n")
+		_, _ = io.WriteString(w, `data: {"type":"response.failed","response":{"status":"failed","error":{"code":"upstream_error"}}}`+"\n\n")
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{
+				Mode: "relay",
+				Relay: &CodexLeaseRelay{
+					BaseURL: upstream.URL,
+					APIKey:  "server-relay-key",
+					ModelMap: map[string]string{
+						codexImagesMainModel: "gpt-5.6-sol",
+					},
+				},
+			}, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"prompt":"relay image"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeImages(rec, req, "subscription-key", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/responses" {
+		t.Fatalf("relay path = %q, want /responses", gotPath)
+	}
+	if gotAuth != "Bearer server-relay-key" {
+		t.Fatalf("relay auth = %q", gotAuth)
+	}
+	if gotAccountID != "" {
+		t.Fatalf("中转请求不应发送 ChatGPT-Account-Id, got %q", gotAccountID)
+	}
+	if gjson.Get(gotBody, "model").String() != "gpt-5.6-sol" {
+		t.Fatalf("主持模型未按中转映射改写: %s", gotBody)
+	}
+	if got := gjson.GetBytes(rec.Body.Bytes(), "data.0.b64_json").String(); got != "iVBOR-relay-partial" {
+		t.Fatalf("未保留最后一张 partial image: %q; body=%s", got, rec.Body.String())
+	}
+}
+
 // 上游没返回图 → 502(不把空/坏响应当成功)。
 func TestCodexServeImagesNoImageReturns502(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

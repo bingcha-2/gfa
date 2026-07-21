@@ -1,21 +1,11 @@
 import { proxyAwareFetch } from "../lease-core/egress";
 import { CatalogAuth, defaultDisplayName, ModelCatalog, ModelInfo } from "../lease-core/model-catalog";
+import { CODEX_MODEL_DISPLAY_NAMES } from "./codex-model-defaults";
 
 const CODEX_BUCKET = "codex";
 
 // Seed list + display names (mirrors cockpit src-tauri/.../codex_protocol.rs).
-const SEED: Record<string, string> = {
-  "gpt-5-codex": "GPT-5 Codex",
-  "gpt-5-codex-mini": "GPT-5 Codex Mini",
-  "gpt-5.1-codex-max": "GPT-5.1 Codex Max",
-  "gpt-5.1-codex-mini": "GPT-5.1 Codex Mini",
-  "gpt-5.2": "GPT-5.2",
-  "gpt-5.2-codex": "GPT-5.2 Codex",
-  "gpt-5.3-codex": "GPT-5.3 Codex",
-  "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark",
-  "gpt-5.4": "GPT-5.4",
-  "gpt-5.4-mini": "GPT-5.4 Mini",
-};
+const SEED = CODEX_MODEL_DISPLAY_NAMES;
 
 // Default upstream model fetch: OpenAI/ChatGPT models endpoint with the leased
 // account access token. Best-effort; the catalog falls back to the seed on any

@@ -245,6 +245,31 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(persisted.bindings).toEqual({ antigravity: 7 });
   });
 
+  it("Codex 中转开启时新订阅不需要存在或分配 Codex 母号", async () => {
+    planCatalog.resolveCodexRelaySettings = vi.fn(async () => ({ enabled: true }));
+    const sub = seed(makeSub({
+      id: "sub-codex-relay",
+      backingKeyValue: "sub_" + "r".repeat(48),
+      config: {
+        line: "bind",
+        products: ["codex"],
+        levels: { codex: "pro" },
+        weight: 1,
+        quotaAlgorithm: "usd",
+        usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 80 } },
+        deviceLimit: 1,
+        windowMs: 18_000_000,
+      },
+    }));
+
+    await expect(service.syncSubscription(sub)).resolves.toBeUndefined();
+
+    expect(rosetta.poolAccountById("codex", 1)).toBeNull();
+    const persisted = JSON.parse(subs.get(sub.id).config);
+    expect(persisted.bindings ?? {}).toEqual({});
+    expect(store.findById(sub.id)?.usdQuotaByProduct?.codex).toBeDefined();
+  });
+
   it("绑定线达到固定最大可售份数后，新订阅保持 UNBOUND", async () => {
     // subA weight 4 占满 account 7(容量 4)。
     const subA = seed(makeSub({ id: "sub-full", weight: 4, backingKeyValue: "sub_" + "1".repeat(48) }));

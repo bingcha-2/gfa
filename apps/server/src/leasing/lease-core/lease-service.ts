@@ -138,6 +138,14 @@ export type RequestLogRecorder = {
 
 export type LeaseHttpErrorClass = new (statusCode: number, message: string, body?: unknown) => Error;
 
+export type RelayFulfillmentConfig = {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  models?: string[];
+  modelMap?: Record<string, string>;
+};
+
 export type LeaseServiceOptions = {
   accessKeysFilePath?: string;
   /** Shared AccessKeyStore injected so all product pools share one usage cache. */
@@ -159,6 +167,8 @@ export type LeaseServiceOptions = {
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
   /** Fair-share tracker for bound-card dynamic quota. */
   fairShareTracker?: FairShareTracker;
+  /** Optional accountless fulfillment. Used by Codex NewAPI relay plans. */
+  relayConfigProvider?: (record: any) => Promise<RelayFulfillmentConfig | null>;
   /** Error class thrown by fail(); the controller routes on `instanceof`. */
   errorClass?: LeaseHttpErrorClass;
   /** getStatus().mode label. Default "remote-token-server". */
@@ -185,6 +195,7 @@ type LeaseRecord = {
   requestBodyBytes: number;
   successfulReportSeen: boolean;
   reportedAt?: number;
+  fulfillmentMode?: "account" | "relay";
 };
 
 type LeaseProofPayload = {
@@ -201,6 +212,7 @@ type LeaseProofPayload = {
   proofExpiresAt: number;
   isGeneration: boolean;
   requestBodyBytes: number;
+  fulfillmentMode?: "account" | "relay";
 };
 
 type HttpErrorBody = {
@@ -325,6 +337,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly affinityTtlMs: number;
   private readonly maxRetainedLeaseRecords: number;
   private readonly leaseProofSecret: string;
+  private readonly relayConfigProvider: ((record: any) => Promise<RelayFulfillmentConfig | null>) | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly banEventRecorder: BanEventRecorder | null;
   private readonly requestLogRecorder: RequestLogRecorder | null;
@@ -387,6 +400,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       || process.env.JWT_SECRET
       || "",
     );
+    this.relayConfigProvider = options.relayConfigProvider || null;
     this.tokenUsageTracker = options.tokenUsageTracker || null;
     this.banEventRecorder = options.banEventRecorder || null;
     this.requestLogRecorder = options.requestLogRecorder || null;
@@ -668,6 +682,66 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
+    const versionCheck = validateClientVersion(payload, this.minClientVersion);
+    if (!versionCheck.ok) {
+      throw this.fail(versionCheck.statusCode || 426, "当前插件版本过低", {
+        code: "CLIENT_UPGRADE_REQUIRED",
+        error: "当前插件版本过低",
+        ...versionCheck,
+        ok: false,
+      });
+    }
+    const clientId = String(payload?.clientId || payload?.client || "").trim();
+    const accessKeySessionId = `sess:${clientId || "session"}`;
+
+    // Accountless relay plans use the exact same subscription quota precheck
+    // above, but skip mother-account selection entirely.
+    const relayConfig = this.relayConfigProvider
+      ? await this.relayConfigProvider(auth.record)
+      : null;
+    if (relayConfig?.enabled) {
+      if (!relayConfig.baseUrl || !relayConfig.apiKey) {
+        throw this.fail(503, "Codex 中转尚未配置完成");
+      }
+      const lease = this.createRelayLease(
+        accessKeySessionId, auth.record.id, clientId, modelKey, payload,
+      );
+      this.leases.set(lease.leaseId, lease);
+      this.totalLeases++;
+      this.ensureDaily();
+      this.dailyLeases++;
+      return {
+        ok: true,
+        mode: "relay",
+        leaseId: lease.leaseId,
+        leaseProof: this.createLeaseProof(lease),
+        activeSubscriptionId: auth.record.id,
+        accessKeySessionId,
+        sessionId: accessKeySessionId,
+        sessionExpiresAt: auth.record.sessionExpiresAt || "",
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
+        // Positive, reserved display id keeps the desktop log/UI contract stable.
+        // The authoritative lease remains accountId=0 and cannot mutate a mother account.
+        accountId: 900000001,
+        serviceAccount: { accountId: 900000001, emailHint: "", planType: "" },
+        planType: "",
+        accessToken: "",
+        relay: {
+          baseUrl: relayConfig.baseUrl,
+          apiKey: relayConfig.apiKey,
+          protocol: "responses",
+          models: relayConfig.models || [],
+          modelMap: relayConfig.modelMap || {},
+        },
+        expiresAt: lease.expiresAt,
+        accessTokenExpiresAt: lease.expiresAt,
+        probation: false,
+        candidateStats: { healthyForModel: 1 },
+        bound: true,
+        displayBound: true,
+      };
+    }
+
     // Two card modes:
     //  • Bound  (boundAccountId > 0): pinned to one account in this pool — lease
     //    only from it, no dynamic-pool fallback.
@@ -712,24 +786,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
-    const versionCheck = validateClientVersion(payload, this.minClientVersion);
-    if (!versionCheck.ok) {
-      throw this.fail(versionCheck.statusCode || 426, "当前插件版本过低", {
-        code: "CLIENT_UPGRADE_REQUIRED",
-        error: "当前插件版本过低",
-        ...versionCheck,
-        ok: false,
-      });
-    }
-
-    const clientId = String(payload?.clientId || payload?.client || "").trim();
     // Session lease (the only runtime credential): multi-device is governed by
     // Device rows + Subscription.deviceLimit (enforced at login), NOT a
     // per-card single-session lock — concurrent clients may lease the same
     // shadow record. The lease still needs a stable non-empty session id for
     // its bookkeeping.
-    const accessKeySessionId = `sess:${clientId || "session"}`;
-
     const tokenFailedIds: number[] = [];
     let lastError: Error | null = null;
     let account: TAccount | null = null;
@@ -1416,7 +1477,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     const durableUsdReport = Boolean(
-      usdManaged && this.fairShareTracker && dedupId && accountId > 0 && quotaBucket
+      usdManaged && this.fairShareTracker && dedupId
+      && (accountId > 0 || lease?.fulfillmentMode === "relay") && quotaBucket
       && (success || usageDetail.totalTokens > 0 || (payload?.accountQuota && typeof payload.accountQuota === "object")),
     );
     const usdUsageBefore = durableUsdReport
@@ -2299,6 +2361,34 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       isGeneration: payload?.isGeneration !== false,
       requestBodyBytes: Math.max(0, Number(payload?.bodyBytes || payload?.requestBodyBytes || 0)),
       successfulReportSeen: false,
+      fulfillmentMode: "account",
+    };
+  }
+
+  private createRelayLease(
+    accessKeySessionId: string,
+    accessKeyId: string,
+    clientId: string,
+    modelKey: string,
+    payload: any,
+  ): LeaseRecord {
+    const ttlMs = Math.max(60_000, Math.min(this.leaseTtlMs, MAX_REMOTE_LEASE_TTL_MS));
+    return {
+      leaseId: this.randomId(),
+      accountId: 0,
+      email: "",
+      projectId: "",
+      clientId,
+      modelKey,
+      accessKeyId,
+      accessKeySessionId,
+      createdAt: this.now(),
+      expiresAt: new Date(this.now() + Math.min(ttlMs, accessKeySessionTtlMs({ sessionTtlMs: ttlMs }))).toISOString(),
+      released: false,
+      isGeneration: payload?.isGeneration !== false,
+      requestBodyBytes: Math.max(0, Number(payload?.bodyBytes || payload?.requestBodyBytes || 0)),
+      successfulReportSeen: false,
+      fulfillmentMode: "relay",
     };
   }
 
@@ -2320,6 +2410,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       proofExpiresAt: lease.createdAt + 24 * 60 * 60 * 1000,
       isGeneration: lease.isGeneration,
       requestBodyBytes: lease.requestBodyBytes,
+      fulfillmentMode: lease.fulfillmentMode,
     };
     const encoded = Buffer.from(JSON.stringify(proof)).toString("base64url");
     const signature = crypto.createHmac("sha256", this.leaseProofSecret).update(encoded).digest("base64url");
@@ -2350,20 +2441,22 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       || proof.provider !== this.provider.id
       || proof.leaseId !== leaseId
       || !Number.isInteger(proof.accountId)
-      || proof.accountId <= 0
+      || (proof.accountId <= 0 && proof.fulfillmentMode !== "relay")
       || !proof.accessKeyId
       || !Number.isFinite(proof.createdAt)
       || !Number.isFinite(proof.proofExpiresAt)
       || proof.proofExpiresAt <= this.now()
     ) return undefined;
-    const account = this.readAccounts().find((candidate) => candidate.id === proof.accountId);
-    if (!account) return undefined;
+    const account = proof.accountId > 0
+      ? this.readAccounts().find((candidate) => candidate.id === proof.accountId)
+      : undefined;
+    if (proof.accountId > 0 && !account) return undefined;
 
     const lease: LeaseRecord = {
       leaseId: proof.leaseId,
       accountId: proof.accountId,
-      email: account.email,
-      projectId: String((account as any).projectId || ""),
+      email: account?.email || "",
+      projectId: String((account as any)?.projectId || ""),
       clientId: String(proof.clientId || ""),
       modelKey: String(proof.modelKey || ""),
       accessKeyId: proof.accessKeyId,
@@ -2374,6 +2467,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       isGeneration: proof.isGeneration !== false,
       requestBodyBytes: Math.max(0, Number(proof.requestBodyBytes || 0)),
       successfulReportSeen: false,
+      fulfillmentMode: proof.fulfillmentMode || "account",
     };
     this.leases.set(lease.leaseId, lease);
     return lease;

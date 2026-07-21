@@ -9,6 +9,10 @@ describe("CodexModelCatalog", () => {
     const keys = catalog.list().map((m) => m.key);
     expect(keys).toContain("gpt-5-codex");
     expect(keys).toContain("gpt-5.1-codex-max");
+    expect(keys).toContain("gpt-5.5");
+    expect(keys).toContain("gpt-5.6-sol");
+    expect(keys).toContain("gpt-5.6-luna");
+    expect(keys).toContain("gpt-5.6-terra");
     const info = catalog.list().find((m) => m.key === "gpt-5-codex")!;
     expect(info.displayName).toBe("GPT-5 Codex");
     expect(info.bucket).toBe("codex");

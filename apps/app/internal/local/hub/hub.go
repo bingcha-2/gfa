@@ -106,6 +106,10 @@ type Platform interface {
 
 	// CodexRestartApp 重启常驻 Codex GUI app(切号后重读 auth.json);未装则 no-op。
 	CodexRestartApp() error
+	// CodexAppRunning / CodexStopApp 用于在修改历史库与凭证前先关闭
+	// app-server,防止它回写旧 provider 或继续持有旧连接。
+	CodexAppRunning() bool
+	CodexStopApp() error
 
 	// RestartSpecifiedApp 杀掉并重启用户在「Codex 设置」里指定的联动应用(切号后)。
 	// 对齐 cockpit codex_restart_specified_app_on_switch / codex_specified_app_path。
@@ -422,11 +426,15 @@ func (h *Hub) reinjectIfLocal(p account.Provider) {
 			return
 		}
 		if tok, err := h.pickCodexToken(); err == nil {
+			wasRunning := h.platform.CodexAppRunning()
+			if wasRunning {
+				_ = h.platform.CodexStopApp()
+			}
 			_ = h.platform.CodexRestoreAccount()
 			_ = h.platform.CodexInjectAccount(tok)
 			// 切号后重启客户端,让新 auth.json 生效(对齐 SetSource,尊重 LaunchOnSwitch);
 			// 否则正在跑的 codex GUI/会话仍抱旧号 —— 用户视角「切了没生效」。
-			h.restartClientAfterSwitch(p)
+			h.restartClientAfterSwitch(p, wasRunning)
 		}
 	case account.ProviderAntigravity:
 		// 按 app 独立接管:把新当前号重注入到所有已本地接管的 app(未接管的不动)。
@@ -638,6 +646,26 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		return nil
 	}
 	prev := h.sources.Get(string(p)) // 上一号源:决定切走时要不要清 config.toml 厂商表
+	codexWasRunning := false
+	codexStopped := false
+	stopCodexForMutation := func() error {
+		if p != account.ProviderCodex || codexStopped {
+			return nil
+		}
+		codexWasRunning = h.platform.CodexAppRunning()
+		if codexWasRunning {
+			if err := h.platform.CodexStopApp(); err != nil {
+				return err
+			}
+		}
+		codexStopped = true
+		return nil
+	}
+	relaunchCodexAfterFailure := func() {
+		if codexWasRunning {
+			_ = h.platform.CodexRestartApp()
+		}
+	}
 	switch src {
 	case takeover.SourceLocal:
 		// codex 'local' = 注入式接管:挑一个自有号直接写进 ~/.codex/auth.json,
@@ -647,8 +675,12 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		if err != nil {
 			return err
 		}
+		if err := stopCodexForMutation(); err != nil {
+			return err
+		}
 		_ = h.platform.CodexRestoreAccount()
 		if err := h.platform.CodexInjectAccount(tok); err != nil {
+			relaunchCodexAfterFailure()
 			return err
 		}
 	case takeover.SourceProvider:
@@ -658,13 +690,20 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		if !ok {
 			return errProviderNotFound(id)
 		}
+		if err := stopCodexForMutation(); err != nil {
+			return err
+		}
 		_ = h.platform.CodexRestoreAccount()
 		if err := h.platform.CodexInjectProvider(CodexProvider{
 			Name: prov.Name, BaseURL: prov.BaseURL, APIKey: prov.APIKey, WireAPI: string(prov.WireAPI),
 		}); err != nil {
+			relaunchCodexAfterFailure()
 			return err
 		}
 	default: // remote:撤本地接管,交还远程托管。
+		if err := stopCodexForMutation(); err != nil {
+			return err
+		}
 		if prev == takeover.SourceProvider {
 			// 上一次是厂商接管:清掉 config.toml 厂商表(auth.json 本就没动)。
 			_ = h.platform.CodexRestoreProvider()
@@ -679,22 +718,25 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		perr = h.sources.Set(string(p), src)
 	}
 	if perr != nil {
+		relaunchCodexAfterFailure()
 		return perr
 	}
 	// 切换接管源后重启对应客户端,让注入/还原的登录真正生效。
-	h.restartClientAfterSwitch(p)
+	h.restartClientAfterSwitch(p, codexWasRunning)
 	return nil
 }
 
 // restartClientAfterSwitch 切换 codex 接管源后重启客户端,让注入的新登录生效:
-// codex CLI 每次运行自读 auth.json 无需重启;仅当用户开了「切换时启动 Codex App」才重启常驻 GUI。
+// codex CLI 每次运行自读 auth.json 无需重启。GUI 原本在运行时必须恢复启动;
+// 原本未运行时则只有用户开了「切换时启动 Codex App」才启动。
 // (antigravity 改为按 app 独立开关,重启在 SetAntigravityLocalInjected 里就地处理。)
-func (h *Hub) restartClientAfterSwitch(p account.Provider) {
+func (h *Hub) restartClientAfterSwitch(p account.Provider, codexWasRunning ...bool) {
 	if p != account.ProviderCodex {
 		return
 	}
 	cs := h.GetCodexSettings()
-	if cs.LaunchOnSwitch {
+	wasRunning := len(codexWasRunning) > 0 && codexWasRunning[0]
+	if cs.LaunchOnSwitch || wasRunning {
 		_ = h.platform.CodexRestartApp()
 	}
 	// 切号后联动重启用户指定的应用(如自建 IDE/编辑器);未开或未配路径则跳过。
@@ -841,4 +883,3 @@ func (h *Hub) WakeupHistory(p account.Provider) ([]wakeup.RunEntry, error) {
 	}
 	return pc.wk.History(), nil
 }
-

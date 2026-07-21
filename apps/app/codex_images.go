@@ -81,32 +81,65 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex token lease failed: %v", err))
 		return
 	}
-	audit.accountID = lease.AccountId
-	audit.token = lease.AccessToken
-
-	base := p.upstreamBase
-	if base == "" {
-		base = DefaultCodexEndpoint
+	relayLease := lease.IsRelay()
+	if relayLease {
+		// 套餐开启中转时没有母号 token。生图与普通 /responses 必须使用同一份
+		// 服务端下发的中转 URL/API Key；日志仍保持官方 Codex 的展示口径。
+		audit.accountID = 900000001
+		audit.token = codexRelayAuditToken
+		audit.hideErrorBody = true
+		mappedHostModel := mapRelayModel(&CodexRelayConfig{ModelMap: lease.Relay.ModelMap}, codexImagesMainModel)
+		if mappedHostModel != codexImagesMainModel {
+			respBody = rewriteCodexModel(respBody, mappedHostModel)
+		}
+	} else {
+		audit.accountID = lease.AccountId
+		audit.token = lease.AccessToken
 	}
-	targetURL := strings.TrimRight(base, "/") + "/backend-api/codex/responses"
-	audit.target = targetURL
+
+	var targetURL string
+	if relayLease {
+		targetURL = strings.TrimRight(strings.TrimSpace(lease.Relay.BaseURL), "/") + "/responses"
+		audit.target = DefaultCodexEndpoint + "/backend-api/codex/responses"
+	} else {
+		base := p.upstreamBase
+		if base == "" {
+			base = DefaultCodexEndpoint
+		}
+		targetURL = strings.TrimRight(base, "/") + "/backend-api/codex/responses"
+		audit.target = targetURL
+	}
 	req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(respBody))
 	if err != nil {
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
 	}
 	copyCodexHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+	credential := lease.AccessToken
+	if relayLease {
+		credential = lease.Relay.APIKey
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
-	applyCodexOfficialHeaders(req.Header, r.Header)
-	if accountID := extractChatGPTAccountId(lease.AccessToken); accountID != "" {
-		req.Header.Set("ChatGPT-Account-Id", accountID)
-	} else {
+	if relayLease {
+		applyCodexRelayHeaders(req.Header, r.Header)
 		req.Header.Del("ChatGPT-Account-Id")
+	} else {
+		applyCodexOfficialHeaders(req.Header, r.Header)
+		if accountID := extractChatGPTAccountId(lease.AccessToken); accountID != "" {
+			req.Header.Set("ChatGPT-Account-Id", accountID)
+		} else {
+			req.Header.Del("ChatGPT-Account-Id")
+		}
 	}
 
-	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, respBody, req, createCodexStreamingHttpClient)
+	var resp *http.Response
+	if relayLease {
+		resp, err = createCodexStreamingHttpClient("direct").Do(req)
+	} else {
+		resp, err = doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, respBody, req, createCodexStreamingHttpClient)
+	}
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = http.StatusBadGateway

@@ -293,13 +293,25 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		Log("[codex] 未识别到 Codex 安装(CLI+GUI 探测均失败);建议用户手动选择 codex 可执行文件")
 		return "Codex: 未检测到安装。若已安装,请在 Codex 设置里手动选择 codex 可执行文件(命令行 `where codex` / `which codex` 可查真实路径)", nil
 	}
+	guiInstalled := codexGUIInstalled()
+	// Cockpit 的顺序是先完整关闭当前实例,再写凭证/配置。否则仍在运行的
+	// app-server 可能用内存中的旧状态回写文件,或让旧 thread 继续复用旧连接。
+	if guiInstalled {
+		QuitCodexApp()
+	}
 	// 新版 Codex Desktop 会把伪 ChatGPT JWT 拿去官方 wham/settings 验签,
 	// 必然 401 并卡白屏。远程托管现在由 requires_openai_auth=false 的自定义
 	// provider 承载，不再伪造或依赖 OAuth 登录。先迁移/清理旧版遗留的伪凭证备份。
 	if err := RestoreFakeCodexAuth(); err != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
 		return "", fmt.Errorf("清理旧版 Codex 登录投影失败: %w", err)
 	}
 	if err := InjectCodexSettings(proxyPort); err != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
 		return "", err
 	}
 	// 备份里保存的是接管前 provider。接管时迁到 bingchaai，取消时再迁回，
@@ -311,25 +323,38 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	// 接管即租号:清掉任何遗留的「中转(relay)」配置,确保生成请求走 bcai 号池租号,
 	// 而不是被旧的中转配置劫持到外部中转站(如 litellm)。热生效,无需重启代理。
 	if cleared, err := ensureCodexRentalMode(); err != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
 		return "", err
 	} else if cleared {
 		Log("[codex] 接管已清除遗留的中转(relay)配置,切回租号模式")
 	}
 	// 纯 CLI 安装:config 已写入并即时生效(CLI 每次运行现读),没有常驻 GUI 需要重启、
 	// 也没有 state_5.sqlite 历史需要 retag。直接返回,提示重开终端。
-	if !codexGUIInstalled() {
+	if !guiInstalled {
 		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI 桌面版:退出后对齐 bingchaai 历史分桶,再重启让常驻进程重读 provider。
-	go RestartCodexAfterTakeover(historySourceProvider, codexProviderID)
-	return "Codex: ✓ 已接管,正在重启 Codex...", nil
+	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
+	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
+	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
+		return "", err
+	}
+	return "Codex: ✓ 已接管并重启,新旧会话均已切换", nil
 }
 
 func (codexTarget) Restore() (string, error) {
 	// 即使接管期间 config.toml 被其它程序改写，也要把 GFA 分桶里的会话迁回用户
 	// 原 provider；不能按当前配置猜来源，否则会把 bingchaai 历史遗留成不可见。
 	historySourceProvider := codexProviderID
+	guiInstalled := codexGUIInstalled()
+	if guiInstalled {
+		QuitCodexApp()
+	}
 	if err := RestoreCodexSettings(); err != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
 		return "", err
 	}
 	restoredProvider := currentCodexModelProvider()
@@ -338,12 +363,14 @@ func (codexTarget) Restore() (string, error) {
 		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
 	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
-	if !codexGUIInstalled() {
+	if !guiInstalled {
 		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI:还原后迁回官方 openai 历史分桶并重启。
-	go RestartCodexAfterTakeover(historySourceProvider, restoredProvider)
-	return "Codex: ✓ 已恢复,正在重启 Codex...", nil
+	// GUI:还原后先把全部会话对齐回用户 provider,再启动;不异步报假成功。
+	if err := RestartCodexAfterTakeover(historySourceProvider, restoredProvider); err != nil {
+		return "", err
+	}
+	return "Codex: ✓ 已恢复并重启,历史会话已恢复", nil
 }
 
 // ── Claude Code(~/.claude/settings.json env 注入,CLI + VSCode 扩展共用)──────
