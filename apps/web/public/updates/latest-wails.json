@@ -6,7 +6,7 @@
   "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3-setup.exe",
   "installerSha256": "4956EA0D5DDEBDB7E088CF4685388E135D3AC246ADEA1C33445F73EFB9BD95DC",
   "installerSize": 21569033,
-  "changelog": "-修复 Codex 接管时的本地代理冲突与连接问题\\n-提升桌面端启动、更新与代理自愈稳定性",
+  "changelog": "-修复 Codex 接管时的本地代理冲突与连接问题\n-提升桌面端启动、更新与代理自愈稳定性",
   "minVersion": "13.5.5",
   "macOS": {
     "arm64": {
