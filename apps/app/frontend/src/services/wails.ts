@@ -12,6 +12,7 @@ import {
   GetStats,
   RefreshQuota as _RefreshQuota,
   RestartProxy as _RestartProxy,
+  ForceReleaseProxyPort as _ForceReleaseProxyPort,
   GetLogs,
   ClearLogs as _ClearLogs,
   GetIDEStatus,
@@ -246,6 +247,11 @@ export async function refreshQuota(): Promise<void> {
 // ===== Proxy =====
 export async function restartProxy(): Promise<void> {
   await _RestartProxy()
+}
+
+// Windows 排障:用户确认后强制结束占用首选端口 48800 的进程，并重启本地代理。
+export async function forceReleaseProxyPort(): Promise<string> {
+  return _ForceReleaseProxyPort()
 }
 
 // ===== Logs =====

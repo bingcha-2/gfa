@@ -42,11 +42,16 @@ func (p *LocalHTTPProxy) Start(port int, card, deviceId, upstreamProxy string) e
 	defer p.startMu.Unlock()
 
 	p.mu.Lock()
-	running := p.isRunning
-	p.mu.Unlock()
-	if running {
+	if p.isRunning {
+		// 重复启动请求通常来自登录刷新/看门狗竞态。监听器已经健康时不重绑端口，
+		// 但必须刷新运行时凭据；否则旧实例会继续拿空 token/旧 deviceId 处理请求。
+		p.card = card
+		p.deviceId = deviceId
+		p.upstreamProxy = upstreamProxy
+		p.mu.Unlock()
 		return nil
 	}
+	p.mu.Unlock()
 
 	if port <= 0 {
 		port = DefaultProxyPort
@@ -159,6 +164,21 @@ func effectiveProxyPort() int {
 		return st.ListenPort
 	}
 	return LoadConfig().ProxyPort
+}
+
+// startHTTPProxyAndAlign 是所有代理启动/重启路径的统一入口。代理可能从 48800 退到
+// 48810，也可能在占用解除后从 48810 回到 48800；每次实际监听端口发生变化，都把已接管
+// 的 Codex/IDE 配置从旧端口迁到新端口，避免生命周期调用方各自漏处理。
+func startHTTPProxyAndAlign(port int, card, deviceID, upstreamProxy string) error {
+	before := GetHTTPProxy().GetStatus()
+	if err := GetHTTPProxy().Start(port, card, deviceID, upstreamProxy); err != nil {
+		return err
+	}
+	after := GetHTTPProxy().GetStatus()
+	if before.ListenPort > 0 && after.Running && after.ListenPort > 0 && before.ListenPort != after.ListenPort {
+		go reinjectActiveTargets(before.ListenPort, after.ListenPort)
+	}
+	return nil
 }
 
 func (p *LocalHTTPProxy) Stop() {

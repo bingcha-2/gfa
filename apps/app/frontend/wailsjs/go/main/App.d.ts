@@ -32,6 +32,8 @@ export function DetectCompetingClaudeConfig():Promise<Array<main.ClaudeConfigCon
 
 export function DownloadUpdate():Promise<void>;
 
+export function ForceReleaseProxyPort():Promise<string>;
+
 export function GetAccountState():Promise<Record<string, any>>;
 
 export function GetAnnouncement():Promise<string>;

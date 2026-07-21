@@ -7,8 +7,8 @@ import (
 )
 
 func TestAppVersionMatchesRelease1372(t *testing.T) {
-	if AppVersion != "13.7.2" {
-		t.Fatalf("AppVersion = %q, want 13.7.2", AppVersion)
+	if AppVersion != "13.7.3" {
+		t.Fatalf("AppVersion = %q, want 13.7.3", AppVersion)
 	}
 }
 

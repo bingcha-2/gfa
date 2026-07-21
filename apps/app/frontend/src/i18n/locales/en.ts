@@ -209,6 +209,12 @@ export const en: DeepPartialDict = {
     localProxyNote: '· after takeover, requests pass through here for token injection; "Stop" restores everything',
     proxyRunning: 'Running · 127.0.0.1:{port}',
     proxyStopped: 'Not running',
+    releasePort: 'Release 48800',
+    releasePortTitle: 'Force release port 48800',
+    releasePortBody: 'This ends the process listening on 127.0.0.1:48800, then restarts the BingchaAI local proxy. Unsaved process data may be lost. Continue?',
+    releasePortConfirm: 'Release port',
+    releasePortDone: 'Port released',
+    releasePortWorking: 'Releasing…',
     sanitize: {
       title: '⚠ Third-party relay config detected',
       ccSwitchLead: 'cc-switch detected — switching/sharing accounts with it easily triggers official risk control and carries the highest ban risk. Cleaning it up is strongly recommended.',

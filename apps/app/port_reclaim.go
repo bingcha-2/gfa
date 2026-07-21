@@ -128,6 +128,75 @@ func reclaimPort(port int) (killed int, foreign bool) {
 	return killed, foreign
 }
 
+// forceReleasePort 强制结束所有监听指定本地端口的其它进程。它与 reclaimPort 的安全语义
+// 不同:reclaimPort 只回收本程序残留；本函数只供用户在界面二次确认后显式调用，用来处理
+// 无法自动识别的旧版本/改名版本进程。永远跳过当前进程。
+func forceReleasePort(port int) (killed []string, err error) {
+	if port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("无效端口: %d", port)
+	}
+
+	self := os.Getpid()
+	var failed []string
+	for _, pid := range pidsOnPort(port) {
+		if pid <= 0 || pid == self {
+			continue
+		}
+		name := processImageName(pid)
+		if name == "" {
+			name = "未知进程"
+		}
+		label := fmt.Sprintf("%s (PID %d)", name, pid)
+		if killPID(pid) {
+			Log("[port] 用户确认强制释放端口 %d:已结束 %s", port, label)
+			killed = append(killed, label)
+		} else {
+			failed = append(failed, label)
+		}
+	}
+
+	// taskkill 返回后端口释放仍可能稍有延迟。最多等 3 秒，再给出明确的管理员权限提示。
+	for i := 0; i < 30; i++ {
+		remaining := portPIDsExcept(port, self)
+		if len(remaining) == 0 {
+			return killed, nil
+		}
+		sleepMs(100)
+	}
+
+	remaining := portPIDsExcept(port, self)
+	for _, pid := range remaining {
+		name := processImageName(pid)
+		if name == "" {
+			name = "未知进程"
+		}
+		label := fmt.Sprintf("%s (PID %d)", name, pid)
+		if !containsString(failed, label) {
+			failed = append(failed, label)
+		}
+	}
+	return killed, fmt.Errorf("端口 %d 仍被 %s 占用，请以管理员身份运行冰茶AI后重试", port, strings.Join(failed, "、"))
+}
+
+func portPIDsExcept(port, excludedPID int) []int {
+	var out []int
+	for _, pid := range pidsOnPort(port) {
+		if pid > 0 && pid != excludedPID {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 // processMatchesSelf 判断 pid 是否在运行与【本程序相同的可执行文件】(按文件名比对)。
 // 用于回收端口时只杀自己的残留实例,绝不误伤别人的程序。无法判定时返回 false(安全优先)。
 func processMatchesSelf(pid int) bool {

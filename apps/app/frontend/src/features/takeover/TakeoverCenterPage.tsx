@@ -11,7 +11,7 @@ import { useT, t as tr } from '@/i18n'
 import { codexLocalApi, antigravityLocalApi, type ProviderLocalApi, antigravityLocalInjected, setAntigravityLocalInjected, listModelProviders, type ModelProvider } from '@/services/localApi'
 import { useRemoteTakeover } from './useRemoteTakeover'
 import { HostProtectionPanel, type HostProtectionConfig, type HostProtectionMode } from './HostProtectionPanel'
-import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode, getHostProtectionStatus, probeHostProtectionStatus, applyHostProtection, restoreHostProtection, releaseHostProtectionTarget, type HostProtectionStatus } from '@/services/wails'
+import { sandboxGetStatus, sandboxInstall, sandboxInstallCommand, sandboxBrowseDir, sandboxWindowsPrereq, sandboxEnableHypervisor, sandboxLogin, sandboxCreate, sandboxEnterCommand, sandboxRestore, sandboxList, sandboxStopOne, sandboxVscodeStatus, sandboxVscodeEnable, sandboxVscodeDisable, getCodexFastMode, setCodexFastMode, getHostProtectionStatus, probeHostProtectionStatus, applyHostProtection, restoreHostProtection, releaseHostProtectionTarget, forceReleaseProxyPort, type HostProtectionStatus } from '@/services/wails'
 import type { PageId } from '@/types'
 import { ArrowRight, Boxes, ChevronDown, Users, Plus, X, Copy, Check, ShieldAlert } from 'lucide-react'
 
@@ -886,17 +886,21 @@ function SandboxCard() {
 export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) => void } = {}) {
   const t = useT()
   const tk = useRemoteTakeover()
+  const { modalProps: portModalProps, showConfirm: showPortConfirm, showAlert: showPortAlert } = useModal()
   const [sandboxOpen, setSandboxOpen] = useState(false)
   const [hostMode, setHostMode] = useState<HostProtectionMode>('configure')
   const [hostStatus, setHostStatus] = useState<HostProtectionStatus | null>(null)
   const [hostBusy, setHostBusy] = useState(false)
   const [hostError, setHostError] = useState('')
+  const [portBusy, setPortBusy] = useState(false)
   const ideProducts = useAppStore((s) => s.ideProducts)
   const proxyRunning = useAppStore((s) => s.proxyRunning)
   const proxyPort = useAppStore((s) => s.proxyPort)
+  const fetchStats = useAppStore((s) => s.fetchStats)
 
   const isMac = isMacPlatform()
-  const showClaudeDesktop = isMac || isWindowsPlatform()
+  const isWindows = isWindowsPlatform()
+  const showClaudeDesktop = isMac || isWindows
 
   const find = (id: string) => ideProducts.find((p) => p.id === id)
   const codexApp = find('codex')
@@ -1040,6 +1044,28 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
     detected: p.detected,
   }))
 
+  const releaseProxyPort = async () => {
+    if (portBusy) return
+    const confirmed = await showPortConfirm(
+      t('takeover.releasePortTitle'),
+      t('takeover.releasePortBody'),
+      { confirmLabel: t('takeover.releasePortConfirm') },
+    )
+    if (!confirmed) return
+
+    setPortBusy(true)
+    try {
+      const message = await forceReleaseProxyPort()
+      await fetchStats()
+      await showPortAlert(t('takeover.releasePortDone'), message)
+    } catch (error) {
+      await fetchStats().catch(() => {})
+      await showPortAlert(t('takeover.opFailed'), String(error))
+    } finally {
+      setPortBusy(false)
+    }
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 pt-3">
       <div>
@@ -1119,11 +1145,26 @@ export function TakeoverCenterPage({ onNavigate }: { onNavigate?: (p: PageId) =>
           <span className="text-[12px] text-[var(--text-secondary)]">{t('takeover.localProxy')}</span>
           <span className="text-[10px] text-[var(--text-muted)]">{t('takeover.localProxyNote')}</span>
         </div>
-        <span className="text-[12px] font-mono-data text-[var(--text-muted)] shrink-0">
-          {proxyRunning ? t('takeover.proxyRunning', { port: proxyPort }) : t('takeover.proxyStopped')}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {isWindows && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={portBusy}
+              onClick={() => void releaseProxyPort()}
+              className="h-7 gap-1.5 px-2 text-[10px] text-[var(--warning-strong)]"
+            >
+              <ShieldAlert size={12} />
+              {portBusy ? t('takeover.releasePortWorking') : t('takeover.releasePort')}
+            </Button>
+          )}
+          <span className="text-[12px] font-mono-data text-[var(--text-muted)]">
+            {proxyRunning ? t('takeover.proxyRunning', { port: proxyPort }) : t('takeover.proxyStopped')}
+          </span>
+        </div>
       </div>
 
+      <Modal {...portModalProps} />
       <Modal {...tk.modalProps} />
       <CompetingRelayDialog {...tk.relayDialogProps} />
       <LoadingOverlay show={tk.busy !== null || hostBusy} label={tk.busyLabel || (hostMode === 'restoring' ? '正在还原宿主环境…' : '正在配置宿主防护…')} />

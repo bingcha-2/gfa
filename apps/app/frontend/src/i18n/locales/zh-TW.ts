@@ -208,6 +208,12 @@ export const zhTW: DeepPartialDict = {
     localProxyNote: '· 接管後請求經此自動注入權杖,「停止」即恢復原狀',
     proxyRunning: '執行中 · 127.0.0.1:{port}',
     proxyStopped: '未執行',
+    releasePort: '釋放 48800',
+    releasePortTitle: '強制釋放連接埠 48800',
+    releasePortBody: '這會結束目前監聽 127.0.0.1:48800 的程序，然後重新啟動冰茶AI 本機代理。未儲存的程序資料可能遺失，是否繼續？',
+    releasePortConfirm: '釋放連接埠',
+    releasePortDone: '連接埠已釋放',
+    releasePortWorking: '釋放中…',
   },
 
   bound: {

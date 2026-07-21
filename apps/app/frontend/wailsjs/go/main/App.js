@@ -34,6 +34,10 @@ export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
 }
 
+export function ForceReleaseProxyPort() {
+  return window['go']['main']['App']['ForceReleaseProxyPort']();
+}
+
 export function GetAccountState() {
   return window['go']['main']['App']['GetAccountState']();
 }

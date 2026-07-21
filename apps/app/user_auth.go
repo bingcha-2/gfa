@@ -202,7 +202,7 @@ func startServicesForUser(cfg Config) {
 	}()
 
 	// HTTP proxy always starts.
-	if err := GetHTTPProxy().Start(cfg.ProxyPort, token, deviceId, ""); err != nil {
+	if err := startHTTPProxyAndAlign(cfg.ProxyPort, token, deviceId, ""); err != nil {
 		Log("[auth] HTTP proxy start failed: %v", err)
 	}
 

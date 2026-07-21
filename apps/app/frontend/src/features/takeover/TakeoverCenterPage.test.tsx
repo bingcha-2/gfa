@@ -10,6 +10,7 @@ const { apiMocks } = vi.hoisted(() => ({
     openURL: vi.fn(),
     getCodexFastMode: vi.fn().mockResolvedValue(false),
     setCodexFastMode: vi.fn().mockResolvedValue(undefined),
+    forceReleaseProxyPort: vi.fn().mockResolvedValue('端口 48800 已释放，本地代理已重新启动'),
     getHostProtectionStatus: vi.fn().mockResolvedValue({
       mode: 'configure', platform: 'windows', requiresAuthorization: false,
       originalTimezone: 'Asia/Shanghai', exitTimezone: 'Asia/Singapore', appliedTimezone: '',
@@ -45,6 +46,7 @@ vi.mock('@/services/wails', () => ({
   openURL: apiMocks.openURL,
   getCodexFastMode: apiMocks.getCodexFastMode,
   setCodexFastMode: apiMocks.setCodexFastMode,
+  forceReleaseProxyPort: apiMocks.forceReleaseProxyPort,
   getHostProtectionStatus: apiMocks.getHostProtectionStatus,
   probeHostProtectionStatus: apiMocks.probeHostProtectionStatus,
   applyHostProtection: apiMocks.applyHostProtection,
@@ -91,6 +93,7 @@ const { store } = vi.hoisted(() => ({
         { id: 'antigravity_hub', name: 'Antigravity Hub', detected: true, injected: false },
       ] as Array<Record<string, unknown>>,
       fetchIDEStatus: () => store.state.ideProducts,
+      fetchStats: vi.fn().mockResolvedValue(undefined),
       proxyRunning: true,
       proxyPort: 48801,
     },
@@ -163,6 +166,22 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     setPlatform('Win32')
     render(<TakeoverCenterPage />)
     expect(screen.getByText('Claude Desktop (Code/Cowork)')).toBeInTheDocument()
+  })
+
+  it('Windows 可确认后一键释放 48800，其他平台不显示', async () => {
+    setPlatform('Win32')
+    const { unmount } = render(<TakeoverCenterPage />)
+    fireEvent.click(screen.getByRole('button', { name: '释放 48800' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('强制释放端口 48800')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '释放端口' }))
+    await waitFor(() => expect(apiMocks.forceReleaseProxyPort).toHaveBeenCalledTimes(1))
+    expect(store.state.fetchStats).toHaveBeenCalled()
+    unmount()
+
+    setPlatform('MacIntel')
+    render(<TakeoverCenterPage />)
+    expect(screen.queryByRole('button', { name: '释放 48800' })).toBeNull()
   })
 
   it('Linux 上不显示 Claude Desktop(无官方桌面端)', () => {

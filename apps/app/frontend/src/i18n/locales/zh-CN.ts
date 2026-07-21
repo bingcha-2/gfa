@@ -209,6 +209,12 @@ export const zhCN = {
     localProxyNote: '· 接管后请求经此自动注入令牌,「停止」即恢复原状',
     proxyRunning: '运行中 · 127.0.0.1:{port}',
     proxyStopped: '未运行',
+    releasePort: '释放 48800',
+    releasePortTitle: '强制释放端口 48800',
+    releasePortBody: '这会结束当前监听 127.0.0.1:48800 的进程，然后重启冰茶AI 本地代理。未保存的进程数据可能丢失，是否继续？',
+    releasePortConfirm: '释放端口',
+    releasePortDone: '端口已释放',
+    releasePortWorking: '释放中…',
     // 第三方中转封号免责 + 一键体检
     sanitize: {
       title: '⚠ 检测到第三方中转配置',

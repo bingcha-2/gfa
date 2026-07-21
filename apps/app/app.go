@@ -293,7 +293,45 @@ func (a *App) RestartProxy() error {
 	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
-	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
+	return startHTTPProxyAndAlign(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
+}
+
+// ForceReleaseProxyPort 是用户显式触发的「释放 48800」排障动作。
+// 自动启动仍只回收可确认是本程序的残留，避免误伤；这里已由前端二次确认，因此会结束
+// 任意占用 48800 的其它进程，然后把本地 HTTP 代理重新绑定到首选端口。
+func (a *App) ForceReleaseProxyPort() (string, error) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	cfg := LoadConfig()
+	// 当前代理可能正在 48800，也可能已退到 48810/48820。先停掉，避免把自己识别成占用者，
+	// 同时保证释放完成后能干净地回到首选端口。
+	GetHTTPProxy().Stop()
+
+	killed, releaseErr := forceReleasePort(DefaultProxyPort)
+	var startErr error
+	if cfg.UserToken != "" {
+		GetCodexProxy().ApplyConfig(cfg)
+		startErr = startHTTPProxyAndAlign(DefaultProxyPort, cfg.UserToken, cfg.DeviceId, "")
+	}
+
+	if releaseErr != nil {
+		if startErr != nil {
+			return "", fmt.Errorf("%v；本地代理重启也失败: %w", releaseErr, startErr)
+		}
+		return "", releaseErr
+	}
+	if startErr != nil {
+		return "", fmt.Errorf("端口 %d 已释放，但本地代理重启失败: %w", DefaultProxyPort, startErr)
+	}
+
+	if cfg.UserToken == "" {
+		return fmt.Sprintf("端口 %d 已释放；登录后会自动启动本地代理", DefaultProxyPort), nil
+	}
+	if len(killed) == 0 {
+		return fmt.Sprintf("端口 %d 已释放，本地代理已重新启动", DefaultProxyPort), nil
+	}
+	return fmt.Sprintf("已结束 %s；本地代理已重新监听 127.0.0.1:%d", strings.Join(killed, "、"), DefaultProxyPort), nil
 }
 
 // RefreshQuota 手动强制拉取上游额度并上报(force=true,绕过 5min 节流)。供前端「刷新」按钮
@@ -448,6 +486,11 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		Log("[takeover] heartbeat refresh before takeover failed: %v", err)
 	}
 	cfg = LoadConfig()
+	// 代理启动时若首选端口被旧进程占用，会自动退到 48810/48820…。
+	// 接管必须写入代理【实际监听】端口；继续使用 cfg.ProxyPort 会把刚接管的
+	// Codex/IDE 指回占用首选端口的旧进程，典型表现就是
+	// "503 Service Unavailable ... 127.0.0.1:48800/v1/responses"。
+	proxyPort := effectiveProxyPort()
 
 	// 绑定卡:只能接管它开通的产品。优先使用 heartbeat 的订阅授权；
 	// 授权未知时才回退到旧 accessKeyStatus.products 兼容逻辑。
@@ -466,7 +509,7 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		if err := enforceEgressGate(required, cfg); err != nil {
 			return "", err
 		}
-		msg, err := t.Inject(cfg.ProxyPort)
+		msg, err := t.Inject(proxyPort)
 		if err != nil {
 			// 文件权限错误在这里翻成可执行的修复指引(FILE_PERM: 前缀),其余原样透出。
 			results = append(results, fmt.Sprintf("%s: 接管失败 (%v)", t.Name(), takeoverErrorForUser(err)))

@@ -64,6 +64,44 @@ func TestBindProxyListenerFallback(t *testing.T) {
 	}
 }
 
+// 接管配置必须跟随代理实际监听端口。首选端口被占后 LocalHTTPProxy 会退到
+// 48810/48820…；若仍把 cfg.ProxyPort 写进 Codex，它就会请求占住旧端口的进程。
+func TestEffectiveProxyPortPrefersActualListener(t *testing.T) {
+	previous := globalHTTPProxy
+	globalHTTPProxy = &LocalHTTPProxy{
+		isRunning:  true,
+		listenPort: 48810,
+	}
+	t.Cleanup(func() { globalHTTPProxy = previous })
+
+	if got := effectiveProxyPort(); got != 48810 {
+		t.Fatalf("effectiveProxyPort() = %d, want actual listener 48810", got)
+	}
+}
+
+func TestForceReleasePortAlreadyFree(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	killed, err := forceReleasePort(port)
+	if err != nil {
+		t.Fatalf("forceReleasePort(%d): %v", port, err)
+	}
+	if len(killed) != 0 {
+		t.Fatalf("free port unexpectedly killed: %v", killed)
+	}
+}
+
+func TestForceReleasePortRejectsInvalidPort(t *testing.T) {
+	if _, err := forceReleasePort(0); err == nil {
+		t.Fatal("forceReleasePort(0) should fail")
+	}
+}
+
 // pickMitmPort:首选可绑则不兜底;被外部进程占(errPortForeignHeld)或 in-use 则退到下一个;
 // 全占则报错;非端口错误立即返回、不再无谓重试。这是 MITM 接管"端口被占即死锁"的修复核心。
 func TestPickMitmPort(t *testing.T) {

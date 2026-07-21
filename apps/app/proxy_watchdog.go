@@ -35,7 +35,7 @@ func runProxyWatchdogOnce() {
 	// 账号制:凭据是 UserToken(卡密 AccountCard 已下线,运行时不再用于鉴权)。
 	if cfg.UserToken != "" && !GetHTTPProxy().GetStatus().Running {
 		Log("[watchdog] HTTP 代理未运行,尝试自愈重启…")
-		if err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, ""); err != nil {
+		if err := startHTTPProxyAndAlign(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, ""); err != nil {
 			Log("[watchdog] HTTP 代理自愈失败(下个周期再试): %v", err)
 		}
 	}

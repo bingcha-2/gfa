@@ -431,7 +431,11 @@ func LaunchCodexApp() {
 			}
 		}
 	case "windows", "linux":
-		if err := exec.Command(path, skinArgs...).Start(); err != nil {
+		cmd := exec.Command(path, skinArgs...)
+		// Codex 的 base_url 指向 127.0.0.1。显式绕过系统/环境代理，避免 Clash、
+		// Mihomo 等把本地 48800 请求截到自己的端口后返回 503。
+		cmd.Env = codexLaunchEnv(os.Environ())
+		if err := cmd.Start(); err != nil {
 			Log("[codex] 启动 Codex 失败: %v", err)
 		}
 	}

@@ -20,7 +20,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "13.7.2"
+var AppVersion = "13.7.3"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用），构建时通过 ldflags 注入 buildApexBase
@@ -702,31 +702,10 @@ func (u *Updater) RestartApp() error {
 	// 保存统计数据
 	GetUsageStats().Save()
 
-	if runtime.GOOS == "darwin" {
-		// macOS: 用 open 命令启动 .app bundle
-		appBundlePath := findAppBundlePath(u.exePath)
-		if appBundlePath != "" {
-			cmd := exec.Command("open", "-a", appBundlePath)
-			if err := cmd.Start(); err != nil {
-				Log("[updater] open -a failed: %v, trying direct exec...", err)
-				// 降级：直接启动二进制
-				cmd2 := exec.Command(u.exePath)
-				cmd2.Dir = filepath.Dir(u.exePath)
-				_ = cmd2.Start()
-			}
-		} else {
-			cmd := exec.Command(u.exePath)
-			cmd.Dir = filepath.Dir(u.exePath)
-			_ = cmd.Start()
-		}
-	} else {
-		cmd := exec.Command(u.exePath)
-		cmd.Dir = filepath.Dir(u.exePath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("restart failed: %w", err)
-		}
+	// 单实例锁要求旧进程先完全退出。由一个轻量辅助进程等待当前 PID 消失后，
+	// 再启动新版本，避免新版启动过早、命中旧实例锁后直接退出。
+	if err := scheduleRestartAfterExit(u.exePath); err != nil {
+		return fmt.Errorf("restart failed: %w", err)
 	}
 
 	// 退出当前进程
