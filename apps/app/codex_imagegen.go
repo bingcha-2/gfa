@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -34,13 +35,22 @@ func codexResolveImageModel(rawJSON []byte) string {
 
 // buildCodexImageTool 从 /v1/images/generations 的 JSON 构造 image_generation 工具。
 func buildCodexImageTool(rawJSON []byte) []byte {
-	tool := []byte(`{"type":"image_generation","action":"generate"}`)
+	return buildCodexImageToolForAction(rawJSON, "generate")
+}
+
+// buildCodexImageToolForAction 同时支持文生图(generate)和参考图编辑(edit)。
+func buildCodexImageToolForAction(rawJSON []byte, action string) []byte {
+	tool := []byte(`{"type":"image_generation"}`)
+	tool, _ = sjson.SetBytes(tool, "action", action)
 	tool, _ = sjson.SetBytes(tool, "model", codexResolveImageModel(rawJSON))
 	for _, field := range []string{"size", "quality", "background", "output_format", "moderation"} {
 		if v := strings.TrimSpace(gjson.GetBytes(rawJSON, field).String()); v != "" {
 			tool, _ = sjson.SetBytes(tool, field, v)
 		}
 	}
+	// OpenAI edits 客户端可能会发送 input_fidelity，但 Codex hosted tool 实际映射到
+	// gpt-image-2-codex；该模型会以 invalid_input_fidelity_model 拒绝此参数。因此这里
+	// 接受客户端字段但不向上游透传，参考图本身仍以 input_image 保真输入。
 	for _, field := range []string{"output_compression", "partial_images"} {
 		if v := gjson.GetBytes(rawJSON, field); v.Exists() && v.Type == gjson.Number {
 			tool, _ = sjson.SetBytes(tool, field, v.Int())
@@ -50,16 +60,34 @@ func buildCodexImageTool(rawJSON []byte) []byte {
 }
 
 // buildCodexImagesResponsesBody 把 /v1/images/generations 请求翻译成 codex responses body
-//(内联 image_generation 工具 + tool_choice 强制生图)。
+// (内联 image_generation 工具 + tool_choice 强制生图)。
 func buildCodexImagesResponsesBody(rawJSON []byte) []byte {
+	return buildCodexImagesResponsesBodyWithInputs(rawJSON, "generate", nil, "")
+}
+
+// buildCodexImagesResponsesBodyWithInputs 构造 hosted image_generation 请求。edit 请求会把
+// 上传文件转成 input_image data URL；可选 mask 放进工具的 input_image_mask。
+func buildCodexImagesResponsesBodyWithInputs(rawJSON []byte, action string, images []string, mask string) []byte {
 	prompt := strings.TrimSpace(gjson.GetBytes(rawJSON, "prompt").String())
-	tool := buildCodexImageTool(rawJSON)
+	tool := buildCodexImageToolForAction(rawJSON, action)
+	if action == "edit" && strings.TrimSpace(mask) != "" {
+		tool, _ = sjson.SetBytes(tool, "input_image_mask.image_url", mask)
+	}
 
 	body := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"store":false,"tool_choice":{"type":"image_generation"}}`)
 	body, _ = sjson.SetBytes(body, "model", codexImagesMainModel)
 
 	input := []byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]`)
 	input, _ = sjson.SetBytes(input, "0.content.0.text", prompt)
+	for _, image := range images {
+		image = strings.TrimSpace(image)
+		if image == "" {
+			continue
+		}
+		index := len(gjson.GetBytes(input, "0.content").Array())
+		input, _ = sjson.SetBytes(input, fmt.Sprintf("0.content.%d.type", index), "input_image")
+		input, _ = sjson.SetBytes(input, fmt.Sprintf("0.content.%d.image_url", index), image)
+	}
 	body, _ = sjson.SetRawBytes(body, "input", input)
 	body, _ = sjson.SetRawBytes(body, "tools", append(append([]byte("["), tool...), ']'))
 	return body
@@ -67,8 +95,8 @@ func buildCodexImagesResponsesBody(rawJSON []byte) []byte {
 
 // codexImageResult 是从 responses.completed 抽出的一张图。
 type codexImageResult struct {
-	B64          string
-	OutputFormat string
+	B64           string
+	OutputFormat  string
 	RevisedPrompt string
 }
 
@@ -116,7 +144,7 @@ func scanCodexImageStream(data []byte) (images []codexImageResult, completed []b
 }
 
 // extractCodexImagesFromCompleted 从 response.completed/response.done 事件里抽出生成的图片
-//(response.output[].image_generation_call.result 是 base64)。
+// (response.output[].image_generation_call.result 是 base64)。
 func extractCodexImagesFromCompleted(completedData []byte) []codexImageResult {
 	t := gjson.GetBytes(completedData, "type").String()
 	if t != "response.completed" && t != "response.done" {

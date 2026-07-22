@@ -2,14 +2,26 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+)
+
+const (
+	codexMaxImageUploadBytes  int64 = 64 * 1024 * 1024
+	codexMaxImageRequestBytes int64 = 256 * 1024 * 1024
+	codexMultipartMemoryBytes int64 = 32 * 1024 * 1024
 )
 
 // isOpenAIImageRequest 判断是否是 OpenAI 图像接口(generations / edits / variations)。
@@ -22,7 +34,147 @@ func isOpenAIImageRequest(path string) bool {
 	}
 }
 
-// ServeImages 处理 OpenAI 图像接口(/v1/images/generations)。
+// buildCodexImageEditRequest 把 OpenAI edits 的 multipart/JSON 输入转换成 hosted
+// image_generation edit 请求。Codex 内置 image_gen 使用的是 multipart/form-data；JSON
+// 形式也保留给兼容客户端使用。
+func buildCodexImageEditRequest(w http.ResponseWriter, r *http.Request) ([]byte, string, error) {
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid Content-Type: %w", err)
+	}
+
+	switch strings.ToLower(mediaType) {
+	case "multipart/form-data":
+		r.Body = http.MaxBytesReader(w, r.Body, codexMaxImageRequestBytes)
+		if err := r.ParseMultipartForm(codexMultipartMemoryBytes); err != nil {
+			return nil, "", fmt.Errorf("invalid multipart image edit request: %w", err)
+		}
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+
+		prompt := strings.TrimSpace(r.FormValue("prompt"))
+		if prompt == "" {
+			return nil, "", fmt.Errorf("prompt is required")
+		}
+		payload := map[string]interface{}{"prompt": prompt}
+		for _, field := range []string{"model", "size", "quality", "background", "output_format", "moderation", "input_fidelity"} {
+			if value := strings.TrimSpace(r.FormValue(field)); value != "" {
+				payload[field] = value
+			}
+		}
+		for _, field := range []string{"output_compression", "partial_images"} {
+			if value := strings.TrimSpace(r.FormValue(field)); value != "" {
+				n, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return nil, "", fmt.Errorf("%s must be an integer", field)
+				}
+				payload[field] = n
+			}
+		}
+
+		files := append([]*multipart.FileHeader(nil), r.MultipartForm.File["image[]"]...)
+		files = append(files, r.MultipartForm.File["image"]...)
+		if len(files) == 0 {
+			return nil, "", fmt.Errorf("image is required")
+		}
+		images := make([]string, 0, len(files))
+		for _, file := range files {
+			dataURL, err := codexMultipartImageDataURL(file)
+			if err != nil {
+				return nil, "", err
+			}
+			images = append(images, dataURL)
+		}
+
+		var mask string
+		if masks := r.MultipartForm.File["mask"]; len(masks) > 0 {
+			mask, err = codexMultipartImageDataURL(masks[0])
+			if err != nil {
+				return nil, "", err
+			}
+		}
+		rawJSON, err := json.Marshal(payload)
+		if err != nil {
+			return nil, "", err
+		}
+		return buildCodexImagesResponsesBodyWithInputs(rawJSON, "edit", images, mask), codexResolveImageModel(rawJSON), nil
+
+	case "application/json":
+		rawJSON, err := io.ReadAll(io.LimitReader(r.Body, codexMaxImageRequestBytes+1))
+		if err != nil {
+			return nil, "", err
+		}
+		if int64(len(rawJSON)) > codexMaxImageRequestBytes {
+			return nil, "", fmt.Errorf("image edit request exceeds %d bytes", codexMaxImageRequestBytes)
+		}
+		if !json.Valid(rawJSON) {
+			return nil, "", fmt.Errorf("body must be valid JSON")
+		}
+		prompt := strings.TrimSpace(gjson.GetBytes(rawJSON, "prompt").String())
+		if prompt == "" {
+			return nil, "", fmt.Errorf("prompt is required")
+		}
+		images := codexJSONImageURLs(rawJSON)
+		if len(images) == 0 {
+			return nil, "", fmt.Errorf("image or images[].image_url is required")
+		}
+		mask := strings.TrimSpace(gjson.GetBytes(rawJSON, "mask.image_url").String())
+		return buildCodexImagesResponsesBodyWithInputs(rawJSON, "edit", images, mask), codexResolveImageModel(rawJSON), nil
+
+	default:
+		return nil, "", fmt.Errorf("unsupported Content-Type %q", contentType)
+	}
+}
+
+func codexJSONImageURLs(rawJSON []byte) []string {
+	var images []string
+	if image := strings.TrimSpace(gjson.GetBytes(rawJSON, "image").String()); image != "" {
+		images = append(images, image)
+	}
+	gjson.GetBytes(rawJSON, "images").ForEach(func(_, value gjson.Result) bool {
+		var image string
+		if value.Type == gjson.String {
+			image = value.String()
+		} else {
+			image = value.Get("image_url").String()
+		}
+		if image = strings.TrimSpace(image); image != "" {
+			images = append(images, image)
+		}
+		return true
+	})
+	return images
+}
+
+func codexMultipartImageDataURL(fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader == nil {
+		return "", fmt.Errorf("image upload is nil")
+	}
+	if fileHeader.Size > codexMaxImageUploadBytes {
+		return "", fmt.Errorf("image upload exceeds %d bytes", codexMaxImageUploadBytes)
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, codexMaxImageUploadBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > codexMaxImageUploadBytes {
+		return "", fmt.Errorf("image upload exceeds %d bytes", codexMaxImageUploadBytes)
+	}
+	mediaType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	if mediaType == "" || mediaType == "application/octet-stream" {
+		mediaType = http.DetectContentType(data)
+	}
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// ServeImages 处理 OpenAI 图像接口(/v1/images/generations 和 /v1/images/edits)。
 //
 // chatgpt.com 的 codex 后端【没有】REST 图像端点(实测 uTLS 真号只回网页 HTML),Codex 的
 // 生图技能调的又正是这个 REST 接口。所以正确做法不是傻转发,也不是往正常请求里注入(那会打断
@@ -46,25 +198,39 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		p.sendJSONError(w, http.StatusServiceUnavailable, "Codex account card is not configured")
 		return
 	}
-	// 目前只翻译 generations(edits/variations 带图片文件,后续按需扩)。
-	if !strings.HasSuffix(strings.ToLower(r.URL.Path), "/generations") {
-		p.sendJSONError(w, http.StatusNotImplemented, "only /v1/images/generations is supported")
+	var respBody []byte
+	var imageModel string
+	path := strings.ToLower(r.URL.Path)
+	switch path {
+	case "/v1/images/generations":
+		rawReq, err := io.ReadAll(r.Body)
+		if err != nil {
+			audit.note = "读请求体失败:" + err.Error()
+			p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
+			return
+		}
+		respBody = buildCodexImagesResponsesBody(rawReq)
+		imageModel = codexResolveImageModel(rawReq)
+	case "/v1/images/edits":
+		var err error
+		respBody, imageModel, err = buildCodexImageEditRequest(w, r)
+		if err != nil {
+			audit.note = "解析图片编辑请求失败:" + err.Error()
+			p.sendJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	case "/v1/images/variations":
+		p.sendJSONError(w, http.StatusNotImplemented, "/v1/images/variations is not supported")
 		return
-	}
-
-	rawReq, err := io.ReadAll(r.Body)
-	if err != nil {
-		audit.note = "读请求体失败:" + err.Error()
-		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
+	default:
+		p.sendJSONError(w, http.StatusNotFound, "image endpoint not found")
 		return
 	}
 	GetUsageStats().AddRequest()
 
-	// 翻译:/v1/images/generations → codex responses body(内联生图工具 + tool_choice)。
-	respBody := buildCodexImagesResponsesBody(rawReq)
-	audit.reqBody = respBody
+	// 翻译:/v1/images/generations|edits → codex responses body(内联生图工具 + tool_choice)。
+	// edit body 内含参考图 base64，不放进审计对象，避免无意义地长期持有大块副本。
 	// 日志/计量按【真正画图的模型】(gpt-image-2),而非触发工具的主持人模型 gpt-5.4-mini。
-	imageModel := codexResolveImageModel(rawReq)
 	audit.model = imageModel
 
 	leaseFunc := p.leaseToken

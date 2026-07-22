@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,6 +81,79 @@ func TestCodexServeImagesTranslatesToResponses(t *testing.T) {
 	}
 	if rp := gjson.GetBytes(out, "data.0.revised_prompt").String(); rp != "a cute cat fishing" {
 		t.Fatalf("revised_prompt = %q", rp)
+	}
+}
+
+// /v1/images/edits 的 multipart 参考图应被转换成 Responses input_image，工具动作改为 edit。
+func TestCodexServeImagesEditTranslatesMultipartImage(t *testing.T) {
+	var gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"edited-image","output_format":"png"}}`+"\n\n")
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-edit"), AccountId: 9}, nil
+		},
+	}
+
+	imageBytes := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 32)...)
+	var form bytes.Buffer
+	writer := multipart.NewWriter(&form)
+	_ = writer.WriteField("prompt", "put an iced tea next to the cat")
+	_ = writer.WriteField("input_fidelity", "high")
+	file, err := writer.CreateFormFile("image", "cat.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.Write(imageBytes)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &form)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	proxy.ServeImages(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := gjson.Get(gotBody, "tools.0.action").String(); got != "edit" {
+		t.Fatalf("tool action = %q; body=%s", got, gotBody)
+	}
+	if got := gjson.Get(gotBody, "tools.0.input_fidelity"); got.Exists() {
+		t.Fatalf("不应向 gpt-image-2-codex 透传 input_fidelity: %s", gotBody)
+	}
+	wantURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageBytes)
+	if got := gjson.Get(gotBody, "input.0.content.1.image_url").String(); got != wantURL {
+		t.Fatalf("input_image 未正确转换: got %q, want %q", got, wantURL)
+	}
+	if got := gjson.GetBytes(rec.Body.Bytes(), "data.0.b64_json").String(); got != "edited-image" {
+		t.Fatalf("编辑结果 = %q", got)
+	}
+}
+
+func TestCodexServeImagesEditRequiresImage(t *testing.T) {
+	proxy := &CodexProxy{leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+		t.Fatal("缺参考图时不应租号")
+		return nil, nil
+	}}
+	var form bytes.Buffer
+	writer := multipart.NewWriter(&form)
+	_ = writer.WriteField("prompt", "edit this")
+	_ = writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &form)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	proxy.ServeImages(rec, req, "codex-card", "device-a", "direct")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "image is required") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

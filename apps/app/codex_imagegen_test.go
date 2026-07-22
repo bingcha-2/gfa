@@ -32,6 +32,28 @@ func TestBuildCodexImagesResponsesBody(t *testing.T) {
 	}
 }
 
+func TestBuildCodexImagesEditResponsesBody(t *testing.T) {
+	raw := []byte(`{"prompt":"keep the cat, add iced tea","input_fidelity":"high","quality":"high"}`)
+	body := buildCodexImagesResponsesBodyWithInputs(raw, "edit", []string{"data:image/png;base64,Y2F0"}, "data:image/png;base64,bWFzaw==")
+
+	if got := gjson.GetBytes(body, "input.0.content.1.type").String(); got != "input_image" {
+		t.Fatalf("参考图输入类型 = %q", got)
+	}
+	if got := gjson.GetBytes(body, "input.0.content.1.image_url").String(); got != "data:image/png;base64,Y2F0" {
+		t.Fatalf("参考图未带入: %q", got)
+	}
+	tool := gjson.GetBytes(body, "tools.0")
+	if tool.Get("action").String() != "edit" {
+		t.Fatalf("edit 工具参数不对: %s", tool.Raw)
+	}
+	if tool.Get("input_fidelity").Exists() {
+		t.Fatalf("gpt-image-2-codex 不支持 input_fidelity，不应透传: %s", tool.Raw)
+	}
+	if got := tool.Get("input_image_mask.image_url").String(); got != "data:image/png;base64,bWFzaw==" {
+		t.Fatalf("mask 未带入: %q", got)
+	}
+}
+
 // 缺 model 时工具回落默认 gpt-image-2。
 func TestBuildCodexImageTool_DefaultModel(t *testing.T) {
 	tool := buildCodexImageTool([]byte(`{"prompt":"x"}`))
