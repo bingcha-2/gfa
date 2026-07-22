@@ -149,7 +149,10 @@ func codexSkinLaunchArgs() []string {
 	if !codexSkinChannelEnabled() {
 		return nil
 	}
-	return []string{fmt.Sprintf("--remote-debugging-port=%d", codexSkinChannelPort)}
+	return []string{
+		"--remote-debugging-address=127.0.0.1",
+		fmt.Sprintf("--remote-debugging-port=%d", codexSkinChannelPort),
+	}
 }
 
 // probeCodexSkinChannel 探测通道当前是否可达(Codex 是否带调试端口在跑)。

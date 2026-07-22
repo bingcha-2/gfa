@@ -115,8 +115,10 @@ func TestInjectCodexProvider_MutualExclusionWithRemote(t *testing.T) {
 	}
 	if !strings.Contains(string(got), `model_provider = "bingchaai"`) ||
 		!strings.Contains(string(got), `[model_providers.bingchaai]`) ||
+		!strings.Contains(string(got), `name = "冰茶 AI"`) ||
 		!strings.Contains(string(got), `base_url = "http://127.0.0.1:8080/v1"`) ||
-		!strings.Contains(string(got), `requires_openai_auth = false`) {
+		!strings.Contains(string(got), `requires_openai_auth = false`) ||
+		!strings.Contains(string(got), `http_headers = { "x-openai-actor-authorization" = "bingchaai" }`) {
 		t.Fatalf("远程重定向未生效:\n%s", got)
 	}
 }

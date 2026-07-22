@@ -117,9 +117,11 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	for _, must := range []string{
 		`model_provider = "bingchaai"`,
 		`[model_providers.bingchaai]`,
+		`name = "冰茶 AI"`,
 		`base_url = "http://127.0.0.1:8080/v1"`,
 		`wire_api = "responses"`,
 		`requires_openai_auth = false`,
+		`http_headers = { "x-openai-actor-authorization" = "bingchaai" }`,
 		`supports_websockets = false`,
 	} {
 		if !strings.Contains(string(injected), must) {
@@ -128,6 +130,16 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	}
 	if strings.Contains(string(injected), "openai_base_url") {
 		t.Fatalf("远程 provider 不应残留顶层 openai_base_url:\n%s", injected)
+	}
+	parsed, _, err := loadCodexConfig()
+	if err != nil {
+		t.Fatalf("解析注入后的 config.toml: %v", err)
+	}
+	providers, _ := parsed["model_providers"].(map[string]interface{})
+	remote, _ := providers[codexProviderID].(map[string]interface{})
+	headers, _ := remote["http_headers"].(map[string]interface{})
+	if got := headers[codexActorHeader]; got != codexActorValue {
+		t.Fatalf("远程 provider 未声明 Codex image_gen actor header: got=%v config=\n%s", got, injected)
 	}
 
 	if err := RestoreCodexSettings(); err != nil {
@@ -165,6 +177,9 @@ func TestInjectCodexSettingsNeverRequiresOAuth(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(home, "config.toml"))
 	if !strings.Contains(string(got), `requires_openai_auth = false`) {
 		t.Fatalf("远程接管不得要求 OAuth:\n%s", got)
+	}
+	if !strings.Contains(string(got), `http_headers = { "x-openai-actor-authorization" = "bingchaai" }`) {
+		t.Fatalf("远程接管必须声明 image_gen actor capability:\n%s", got)
 	}
 }
 
@@ -253,6 +268,64 @@ func TestIsCodexInjectedRequiresCurrentProxyPort(t *testing.T) {
 	}
 	if IsCodexInjected(9999) {
 		t.Fatal("旧代理端口不应识别为已接管")
+	}
+}
+
+func TestIsCodexInjectedRejectsLegacyProviderWithoutImageGenActor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	legacy := `model_provider = "bingchaai"
+
+[model_providers.bingchaai]
+name = "BingchaAI Remote"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+`
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if IsCodexInjected(8080) {
+		t.Fatal("缺少 image_gen actor header 的旧 provider 不应继续判定为接管正常")
+	}
+}
+
+func TestIsCodexInjectedRejectsLegacyDisplayNameWithoutChangingProviderID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	legacy := `model_provider = "bingchaai"
+
+[model_providers.bingchaai]
+name = "BingchaAI Remote"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "bingchaai" }
+supports_websockets = false
+`
+	configPath := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(configPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if IsCodexInjected(8080) {
+		t.Fatal("旧显示名应触发无损重新注入")
+	}
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(got)
+	if !strings.Contains(content, `model_provider = "bingchaai"`) ||
+		!strings.Contains(content, `[model_providers.bingchaai]`) ||
+		!strings.Contains(content, `name = "冰茶 AI"`) {
+		t.Fatalf("显示名迁移必须保留 provider ID:\n%s", content)
+	}
+	if !IsCodexInjected(8080) {
+		t.Fatal("显示名迁移后应识别为已接管")
 	}
 }
 

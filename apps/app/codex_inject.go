@@ -34,15 +34,18 @@ import (
 //
 //	model_provider = "bingchaai"
 //	[model_providers.bingchaai]
-//	name = "BingchaAI Remote"
+//	name = "冰茶 AI"
 //	base_url = "http://127.0.0.1:<port>/v1"
 //	wire_api = "responses"
 //	requires_openai_auth = false
+//	http_headers = { "x-openai-actor-authorization" = "bingchaai" }
 const (
 	codexDefaultProvider = "openai"
 	codexProviderID      = "bingchaai"
 	codexModelProvider   = "model_provider"
 	codexOpenAIBaseURL   = "openai_base_url"
+	codexActorHeader     = "x-openai-actor-authorization"
+	codexActorValue      = "bingchaai"
 )
 
 func codexHomeDir() string {
@@ -192,10 +195,15 @@ func InjectCodexSettings(proxyPort int) error {
 	content = removeTopLevelKey(content, codexOpenAIBaseURL)
 	content = setTopLevelString(content, codexModelProvider, codexProviderID)
 	content = upsertProviderTable(content, codexProviderID, [][2]string{
-		{"name", tomlQuote("BingchaAI Remote")},
+		{"name", tomlQuote(codexRemoteProviderName)},
 		{"base_url", tomlQuote(codexProxyBaseURL(proxyPort))},
 		{"wire_api", tomlQuote("responses")},
 		{"requires_openai_auth", "false"},
+		// Codex only exposes its built-in image_gen extension to custom no-auth
+		// providers that opt in through this non-empty actor header. This mirrors
+		// Cockpit's provider projection; the header is a capability marker, not an
+		// upstream credential.
+		{"http_headers", fmt.Sprintf("{ %s = %s }", tomlQuote(codexActorHeader), tomlQuote(codexActorValue))},
 		{"supports_websockets", "false"},
 	})
 	return writeFileAtomic(codexConfigPath(), []byte(content), 0o644)
@@ -266,7 +274,21 @@ func readCodexBackupPrev() interface{} {
 	return bk.PrevModelProvider
 }
 
-// IsCodexInjected 判断 config.toml 当前是否已把无鉴权远程 provider 指向本机代理。
+// providerHasCodexActorAuthorization 判断自定义 provider 是否声明了 Codex 内置
+// image_gen 所需的 actor capability。Codex 对 header 名大小写不敏感、值只要求非空。
+func providerHasCodexActorAuthorization(provider map[string]interface{}) bool {
+	headers, _ := provider["http_headers"].(map[string]interface{})
+	for name, raw := range headers {
+		value, _ := raw.(string)
+		if strings.EqualFold(strings.TrimSpace(name), codexActorHeader) && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCodexInjected 判断 config.toml 当前是否已把带 image_gen capability 的无鉴权
+// 远程 provider 指向本机代理。旧版缺 actor header 的配置必须返回 false，促使重新注入。
 func IsCodexInjected(proxyPort int) bool {
 	m, had, err := loadCodexConfig()
 	if err != nil || !had {
@@ -278,7 +300,10 @@ func IsCodexInjected(proxyPort int) bool {
 	providers, _ := m["model_providers"].(map[string]interface{})
 	provider, _ := providers[codexProviderID].(map[string]interface{})
 	baseURL, _ := provider["base_url"].(string)
-	return baseURL == codexProxyBaseURL(proxyPort)
+	providerName, _ := provider["name"].(string)
+	return baseURL == codexProxyBaseURL(proxyPort) &&
+		providerName == codexRemoteProviderName &&
+		providerHasCodexActorAuthorization(provider)
 }
 
 func currentCodexModelProvider() string {
@@ -366,6 +391,8 @@ func isCodexProcessTreeRunning() bool {
 // Wails app 未授权时静默失败,导致 Codex 退不掉、随后 `open -a` 拉不起新实例 ——
 // 即"无法唤起")。改用 pgrep+kill(SIGTERM→等待→SIGKILL),与 ide_inject.go 一致。
 func QuitCodexApp() {
+	// 先停掉 CDP 注入循环，避免退出/还原期间继续向旧 renderer 写 DOM。
+	stopCodexRemoteBrandingInjection()
 	if appActionsSuppressed() {
 		return // go test 下绝不 kill 本机 Codex 进程
 	}
@@ -406,9 +433,11 @@ func LaunchCodexApp() {
 		Log("[codex] 未检测到 Codex 安装路径,跳过启动")
 		return
 	}
-	// 皮肤调试通道开启时给 GUI 附加 --remote-debugging-port(见 codex_skin_channel.go);
-	// CLI 分支不附加 —— codex CLI 不认识该参数。
-	skinArgs := codexSkinLaunchArgs()
+	// 远端接管时自动开启临时回环 CDP，用于头像/额度展示；手动皮肤通道开启时
+	// 复用其 9335 端口。CLI 分支不附加，codex CLI 不认识这些参数。
+	launchPlan := prepareCodexAppLaunchPlan()
+	launchArgs := launchPlan.Args
+	launched := false
 	switch runtime.GOOS {
 	case "darwin":
 		// detectCodexAppPath 现在优先返回 chrome-native-hosts.json 里的 codexCliPath,
@@ -418,26 +447,35 @@ func LaunchCodexApp() {
 		// 因此先把路径归一到外层 .app bundle 再 `open`,确保拉起的是 GUI。
 		if bundle := codexAppBundlePath(path); strings.HasSuffix(bundle, ".app") {
 			openArgs := []string{bundle}
-			if len(skinArgs) > 0 {
-				openArgs = append(append(openArgs, "--args"), skinArgs...)
+			if len(launchArgs) > 0 {
+				openArgs = append(append(openArgs, "--args"), launchArgs...)
 			}
 			if err := exec.Command("open", openArgs...).Start(); err != nil {
 				Log("[codex] 启动 Codex 失败: %v", err)
+			} else {
+				launched = true
 			}
 		} else {
 			// 独立安装的 CLI(不在 .app 内,无 GUI 可拉起):直接执行。
 			if err := exec.Command(path).Start(); err != nil {
 				Log("[codex] 启动 Codex 失败: %v", err)
+			} else {
+				launched = true
 			}
 		}
 	case "windows", "linux":
-		cmd := exec.Command(path, skinArgs...)
+		cmd := exec.Command(path, launchArgs...)
 		// Codex 的 base_url 指向 127.0.0.1。显式绕过系统/环境代理，避免 Clash、
 		// Mihomo 等把本地 48800 请求截到自己的端口后返回 503。
 		cmd.Env = codexLaunchEnv(os.Environ())
 		if err := cmd.Start(); err != nil {
 			Log("[codex] 启动 Codex 失败: %v", err)
+		} else {
+			launched = true
 		}
+	}
+	if launched && launchPlan.Branding {
+		startCodexRemoteBrandingInjection(launchPlan.CDPPort)
 	}
 }
 

@@ -224,9 +224,13 @@ func (localPlatform) CodexRestartApp() error {
 	// open -n 强开新实例。皮肤通道开启时,旧渲染进程不退干净就占着调试端口(9335),
 	// 新实例抢绑失败会让通道静默掉线 —— 必须等旧实例真正消失再拉起。
 	QuitCodexApp()
-	// 皮肤调试通道开启时切号重启也要带端口,否则本地切一次号通道就静默掉线
-	// (与 LaunchCodexApp 的行为保持一致,见 codex_skin_channel.go)。
-	_, err := localPlatform{}.LaunchApp(appPath, "", codexSkinLaunchArgs())
+	// 与 LaunchCodexApp 复用同一启动计划：手动皮肤通道保留，远程接管的
+	// 头像/额度注入也会在重启后自动恢复。
+	launchPlan := prepareCodexAppLaunchPlan()
+	_, err := localPlatform{}.LaunchApp(appPath, "", launchPlan.Args)
+	if err == nil && launchPlan.Branding {
+		startCodexRemoteBrandingInjection(launchPlan.CDPPort)
+	}
 	return err
 }
 
