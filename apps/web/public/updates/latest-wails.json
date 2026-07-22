@@ -1,30 +1,30 @@
 {
-  "version": "13.7.3",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3.exe",
-  "sha256": "B78CA0F1DC3B8D532EB0E77E8F6F3B0C5EC8A56AA618A55745F2BDD9EE1079C2",
-  "size": 56297472,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3-setup.exe",
-  "installerSha256": "4956EA0D5DDEBDB7E088CF4685388E135D3AC246ADEA1C33445F73EFB9BD95DC",
-  "installerSize": 21569033,
-  "changelog": "-修复 Codex 接管时的本地代理冲突与连接问题\n-提升桌面端启动、更新与代理自愈稳定性",
+  "version": "13.7.4",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.4/BingchaAI-13.7.4.exe",
+  "sha256": "163F0B2C93D1213C170C15949E0D867002B0FD6BCE99CFF371737A9AA30DA5D6",
+  "size": 56333824,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.4/BingchaAI-13.7.4-setup.exe",
+  "installerSha256": "52835221CF7F91E9F61E24D42AFBFE5B0E49CAEC04C0B0A39159EDB9CCC2F2EA",
+  "installerSize": 21588821,
+  "changelog": "-修复 Codex 远端接管的图片生成与额度显示\\n-优化 Codex 远端接管界面体验",
   "minVersion": "13.5.5",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3-arm64.dmg",
-      "sha256": "C94E5CCFDE7844B42A597D821B3944630670FBC044DA6D580967740CA9B6D87B",
-      "size": 21354979
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.4/BingchaAI-13.7.4-arm64.dmg",
+      "sha256": "6A64C975DFD135F14EFC295B2229F2254C292EA479017B245F7DEE8CA90B660E",
+      "size": 21377605
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3-amd64.dmg",
-      "sha256": "CA1992EACADF2ED1932F8DADB3A661237DD208FE04A30910B977B6718F43E7D8",
-      "size": 23534096
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.4/BingchaAI-13.7.4-amd64.dmg",
+      "sha256": "D2613C277D42EB034A9C12948C13471E0E0A4E30FBF1992A76D002A3113511F6",
+      "size": 23581472
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.3/BingchaAI-13.7.3-linux-amd64.tar.gz",
-      "sha256": "429370D2E4817DF10BDEA218E48D1C4C7EF82B0426272422AEAD6EB1D5C0FB5E",
-      "size": 18989570
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.4/BingchaAI-13.7.4-linux-amd64.tar.gz",
+      "sha256": "4C6A81AF4EBEC578EB47E49D6416686CBD4B75C8EDF7A517639D2DB93C87D98C",
+      "size": 19014252
     }
   }
 }
