@@ -299,6 +299,17 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	if guiInstalled {
 		QuitCodexApp()
 	}
+	// 远程接管必须先撤销 GFA 的“本地账号接管”投影，再判断用户原生登录态。
+	// 不能把 local 号源注入的 OAuth 提交成新的用户基线：该账号可能已失效，
+	// 且用户接管前本来就是未登录。恢复后有原生 OAuth 才桥接，否则走 API Key。
+	if restored, err := restoreCodexLocalSourceBeforeRemote(); err != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
+		return "", fmt.Errorf("恢复 Codex 接管前登录态失败: %w", err)
+	} else if restored {
+		Log("[codex-local] 远程接管前已撤销本地账号投影，改按用户原生登录态判定")
+	}
 	// 新版 Codex Desktop 会把伪 ChatGPT JWT 拿去官方 wham/settings 验签,
 	// 必然 401 并卡白屏。远程托管不再伪造登录；有真实 OAuth 时保留它承载
 	// 插件目录等账号能力，没有时才用无鉴权 provider。先迁移/清理旧版伪凭证备份。
@@ -349,18 +360,12 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	// 纯 CLI 安装:config 已写入并即时生效(CLI 每次运行现读),没有常驻 GUI 需要重启、
 	// 也没有 state_5.sqlite 历史需要 retag。直接返回,提示重开终端。
 	if !guiInstalled {
-		if _, err := commitCodexLocalRemoteHandoff(); err != nil {
-			return "", fmt.Errorf("Codex 远程接管已写入，但提交本地账号直切状态失败: %w", err)
-		}
 		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
 	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
 		return "", err
-	}
-	if _, err := commitCodexLocalRemoteHandoff(); err != nil {
-		return "", fmt.Errorf("Codex 远程接管已生效，但提交本地账号直切状态失败: %w", err)
 	}
 	return "Codex: ✓ 已接管并重启,新旧会话均已切换", nil
 }
@@ -385,8 +390,6 @@ func (codexTarget) Restore() (string, error) {
 	if err := RestoreFakeCodexAuth(); err != nil {
 		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
-	// 本地自有号直切远程后，取消只恢复 provider/历史；当前 OAuth 登录保持不动。
-	finishCodexLocalRemoteHandoff()
 	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
 	if !guiInstalled {
 		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil

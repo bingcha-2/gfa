@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -130,6 +131,60 @@ func TestLocal_CodexTakeoverInjectionEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
 		t.Fatalf("撤接管后 %s 应被还原删除 (err=%v)", authPath, err)
+	}
+}
+
+func TestRemoteTakeoverRestoresManagedLocalProjectionBeforeAuthDetection(t *testing.T) {
+	codexHome := localTestEnv(t)
+	app := NewApp()
+	if _, err := app.LocalAddCodexToken("managed-refresh", "managed-access", "managed@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.LocalSetCodexSource("local"); err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := restoreCodexLocalSourceBeforeRemote()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restored {
+		t.Fatal("本地账号投影应在远程接管前撤销")
+	}
+	if got := app.LocalGetCodexSource(); got != string(takeover.SourceRemote) {
+		t.Fatalf("source=%q want remote", got)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("接管前原本未登录，撤销本地投影后 auth.json 应不存在: %v", err)
+	}
+}
+
+func TestRemoteTakeoverRestoresNativeOAuthBeforeAuthDetection(t *testing.T) {
+	codexHome := localTestEnv(t)
+	app := NewApp()
+	native := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"native-id","access_token":"native-access","refresh_token":"native-refresh","account_id":"native-account"}}`)
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), native, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LocalAddCodexToken("managed-refresh", "managed-access", "managed@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.LocalSetCodexSource("local"); err != nil {
+		t.Fatal(err)
+	}
+
+	if restored, err := restoreCodexLocalSourceBeforeRemote(); err != nil || !restored {
+		t.Fatalf("restore local source: restored=%v err=%v", restored, err)
+	}
+	got, err := os.ReadFile(filepath.Join(codexHome, "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, native) {
+		t.Fatalf("应恢复用户原生 OAuth:\nwant %s\ngot  %s", native, got)
 	}
 }
 

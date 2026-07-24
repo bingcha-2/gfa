@@ -65,7 +65,10 @@ type codexCredsBackup struct {
 	KeychainCaptured bool   `json:"keychainCaptured,omitempty"` // 是否已捕获 macOS keychain 原状态
 	KeychainExisted  bool   `json:"keychainExisted,omitempty"`
 	PrevKeychain     string `json:"prevKeychain,omitempty"`
-	ProjectionSHA256 string `json:"projectionSha256,omitempty"` // 只还原 GFA 自己最后写入且未被外部替换的投影
+	// OAuth 投影写原始 JSON；API Key 模式按 Codex/Cockpit 约定不写 Keychain，
+	// 而是暂时删除旧项，避免 Desktop 优先读到旧 OAuth 后停在登录页。
+	KeychainProjection string `json:"keychainProjection,omitempty"` // "json" | "absent"
+	ProjectionSHA256   string `json:"projectionSha256,omitempty"`   // 只还原 GFA 自己最后写入且未被外部替换的投影
 }
 
 // InjectFakeCodexAuth 写入远程接管专用登录投影。不信任磁盘上现有 token:
@@ -73,7 +76,7 @@ type codexCredsBackup struct {
 // 主动投影受控凭证。macOS 上 Codex 优先读 Keychain,所以必须与 auth.json 同步。
 // 已注入(备份已存在)则只刷新伪凭证、不重复备份。
 func InjectFakeCodexAuth() error {
-	return projectCodexManagedAuth(buildFakeCodexAuth(), "旧伪 OAuth")
+	return projectCodexManagedAuth(buildFakeCodexAuth(), "旧伪 OAuth", true)
 }
 
 // InjectCodexAPIKeyAuth 对齐 Cockpit 的无账号 API 服务投影。它不是伪造 OAuth：
@@ -88,10 +91,10 @@ func InjectCodexAPIKeyAuth() error {
 	if err != nil {
 		return err
 	}
-	return projectCodexManagedAuth(projected, "API Key")
+	return projectCodexManagedAuth(projected, "API Key", false)
 }
 
-func projectCodexManagedAuth(projected []byte, kind string) error {
+func projectCodexManagedAuth(projected []byte, kind string, projectKeychain bool) error {
 	codexCredsMu.Lock()
 	defer codexCredsMu.Unlock()
 
@@ -114,9 +117,25 @@ func projectCodexManagedAuth(projected []byte, kind string) error {
 		if err != nil {
 			return err
 		}
+		// 13.7.6 曾把 GFA 的 API Key auth 误写进 Keychain。它不是用户原凭据，
+		// 升级后不得再把这份坏状态当作备份恢复回去。
+		if existed {
+			_, legacyManagedOAuth := normalizeCodexKeychainOAuthSecret(secret)
+			if isCodexManagedAPIKeyAuth(codexKeychainAuthBytes(secret)) || legacyManagedOAuth {
+				secret = ""
+				existed = false
+			}
+		}
 		bk.KeychainCaptured = true
 		bk.KeychainExisted = existed
 		bk.PrevKeychain = secret
+	}
+	if runtime.GOOS == "darwin" && !appActionsSuppressed() {
+		if projectKeychain {
+			bk.KeychainProjection = "json"
+		} else {
+			bk.KeychainProjection = "absent"
+		}
 	}
 	bk.ProjectionSHA256 = codexAuthProjectionDigest(projected)
 	encodedBackup, err := json.MarshalIndent(bk, "", "  ")
@@ -130,12 +149,18 @@ func projectCodexManagedAuth(projected []byte, kind string) error {
 	if err := writeFileAtomic(codexAuthPath(), projected, 0o600); err != nil {
 		return err
 	}
-	// Codex/keyring 在 macOS generic-password 中保存的不是原始 JSON,
-	// 而是 JSON bytes 的小写 hex 字符串。写原始 JSON 会被读成
-	// auth_token_missing。虽然新远程接管已不再依赖伪登录,但保留
-	// 正确编码以便旧版迁移/回归测试不再制造损坏的 keychain 项。
-	if err := writeCodexKeychainSecret(hex.EncodeToString(projected)); err != nil {
-		return err
+	// 对齐 Codex 官方存储与 Cockpit：
+	//   OAuth/Agent Identity → Keychain 保存原始 JSON；
+	//   API Key             → 不写 Keychain，只由 auth.json 承载。
+	// Desktop 在 macOS 优先读 Keychain，向其中写 API Key 或 hex(JSON) 都可能
+	// 让 auth.json 的有效 API Key 投影被旧/不可解析的 Keychain 状态遮蔽。
+	if runtime.GOOS == "darwin" && !appActionsSuppressed() {
+		if err := applyCodexManagedKeychainProjection(projected, projectKeychain, codexLocalKeychainOps{
+			Write:  writeCodexKeychainSecret,
+			Delete: deleteCodexKeychainSecret,
+		}); err != nil {
+			return err
+		}
 	}
 	keychainProjected := runtime.GOOS == "darwin" && !appActionsSuppressed()
 	Log("[codex-creds] 已投影远程接管 %s 登录态: auth=%s keychain=%v", kind, codexAuthPath(), keychainProjected)
@@ -170,7 +195,7 @@ func RestoreFakeCodexAuth() error {
 		if err != nil {
 			return err
 		}
-		keychainWasProjected = existed && codexManagedKeychainProjectionMatches(currentSecret, bk)
+		keychainWasProjected = codexManagedKeychainProjectionIsCurrent(currentSecret, existed, bk)
 		if keychainWasProjected {
 			if bk.KeychainExisted {
 				if err := writeCodexKeychainSecret(bk.PrevKeychain); err != nil {
@@ -205,6 +230,24 @@ func codexManagedKeychainProjectionMatches(secret string, backup *codexCredsBack
 		raw = decoded
 	}
 	return codexManagedProjectionMatches(raw, backup)
+}
+
+func applyCodexManagedKeychainProjection(projected []byte, projectKeychain bool, ops codexLocalKeychainOps) error {
+	if projectKeychain {
+		return ops.Write(string(projected))
+	}
+	return ops.Delete()
+}
+
+func codexManagedKeychainProjectionIsCurrent(secret string, existed bool, backup *codexCredsBackup) bool {
+	if backup == nil {
+		return false
+	}
+	if backup.KeychainProjection == "absent" {
+		return !existed
+	}
+	// "json" 以及 13.7.6 以前没有标记、写过 raw/hex(JSON) 的旧备份。
+	return existed && codexManagedKeychainProjectionMatches(secret, backup)
 }
 
 // isFakeCodexAuth 只识别 GFA 自己生成的旧伪凭证。如果接管期间用户或
@@ -262,6 +305,16 @@ func isCodexAPIKeyAuthMode(mode string) bool {
 	normalized := strings.NewReplacer("_", "", "-", "", " ", "").
 		Replace(strings.ToLower(strings.TrimSpace(mode)))
 	return normalized == "apikey"
+}
+
+func isCodexManagedAPIKeyAuth(data []byte) bool {
+	var auth struct {
+		AuthMode string `json:"auth_mode"`
+		APIKey   string `json:"OPENAI_API_KEY"`
+	}
+	return json.Unmarshal(data, &auth) == nil &&
+		isCodexAPIKeyAuthMode(auth.AuthMode) &&
+		strings.TrimSpace(auth.APIKey) == codexTakeoverAPIKey
 }
 
 func codexKeychainAuthBytes(secret string) []byte {
@@ -330,37 +383,41 @@ func selectCodexOAuthIdentity(authJSON, keychainJSON []byte, preferKeychain bool
 			return codexOAuthIdentity{}, false
 		}
 	}
-	if preferKeychain && len(keychainJSON) > 0 {
-		if identity, ok := parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain); ok {
-			return identity, true
+	if preferKeychain {
+		// macOS Desktop 以 Keychain 为登录事实来源。auth.json 即使结构完整，
+		// Desktop 也可能已经因账号失效清掉 Keychain 并显示登录页；此时回退文件
+		// 会把“已退出登录”误判成可桥接 OAuth。
+		if len(keychainJSON) == 0 {
+			return codexOAuthIdentity{}, false
 		}
+		return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
 	}
 	if len(authJSON) > 0 {
 		if identity, ok := parseCodexOAuthIdentity(authJSON, codexOAuthStoreAuthFile); ok {
 			return identity, true
 		}
 	}
-	if !preferKeychain && len(keychainJSON) > 0 {
-		return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
-	}
 	return codexOAuthIdentity{}, false
 }
 
-// currentCodexOAuthIdentity 对齐 Cockpit 的官方存储优先级:
-// auth.json 明确 API Key → 不桥接 OAuth；macOS 优先 Keychain，再回退 auth.json；
-// 其他平台使用 auth.json。
+// currentCodexOAuthIdentity:
+// auth.json 明确 API Key → 不桥接 OAuth；macOS Desktop 只认 Keychain 是否仍有
+// 登录事实，其他平台使用 auth.json。
 func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
 	authJSON, _ := os.ReadFile(codexAuthPath())
 	var keychainJSON []byte
 	if runtime.GOOS == "darwin" {
 		secret, existed, err := readCodexKeychainSecret()
 		if err != nil {
-			Log("[codex] 读取 Keychain OAuth 失败，回退 auth.json: %v", err)
+			Log("[codex] 读取 Keychain OAuth 失败，按未登录处理: %v", err)
 		} else if existed {
 			keychainJSON = codexKeychainAuthBytes(secret)
 		}
 	}
-	return selectCodexOAuthIdentity(authJSON, keychainJSON, runtime.GOOS == "darwin")
+	// 单测禁止访问真实 Keychain，故测试环境只验证 auth.json 分支；macOS 生产
+	// Desktop 必须严格以 Keychain 为准。
+	preferKeychain := runtime.GOOS == "darwin" && !appActionsSuppressed()
+	return selectCodexOAuthIdentity(authJSON, keychainJSON, preferKeychain)
 }
 
 // detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的登录形态。
@@ -375,8 +432,27 @@ func detectCodexOAuthCapabilityBridge() (bool, string) {
 	store := "auth.json"
 	if identity.Store == codexOAuthStoreKeychain {
 		store = "macOS Keychain"
+		// 13.7.6 曾按 hex(JSON) 写入本地接管 OAuth。Codex 官方与 Cockpit
+		// 都只写原始 JSON，因此 hex 只能视为旧 GFA 受管残留，不能继续桥接。
+		if secret, existed, err := readCodexKeychainSecret(); err == nil && existed {
+			if _, legacyManaged := normalizeCodexKeychainOAuthSecret(secret); legacyManaged {
+				return false, "检测到旧版 GFA Keychain OAuth 残留"
+			}
+		}
 	}
 	return true, "保留现有 OAuth 登录态（" + store + "，不验号、不刷新）"
+}
+
+func normalizeCodexKeychainOAuthSecret(secret string) (string, bool) {
+	trimmed := strings.TrimSpace(secret)
+	if json.Valid([]byte(trimmed)) {
+		return secret, false
+	}
+	decoded, err := hex.DecodeString(trimmed)
+	if err != nil || !json.Valid(decoded) || !codexAuthHasOAuthIdentity(decoded) {
+		return secret, false
+	}
+	return string(decoded), true
 }
 
 // codexKeychainAccount 对齐 Cockpit / Codex 官方键名:cli|sha256(canonical CODEX_HOME)[:16]。

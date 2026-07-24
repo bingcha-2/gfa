@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -64,7 +63,9 @@ func projectCodexLocalAccountKeychainWithOps(authJSON []byte, ops codexLocalKeyc
 	if err := writeFileAtomic(backupPath, encoded, 0o600); err != nil {
 		return err
 	}
-	return ops.Write(hex.EncodeToString(authJSON))
+	// Codex 官方 Keychain 与 Cockpit 都保存原始 auth JSON。旧版 GFA 写成
+	// hex(JSON)，Desktop 会把它当成不可解析凭据并停在登录页。
+	return ops.Write(string(authJSON))
 }
 
 func restoreCodexLocalAccountKeychain() error {

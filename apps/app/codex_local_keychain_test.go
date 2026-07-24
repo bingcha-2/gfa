@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"os"
 	"testing"
 )
@@ -29,7 +28,7 @@ func (f *fakeCodexKeychain) ops() codexLocalKeychainOps {
 	}
 }
 
-func TestLocalCodexOAuthProjectionWritesHexKeychainAndRestoresOriginal(t *testing.T) {
+func TestLocalCodexOAuthProjectionWritesRawJSONKeychainAndRestoresOriginal(t *testing.T) {
 	isolateCodexHome(t)
 	keychain := &fakeCodexKeychain{secret: "original-keychain", existed: true}
 	auth := []byte(`{"OPENAI_API_KEY":null,"tokens":{"id_token":"id","access_token":"at","refresh_token":"rt","account_id":"acc"}}`)
@@ -37,7 +36,7 @@ func TestLocalCodexOAuthProjectionWritesHexKeychainAndRestoresOriginal(t *testin
 	if err := projectCodexLocalAccountKeychainWithOps(auth, keychain.ops()); err != nil {
 		t.Fatal(err)
 	}
-	if want := hex.EncodeToString(auth); keychain.secret != want {
+	if want := string(auth); keychain.secret != want {
 		t.Fatalf("keychain projection=%q want=%q", keychain.secret, want)
 	}
 	if _, err := os.Stat(codexLocalKeychainBackupPath()); err != nil {
@@ -76,7 +75,7 @@ func TestLocalCodexOAuthRestorePreservesExternalLogin(t *testing.T) {
 	if err := projectCodexLocalAccountKeychainWithOps(auth, keychain.ops()); err != nil {
 		t.Fatal(err)
 	}
-	keychain.secret = hex.EncodeToString([]byte(`{"tokens":{"id_token":"new","access_token":"new","account_id":"new-account"}}`))
+	keychain.secret = `{"tokens":{"id_token":"new","access_token":"new","account_id":"new-account"}}`
 	if err := restoreCodexLocalAccountKeychainWithOps(keychain.ops()); err != nil {
 		t.Fatal(err)
 	}

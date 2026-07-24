@@ -236,6 +236,64 @@ func TestRestoreCodexAPIKeyAuthDoesNotClobberLoginDuringTakeover(t *testing.T) {
 	}
 }
 
+func TestManagedCodexAPIKeyProjectionDeletesKeychain(t *testing.T) {
+	keychain := &fakeCodexKeychain{secret: `{"tokens":{"access_token":"old"}}`, existed: true}
+	projected := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"gfa_codex_takeover"}`)
+
+	if err := applyCodexManagedKeychainProjection(projected, false, keychain.ops()); err != nil {
+		t.Fatal(err)
+	}
+	if keychain.existed {
+		t.Fatalf("API Key 模式不应在 Keychain 留凭据: %+v", keychain)
+	}
+}
+
+func TestManagedCodexOAuthProjectionWritesRawJSONKeychain(t *testing.T) {
+	keychain := &fakeCodexKeychain{}
+	projected := []byte(`{"tokens":{"id_token":"id","access_token":"at","refresh_token":"rt"}}`)
+
+	if err := applyCodexManagedKeychainProjection(projected, true, keychain.ops()); err != nil {
+		t.Fatal(err)
+	}
+	if keychain.secret != string(projected) {
+		t.Fatalf("OAuth Keychain 应写原始 JSON:\nwant %s\ngot  %s", projected, keychain.secret)
+	}
+}
+
+func TestManagedCodexDeletedKeychainRestoresOnlyWhileStillAbsent(t *testing.T) {
+	backup := &codexCredsBackup{KeychainProjection: "absent"}
+	if !codexManagedKeychainProjectionIsCurrent("", false, backup) {
+		t.Fatal("GFA 删除后仍为空，应允许恢复原 Keychain")
+	}
+	if codexManagedKeychainProjectionIsCurrent(`{"tokens":{"access_token":"new-login"}}`, true, backup) {
+		t.Fatal("接管期间产生的新登录不得被旧 Keychain 备份覆盖")
+	}
+}
+
+func TestManagedCodexAPIKeyKeychainResidueIsNotUserBackup(t *testing.T) {
+	raw := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"gfa_codex_takeover"}`)
+	if !isCodexManagedAPIKeyAuth(raw) {
+		t.Fatal("应识别 GFA 13.7.6 遗留的 API Key Keychain")
+	}
+	if !isCodexManagedAPIKeyAuth(codexKeychainAuthBytes(hex.EncodeToString(raw))) {
+		t.Fatal("应识别 GFA 13.7.6 遗留的 hex(API Key JSON)")
+	}
+	if isCodexManagedAPIKeyAuth([]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"user-key"}`)) {
+		t.Fatal("不得把用户 API Key 当成 GFA 遗留")
+	}
+}
+
+func TestNormalizeLegacyHexCodexOAuthKeychain(t *testing.T) {
+	raw := []byte(`{"tokens":{"id_token":"id","access_token":"at","refresh_token":"rt","account_id":"acc"}}`)
+	got, changed := normalizeCodexKeychainOAuthSecret(hex.EncodeToString(raw))
+	if !changed || got != string(raw) {
+		t.Fatalf("旧 hex OAuth 未规范化: changed=%v got=%q", changed, got)
+	}
+	if got, changed := normalizeCodexKeychainOAuthSecret(string(raw)); changed || got != string(raw) {
+		t.Fatalf("原始 JSON 不应重复改写: changed=%v got=%q", changed, got)
+	}
+}
+
 // 旧远程接管期间若用户已切到一份新的本地真号,迁移时只丢弃
 // 过期备份,不能用较早的登录态把用户新选的号覆盖掉。
 func TestRestoreFakeCodexAuth_DoesNotClobberExternallyReplacedAuth(t *testing.T) {
@@ -303,13 +361,16 @@ func TestCodexAuthHasOAuthIdentity(t *testing.T) {
 	}
 }
 
-func TestSelectCodexOAuthIdentityMatchesCockpitPrecedence(t *testing.T) {
+func TestSelectCodexOAuthIdentityUsesMacDesktopLoginFact(t *testing.T) {
 	fileOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"file-id","access_token":"file-access","refresh_token":"file-refresh","account_id":"file-account"}}`)
 	keychainOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"key-id","access_token":"key-access","refresh_token":"key-refresh","account_id":"key-account"}}`)
 
 	identity, ok := selectCodexOAuthIdentity(fileOAuth, keychainOAuth, true)
 	if !ok || identity.Store != codexOAuthStoreKeychain || identity.AccessToken != "key-access" {
 		t.Fatalf("macOS 应优先 Keychain: ok=%v identity=%+v", ok, identity)
+	}
+	if identity, ok = selectCodexOAuthIdentity(fileOAuth, nil, true); ok {
+		t.Fatalf("macOS Keychain 已无登录项时不得用残留 auth.json 桥接: %+v", identity)
 	}
 	identity, ok = selectCodexOAuthIdentity(fileOAuth, keychainOAuth, false)
 	if !ok || identity.Store != codexOAuthStoreAuthFile || identity.AccessToken != "file-access" {

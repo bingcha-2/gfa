@@ -157,31 +157,6 @@ func TestHub_SetSourceCodex_InjectsAccountNotGateway(t *testing.T) {
 	}
 }
 
-func TestHub_HandoffCodexLocalToRemoteKeepsProjectedAccount(t *testing.T) {
-	h, fp := newHub(t)
-	_ = h.acc.Add(&account.Account{
-		Provider: account.ProviderCodex, Email: "cx@x.com", AuthKind: account.AuthOAuth,
-		AccessToken: "AT", RefreshToken: "RT", AccountID: "acc", PoolEnabled: true, Priority: true,
-	})
-	if err := h.SetSource(account.ProviderCodex, "local"); err != nil {
-		t.Fatalf("SetSource local: %v", err)
-	}
-	restoreBefore := fp.codexRestoreCount
-	restartBefore := fp.codexRestartCount
-	if err := h.HandoffCodexLocalToRemote(); err != nil {
-		t.Fatalf("HandoffCodexLocalToRemote: %v", err)
-	}
-	if got := h.GetSource(account.ProviderCodex); got != "remote" {
-		t.Fatalf("source=%q want remote", got)
-	}
-	if fp.codexRestoreCount != restoreBefore {
-		t.Fatalf("直接切远程不得撤销当前 OAuth 投影: restores=%d want=%d", fp.codexRestoreCount, restoreBefore)
-	}
-	if fp.codexRestartCount != restartBefore {
-		t.Fatalf("远程 provider 已负责重启，提交号源不得重复重启: restarts=%d want=%d", fp.codexRestartCount, restartBefore)
-	}
-}
-
 // 反代网关独立于接管:GatewayStart 可单独开,与 SetSource 无关。
 func TestHub_GatewayIndependentOfTakeover(t *testing.T) {
 	h, _ := newHub(t)

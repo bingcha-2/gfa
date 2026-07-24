@@ -17,46 +17,6 @@ import (
 // 进程启停桥给 internal/local/hub。这是本地接管唯一需要留在 package main 的平台胶水。
 type localPlatform struct{}
 
-const codexLocalRemoteHandoffFile = ".bcai-codex-local-remote-handoff.json"
-
-func codexLocalRemoteHandoffPath() string {
-	return filepath.Join(codexHomeDir(), codexLocalRemoteHandoffFile)
-}
-
-func markCodexLocalRemoteHandoff() error {
-	if err := os.MkdirAll(codexHomeDir(), 0o755); err != nil {
-		return err
-	}
-	return writeFileAtomic(codexLocalRemoteHandoffPath(), []byte(`{"active":true}`), 0o600)
-}
-
-func clearCodexLocalRemoteHandoff() {
-	_ = os.Remove(codexLocalRemoteHandoffPath())
-}
-
-// commitCodexLocalAccountProjection 把当前本地自有号登录确认为新的用户基线。
-// 直切远程后，取消远程只恢复 provider，不应再把登录回滚到接管本地号之前
-// （那个状态可能就是未登录）。因此删除本地投影备份，但保留当前 auth.json / Keychain。
-func commitCodexLocalAccountProjection() error {
-	paths := []string{
-		filepath.Join(codexHomeDir(), ".bcai-codex-auth-backup.json"),
-		codexLocalKeychainBackupPath(),
-	}
-	for _, path := range paths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-func finishCodexLocalRemoteHandoff() {
-	if _, err := os.Stat(codexLocalRemoteHandoffPath()); err == nil {
-		clearCodexLocalRemoteHandoff()
-		Log("[codex-local] 已取消远程接管，保留当前 OAuth 登录")
-	}
-}
-
 // CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI(注入式接管)。
 // 这与反代(cliproxy 网关)无关——反代是单独功能,由反代 tab 独立开关。
 //
@@ -114,7 +74,6 @@ func (localPlatform) CodexRestoreAccount() error {
 	if err := restoreCodexLocalAccountKeychain(); err != nil {
 		return err
 	}
-	clearCodexLocalRemoteHandoff()
 	return nil
 }
 

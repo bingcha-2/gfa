@@ -630,20 +630,6 @@ func (h *Hub) GetSource(p account.Provider) string {
 	return string(h.sources.Get(string(p)))
 }
 
-// HandoffCodexLocalToRemote 只提交“本地自有号 → 远程托管”的号源状态，
-// 不撤销当前 Codex OAuth 投影、不重启客户端。调用方必须先成功完成远程 provider
-// 接管；这样远程接管可以直接沿用当前自有号承载插件身份，取消远程接管时再由平台层
-// 按原备份恢复接管前登录。
-func (h *Hub) HandoffCodexLocalToRemote() error {
-	if _, err := h.ctx(account.ProviderCodex); err != nil {
-		return err
-	}
-	if h.sources.Get(string(account.ProviderCodex)) != takeover.SourceLocal {
-		return errors.New("hub: Codex 当前不是本地自有号接管，不能提交直接切换")
-	}
-	return h.sources.Set(string(account.ProviderCodex), takeover.SourceRemote)
-}
-
 func (h *Hub) SetSource(p account.Provider, source string) error {
 	if _, err := h.ctx(p); err != nil {
 		return err
@@ -692,7 +678,9 @@ func (h *Hub) SetSource(p account.Provider, source string) error {
 		if err := stopCodexForMutation(); err != nil {
 			return err
 		}
-		_ = h.platform.CodexRestoreAccount()
+		// CodexInjectAccount 自己会撤远程 API Key/provider 投影，并由
+		// codexinject.InjectToHome 在覆盖前备份用户原生 auth。这里若先 RestoreAccount，
+		// 首次本地接管因尚无备份反而会删除用户原生 auth.json。
 		if err := h.platform.CodexInjectAccount(tok); err != nil {
 			relaunchCodexAfterFailure()
 			return err
