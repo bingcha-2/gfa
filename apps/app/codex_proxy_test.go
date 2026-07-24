@@ -85,6 +85,28 @@ func TestIsCodexGenerationRequest(t *testing.T) {
 	}
 }
 
+func TestCodexResponsesLiteMaxPassesThroughUnchanged(t *testing.T) {
+	const responsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
+	body := []byte(`{"model":"gpt-5.6-terra","reasoning":{"effort":"max"}}`)
+
+	if got := normalizeCodexRequestBody("/v1/responses", body); !bytes.Equal(got, body) {
+		t.Fatalf("responses body was rewritten:\ngot  %s\nwant %s", got, body)
+	}
+
+	src := http.Header{
+		responsesLiteHeader:     {"true"},
+		"X-Codex-Turn-Metadata": {`{"turn_id":"turn-1"}`},
+	}
+	dst := make(http.Header)
+	copyCodexHeaders(dst, src)
+	if got := dst.Get(responsesLiteHeader); got != "true" {
+		t.Fatalf("%s = %q, want true", responsesLiteHeader, got)
+	}
+	if got := dst.Get("X-Codex-Turn-Metadata"); got != `{"turn_id":"turn-1"}` {
+		t.Fatalf("X-Codex-Turn-Metadata = %q", got)
+	}
+}
+
 func TestCodexBuiltInProviderWebSocketFallsBackToHTTP(t *testing.T) {
 	proxy := &CodexProxy{
 		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
