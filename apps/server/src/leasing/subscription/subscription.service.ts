@@ -39,6 +39,7 @@ export interface OrderForActivation {
   customerId: string;
   config: string | null;
   catalogVersion: number | null;
+  payChannel?: string | null;
 }
 
 export interface ActivationOptions {
@@ -89,10 +90,12 @@ export class SubscriptionService {
     if (!customer) throw new NotFoundException(`Customer "${order.customerId}" not found`);
 
     const config = JSON.parse(order.config) as Record<string, any>;
+    const isTrialOrder = order.payChannel === "TRIAL";
     const durationDays = this.resolveDurationDaysOverride(options.durationDaysOverride)
+      ?? (isTrialOrder ? this.resolveTrialDurationDays(config) : null)
       ?? await this.resolveDurationDays(order.catalogVersion);
 
-    const now = new Date();
+    const now = isTrialOrder ? this.resolveTrialStartsAt(config) : new Date();
     const durationMs = durationDays * DAY_MS;
 
     // 同配置续费(spec §8):命中一条 config 等价的 ACTIVE 订阅 → 延长 expiresAt 复用,
@@ -100,10 +103,10 @@ export class SubscriptionService {
     // 用量/levels+weight),排除 bindings(座位分配结果)与 windowMs(锁死)。绑定线续期
     // 走 syncSubscription:它对已绑产品短路复用,不重分配座位、不占新份额。
     // forceNew(激活码):跳过续费去重,直接新建。空数组 → 下面的 same 必为 undefined。
-    const actives = options.forceNew
+    const actives = options.forceNew || isTrialOrder
       ? []
       : await this.prisma.subscription.findMany({
-          where: { customerId: order.customerId, status: "ACTIVE" },
+          where: { customerId: order.customerId, status: "ACTIVE", isTrial: false },
         });
     const same = actives.find((s) => sameConfigFingerprint(parseConfig(s.config), config));
     if (same) {
@@ -128,13 +131,16 @@ export class SubscriptionService {
       });
       await this.entitlementSync.syncSubscription(extended, { customerEmail: customer.email });
       const resynced = (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
-      return this.mirrorBindingsFromConfig(resynced);
+      const mirrored = await this.mirrorBindingsFromConfig(resynced);
+      await this.cancelActiveTrialsAfterPaidActivation(order.customerId, isTrialOrder);
+      return mirrored;
     }
 
     const sub = await this.prisma.subscription.create({
       data: {
         customerId: order.customerId,
         status: "ACTIVE",
+        isTrial: isTrialOrder,
         startsAt: now,
         expiresAt: new Date(now.getTime() + durationMs),
         config: order.config, // computePurchase 快照,单一真相源
@@ -154,7 +160,43 @@ export class SubscriptionService {
     await this.entitlementSync.syncSubscription(sub, { customerEmail: customer.email });
     // sync 在 config 里写入了分配到的 bindings(绑定线);镜像回 legacy bindings 列供 lease-service。
     const synced = (await this.prisma.subscription.findUnique({ where: { id: sub.id } }))!;
-    return this.mirrorBindingsFromConfig(synced);
+    const mirrored = await this.mirrorBindingsFromConfig(synced);
+    await this.cancelActiveTrialsAfterPaidActivation(order.customerId, isTrialOrder);
+    return mirrored;
+  }
+
+  private resolveTrialDurationDays(config: Record<string, any>): number | null {
+    const days = Number(config?.trial?.durationDays);
+    return Number.isInteger(days) && days > 0 && days <= 365 ? days : null;
+  }
+
+  private resolveTrialStartsAt(config: Record<string, any>): Date {
+    const value = new Date(String(config?.trial?.startsAt || ""));
+    return Number.isNaN(value.getTime()) ? new Date() : value;
+  }
+
+  /**
+   * A paid/granted/code activation supersedes an active trial. Keeping the
+   * trial separate avoids mixing pre-purchase usage into refund eligibility,
+   * while cancelling it after the new entitlement is live prevents downtime.
+   */
+  private async cancelActiveTrialsAfterPaidActivation(
+    customerId: string,
+    activatingTrial: boolean,
+  ): Promise<void> {
+    if (activatingTrial) return;
+    const trials = await this.prisma.subscription.findMany({
+      where: { customerId, status: "ACTIVE", isTrial: true },
+      select: { id: true },
+    });
+    if (trials.length === 0) return;
+    await this.prisma.subscription.updateMany({
+      where: { id: { in: trials.map((trial) => trial.id) }, status: "ACTIVE" },
+      data: { status: "CANCELLED" },
+    });
+    for (const trial of trials) {
+      this.entitlementSync.expireShadowRecord(trial.id);
+    }
   }
 
   /** 解析该版 catalog 的 durationDays(版本不可变,溯源稳定);缺则抛错(无法确定有效期)。 */

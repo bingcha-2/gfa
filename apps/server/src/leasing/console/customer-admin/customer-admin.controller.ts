@@ -27,7 +27,11 @@ import { ConsoleJwtGuard } from "../../../shared/auth/console-jwt.guard";
 import { Roles } from "../../../shared/auth/roles.decorator";
 import { AuditLogService } from "../../../shared/audit-log/audit-log.service";
 import { CustomerAdminService } from "./customer-admin.service";
-import { GrantCatalogSubscriptionDto, UpdateCustomerDto } from "./dto/customer-admin.dto";
+import {
+  GrantCatalogSubscriptionDto,
+  GrantTrialDto,
+  UpdateCustomerDto,
+} from "./dto/customer-admin.dto";
 
 @Controller("console/customers")
 @UseGuards(ConsoleJwtGuard)
@@ -90,5 +94,31 @@ export class CustomerAdminController {
       detail: { selection: dto.selection, durationDays: dto.durationDays, subscriptionId: sub.id },
     });
     return sub;
+  }
+
+  /** 发放客户终身唯一的一次试用；重复请求幂等返回既有试用。 */
+  @Post(":id/trial")
+  async grantTrial(
+    @Param("id") id: string,
+    @Body() dto: GrantTrialDto,
+    @Request() req: any,
+  ) {
+    const result = await this.customerAdmin.grantTrial(id, {
+      durationDays: dto.durationDays,
+      weeklyUsdLimit: dto.weeklyUsdLimit,
+    });
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "GRANT_TRIAL",
+      targetType: "Customer",
+      targetId: id,
+      detail: {
+        durationDays: dto.durationDays,
+        weeklyUsdLimit: dto.weeklyUsdLimit,
+        subscriptionId: result.subscription.id,
+        created: result.created,
+      },
+    });
+    return result;
   }
 }

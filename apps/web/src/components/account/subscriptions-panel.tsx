@@ -133,6 +133,7 @@ export function SubscriptionsPanel() {
                 <div className="account-relay-head">
                   <span className="account-relay-name">
                     <span>{subscriptionPlanLabel(sub)}</span>
+                    {sub.isTrial && <span className="account-relay-tag">{t.trialTag}</span>}
                     {i === 0 && <span className="account-relay-tag">{t.priorityTag}</span>}
                   </span>
                   <AccountStatusBadge tone={active ? "success" : "muted"}>

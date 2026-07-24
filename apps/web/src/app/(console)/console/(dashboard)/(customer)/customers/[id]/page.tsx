@@ -14,6 +14,7 @@ import {
 import { buildSubscriptionView } from "@/lib/console/subscription-view";
 import { orderAction } from "@/lib/console/order-action";
 import { GrantSubscriptionDialog } from "./grant-subscription-dialog";
+import { GrantTrialDialog } from "./grant-trial-dialog";
 import { SubscriptionDetailDrawer } from "../../subscriptions/subscription-detail-drawer";
 
 import {
@@ -36,7 +37,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Ban, CircleCheck, Pencil, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, Ban, CircleCheck, Gift, Pencil, Plus, RefreshCw } from "lucide-react";
 
 function subStatusBadge(status: string) {
   if (status === "ACTIVE") return <Badge className="bg-emerald-500 text-white">{SUB_STATUS_LABEL[status]}</Badge>;
@@ -96,6 +97,7 @@ export default function CustomerDetailPage() {
   const [editForm, setEditForm] = useState({ displayName: "", creditYuan: "" });
 
   const [grantOpen, setGrantOpen] = useState(false);
+  const [trialOpen, setTrialOpen] = useState(false);
   const [detail, setDetail] = useState<ConsoleSubscription | null>(null);
   const [subEditOpen, setSubEditOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<ConsoleSubscriptionLite | null>(null);
@@ -226,6 +228,7 @@ export default function CustomerDetailPage() {
       </div>
     );
   }
+  const hasTrial = c.planOrders.some((order) => order.payChannel === "TRIAL");
 
   return (
     <div className="space-y-4">
@@ -235,8 +238,8 @@ export default function CustomerDetailPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 space-y-1">
               <CardTitle className="flex items-center gap-2">
                 {c.email}
                 {c.status === "DISABLED" ? <Badge variant="destructive">已封禁</Badge> : <Badge className="bg-emerald-500 text-white">正常</Badge>}
@@ -262,8 +265,18 @@ export default function CustomerDetailPage() {
               </div>
               <div className="text-xs text-muted-foreground">注册于 {fmtDateTime(c.createdAt)}</div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               <Button variant="outline" size="sm" onClick={openEdit}><Pencil className="h-3.5 w-3.5 mr-1" />备注/额度</Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTrialOpen(true)}
+                disabled={hasTrial}
+                title={hasTrial ? "该客户已经领取过试用" : undefined}
+              >
+                <Gift data-icon="inline-start" />
+                {hasTrial ? "已发试用" : "发放试用"}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setGrantOpen(true)}><Plus className="h-3.5 w-3.5 mr-1" />发放订阅</Button>
               <AlertDialog>
                 <AlertDialogTrigger render={<Button variant="outline" size="sm" className={c.status === "DISABLED" ? "text-emerald-600" : "text-destructive"} />}>
@@ -315,9 +328,12 @@ export default function CustomerDetailPage() {
                     {c.subscriptions.map((s) => (
                       <TableRow key={s.id}>
                         <TableCell className="font-medium">
-                          <button className="text-blue-600 hover:underline" onClick={() => void openSubscriptionDetail(s.id)}>
-                            {selectionName(s.config)}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button className="text-blue-600 hover:underline" onClick={() => void openSubscriptionDetail(s.id)}>
+                              {selectionName(s.config)}
+                            </button>
+                            {s.isTrial && <Badge variant="secondary">试用</Badge>}
+                          </div>
                           <div className="text-xs text-muted-foreground mt-0.5">
                             {buildSubscriptionView(s).rows.map((r) =>
                               r.bound ? `${r.product}→#${r.accountId}` : r.level ? `${r.product}→未绑定` : r.product
@@ -519,6 +535,16 @@ export default function CustomerDetailPage() {
         open={grantOpen}
         onOpenChange={setGrantOpen}
         customerId={c.id}
+        onGranted={load}
+      />
+
+      <GrantTrialDialog
+        open={trialOpen}
+        onOpenChange={setTrialOpen}
+        customerId={c.id}
+        customerEmail={c.email}
+        defaultDurationDays={c.trialDefaults.durationDays}
+        defaultWeeklyUsdLimit={c.trialDefaults.weeklyUsdLimit}
         onGranted={load}
       />
 

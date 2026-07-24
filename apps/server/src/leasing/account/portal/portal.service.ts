@@ -293,6 +293,7 @@ export class PortalService {
         // The configurator has no single plan name; products[] carries the detail.
         planName: null,
         status: sub.status as string,
+        isTrial: sub.isTrial,
         products: productEntitlements,
         expiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
         deviceLimit: sub.deviceLimit,
