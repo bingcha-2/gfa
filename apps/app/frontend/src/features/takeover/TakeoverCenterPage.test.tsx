@@ -250,6 +250,27 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     })
   })
 
+  it('Codex 自有号直接切远程:前端不先恢复旧登录，handoff 由后端接管事务提交', async () => {
+    setPlatform('MacIntel')
+    codexApi.getSource.mockResolvedValue('local')
+    apiMocks.injectSelected.mockImplementation(async () => {
+      store.state.ideProducts = store.state.ideProducts.map((item) =>
+        item.id === 'codex' ? { ...item, injected: true } : item,
+      )
+      return 'Codex: ✓ 已接管并重启'
+    })
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    await within(codex).findByRole('button', { name: '停止' })
+    fireEvent.click(within(codex).getByRole('button', { name: '远程托管' }))
+    const takeover = await within(codex).findByRole('button', { name: '接管' })
+    await waitFor(() => expect(takeover).not.toBeDisabled())
+    fireEvent.click(takeover)
+
+    await waitFor(() => expect(apiMocks.injectSelected).toHaveBeenCalledWith(['codex']))
+    expect(codexApi.setSource).not.toHaveBeenCalledWith('remote')
+  })
+
   // ── 模型厂商接管(接管中心选厂商) ──
   it('Codex 卡:本地段选自定义厂商并接管 → 调 setSource(provider:<id>)', async () => {
     setPlatform('MacIntel')

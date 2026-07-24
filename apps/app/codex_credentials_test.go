@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -61,6 +62,16 @@ func splitDots(s string) []string {
 		cur += string(c)
 	}
 	return append(out, cur)
+}
+
+func testCodexJWTWithExp(t *testing.T, exp int64) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, err := json.Marshal(map[string]interface{}{"exp": exp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 // 伪 auth.json 的核心约定：auth_mode=chatgpt，id_token 可解出 email，exp 在远未来（不触发刷新）。
@@ -163,6 +174,68 @@ func TestFakeCodexAuth_PreservesExisting(t *testing.T) {
 	}
 }
 
+func TestCodexAPIKeyAuthProjectionMatchesCockpitAndRestoresOriginal(t *testing.T) {
+	dir := isolateCodexHome(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"USER-TOKEN"}}`)
+	if err := os.WriteFile(codexAuthPath(), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectCodexAPIKeyAuth(); err != nil {
+		t.Fatalf("API Key 投影失败: %v", err)
+	}
+	projected, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auth map[string]interface{}
+	if err := json.Unmarshal(projected, &auth); err != nil {
+		t.Fatal(err)
+	}
+	if auth["auth_mode"] != "apikey" || auth["OPENAI_API_KEY"] != codexTakeoverAPIKey {
+		t.Fatalf("无账号投影未对齐 Cockpit API Key 形态: %#v", auth)
+	}
+	backup := readCodexCredsBackup()
+	if backup == nil || backup.ProjectionSHA256 != codexAuthProjectionDigest(projected) {
+		t.Fatalf("投影摘要未持久化: %+v", backup)
+	}
+
+	if err := RestoreFakeCodexAuth(); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	restored, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != string(original) {
+		t.Fatalf("用户原 auth 未精确恢复:\nwant %s\ngot  %s", original, restored)
+	}
+}
+
+func TestRestoreCodexAPIKeyAuthDoesNotClobberLoginDuringTakeover(t *testing.T) {
+	isolateCodexHome(t)
+	if err := InjectCodexAPIKeyAuth(); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"NEW-LOGIN","account_id":"real"}}`)
+	if err := os.WriteFile(codexAuthPath(), replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreFakeCodexAuth(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(replacement) {
+		t.Fatalf("接管期间的新登录被旧备份覆盖:\nwant %s\ngot  %s", replacement, got)
+	}
+}
+
 // 旧远程接管期间若用户已切到一份新的本地真号,迁移时只丢弃
 // 过期备份,不能用较早的登录态把用户新选的号覆盖掉。
 func TestRestoreFakeCodexAuth_DoesNotClobberExternallyReplacedAuth(t *testing.T) {
@@ -203,6 +276,91 @@ func TestIsFakeCodexKeychainSecretSupportsLegacyRawAndCodexHex(t *testing.T) {
 	}
 	if isFakeCodexKeychainSecret(hex.EncodeToString([]byte(`{"tokens":{"account_id":"real-account"}}`))) {
 		t.Fatal("不应把真账号 keychain 误判为 GFA 伪凭证")
+	}
+}
+
+func TestCodexAuthHasOAuthIdentity(t *testing.T) {
+	realOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh","account_id":"account-1"}}`)
+	if !codexAuthHasOAuthIdentity(realOAuth) {
+		t.Fatal("完整真实 OAuth 应被识别")
+	}
+	if !codexAuthHasOAuthIdentity(codexKeychainAuthBytes(hex.EncodeToString(realOAuth))) {
+		t.Fatal("Keychain 的 hex(JSON) OAuth 应被识别")
+	}
+	for name, raw := range map[string][]byte{
+		"api key": []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}`),
+		"api key with stale oauth": []byte(
+			`{"auth_mode":"api_key","OPENAI_API_KEY":"sk-test","tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh","account_id":"account-1"}}`,
+		),
+		"missing refresh": []byte(`{"tokens":{"id_token":"id","access_token":"access","account_id":"account-1"}}`),
+		"legacy fake":     buildFakeCodexAuth(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if codexAuthHasOAuthIdentity(raw) {
+				t.Fatalf("%s 不应被识别为可保留账号能力的 OAuth", name)
+			}
+		})
+	}
+}
+
+func TestSelectCodexOAuthIdentityMatchesCockpitPrecedence(t *testing.T) {
+	fileOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"file-id","access_token":"file-access","refresh_token":"file-refresh","account_id":"file-account"}}`)
+	keychainOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"key-id","access_token":"key-access","refresh_token":"key-refresh","account_id":"key-account"}}`)
+
+	identity, ok := selectCodexOAuthIdentity(fileOAuth, keychainOAuth, true)
+	if !ok || identity.Store != codexOAuthStoreKeychain || identity.AccessToken != "key-access" {
+		t.Fatalf("macOS 应优先 Keychain: ok=%v identity=%+v", ok, identity)
+	}
+	identity, ok = selectCodexOAuthIdentity(fileOAuth, keychainOAuth, false)
+	if !ok || identity.Store != codexOAuthStoreAuthFile || identity.AccessToken != "file-access" {
+		t.Fatalf("非 macOS 应使用 auth.json: ok=%v identity=%+v", ok, identity)
+	}
+	apiKeyMode := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}`)
+	if identity, ok = selectCodexOAuthIdentity(apiKeyMode, keychainOAuth, true); ok {
+		t.Fatalf("显式 API Key 模式不得借用残留 Keychain OAuth: %+v", identity)
+	}
+}
+
+func TestCodexHasOAuthIdentityReadsAuthFile(t *testing.T) {
+	isolateCodexHome(t)
+	oauth := []byte(`{"tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh","account_id":"account-1"}}`)
+	if err := os.WriteFile(codexAuthPath(), oauth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, ok := currentCodexOAuthIdentity()
+	if !ok {
+		t.Fatal("auth.json 中的真实 OAuth 应被识别")
+	}
+	if identity.AccessToken != "access" || identity.AccountID != "account-1" {
+		t.Fatalf("OAuth identity 解析错误: %+v", identity)
+	}
+}
+
+func TestDetectCodexOAuthCapabilityBridgePreservesCompleteLoginWithoutMutation(t *testing.T) {
+	isolateCodexHome(t)
+	oauth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh","account_id":"account-1"},"custom":"preserved"}`)
+	if err := os.WriteFile(codexAuthPath(), oauth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, reason := detectCodexOAuthCapabilityBridge(); !ok {
+		t.Fatalf("完整 OAuth 应直接桥接: %s", reason)
+	}
+	got, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, oauth) {
+		t.Fatalf("识别 OAuth 时不得改写用户凭证:\nwant %s\ngot  %s", oauth, got)
+	}
+}
+
+func TestDetectCodexOAuthCapabilityBridgeRejectsOnlyNonOAuthShape(t *testing.T) {
+	isolateCodexHome(t)
+	if err := os.WriteFile(codexAuthPath(), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, reason := detectCodexOAuthCapabilityBridge(); ok || reason == "" {
+		t.Fatalf("API Key 形态不得当成 OAuth: ok=%v reason=%q", ok, reason)
 	}
 }
 

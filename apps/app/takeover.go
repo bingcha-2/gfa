@@ -300,15 +300,31 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		QuitCodexApp()
 	}
 	// 新版 Codex Desktop 会把伪 ChatGPT JWT 拿去官方 wham/settings 验签,
-	// 必然 401 并卡白屏。远程托管现在由 requires_openai_auth=false 的自定义
-	// provider 承载，不再伪造或依赖 OAuth 登录。先迁移/清理旧版遗留的伪凭证备份。
+	// 必然 401 并卡白屏。远程托管不再伪造登录；有真实 OAuth 时保留它承载
+	// 插件目录等账号能力，没有时才用无鉴权 provider。先迁移/清理旧版伪凭证备份。
 	if err := RestoreFakeCodexAuth(); err != nil {
 		if guiInstalled {
 			LaunchCodexApp()
 		}
 		return "", fmt.Errorf("清理旧版 Codex 登录投影失败: %w", err)
 	}
-	if err := InjectCodexSettings(proxyPort); err != nil {
+	preserveOAuthCapabilities, oauthReason := detectCodexOAuthCapabilityBridge()
+	Log("[codex] OAuth 账号能力桥接=%v (%s)", preserveOAuthCapabilities, oauthReason)
+	if !preserveOAuthCapabilities {
+		// 对齐 Cockpit 无账号 API 服务：用正规的 apikey auth.json 让 Desktop
+		// 稳定进入主界面；它不是伪 OAuth，不会触发官方 wham/refresh 401。
+		if err := InjectCodexAPIKeyAuth(); err != nil {
+			_ = RestoreFakeCodexAuth()
+			if guiInstalled {
+				LaunchCodexApp()
+			}
+			return "", fmt.Errorf("写入 Codex API Key 登录投影失败: %w", err)
+		}
+	}
+	if err := InjectCodexSettings(proxyPort, preserveOAuthCapabilities); err != nil {
+		if !preserveOAuthCapabilities {
+			_ = RestoreFakeCodexAuth()
+		}
 		if guiInstalled {
 			LaunchCodexApp()
 		}
@@ -333,12 +349,18 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	// 纯 CLI 安装:config 已写入并即时生效(CLI 每次运行现读),没有常驻 GUI 需要重启、
 	// 也没有 state_5.sqlite 历史需要 retag。直接返回,提示重开终端。
 	if !guiInstalled {
+		if _, err := commitCodexLocalRemoteHandoff(); err != nil {
+			return "", fmt.Errorf("Codex 远程接管已写入，但提交本地账号直切状态失败: %w", err)
+		}
 		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
 	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
 		return "", err
+	}
+	if _, err := commitCodexLocalRemoteHandoff(); err != nil {
+		return "", fmt.Errorf("Codex 远程接管已生效，但提交本地账号直切状态失败: %w", err)
 	}
 	return "Codex: ✓ 已接管并重启,新旧会话均已切换", nil
 }
@@ -351,23 +373,27 @@ func (codexTarget) Restore() (string, error) {
 	if guiInstalled {
 		QuitCodexApp()
 	}
-	if err := RestoreCodexSettings(); err != nil {
+	configWasManaged, err := restoreCodexSettingsManaged()
+	if err != nil {
 		if guiInstalled {
 			LaunchCodexApp()
 		}
 		return "", err
 	}
 	restoredProvider := currentCodexModelProvider()
-	// 兼容清理旧版伪登录态;新版远程接管不会再创建这份备份。
+	// 恢复无账号 API Key 投影；同时兼容清理旧版伪 OAuth 登录态。
 	if err := RestoreFakeCodexAuth(); err != nil {
 		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
+	// 本地自有号直切远程后，取消只恢复 provider/历史；当前 OAuth 登录保持不动。
+	finishCodexLocalRemoteHandoff()
 	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
 	if !guiInstalled {
 		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
 	}
-	// GUI:还原后先把全部会话对齐回用户 provider,再启动;不异步报假成功。
-	if err := RestartCodexAfterTakeover(historySourceProvider, restoredProvider); err != nil {
+	// GUI:正常接管态全量对齐回原 provider；若用户已自行切换 provider，只迁移
+	// GFA 的 bingchaai 分桶，避免覆盖新 provider 自己的聊天标签。
+	if err := RestartCodexAfterRestore(historySourceProvider, restoredProvider, configWasManaged); err != nil {
 		return "", err
 	}
 	return "Codex: ✓ 已恢复并重启,历史会话已恢复", nil

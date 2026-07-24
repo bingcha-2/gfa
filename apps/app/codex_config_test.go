@@ -121,6 +121,7 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 		`base_url = "http://127.0.0.1:8080/v1"`,
 		`wire_api = "responses"`,
 		`requires_openai_auth = false`,
+		`experimental_bearer_token = "gfa_codex_takeover"`,
 		`http_headers = { "x-openai-actor-authorization" = "bingchaai" }`,
 		`supports_websockets = false`,
 	} {
@@ -158,28 +159,118 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	}
 }
 
-func TestInjectCodexSettingsNeverRequiresOAuth(t *testing.T) {
+func TestInjectCodexSettingsPreservesOAuthAccountCapabilities(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(sampleConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// 即使磁盘上留有看似完整的 OAuth，远程接管也不能依赖它。Desktop 启动会强制
-	// 刷新，refresh token 一旦失效就会把用户直接送回登录页。
-	realLookingAuth := `{"tokens":{"access_token":"access","id_token":"id","refresh_token":"stale-refresh","account_id":"acct"}}`
+	realLookingAuth := `{"auth_mode":"chatgpt","tokens":{"access_token":"access","id_token":"id","refresh_token":"refresh","account_id":"acct"}}`
 	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(realLookingAuth), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := InjectCodexSettings(8080); err != nil {
+	if err := InjectCodexSettings(8080, true); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(home, "config.toml"))
-	if !strings.Contains(string(got), `requires_openai_auth = false`) {
-		t.Fatalf("远程接管不得要求 OAuth:\n%s", got)
+	if !strings.Contains(string(got), `requires_openai_auth = true`) {
+		t.Fatalf("已有 OAuth 时必须保留账号能力:\n%s", got)
+	}
+	if !strings.Contains(string(got), `experimental_bearer_token = "gfa_codex_takeover"`) {
+		t.Fatalf("OAuth 组合接管仍须携带本地 provider bearer:\n%s", got)
 	}
 	if !strings.Contains(string(got), `http_headers = { "x-openai-actor-authorization" = "bingchaai" }`) {
 		t.Fatalf("远程接管必须声明 image_gen actor capability:\n%s", got)
+	}
+	if !IsCodexInjected(8080) {
+		t.Fatal("OAuth 组合接管应识别为已接管")
+	}
+}
+
+func TestInjectRestorePreservesPluginsSkillsMCPAndOAuth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	configPath := filepath.Join(home, "config.toml")
+	authPath := filepath.Join(home, "auth.json")
+	capabilityConfig := sampleConfig + `
+[plugins."superpowers@test-marketplace"]
+enabled = true
+
+[[skills.config]]
+path = "/tmp/skills/systematic-debugging"
+enabled = true
+
+[mcp_servers.docs]
+url = "https://docs.example.test/mcp"
+
+[features]
+plugins = true
+remote_plugin = true
+
+[marketplaces.team]
+source = "https://example.test/team-plugins.git"
+`
+	oauth := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"access","id_token":"id","refresh_token":"refresh","account_id":"acct"}}`)
+	if err := os.WriteFile(configPath, []byte(capabilityConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, oauth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectCodexSettings(8080, true); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	injected, _ := os.ReadFile(configPath)
+	for _, must := range []string{
+		`[plugins."superpowers@test-marketplace"]`,
+		"[[skills.config]]",
+		"[mcp_servers.docs]",
+		"[features]",
+		"[marketplaces.team]",
+		"requires_openai_auth = true",
+	} {
+		if !strings.Contains(string(injected), must) {
+			t.Fatalf("接管后丢失能力配置 %q:\n%s", must, injected)
+		}
+	}
+
+	// 模拟接管期间新装插件；取消接管不能用旧快照整文件覆盖。
+	duringTakeover := string(injected) + `
+[plugins."installed-during-takeover@test-marketplace"]
+enabled = true
+`
+	if err := os.WriteFile(configPath, []byte(duringTakeover), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreCodexSettings(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	restored, _ := os.ReadFile(configPath)
+	for _, must := range []string{
+		`[plugins."superpowers@test-marketplace"]`,
+		`[plugins."installed-during-takeover@test-marketplace"]`,
+		"[[skills.config]]",
+		"[mcp_servers.docs]",
+		"[features]",
+		"[marketplaces.team]",
+	} {
+		if !strings.Contains(string(restored), must) {
+			t.Fatalf("取消接管后丢失能力配置 %q:\n%s", must, restored)
+		}
+	}
+	for _, gone := range []string{`model_provider = "bingchaai"`, "[model_providers.bingchaai]"} {
+		if strings.Contains(string(restored), gone) {
+			t.Fatalf("取消接管后仍残留 %q:\n%s", gone, restored)
+		}
+	}
+	gotAuth, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotAuth) != string(oauth) {
+		t.Fatalf("接管往返不应改写 OAuth:\nwant %s\ngot  %s", oauth, gotAuth)
 	}
 }
 
@@ -222,6 +313,62 @@ base_url = "http://127.0.0.1:60670/v1"
 	}
 	if strings.Contains(string(restored), "bingchaai") {
 		t.Fatalf("还原后仍残留 bingchaai:\n%s", restored)
+	}
+}
+
+func TestRestoreDoesNotOverwriteProviderChangedDuringTakeover(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	cfgPath := filepath.Join(home, "config.toml")
+	original := `model_provider = "openai"
+
+[model_providers.user-selected]
+name = "User Selected"
+base_url = "https://new.example/v1"
+wire_api = "responses"
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatal(err)
+	}
+	duringTakeover, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := setTopLevelString(string(duringTakeover), codexModelProvider, "user-selected")
+	changed = setTopLevelString(changed, codexOpenAIBaseURL, "https://new.example/v1")
+	if err := os.WriteFile(cfgPath, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wasManaged, err := restoreCodexSettingsManaged()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wasManaged {
+		t.Fatal("用户已切换 provider 时不应认定为 GFA managed config")
+	}
+	restored, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(restored)
+	for _, must := range []string{
+		`model_provider = "user-selected"`,
+		`openai_base_url = "https://new.example/v1"`,
+		`[model_providers.user-selected]`,
+	} {
+		if !strings.Contains(text, must) {
+			t.Fatalf("取消接管覆盖了用户新配置 %q:\n%s", must, text)
+		}
+	}
+	if strings.Contains(text, `[model_providers.bingchaai]`) {
+		t.Fatalf("取消接管后应清理 GFA provider 表:\n%s", text)
+	}
+	if _, err := os.Stat(codexBackupPath()); !os.IsNotExist(err) {
+		t.Fatalf("取消接管后应清理备份, err=%v", err)
 	}
 }
 

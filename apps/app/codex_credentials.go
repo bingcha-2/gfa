@@ -47,6 +47,7 @@ import (
 const codexFakeEmail = "codex@bingchaai.app"
 
 const codexKeychainService = "Codex Auth"
+const codexTakeoverAPIKey = "gfa_codex_takeover"
 
 var codexCredsMu sync.Mutex
 
@@ -64,6 +65,7 @@ type codexCredsBackup struct {
 	KeychainCaptured bool   `json:"keychainCaptured,omitempty"` // 是否已捕获 macOS keychain 原状态
 	KeychainExisted  bool   `json:"keychainExisted,omitempty"`
 	PrevKeychain     string `json:"prevKeychain,omitempty"`
+	ProjectionSHA256 string `json:"projectionSha256,omitempty"` // 只还原 GFA 自己最后写入且未被外部替换的投影
 }
 
 // InjectFakeCodexAuth 写入远程接管专用登录投影。不信任磁盘上现有 token:
@@ -71,6 +73,25 @@ type codexCredsBackup struct {
 // 主动投影受控凭证。macOS 上 Codex 优先读 Keychain,所以必须与 auth.json 同步。
 // 已注入(备份已存在)则只刷新伪凭证、不重复备份。
 func InjectFakeCodexAuth() error {
+	return projectCodexManagedAuth(buildFakeCodexAuth(), "旧伪 OAuth")
+}
+
+// InjectCodexAPIKeyAuth 对齐 Cockpit 的无账号 API 服务投影。它不是伪造 OAuth：
+// Codex 看到的是正规的 apikey 登录形态，实际 key 只用于本机 bingchaai provider。
+// 原 auth.json / macOS keychain 会被精确备份，取消接管时仅在投影未被外部替换的
+// 前提下恢复，避免覆盖用户在接管期间主动登录或切换的新账号。
+func InjectCodexAPIKeyAuth() error {
+	projected, err := json.MarshalIndent(map[string]interface{}{
+		"auth_mode":      "apikey",
+		"OPENAI_API_KEY": codexTakeoverAPIKey,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return projectCodexManagedAuth(projected, "API Key")
+}
+
+func projectCodexManagedAuth(projected []byte, kind string) error {
 	codexCredsMu.Lock()
 	defer codexCredsMu.Unlock()
 
@@ -97,6 +118,7 @@ func InjectFakeCodexAuth() error {
 		bk.KeychainExisted = existed
 		bk.PrevKeychain = secret
 	}
+	bk.ProjectionSHA256 = codexAuthProjectionDigest(projected)
 	encodedBackup, err := json.MarshalIndent(bk, "", "  ")
 	if err != nil {
 		return err
@@ -105,19 +127,18 @@ func InjectFakeCodexAuth() error {
 		return err
 	}
 
-	fakeAuth := buildFakeCodexAuth()
-	if err := writeFileAtomic(codexAuthPath(), fakeAuth, 0o600); err != nil {
+	if err := writeFileAtomic(codexAuthPath(), projected, 0o600); err != nil {
 		return err
 	}
 	// Codex/keyring 在 macOS generic-password 中保存的不是原始 JSON,
 	// 而是 JSON bytes 的小写 hex 字符串。写原始 JSON 会被读成
 	// auth_token_missing。虽然新远程接管已不再依赖伪登录,但保留
 	// 正确编码以便旧版迁移/回归测试不再制造损坏的 keychain 项。
-	if err := writeCodexKeychainSecret(hex.EncodeToString(fakeAuth)); err != nil {
+	if err := writeCodexKeychainSecret(hex.EncodeToString(projected)); err != nil {
 		return err
 	}
 	keychainProjected := runtime.GOOS == "darwin" && !appActionsSuppressed()
-	Log("[codex-creds] 已投影远程接管登录态: auth=%s keychain=%v", codexAuthPath(), keychainProjected)
+	Log("[codex-creds] 已投影远程接管 %s 登录态: auth=%s keychain=%v", kind, codexAuthPath(), keychainProjected)
 	return nil
 }
 
@@ -132,7 +153,7 @@ func RestoreFakeCodexAuth() error {
 		return nil // 未注入过,无需还原
 	}
 	currentAuth, _ := os.ReadFile(codexAuthPath())
-	authWasProjected := isFakeCodexAuth(currentAuth)
+	authWasProjected := codexManagedProjectionMatches(currentAuth, bk)
 	if authWasProjected {
 		if bk.Existed {
 			if err := writeFileAtomic(codexAuthPath(), bk.Prev, 0o600); err != nil {
@@ -149,7 +170,7 @@ func RestoreFakeCodexAuth() error {
 		if err != nil {
 			return err
 		}
-		keychainWasProjected = existed && isFakeCodexKeychainSecret(currentSecret)
+		keychainWasProjected = existed && codexManagedKeychainProjectionMatches(currentSecret, bk)
 		if keychainWasProjected {
 			if bk.KeychainExisted {
 				if err := writeCodexKeychainSecret(bk.PrevKeychain); err != nil {
@@ -161,8 +182,29 @@ func RestoreFakeCodexAuth() error {
 		}
 	}
 	_ = os.Remove(codexCredsBackupPath())
-	Log("[codex-creds] 已清理旧登录投影 (auth 已还原=%v keychain 已还原=%v)", authWasProjected, keychainWasProjected)
+	Log("[codex-creds] 已清理受管登录投影 (auth 已还原=%v keychain 已还原=%v)", authWasProjected, keychainWasProjected)
 	return nil
+}
+
+func codexAuthProjectionDigest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func codexManagedProjectionMatches(data []byte, backup *codexCredsBackup) bool {
+	if backup != nil && strings.TrimSpace(backup.ProjectionSHA256) != "" {
+		return codexAuthProjectionDigest(data) == backup.ProjectionSHA256
+	}
+	// 兼容升级前没有 projectionSha256 的旧伪 OAuth 备份。
+	return isFakeCodexAuth(data)
+}
+
+func codexManagedKeychainProjectionMatches(secret string, backup *codexCredsBackup) bool {
+	raw := []byte(secret)
+	if decoded, err := hex.DecodeString(secret); err == nil {
+		raw = decoded
+	}
+	return codexManagedProjectionMatches(raw, backup)
 }
 
 // isFakeCodexAuth 只识别 GFA 自己生成的旧伪凭证。如果接管期间用户或
@@ -187,6 +229,154 @@ func isFakeCodexKeychainSecret(secret string) bool {
 		raw = decoded
 	}
 	return isFakeCodexAuth(raw)
+}
+
+// codexAuthHasOAuthIdentity 判断一份 Codex 登录快照是否足以保留 ChatGPT
+// 账号能力（插件目录、workspace 插件、Apps/连接器等）。远程接管只借用这份
+// 身份让 Codex 读取账号能力；生成请求仍由本地代理换成租来的号池 token。
+func codexAuthHasOAuthIdentity(data []byte) bool {
+	var auth struct {
+		AuthMode string `json:"auth_mode"`
+		Tokens   struct {
+			IDToken      string `json:"id_token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			AccountID    string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(data, &auth) != nil {
+		return false
+	}
+	if isCodexAPIKeyAuthMode(auth.AuthMode) {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(auth.Tokens.AccountID), "bcai-") {
+		return false
+	}
+	return strings.TrimSpace(auth.Tokens.IDToken) != "" &&
+		strings.TrimSpace(auth.Tokens.AccessToken) != "" &&
+		strings.TrimSpace(auth.Tokens.RefreshToken) != ""
+}
+
+func isCodexAPIKeyAuthMode(mode string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", " ", "").
+		Replace(strings.ToLower(strings.TrimSpace(mode)))
+	return normalized == "apikey"
+}
+
+func codexKeychainAuthBytes(secret string) []byte {
+	if decoded, err := hex.DecodeString(strings.TrimSpace(secret)); err == nil {
+		return decoded
+	}
+	return []byte(secret)
+}
+
+type codexOAuthStore uint8
+
+const (
+	codexOAuthStoreAuthFile codexOAuthStore = iota + 1
+	codexOAuthStoreKeychain
+)
+
+type codexOAuthIdentity struct {
+	IDToken      string
+	AccessToken  string
+	RefreshToken string
+	AccountID    string
+	Raw          []byte
+	Store        codexOAuthStore
+}
+
+func parseCodexOAuthIdentity(data []byte, store ...codexOAuthStore) (codexOAuthIdentity, bool) {
+	if !codexAuthHasOAuthIdentity(data) {
+		return codexOAuthIdentity{}, false
+	}
+	var auth struct {
+		Tokens struct {
+			IDToken      string `json:"id_token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			AccountID    string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(data, &auth) != nil {
+		return codexOAuthIdentity{}, false
+	}
+	accountID := strings.TrimSpace(auth.Tokens.AccountID)
+	if accountID == "" {
+		accountID = extractChatGPTAccountId(auth.Tokens.AccessToken)
+	}
+	selectedStore := codexOAuthStoreAuthFile
+	if len(store) > 0 {
+		selectedStore = store[0]
+	}
+	return codexOAuthIdentity{
+		IDToken:      strings.TrimSpace(auth.Tokens.IDToken),
+		AccessToken:  strings.TrimSpace(auth.Tokens.AccessToken),
+		RefreshToken: strings.TrimSpace(auth.Tokens.RefreshToken),
+		AccountID:    accountID,
+		Raw:          append([]byte(nil), data...),
+		Store:        selectedStore,
+	}, true
+}
+
+func selectCodexOAuthIdentity(authJSON, keychainJSON []byte, preferKeychain bool) (codexOAuthIdentity, bool) {
+	// 对齐 Cockpit:auth.json 明确声明 API Key 时，不得从残留 Keychain 借 OAuth。
+	if len(authJSON) > 0 {
+		var header struct {
+			AuthMode string `json:"auth_mode"`
+		}
+		if json.Unmarshal(authJSON, &header) == nil && isCodexAPIKeyAuthMode(header.AuthMode) {
+			return codexOAuthIdentity{}, false
+		}
+	}
+	if preferKeychain && len(keychainJSON) > 0 {
+		if identity, ok := parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain); ok {
+			return identity, true
+		}
+	}
+	if len(authJSON) > 0 {
+		if identity, ok := parseCodexOAuthIdentity(authJSON, codexOAuthStoreAuthFile); ok {
+			return identity, true
+		}
+	}
+	if !preferKeychain && len(keychainJSON) > 0 {
+		return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
+	}
+	return codexOAuthIdentity{}, false
+}
+
+// currentCodexOAuthIdentity 对齐 Cockpit 的官方存储优先级:
+// auth.json 明确 API Key → 不桥接 OAuth；macOS 优先 Keychain，再回退 auth.json；
+// 其他平台使用 auth.json。
+func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
+	authJSON, _ := os.ReadFile(codexAuthPath())
+	var keychainJSON []byte
+	if runtime.GOOS == "darwin" {
+		secret, existed, err := readCodexKeychainSecret()
+		if err != nil {
+			Log("[codex] 读取 Keychain OAuth 失败，回退 auth.json: %v", err)
+		} else if existed {
+			keychainJSON = codexKeychainAuthBytes(secret)
+		}
+	}
+	return selectCodexOAuthIdentity(authJSON, keychainJSON, runtime.GOOS == "darwin")
+}
+
+// detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的登录形态。
+// 远程接管不是账号管理器：不得主动请求 usage 验号、不得消费轮换型 refresh token，
+// 也不得因一次 401 就覆盖用户登录态。只要本地是完整 OAuth，就原样保留并让 Codex
+// 自己负责续期；只有明确没有 OAuth（未登录/API Key）时才投影受管 API Key。
+func detectCodexOAuthCapabilityBridge() (bool, string) {
+	identity, ok := currentCodexOAuthIdentity()
+	if !ok {
+		return false, "未发现完整 OAuth 登录态"
+	}
+	store := "auth.json"
+	if identity.Store == codexOAuthStoreKeychain {
+		store = "macOS Keychain"
+	}
+	return true, "保留现有 OAuth 登录态（" + store + "，不验号、不刷新）"
 }
 
 // codexKeychainAccount 对齐 Cockpit / Codex 官方键名:cli|sha256(canonical CODEX_HOME)[:16]。

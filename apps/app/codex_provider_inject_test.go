@@ -110,7 +110,7 @@ func TestInjectCodexProvider_MutualExclusionWithRemote(t *testing.T) {
 		t.Fatalf("inject remote: %v", err)
 	}
 	got, _ := os.ReadFile(cfgPath)
-	if strings.Contains(string(got), "gfa_local_provider") || strings.Contains(string(got), "experimental_bearer_token") {
+	if strings.Contains(string(got), "gfa_local_provider") {
 		t.Fatalf("切远程后厂商表未清:\n%s", got)
 	}
 	if !strings.Contains(string(got), `model_provider = "bingchaai"`) ||
@@ -118,6 +118,7 @@ func TestInjectCodexProvider_MutualExclusionWithRemote(t *testing.T) {
 		!strings.Contains(string(got), `name = "冰茶 AI"`) ||
 		!strings.Contains(string(got), `base_url = "http://127.0.0.1:8080/v1"`) ||
 		!strings.Contains(string(got), `requires_openai_auth = false`) ||
+		!strings.Contains(string(got), `experimental_bearer_token = "gfa_codex_takeover"`) ||
 		!strings.Contains(string(got), `http_headers = { "x-openai-actor-authorization" = "bingchaai" }`) {
 		t.Fatalf("远程重定向未生效:\n%s", got)
 	}

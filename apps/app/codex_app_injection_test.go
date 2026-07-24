@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,43 @@ func TestBuildCodexAppLaunchPlan(t *testing.T) {
 	})
 }
 
+func TestWindowsCodexInjectionProfileKeepsCodexHomeAndAddsElectronIsolation(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	appData := filepath.Join(t.TempDir(), "BingchaAI")
+	plan := withCodexWindowsInjectionProfile(codexAppLaunchPlan{
+		Args:     []string{"--remote-debugging-port=45678"},
+		CDPPort:  45678,
+		Branding: true,
+	}, appData)
+	wantProfile := filepath.Join(appData, "codex-remote-electron")
+	if plan.ElectronUserDataDir != wantProfile {
+		t.Fatalf("ElectronUserDataDir=%q want=%q", plan.ElectronUserDataDir, wantProfile)
+	}
+	args := strings.Join(codexAppLaunchArgs(plan), " ")
+	if !strings.Contains(args, "--user-data-dir="+wantProfile) {
+		t.Fatalf("Windows launch args missing isolated user-data-dir: %s", args)
+	}
+	env := codexAppLaunchEnvironment(plan, []string{
+		"CODEX_HOME=stale",
+		"CODEX_ELECTRON_USER_DATA_PATH=stale",
+		"NO_PROXY=example.test",
+	})
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{
+		"CODEX_HOME=" + codexHome,
+		"CODEX_ELECTRON_USER_DATA_PATH=" + wantProfile,
+		"127.0.0.1",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Windows launch env missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "CODEX_HOME=stale") || strings.Contains(joined, "CODEX_ELECTRON_USER_DATA_PATH=stale") {
+		t.Fatalf("Windows launch env retained stale profile values:\n%s", joined)
+	}
+}
+
 func TestQuotaRemainingPercentForCodexApp(t *testing.T) {
 	cases := []struct {
 		used, limit float64
@@ -98,6 +136,38 @@ func TestCodexAppQuotaUsesDisplayedSubscriptionSnapshot(t *testing.T) {
 	}
 }
 
+func TestCodexAppQuotaFallsBackToRuntimeAccessKeyStatus(t *testing.T) {
+	view := codexAppQuotaViewFromAccessKeyStatus(map[string]interface{}{
+		"usdQuotaByProduct": map[string]interface{}{
+			"codex": map[string]interface{}{
+				"weekly": map[string]interface{}{"used": float64(25), "limit": float64(100)},
+			},
+		},
+	})
+	if view.Weekly == nil || *view.Weekly != 75 {
+		t.Fatalf("weekly fallback=%v want=75", view.Weekly)
+	}
+}
+
+func TestCodexAppQuotaRuntimeShapeCanOverrideStaleSubscription(t *testing.T) {
+	subscriptions := []SubscriptionSnapshot{{
+		Priority: 1,
+		UsdQuotaByProduct: map[string]SubscriptionProductUsdQuota{
+			"codex": {Weekly: &SubscriptionUsdQuotaWindow{Used: 10, Limit: 100}},
+		},
+	}}
+	view := codexAppQuotaViewFromSources(map[string]interface{}{
+		"usdQuotaByProduct": map[string]interface{}{
+			"codex": map[string]interface{}{
+				"weekly": map[string]interface{}{"used": float64(25), "limit": float64(100)},
+			},
+		},
+	}, subscriptions)
+	if view.Weekly == nil || *view.Weekly != 75 {
+		t.Fatalf("runtime weekly=%v want=75; stale subscription must not win", view.Weekly)
+	}
+}
+
 func TestCodexRemoteBrandingScriptContainsAvatarAndQuota(t *testing.T) {
 	script := codexRemoteBrandingScript(codexAppQuotaView{
 		Weekly: intPointer(64),
@@ -108,9 +178,11 @@ func TestCodexRemoteBrandingScriptContainsAvatarAndQuota(t *testing.T) {
 		`data:image/png;base64,`,
 		`data-bcai-remote-avatar`,
 		`data-bcai-remote-quota`,
-		`normalized(element.textContent) === brandName`,
+		`value.startsWith(brandKey)`,
 		`root.avatarLayoutVersion = 2`,
 		`insertBefore(avatar, icon)`,
+		`target.insertBefore(avatar, target.firstChild)`,
+		`brandTarget.appendChild(host)`,
 		`background:#10b981`,
 		`>本周 ' + Math.round(weeklyPercent)`,
 		`const nextHtml = fields.join('')`,

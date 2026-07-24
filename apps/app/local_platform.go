@@ -17,6 +17,46 @@ import (
 // 进程启停桥给 internal/local/hub。这是本地接管唯一需要留在 package main 的平台胶水。
 type localPlatform struct{}
 
+const codexLocalRemoteHandoffFile = ".bcai-codex-local-remote-handoff.json"
+
+func codexLocalRemoteHandoffPath() string {
+	return filepath.Join(codexHomeDir(), codexLocalRemoteHandoffFile)
+}
+
+func markCodexLocalRemoteHandoff() error {
+	if err := os.MkdirAll(codexHomeDir(), 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomic(codexLocalRemoteHandoffPath(), []byte(`{"active":true}`), 0o600)
+}
+
+func clearCodexLocalRemoteHandoff() {
+	_ = os.Remove(codexLocalRemoteHandoffPath())
+}
+
+// commitCodexLocalAccountProjection 把当前本地自有号登录确认为新的用户基线。
+// 直切远程后，取消远程只恢复 provider，不应再把登录回滚到接管本地号之前
+// （那个状态可能就是未登录）。因此删除本地投影备份，但保留当前 auth.json / Keychain。
+func commitCodexLocalAccountProjection() error {
+	paths := []string{
+		filepath.Join(codexHomeDir(), ".bcai-codex-auth-backup.json"),
+		codexLocalKeychainBackupPath(),
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func finishCodexLocalRemoteHandoff() {
+	if _, err := os.Stat(codexLocalRemoteHandoffPath()); err == nil {
+		clearCodexLocalRemoteHandoff()
+		Log("[codex-local] 已取消远程接管，保留当前 OAuth 登录")
+	}
+}
+
 // CodexInjectAccount 把一份自有号写进 ~/.codex/auth.json,真 codex CLI 直连 OpenAI(注入式接管)。
 // 这与反代(cliproxy 网关)无关——反代是单独功能,由反代 tab 独立开关。
 //
@@ -24,6 +64,11 @@ type localPlatform struct{}
 // 自定义 provider 重定向 —— 否则 config.toml 还指着远程租号代理,自有号凭证会经远程
 // 代理出口(违反「远程/本地两条数据面互斥、自有号不经远程」)。两种接管互斥,这里强制。
 func (localPlatform) CodexInjectAccount(tok hub.CodexToken) error {
+	// 从远程租号切到本地自有号时，先撤掉远程 API Key auth/keychain 投影，
+	// 否则本地接管会把远程投影误当成用户原登录态进行二次备份。
+	if err := RestoreFakeCodexAuth(); err != nil {
+		return fmt.Errorf("恢复 Codex 远程登录投影失败: %w", err)
+	}
 	if err := RestoreCodexSettings(); err != nil {
 		return err
 	}
@@ -33,19 +78,44 @@ func (localPlatform) CodexInjectAccount(tok hub.CodexToken) error {
 	if _, err := AlignCodexHistoryVisibility(codexHomeDir(), currentCodexModelProvider()); err != nil {
 		return fmt.Errorf("对齐 Codex 本地接管历史失败: %w", err)
 	}
-	return codexinject.InjectToHome(codexHomeDir(), codexinject.Token{
+	if err := codexinject.InjectToHome(codexHomeDir(), codexinject.Token{
 		AuthKind:     tok.AuthKind,
 		IDToken:      tok.IDToken,
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		AccountID:    tok.AccountID,
 		APIKey:       tok.APIKey,
-	})
+	}); err != nil {
+		return err
+	}
+	// macOS Desktop 优先读取 Codex Auth Keychain；只写 auth.json 会导致 CLI
+	// 已切号但 Desktop 仍显示未登录/旧账号。Windows/Linux 此函数是 no-op。
+	projected, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		_ = codexinject.RestoreHome(codexHomeDir())
+		return fmt.Errorf("读取 Codex 本地账号投影失败: %w", err)
+	}
+	if err := projectCodexLocalAccountKeychain(projected); err != nil {
+		_ = codexinject.RestoreHome(codexHomeDir())
+		_ = restoreCodexLocalAccountKeychain()
+		return fmt.Errorf("写入 Codex 本地账号 Keychain 失败: %w", err)
+	}
+	Log("[codex-local] 自有号登录态已投影: authKind=%s hasIDToken=%v hasAccountID=%v keychain=%v",
+		tok.AuthKind, strings.TrimSpace(tok.IDToken) != "", strings.TrimSpace(tok.AccountID) != "",
+		runtime.GOOS == "darwin")
+	return nil
 }
 
-// CodexRestoreAccount 还原 codex 注入前的 auth.json。
+// CodexRestoreAccount 还原 codex 注入前的 auth.json / macOS Keychain。
 func (localPlatform) CodexRestoreAccount() error {
-	return codexinject.RestoreHome(codexHomeDir())
+	if err := codexinject.RestoreHome(codexHomeDir()); err != nil {
+		return err
+	}
+	if err := restoreCodexLocalAccountKeychain(); err != nil {
+		return err
+	}
+	clearCodexLocalRemoteHandoff()
+	return nil
 }
 
 // CodexInjectProvider 把 codex config.toml 指向自定义模型厂商(第三种接管源)。
@@ -227,7 +297,7 @@ func (localPlatform) CodexRestartApp() error {
 	// 与 LaunchCodexApp 复用同一启动计划：手动皮肤通道保留，远程接管的
 	// 头像/额度注入也会在重启后自动恢复。
 	launchPlan := prepareCodexAppLaunchPlan()
-	_, err := localPlatform{}.LaunchApp(appPath, "", launchPlan.Args)
+	err := launchCodexGUIProcess(appPath, launchPlan)
 	if err == nil && launchPlan.Branding {
 		startCodexRemoteBrandingInjection(launchPlan.CDPPort)
 	}

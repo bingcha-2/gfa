@@ -235,6 +235,30 @@ func (a *App) LocalSetCodexSource(source string) error {
 	return localHub.SetSource(account.ProviderCodex, source)
 }
 
+// commitCodexLocalRemoteHandoff 在远程 provider 已接管成功后，仅提交号源状态。
+// 必须由后端接管事务直接调用，不能依赖前端再补一次 Wails 调用；否则前端热更新而
+// 后端仍是旧进程时会静默漏提交，取消远程后又被当成本地接管重新注入。
+func commitCodexLocalRemoteHandoff() (bool, error) {
+	if err := ensureLocal(); err != nil {
+		return false, err
+	}
+	if localHub.GetSource(account.ProviderCodex) != "local" {
+		return false, nil
+	}
+	if err := markCodexLocalRemoteHandoff(); err != nil {
+		return false, err
+	}
+	if err := localHub.HandoffCodexLocalToRemote(); err != nil {
+		clearCodexLocalRemoteHandoff()
+		return false, err
+	}
+	if err := commitCodexLocalAccountProjection(); err != nil {
+		return false, err
+	}
+	Log("[codex-local] 已沿用当前自有号 OAuth 并提交远程号源；取消远程时保持登录")
+	return true, nil
+}
+
 func (a *App) LocalCodexWakeupConfig() (wakeup.Config, error) {
 	if err := ensureLocal(); err != nil {
 		return wakeup.Config{}, err
@@ -406,4 +430,3 @@ func (a *App) LocalAntigravityWakeupHistory() ([]wakeup.RunEntry, error) {
 	}
 	return localHub.WakeupHistory(account.ProviderAntigravity)
 }
-

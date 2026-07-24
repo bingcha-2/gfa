@@ -300,6 +300,13 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
   // 远程接管:切本地→远程前先停本地(互斥,后端撤掉所有本地注入),再走通行证注入。
   const onToggleRemote = async (spec: RemoteRowSpec) => {
     if (!spec.injected && !(await tk.ensureCard(name))) return
+    // Codex 自有号直连 → 远程托管：不要先恢复旧 Keychain。远程接管后端会在 provider
+    // 启动成功后原子提交 source=remote，并保留当前 OAuth 承载插件身份。
+    if (!spec.injected && isCodex && source === 'local' && !providerId) {
+      await tk.runTakeover(spec.target, true)
+      await refresh()
+      return
+    }
     if (!spec.injected && source === 'local') {
       try { await api.setSource?.('remote') } catch { /* 后端 inject 会覆盖配置,失败不阻断 */ }
       await refresh()

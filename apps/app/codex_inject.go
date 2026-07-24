@@ -19,10 +19,12 @@ import (
 // access_token 直连 chatgpt.com/backend-api/wham/* 和 /settings/user;伪 JWT 一定被
 // 官方验签拒绝,最终反复 account/read + 401 并卡在白屏。
 //
-// 因此远程接管使用自定义 bingchaai provider，只把 Responses API 指向本地代理 /v1，
-// 并固定 requires_openai_auth=false。服务端只下发短期 access token、不下发可轮换的
-// refresh token，不能可靠维持 Desktop 的 OAuth 账号态。真实池号 token 只在
-// CodexProxy 转发到上游的瞬间注入,不落盘到用户机器。
+// 因此远程接管使用自定义 bingchaai provider，只把 Responses API 指向本地代理 /v1。
+// 若用户本机已有且通过官方在线校验的真实 OAuth 登录态，则像 Cockpit 的
+// 「API Provider + 绑定 OAuth」一样保留该身份并写 requires_openai_auth=true，
+// 让插件目录、workspace 插件、Apps/连接器等账号能力继续可用；未登录、过期或
+// 校验失败时回落 requires_openai_auth=false。真实池号 token 仍只在 CodexProxy
+// 转发到上游的瞬间注入,不落盘到用户机器。
 //
 // 内置 provider 会先尝试 WebSocket;代理对本机 /v1/responses Upgrade 返回 426,
 // Codex 官方 fallback 会立即切到 HTTP POST,再进入现有租号转发链路。
@@ -37,7 +39,8 @@ import (
 //	name = "冰茶 AI"
 //	base_url = "http://127.0.0.1:<port>/v1"
 //	wire_api = "responses"
-//	requires_openai_auth = false
+//	requires_openai_auth = <本机存在完整 OAuth 时 true，否则 false>
+//	experimental_bearer_token = "gfa_codex_takeover"
 //	http_headers = { "x-openai-actor-authorization" = "bingchaai" }
 const (
 	codexDefaultProvider = "openai"
@@ -177,7 +180,9 @@ func ensureCodexBackup(hadConfig bool) error {
 }
 
 // InjectCodexSettings 把远程托管 provider 指向本地代理 /v1。
-func InjectCodexSettings(proxyPort int) error {
+// preserveOAuthCapabilities 只能传 detectCodexOAuthCapabilityBridge 的识别结果；
+// 默认 false，确保明确未登录/API Key 场景仍走无 OAuth 的稳定路径。
+func InjectCodexSettings(proxyPort int, preserveOAuthCapabilities ...bool) error {
 	content, had, err := readCodexConfigRaw()
 	if err != nil {
 		return err
@@ -194,53 +199,81 @@ func InjectCodexSettings(proxyPort int) error {
 	content = removeProviderTable(content, codexLocalProviderID)
 	content = removeTopLevelKey(content, codexOpenAIBaseURL)
 	content = setTopLevelString(content, codexModelProvider, codexProviderID)
+	requiresOpenAIAuth := len(preserveOAuthCapabilities) > 0 && preserveOAuthCapabilities[0]
+	requiresOpenAIAuthValue := "false"
+	if requiresOpenAIAuth {
+		requiresOpenAIAuthValue = "true"
+	}
 	content = upsertProviderTable(content, codexProviderID, [][2]string{
 		{"name", tomlQuote(codexRemoteProviderName)},
 		{"base_url", tomlQuote(codexProxyBaseURL(proxyPort))},
 		{"wire_api", tomlQuote("responses")},
-		{"requires_openai_auth", "false"},
-		// Codex only exposes its built-in image_gen extension to custom no-auth
-		// providers that opt in through this non-empty actor header. This mirrors
-		// Cockpit's provider projection; the header is a capability marker, not an
-		// upstream credential.
+		{"requires_openai_auth", requiresOpenAIAuthValue},
+		// 对齐 Cockpit API 服务投影：provider 与无账号 auth.json 使用同一份
+		// 本地 bearer。GFA 代理仍会在转发瞬间替换为号池 token，不会把池号落盘。
+		{"experimental_bearer_token", tomlQuote(codexTakeoverAPIKey)},
+		// Codex only exposes its built-in image_gen extension to custom providers
+		// that opt in through this non-empty actor header. This mirrors Cockpit's
+		// pure API and OAuth-bound projections; the header is a capability marker,
+		// not an upstream credential.
 		{"http_headers", fmt.Sprintf("{ %s = %s }", tomlQuote(codexActorHeader), tomlQuote(codexActorValue))},
 		{"supports_websockets", "false"},
 	})
+	Log("[codex] 远程 provider 已写入: 保留 OAuth 账号能力=%v", requiresOpenAIAuth)
 	return writeFileAtomic(codexConfigPath(), []byte(content), 0o644)
 }
 
-// RestoreCodexSettings 移除本机 base URL 并复位原 model_provider/openai_base_url。
-func RestoreCodexSettings() error {
+func isCodexManagedProvider(provider string) bool {
+	provider = strings.TrimSpace(provider)
+	return provider == codexProviderID || provider == codexLocalProviderID
+}
+
+// restoreCodexSettingsManaged 移除 GFA provider，并仅在当前顶层 provider 仍由
+// GFA 管理时复位原 model_provider/openai_base_url。若用户或 Cockpit 已在接管
+// 期间切到别的 provider，只清理 GFA 的孤儿表，绝不覆盖用户的新选择。
+// 返回值表示调用时当前配置是否仍由 GFA 管理。
+func restoreCodexSettingsManaged() (bool, error) {
 	content, had, err := readCodexConfigRaw()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !had {
 		_ = os.Remove(codexBackupPath())
-		return nil
+		return false, nil
 	}
 
+	currentProvider := currentCodexModelProvider()
+	wasManaged := isCodexManagedProvider(currentProvider)
 	content = removeProviderTable(content, codexProviderID)
 	content = removeProviderTable(content, codexLocalProviderID) // 自定义厂商接管的表
 	content = stripLegacyLocalCodexBaseURL(content)
-	prevProvider := prevProviderFromBackup()
-	if prevProvider != "" && prevProvider != codexProviderID && prevProvider != codexLocalProviderID {
-		// 用户原本有自定义 provider:恢复它。
-		content = setTopLevelString(content, codexModelProvider, prevProvider)
-	} else {
-		// 原本无 model_provider(用官方默认):删掉我们写入的键即可回到默认。
-		content = removeTopLevelKey(content, codexModelProvider)
-	}
-	if prevBaseURL := prevOpenAIBaseURLFromBackup(); prevBaseURL != "" {
-		content = setTopLevelString(content, codexOpenAIBaseURL, prevBaseURL)
-	} else {
-		content = removeTopLevelKey(content, codexOpenAIBaseURL)
+	if wasManaged {
+		prevProvider := prevProviderFromBackup()
+		if prevProvider != "" && !isCodexManagedProvider(prevProvider) {
+			// 用户原本有自定义 provider:恢复它。
+			content = setTopLevelString(content, codexModelProvider, prevProvider)
+		} else {
+			// 原本无 model_provider(用官方默认):删掉我们写入的键即可回到默认。
+			content = removeTopLevelKey(content, codexModelProvider)
+		}
+		if prevBaseURL := prevOpenAIBaseURLFromBackup(); prevBaseURL != "" {
+			content = setTopLevelString(content, codexOpenAIBaseURL, prevBaseURL)
+		} else {
+			content = removeTopLevelKey(content, codexOpenAIBaseURL)
+		}
 	}
 	if err := writeFileAtomic(codexConfigPath(), []byte(content), 0o644); err != nil {
-		return err
+		return false, err
 	}
 	_ = os.Remove(codexBackupPath())
-	return nil
+	return wasManaged, nil
+}
+
+// RestoreCodexSettings 保持旧调用签名；需要知道 managed-state 的接管编排使用
+// restoreCodexSettingsManaged。
+func RestoreCodexSettings() error {
+	_, err := restoreCodexSettingsManaged()
+	return err
 }
 
 // CleanupLegacyCodexTakeover 启动时清理旧版接管残留的本地 chatgpt_base_url。
@@ -287,8 +320,8 @@ func providerHasCodexActorAuthorization(provider map[string]interface{}) bool {
 	return false
 }
 
-// IsCodexInjected 判断 config.toml 当前是否已把带 image_gen capability 的无鉴权
-// 远程 provider 指向本机代理。旧版缺 actor header 的配置必须返回 false，促使重新注入。
+// IsCodexInjected 判断 config.toml 当前是否已把带 image_gen capability 的远程
+// provider 指向本机代理。旧版缺 actor header 的配置必须返回 false，促使重新注入。
 func IsCodexInjected(proxyPort int) bool {
 	m, had, err := loadCodexConfig()
 	if err != nil || !had {
@@ -301,8 +334,10 @@ func IsCodexInjected(proxyPort int) bool {
 	provider, _ := providers[codexProviderID].(map[string]interface{})
 	baseURL, _ := provider["base_url"].(string)
 	providerName, _ := provider["name"].(string)
+	bearerToken, _ := provider["experimental_bearer_token"].(string)
 	return baseURL == codexProxyBaseURL(proxyPort) &&
 		providerName == codexRemoteProviderName &&
+		bearerToken == codexTakeoverAPIKey &&
 		providerHasCodexActorAuthorization(provider)
 }
 
@@ -436,8 +471,17 @@ func LaunchCodexApp() {
 	// 远端接管时自动开启临时回环 CDP，用于头像/额度展示；手动皮肤通道开启时
 	// 复用其 9335 端口。CLI 分支不附加，codex CLI 不认识这些参数。
 	launchPlan := prepareCodexAppLaunchPlan()
-	launchArgs := launchPlan.Args
-	launched := false
+	if err := launchCodexGUIProcess(path, launchPlan); err != nil {
+		Log("[codex] 启动 Codex 失败: %v", err)
+		return
+	}
+	if launchPlan.Branding {
+		startCodexRemoteBrandingInjection(launchPlan.CDPPort)
+	}
+}
+
+func launchCodexGUIProcess(path string, launchPlan codexAppLaunchPlan) error {
+	launchArgs := codexAppLaunchArgs(launchPlan)
 	switch runtime.GOOS {
 	case "darwin":
 		// detectCodexAppPath 现在优先返回 chrome-native-hosts.json 里的 codexCliPath,
@@ -451,32 +495,31 @@ func LaunchCodexApp() {
 				openArgs = append(append(openArgs, "--args"), launchArgs...)
 			}
 			if err := exec.Command("open", openArgs...).Start(); err != nil {
-				Log("[codex] 启动 Codex 失败: %v", err)
-			} else {
-				launched = true
+				return err
 			}
 		} else {
 			// 独立安装的 CLI(不在 .app 内,无 GUI 可拉起):直接执行。
 			if err := exec.Command(path).Start(); err != nil {
-				Log("[codex] 启动 Codex 失败: %v", err)
-			} else {
-				launched = true
+				return err
 			}
 		}
 	case "windows", "linux":
+		if launchPlan.ElectronUserDataDir != "" {
+			if err := os.MkdirAll(launchPlan.ElectronUserDataDir, 0o700); err != nil {
+				return fmt.Errorf("创建 Codex 远程接管 Electron 目录失败: %w", err)
+			}
+		}
 		cmd := exec.Command(path, launchArgs...)
 		// Codex 的 base_url 指向 127.0.0.1。显式绕过系统/环境代理，避免 Clash、
 		// Mihomo 等把本地 48800 请求截到自己的端口后返回 503。
-		cmd.Env = codexLaunchEnv(os.Environ())
+		cmd.Env = codexAppLaunchEnvironment(launchPlan, os.Environ())
 		if err := cmd.Start(); err != nil {
-			Log("[codex] 启动 Codex 失败: %v", err)
-		} else {
-			launched = true
+			return err
 		}
 	}
-	if launched && launchPlan.Branding {
-		startCodexRemoteBrandingInjection(launchPlan.CDPPort)
-	}
+	Log("[codex-ui] Codex 已带界面注入参数启动: cdp=%d isolatedProfile=%v",
+		launchPlan.CDPPort, launchPlan.ElectronUserDataDir != "")
+	return nil
 }
 
 // codexAppBundlePath 把 bundle 内的任意路径归一到外层 .app bundle 路径。
@@ -499,6 +542,17 @@ func codexAppBundlePath(p string) string {
 // provider 值。Cockpit 的启动前修复也是以“当前配置为目标”全量对齐。
 // sourceProvider 仅保留给日志和旧调用方,不再用它限制修复范围。
 func RestartCodexAfterTakeover(sourceProvider, targetProvider string) (retErr error) {
+	return restartCodexWithHistoryMigration(sourceProvider, targetProvider, true)
+}
+
+// RestartCodexAfterRestore 在正常 GFA 接管态下全量对齐历史，保证接管前后聊天均可见；
+// 如果用户在接管期间已经切换到其他 provider，则只迁移 bingchaai 分桶，避免覆盖
+// 该 provider 自己的聊天标签。
+func RestartCodexAfterRestore(sourceProvider, targetProvider string, configWasManaged bool) error {
+	return restartCodexWithHistoryMigration(sourceProvider, targetProvider, configWasManaged)
+}
+
+func restartCodexWithHistoryMigration(sourceProvider, targetProvider string, alignAll bool) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			Log("[codex] 重启编排 panic: %v", r)
@@ -507,15 +561,27 @@ func RestartCodexAfterTakeover(sourceProvider, targetProvider string) (retErr er
 		}
 	}()
 	QuitCodexApp()
-	summary, err := AlignCodexHistoryVisibility(codexHomeDir(), targetProvider)
+	var (
+		summary HistoryVisibilitySummary
+		err     error
+	)
+	if alignAll {
+		summary, err = AlignCodexHistoryVisibility(codexHomeDir(), targetProvider)
+	} else {
+		summary, err = MigrateCodexHistoryProvider(codexHomeDir(), sourceProvider, targetProvider)
+	}
 	if err != nil {
 		// 即使修复失败也把 Codex 拉起,但把失败返回给接管 UI,绝不再显示
-		// 假的“已接管”。用户重试时全量对齐是幂等的。
+		// 假的“已接管”。用户重试时全量对齐/定向迁移都是幂等的。
 		LaunchCodexApp()
 		return fmt.Errorf("对齐 Codex 旧会话失败: %w", err)
 	} else {
-		Log("[codex] 历史 provider 已全量对齐: %s → %s, rollout=%d sqlite=%d skipped=%v",
-			sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
+		mode := "定向迁移"
+		if alignAll {
+			mode = "全量对齐"
+		}
+		Log("[codex] 历史 provider 已%s: %s → %s, rollout=%d sqlite=%d skipped=%v",
+			mode, sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
 	}
 	LaunchCodexApp()
 	return nil

@@ -288,3 +288,43 @@ func TestRestartCodexAfterTakeoverAlignsAllHistoryBothDirections(t *testing.T) {
 	}
 	assertThreadProvider("openai")
 }
+
+func TestRestartCodexAfterRestorePreservesUserSelectedProviderBuckets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	db, err := sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('gfa-chat','bingchaai'),('user-chat','user-selected'),('legacy-chat','legacy-custom')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RestartCodexAfterRestore("bingchaai", "user-selected", false); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(home, codexStateDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for id, want := range map[string]string{
+		"gfa-chat":    "user-selected",
+		"user-chat":   "user-selected",
+		"legacy-chat": "legacy-custom",
+	} {
+		var got string
+		if err := db.QueryRow(`SELECT model_provider FROM threads WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("%s provider=%q want=%q", id, got, want)
+		}
+	}
+}
