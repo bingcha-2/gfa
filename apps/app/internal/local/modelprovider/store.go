@@ -154,9 +154,15 @@ func (s *Store) SetModelCatalog(id string, models []string) error {
 }
 
 func (s *Store) readLocked() []Provider {
-	var list []Provider
+	// Wails 会把 nil slice 序列化成 null。接管中心在首次配置自定义厂商前收到
+	// null 后，远程模式仍能显示，但一切到「本地自有号」渲染 providers.length
+	// 就会触发 React 崩溃。存储层始终返回非 nil 空数组，固定跨桥协议为 []。
+	list := make([]Provider, 0)
 	if data, err := os.ReadFile(s.path); err == nil {
 		_ = json.Unmarshal(data, &list)
+	}
+	if list == nil {
+		list = make([]Provider, 0)
 	}
 	for i := range list {
 		list[i].WireAPI = NormalizeWireAPI(string(list[i].WireAPI), list[i].BaseURL)

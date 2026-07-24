@@ -237,6 +237,20 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
     expect(apiMocks.injectSelected).not.toHaveBeenCalled()
   })
 
+  it('Codex 卡:旧后端把空厂商列表返回 null 时,切本地模式不会崩溃', async () => {
+    setPlatform('MacIntel')
+    // Go nil slice 经 Wails JSON 桥会成为 null；这是受影响客户端首次配置厂商时的真实形态。
+    agLocalMocks.listModelProviders.mockResolvedValueOnce(null)
+    render(<TakeoverCenterPage />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    await waitFor(() => expect(agLocalMocks.listModelProviders).toHaveBeenCalled())
+
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+
+    expect(await within(codex).findByRole('button', { name: '接管' })).toBeInTheDocument()
+    expect(within(codex).getByText('未接管')).toBeInTheDocument()
+  })
+
   it('Codex 已在本地模式时显示「停止」并调 setSource(remote)', async () => {
     setPlatform('MacIntel')
     codexApi.getSource.mockResolvedValue('local')

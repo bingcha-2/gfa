@@ -4,6 +4,16 @@ import (
 	"testing"
 )
 
+func TestListMissingFileReturnsNonNilEmptySlice(t *testing.T) {
+	got := NewStore(t.TempDir()).List()
+	if got == nil {
+		t.Fatal("empty provider list must serialize as [] instead of null")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty provider list, got %+v", got)
+	}
+}
+
 func TestSaveCreatesAndAssignsID(t *testing.T) {
 	s := NewStore(t.TempDir())
 	got, err := s.Save(Provider{Name: "deepseek", BaseURL: "https://api.deepseek.com/v1", APIKey: "k1"})

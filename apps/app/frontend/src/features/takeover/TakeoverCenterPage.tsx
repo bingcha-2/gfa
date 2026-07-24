@@ -240,7 +240,9 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
       setProviderId(raw.startsWith('provider:') ? raw.slice('provider:'.length) : '')
       if (local) setMode('local')
       try {
-        if (isCodex) setProviders(await listModelProviders())
+        // 兼容旧后端/空存储把 Go nil slice 编码成 null；否则远程模式看不出异常，
+        // 点「本地自有号」后首次读取 providers.length 会让整张 React 页面崩掉。
+        if (isCodex) setProviders((await listModelProviders()) ?? [])
         const list = await api.listAccounts()
         setAccounts(list.length)
         await loadAgInjected()
