@@ -23,6 +23,11 @@ let seq = 0;
 let service: CustomerAdminService;
 let billing: { createGrantOrder: ReturnType<typeof vi.fn> };
 let subscriptions: { activateForOrder: ReturnType<typeof vi.fn> };
+let trials: {
+  getDefaultDurationDays: ReturnType<typeof vi.fn>;
+  getDefaultWeeklyUsdLimit: ReturnType<typeof vi.fn>;
+  grantTrial: ReturnType<typeof vi.fn>;
+};
 
 async function createOrder(customerId: string, overrides: Partial<{ status: string; amountCents: number }> = {}) {
   return prisma.planOrder.create({
@@ -68,7 +73,17 @@ beforeEach(async () => {
   // 手动授予用 billing/subscription;list/detail/update 用例用不到,传 mock。
   billing = { createGrantOrder: vi.fn() };
   subscriptions = { activateForOrder: vi.fn() };
-  service = new CustomerAdminService(prisma as any, billing as any, subscriptions as any);
+  trials = {
+    getDefaultDurationDays: vi.fn(() => 3),
+    getDefaultWeeklyUsdLimit: vi.fn(() => 20),
+    grantTrial: vi.fn(),
+  };
+  service = new CustomerAdminService(
+    prisma as any,
+    billing as any,
+    subscriptions as any,
+    trials as any,
+  );
 });
 
 afterAll(async () => {
@@ -141,6 +156,10 @@ describe("CustomerAdminService.getCustomer", () => {
     expect(detail.subscriptions).toHaveLength(1);
     expect(detail.planOrders).toHaveLength(1);
     expect(detail.devices).toHaveLength(1);
+    expect(detail.trialDefaults).toEqual({
+      durationDays: 3,
+      weeklyUsdLimit: 20,
+    });
   });
 
   it("throws 404 for an unknown customer", async () => {
@@ -205,5 +224,26 @@ describe("CustomerAdminService.grantCatalogSubscription", () => {
     expect(billing.createGrantOrder).toHaveBeenCalledWith("cust-grant", selection);
     expect(subscriptions.activateForOrder).toHaveBeenCalledWith(order, { durationDaysOverride: 7 });
     expect(result).toBe(sub);
+  });
+});
+
+describe("CustomerAdminService.grantTrial", () => {
+  it("uses configured defaults or explicit admin duration and quota", async () => {
+    trials.grantTrial.mockResolvedValue({ created: true, subscription: { id: "trial-sub" } });
+
+    await service.grantTrial("cust-trial");
+    expect(trials.grantTrial).toHaveBeenLastCalledWith("cust-trial", {
+      durationDays: 3,
+      weeklyUsdLimit: 20,
+    });
+
+    await service.grantTrial("cust-trial-7", {
+      durationDays: 7,
+      weeklyUsdLimit: 12,
+    });
+    expect(trials.grantTrial).toHaveBeenLastCalledWith("cust-trial-7", {
+      durationDays: 7,
+      weeklyUsdLimit: 12,
+    });
   });
 });

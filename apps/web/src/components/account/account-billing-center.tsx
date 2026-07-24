@@ -242,7 +242,9 @@ export function AccountBillingCenter({
               {subscriptions.map((sub) => (
                 <article className="account-subscription-card" key={sub.id}>
                   <div>
-                    <strong>{planLabel(sub)}</strong>
+                    <strong>
+                      {sub.isTrial ? `${b.trialBadge} · ${planLabel(sub)}` : planLabel(sub)}
+                    </strong>
                     <span>{productList(sub.products, b.autoProvision)}</span>
                   </div>
                   <div>
@@ -387,7 +389,11 @@ export function AccountBillingCenter({
                   <strong>
                     {order.payType
                       ? (b.payType as Record<string, string>)[order.payType] ?? order.payType
-                      : "—"}
+                      : order.payChannel === "TRIAL"
+                        ? b.channelTrial
+                        : order.payChannel === "GRANT"
+                          ? b.channelGrant
+                          : "—"}
                   </strong>
                 </div>
                 <div>
