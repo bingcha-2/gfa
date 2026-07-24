@@ -216,8 +216,8 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       addInitScript: vi.fn(async () => {}),
       on: vi.fn(),
     };
-    mocks.connectOverCDP.mockResolvedValue({
-      contexts: () => [context],
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
       close: vi.fn(async () => {}),
     });
 
@@ -226,13 +226,14 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       redirectUri: "http://localhost:1455/auth/callback",
       email: "paintergilton06@hotmail.com",
       password: "mail-password",
-      adspowerProfileId: "profile-1",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
     });
     await vi.runAllTimersAsync();
     const result = await resultPromise;
 
     expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ channel: "msedge", headless: false }));
+    expect(mocks.connectOverCDP).not.toHaveBeenCalled();
   });
 
   it("keeps waiting when OpenAI security verification takes longer than 45 seconds", async () => {
@@ -244,8 +245,8 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       addInitScript: vi.fn(async () => {}),
       on: vi.fn(),
     };
-    mocks.connectOverCDP.mockResolvedValue({
-      contexts: () => [context],
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
       close: vi.fn(async () => {}),
     });
 
@@ -254,7 +255,6 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       redirectUri: "http://localhost:1455/auth/callback",
       email: "paintergilton06@hotmail.com",
       password: "mail-password",
-      adspowerProfileId: "profile-1",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
     });
     await vi.runAllTimersAsync();
@@ -273,8 +273,8 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       addInitScript: vi.fn(async () => {}),
       on: vi.fn(),
     };
-    mocks.connectOverCDP.mockResolvedValue({
-      contexts: () => [context],
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
       close: vi.fn(async () => {}),
     });
 
@@ -283,7 +283,6 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       redirectUri: "http://localhost:1455/auth/callback",
       email: "paintergilton06@hotmail.com",
       password: "mail-password",
-      adspowerProfileId: "profile-1",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
     });
     await vi.runAllTimersAsync();
@@ -303,8 +302,8 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       addInitScript: vi.fn(async () => {}),
       on: vi.fn(),
     };
-    mocks.connectOverCDP.mockResolvedValue({
-      contexts: () => [context],
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
       close: vi.fn(async () => {}),
     });
 
@@ -313,7 +312,6 @@ describe("runCodexBrowserLogin OpenAI security verification", () => {
       redirectUri: "http://localhost:1455/auth/callback",
       email: "paintergilton06@hotmail.com",
       password: "mail-password",
-      adspowerProfileId: "profile-1",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
     });
     await vi.runAllTimersAsync();

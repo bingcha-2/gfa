@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, TimerResetIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { AccountBoundSubscriptionActions } from "@/components/console/leasing/account-bound-subscription-actions";
+import { CodexPrechargePool } from "@/components/console/leasing/codex-precharge-pool";
 import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
 import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
 import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
@@ -49,10 +51,6 @@ type CodexAccount = {
   codexWeeklyResetTime: string;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
-  adspowerProfileId?: string;
-  adspowerProfileStatus?: string;
-  adspowerProfileProvider?: string;
-  adspowerProfileLastUsedAt?: string;
   autoLoginStatus?: string;
   autoLoginStep?: string;
   autoLoginError?: string;
@@ -100,7 +98,6 @@ const AUTO_STEP_LABELS: Record<string, string> = {
   choose_account: "切换账号…",
   email: "填写邮箱…",
   password: "填写密码…",
-  creating_adspower_profile: "创建 AdsPower 环境…",
   email_code_polling: "读取邮箱验证码…",
   email_code_fill: "填写邮箱验证码…",
   totp: "提交动态验证码(TOTP)…",
@@ -147,7 +144,6 @@ export default function CodexAccountsPage() {
   const [autoPhone, setAutoPhone] = useState("");
   const [autoSmsUrl, setAutoSmsUrl] = useState("");
   const [autoProxy, setAutoProxy] = useState("");
-  const [autoAdspowerProfileId, setAutoAdspowerProfileId] = useState("");
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoStep, setAutoStep] = useState("");
 
@@ -405,8 +401,8 @@ export default function CodexAccountsPage() {
   }
 
   async function handleAutoLogin() {
-    if (!autoEmail.trim() || !autoPassword.trim() || (!autoProxy.trim() && !autoAdspowerProfileId.trim())) {
-      toast.error("请填写邮箱、密码，并提供出口代理或 AdsPower Profile");
+    if (!autoEmail.trim() || !autoPassword.trim() || !autoProxy.trim()) {
+      toast.error("请填写邮箱、密码和出口代理");
       return;
     }
     setAutoRunning(true);
@@ -422,7 +418,6 @@ export default function CodexAccountsPage() {
           phoneNumber: autoPhone.trim(),
           smsUrl: autoSmsUrl.trim(),
           proxyUrl: autoProxy.trim(),
-          adspowerProfileId: autoAdspowerProfileId.trim(),
         }),
       });
       const data = await res.json();
@@ -447,7 +442,6 @@ export default function CodexAccountsPage() {
           setAutoPhone("");
           setAutoSmsUrl("");
           setAutoProxy("");
-          setAutoAdspowerProfileId("");
           fetchAccounts(true);
           return;
         }
@@ -733,7 +727,7 @@ export default function CodexAccountsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            浏览器自动完成 OpenAI 登录（邮箱→密码→邮箱验证码/TOTP→必要时手机短信→授权），可使用已绑定的 AdsPower 环境。
+            使用服务器默认 Microsoft Edge 自动完成 OpenAI 登录（邮箱→密码→邮箱验证码/TOTP→必要时手机短信→授权）。
           </p>
           <div className="flex flex-wrap items-end gap-3">
             <Field className="min-w-[220px] flex-1">
@@ -762,10 +756,6 @@ export default function CodexAccountsPage() {
               <FieldLabel>出口代理</FieldLabel>
               <Input placeholder="socks5://user:pass@host:port 或 host:port:user:pass" value={autoProxy} onChange={(e) => setAutoProxy(e.target.value)} disabled={autoRunning} />
             </Field>
-            <Field className="min-w-[180px]">
-              <FieldLabel>AdsPower Profile</FieldLabel>
-              <Input placeholder="留空则自动创建" value={autoAdspowerProfileId} onChange={(e) => setAutoAdspowerProfileId(e.target.value)} disabled={autoRunning} />
-            </Field>
             <Button onClick={handleAutoLogin} disabled={autoRunning}>
               {autoRunning ? <Spinner data-icon className="size-4" /> : <BotIcon data-icon className="size-4" />}
               开始自动上号
@@ -778,6 +768,8 @@ export default function CodexAccountsPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      <CodexPrechargePool onAccountsChanged={() => fetchAccounts(true)} />
 
       <Card>
         <CardHeader>
@@ -966,12 +958,6 @@ export default function CodexAccountsPage() {
                           )}
                         </button>
                       )}
-                      {a.adspowerProfileId ? (
-                        <div className="mt-1 max-w-[220px] truncate text-[11px] text-muted-foreground" title={a.adspowerProfileId}>
-                          Profile {a.adspowerProfileId}
-                          {a.adspowerProfileStatus ? ` · ${a.adspowerProfileStatus}` : ""}
-                        </div>
-                      ) : null}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
@@ -1003,6 +989,12 @@ export default function CodexAccountsPage() {
                         onClick={() => openReset(a)}>
                         {busyId === a.id ? <Spinner size={14} /> : <TimerResetIcon className="size-4 text-sky-500" />}
                       </Button>
+                      <AccountBoundSubscriptionActions
+                        product="codex"
+                        account={a}
+                        disabled={busyId === a.id}
+                        onChanged={() => fetchAccounts(true)}
+                      />
                       <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
                         onClick={() => handleReactivate(a)}>
                         <BadgeCheckIcon className="size-4 text-amber-500" />

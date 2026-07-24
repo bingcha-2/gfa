@@ -18,6 +18,10 @@ type CodexTokenLease struct {
 	AccountId   int    `json:"accountId"`
 	LeaseId     string `json:"leaseId"`
 	LeaseProof  string `json:"leaseProof"`
+	// AllowBoundOverflow permits one hidden re-lease only after a confirmed
+	// upstream quota-exhausted 429. It never enables rotation for auth,
+	// verification, capacity or transport errors.
+	AllowBoundOverflow bool `json:"allowBoundOverflow"`
 	EmailHint   string `json:"emailHint"`
 	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
 	// FastAllowed 是服务端下发的「快速档授权闸」:该租约是否被允许吃快速(priority)服务档。
@@ -54,6 +58,7 @@ type codexLeaseTokenResp struct {
 	AccountId   json.RawMessage `json:"accountId"`
 	LeaseId     string          `json:"leaseId"`
 	LeaseProof  string          `json:"leaseProof"`
+	AllowBoundOverflow bool     `json:"allowBoundOverflow"`
 	EmailHint   string          `json:"emailHint"`
 	PlanType    string          `json:"planType"`
 	FastAllowed bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
@@ -191,6 +196,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		LeaseId:     leaseResp.LeaseId,
 		LeaseProof:  leaseResp.LeaseProof,
+		AllowBoundOverflow: leaseResp.AllowBoundOverflow,
 		EmailHint:   leaseResp.EmailHint,
 		PlanType:    leaseResp.PlanType,
 		FastAllowed: leaseResp.FastAllowed,

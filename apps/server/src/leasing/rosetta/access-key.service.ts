@@ -80,7 +80,7 @@ export class AccessKeyService {
     occupiedShares: Map<number, number>,
     boundCounts: Map<number, number> = new Map(),
     salesCapacity = ACCOUNT_SHARE_CAPACITY,
-    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number } = {},
+    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number; excludeAccountIds?: ReadonlySet<number> } = {},
   ): number | null {
     if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
     const lvl = String(level || "").trim();
@@ -91,6 +91,7 @@ export class AccessKeyService {
     const ceiling = Number.isFinite(opts.oversellCeiling as number) ? (opts.oversellCeiling as number) : Infinity;
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
     const candidates = (Array.isArray(pool.accounts) ? pool.accounts : [])
+      .filter((a: any) => !opts.excludeAccountIds?.has(Number(a.id)))
       .filter((a: any) => this.isAccountBindable(product, a, lvl))
       .map((a: any) => {
         const id = Number(a.id);
@@ -138,7 +139,7 @@ export class AccessKeyService {
     level: string,
     occupiedShares: Map<number, number>,
     salesCapacity = ACCOUNT_SHARE_CAPACITY,
-    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number } = {},
+    opts: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number; excludeAccountIds?: ReadonlySet<number> } = {},
   ): boolean {
     return this.assignSeatForProductFromShares(product, weight, level, occupiedShares, new Map(), salesCapacity, opts) !== null;
   }

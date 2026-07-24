@@ -485,6 +485,13 @@ export class RosettaService {
   submitCodexOAuthCallback(loginId: string, rawInput: string) { return this.codexSvc.submitCodexOAuthCallback(loginId, rawInput); }
   startAutomatedCodexLogin(payload: any) { return this.codexSvc.startAutomatedCodexLogin(payload); }
   getAutomatedCodexLoginStatus(jobId: string) { return this.codexSvc.getAutomatedCodexLoginStatus(jobId); }
+  listCodexPrechargeAccounts() { return this.codexSvc.listCodexPrechargeAccounts(); }
+  importCodexPrechargeAccounts(payload: any) { return this.codexSvc.importCodexPrechargeAccounts(payload); }
+  startCodexPrechargeSessionLogin(payload: any) { return this.codexSvc.startCodexPrechargeSessionLogin(payload); }
+  startCodexPrechargeOnboard(payload: any) { return this.codexSvc.startCodexPrechargeOnboard(payload); }
+  getCodexPrechargeSessionLoginStatus(taskId: string) { return this.codexSvc.getCodexPrechargeSessionLoginStatus(taskId); }
+  getCodexPrechargeSession(payload: any) { return this.codexSvc.getCodexPrechargeSession(payload); }
+  deleteCodexPrechargeAccount(payload: any) { return this.codexSvc.deleteCodexPrechargeAccount(payload); }
   toggleCodexAccount(payload: any) { return this.codexSvc.toggleCodexAccount(payload); }
   toggleCodexAccountPool(payload: any) { return this.codexSvc.toggleCodexAccountPool(payload); }
   deleteCodexAccount(payload: any) { return this.codexSvc.deleteCodexAccount(payload); }
@@ -569,7 +576,7 @@ export class RosettaService {
     occupiedShares: Map<number, number>,
     boundCounts?: Map<number, number>,
     salesCapacity?: number,
-    opts?: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number },
+    opts?: { exclusive?: boolean; exclusiveLocked?: Set<number>; oversellCeiling?: number; excludeAccountIds?: ReadonlySet<number> },
   ) {
     return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts, salesCapacity, opts);
   }

@@ -104,6 +104,7 @@ describe("EntitlementSyncService(去影子)", () => {
     subs = new Map();
     prismaStub = {
       customer: { findUnique: vi.fn(async () => ({ email: "user@example.com" })) },
+      $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
       subscription: {
         // The seat-share count reads ALL ACTIVE subs' configs from here.
         findMany: vi.fn(async () => [...subs.values()].filter((s) => s.status === "ACTIVE")),
@@ -198,6 +199,299 @@ describe("EntitlementSyncService(去影子)", () => {
     releases.splice(0).forEach((release) => release());
 
     await expect(result).resolves.toMatchObject({ ok: true });
+  });
+
+  it("upgrades seats by increasing limits while preserving used quota, reset window, dates, and subscription id", async () => {
+    planCatalog.getPublished.mockResolvedValue({
+      config: { shareCapacity: CAP, accountCapacity: CAP, oversellFactor: 1.5 },
+    });
+    writeJson(path.join(tmpDir, "codex-accounts.json"), {
+      accounts: [
+        { id: 11, email: "codex@pool.test", refreshToken: "rt", enabled: true, planType: "pro" },
+      ],
+    });
+    const startsAt = new Date("2026-07-01T00:00:00.000Z");
+    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
+    const windowState = JSON.stringify({
+      usdUsageByProduct: {
+        codex: { usedWeekly: 100, windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z") },
+      },
+    });
+    const sub = seed(makeSub({
+      id: "sub-seat-upgrade",
+      startsAt,
+      expiresAt,
+      config: {
+        line: "bind",
+        products: ["codex"],
+        levels: { codex: "pro" },
+        bindings: { codex: 11 },
+        shareSeats: 1,
+        shareCapacity: CAP,
+        weight: 1,
+        quotaSeatCapacity: CAP,
+        quotaAlgorithm: "usd",
+        usdQuotaMigrationVersion: 5,
+        usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 } },
+        deviceLimit: 1,
+        windowMs: 18_000_000,
+      },
+    }));
+    sub.windowState = windowState;
+    await service.syncSubscription(sub);
+    const record = store.findById(sub.id)!;
+    record.usdUsageByProduct = {
+      codex: {
+        usedWeekly: 100,
+        windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z"),
+      },
+    };
+
+    const result = await service.upgradeSubscriptionSeats(sub.id, 2);
+
+    expect(result).toMatchObject({
+      ok: true,
+      previousShareSeats: 1,
+      shareSeats: 2,
+      reboundProducts: [],
+      usageByProduct: { codex: { weekly: { used: 100, limit: 200 } } },
+    });
+    const persisted = subs.get(sub.id);
+    const config = JSON.parse(persisted.config);
+    expect(persisted.id).toBe("sub-seat-upgrade");
+    expect(persisted.startsAt).toEqual(startsAt);
+    expect(persisted.expiresAt).toEqual(expiresAt);
+    expect(persisted.windowState).toBe(windowState);
+    expect(persisted.weight).toBe(2);
+    expect(config).toMatchObject({
+      shareSeats: 2,
+      weight: 2,
+      bindings: { codex: 11 },
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
+    });
+    expect(store.findById(sub.id)?.usdUsageByProduct?.codex).toMatchObject({
+      usedWeekly: 100,
+      windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z"),
+    });
+  });
+
+  it("moves an upgraded subscription to a same-level account when its current account cannot fit the larger weight", async () => {
+    planCatalog.getPublished.mockResolvedValue({
+      config: { shareCapacity: CAP, accountCapacity: CAP, oversellFactor: 1 },
+    });
+    writeJson(path.join(tmpDir, "codex-accounts.json"), {
+      accounts: [
+        { id: 11, email: "full@pool.test", refreshToken: "rt-11", enabled: true, planType: "pro" },
+        { id: 12, email: "free@pool.test", refreshToken: "rt-12", enabled: true, planType: "pro" },
+      ],
+    });
+    const bindConfig = (accountId: number, seats: number) => ({
+      line: "bind",
+      products: ["codex"],
+      levels: { codex: "pro" },
+      bindings: { codex: accountId },
+      shareSeats: seats,
+      shareCapacity: CAP,
+      weight: seats,
+      quotaSeatCapacity: CAP,
+      quotaAlgorithm: "usd",
+      usdQuotaMigrationVersion: 5,
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 * seats } },
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    });
+    seed(makeSub({ id: "occupied-current", config: bindConfig(11, CAP - 1) }));
+    const sub = seed(makeSub({ id: "sub-upgrade-rebind", config: bindConfig(11, 1) }));
+    await service.syncSubscription(sub);
+
+    const result = await service.upgradeSubscriptionSeats(sub.id, 2);
+
+    expect(result).toMatchObject({
+      ok: true,
+      reboundProducts: [{ product: "codex", previousAccountId: 11, accountId: 12 }],
+    });
+    expect(JSON.parse(subs.get(sub.id).config).bindings).toEqual({ codex: 12 });
+    expect(store.findById(sub.id)?.bindings).toEqual({ codex: 12 });
+  });
+
+  it("moves every bound subscription to a same-level account with available capacity", async () => {
+    writeJson(path.join(tmpDir, "codex-accounts.json"), {
+      accounts: [
+        { id: 11, email: "source@pool.test", refreshToken: "rt-source", enabled: false, planType: "pro" },
+        { id: 12, email: "target@pool.test", refreshToken: "rt-target", enabled: true, planType: "pro" },
+      ],
+    });
+    const source = seed(makeSub({
+      id: "sub-batch-rebind",
+      config: { line: "bind", products: ["codex"], levels: { codex: "pro" }, bindings: { codex: 11 }, weight: 2, deviceLimit: 1, windowMs: 18_000_000 },
+    }));
+
+    const result = await service.rebindBoundAccountSubscriptions("codex", 11);
+
+    expect(result).toMatchObject({ ok: true, sourceAccountId: 11, movedSubscriptions: 1, targets: [{ accountId: 12, count: 1 }] });
+    expect(JSON.parse(subs.get(source.id).config).bindings).toEqual({ codex: 12 });
+    expect(JSON.parse(subs.get(source.id).bindings)).toEqual({ codex: 12 });
+    expect(reloads.tokenServer.reloadAccessKeys).toHaveBeenCalled();
+  });
+
+  it("splits seven bound customers across three same-level accounts when only their combined capacity is sufficient", async () => {
+    planCatalog.getPublished.mockResolvedValue({ config: { accountCapacity: CAP, oversellFactor: 1 } });
+    writeJson(path.join(tmpDir, "codex-accounts.json"), {
+      accounts: [
+        { id: 11, email: "source@pool.test", refreshToken: "rt-source", enabled: false, planType: "pro" },
+        { id: 12, email: "target-3@pool.test", refreshToken: "rt-12", enabled: true, planType: "pro" },
+        { id: 13, email: "target-2a@pool.test", refreshToken: "rt-13", enabled: true, planType: "pro" },
+        { id: 14, email: "target-2b@pool.test", refreshToken: "rt-14", enabled: true, planType: "pro" },
+      ],
+    });
+
+    const bindConfig = (accountId: number, weight = 1) => ({
+      line: "bind",
+      products: ["codex"],
+      levels: { codex: "pro" },
+      bindings: { codex: accountId },
+      weight,
+      quotaSeatCapacity: CAP,
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    });
+
+    // Leave 3, 2 and 2 shares free on the three targets (CAP is 4 in tests).
+    seed(makeSub({ id: "occupied-12", config: bindConfig(12, CAP - 3) }));
+    seed(makeSub({ id: "occupied-13", config: bindConfig(13, CAP - 2) }));
+    seed(makeSub({ id: "occupied-14", config: bindConfig(14, CAP - 2) }));
+    const sourceIds = Array.from({ length: 7 }, (_, index) => `source-${index + 1}`);
+    for (const id of sourceIds) seed(makeSub({ id, config: bindConfig(11) }));
+
+    const result = await service.rebindBoundAccountSubscriptions("codex", 11);
+
+    expect(result).toMatchObject({
+      ok: true,
+      sourceAccountId: 11,
+      movedSubscriptions: 7,
+      targets: [
+        { accountId: 12, count: 3 },
+        { accountId: 13, count: 2 },
+        { accountId: 14, count: 2 },
+      ],
+    });
+    expect(sourceIds.map((id) => JSON.parse(subs.get(id).config).bindings.codex).sort()).toEqual([12, 12, 12, 13, 13, 14, 14]);
+    expect(prismaStub.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the currently published oversell ceiling while preserving quotas, windows and subscription dates", async () => {
+    planCatalog.getPublished.mockResolvedValue({
+      config: { accountCapacity: CAP, shareCapacity: CAP, oversellFactor: 1.5 },
+    });
+    writeJson(path.join(tmpDir, "codex-accounts.json"), {
+      accounts: [
+        { id: 11, email: "source@pool.test", refreshToken: "rt-source", enabled: false, planType: "pro" },
+        { id: 12, email: "target-2@pool.test", refreshToken: "rt-12", enabled: true, planType: "pro" },
+        { id: 13, email: "target-1@pool.test", refreshToken: "rt-13", enabled: true, planType: "pro" },
+      ],
+    });
+    const bindConfig = (accountId: number, weight: number) => ({
+      line: "bind",
+      products: ["codex"],
+      levels: { codex: "pro" },
+      bindings: { codex: accountId },
+      weight,
+      shareCapacity: CAP,
+      // Deliberately preserve the old, lower sales snapshot. Rebinding must
+      // plan with the current ceiling (CAP * 1.5), without rewriting this.
+      quotaSeatCapacity: CAP,
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 123.456 } },
+      deviceLimit: 2,
+      windowMs: 18_000_000,
+    });
+
+    seed(makeSub({ id: "current-full-12", config: bindConfig(12, CAP) }));
+    seed(makeSub({ id: "current-over-13", config: bindConfig(13, CAP + 1) }));
+    const startsAt = new Date("2026-06-01T00:00:00.000Z");
+    const expiresAt = new Date("2026-09-01T00:00:00.000Z");
+    const sourceIds = ["old-cap-source-1", "old-cap-source-2", "old-cap-source-3"];
+    for (const id of sourceIds) {
+      const row = makeSub({ id, startsAt, expiresAt, config: bindConfig(11, 1) });
+      row.windowState = JSON.stringify({ usdUsageByProduct: { codex: { usedWeekly: 42 } } });
+      seed(row);
+    }
+
+    const result = await service.rebindBoundAccountSubscriptions("codex", 11);
+
+    expect(result).toMatchObject({
+      ok: true,
+      movedSubscriptions: 3,
+      targets: [{ accountId: 12, count: 2 }, { accountId: 13, count: 1 }],
+    });
+    for (const id of sourceIds) {
+      const row = subs.get(id);
+      const config = JSON.parse(row.config);
+      expect(config.quotaSeatCapacity).toBe(CAP);
+      expect(config.usdQuotaByProduct).toEqual({ codex: { fiveHour: 0, weekly: 123.456 } });
+      expect(row.windowState).toBe(JSON.stringify({ usdUsageByProduct: { codex: { usedWeekly: 42 } } }));
+      expect(row.startsAt).toEqual(startsAt);
+      expect(row.expiresAt).toEqual(expiresAt);
+    }
+    const sourceWrites = prismaStub.subscription.update.mock.calls
+      .map(([args]: any[]) => args)
+      .filter((args: any) => sourceIds.includes(args.where.id));
+    expect(sourceWrites).toHaveLength(3);
+    for (const write of sourceWrites) {
+      expect(Object.keys(write.data).sort()).toEqual(["bindings", "config"]);
+    }
+  });
+
+  it("does not partially rebind when the same-level capacity is insufficient", async () => {
+    planCatalog.getPublished.mockResolvedValue({ config: { accountCapacity: CAP, oversellFactor: 1 } });
+    writeJson(path.join(tmpDir, "anthropic-accounts.json"), {
+      accounts: [
+        { id: 21, email: "source@pool.test", refreshToken: "rt-source", enabled: false, planType: "max" },
+        { id: 22, email: "full@pool.test", refreshToken: "rt-full", enabled: true, planType: "max" },
+      ],
+    });
+    const full = seed(makeSub({
+      id: "sub-target-full",
+      config: { line: "bind", products: ["anthropic"], levels: { anthropic: "max" }, bindings: { anthropic: 22 }, weight: CAP, deviceLimit: 1, windowMs: 18_000_000 },
+    }));
+    const source = seed(makeSub({
+      id: "sub-source-stays",
+      config: { line: "bind", products: ["anthropic"], levels: { anthropic: "max" }, bindings: { anthropic: 21 }, weight: 1, deviceLimit: 1, windowMs: 18_000_000 },
+    }));
+
+    const result = await service.rebindBoundAccountSubscriptions("anthropic", 21);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.parse(subs.get(source.id).config).bindings).toEqual({ anthropic: 21 });
+    expect(JSON.parse(subs.get(full.id).config).bindings).toEqual({ anthropic: 22 });
+    expect(prismaStub.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("resets only the local USD windows of subscriptions bound to the account", async () => {
+    const bound = seed(makeSub({
+      id: "sub-batch-reset",
+      config: { line: "bind", products: ["codex"], levels: { codex: "pro" }, bindings: { codex: 31 }, weight: 1, deviceLimit: 1, windowMs: 18_000_000 },
+    }));
+    store.loadSubscriptionRecords([{
+      id: bound.id,
+      key: bound.backingKeyValue,
+      status: "active",
+      products: ["codex"],
+      bindings: { codex: 31 },
+      quotaAlgorithm: "usd",
+      usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 100 } },
+    }] as any);
+    store.findById(bound.id)!.usdUsageByProduct = {
+      codex: { used5h: 3, usedWeekly: 17, windowStartedAt5h: Date.now(), windowStartedAtWeekly: Date.now() },
+    };
+
+    const result = await service.resetBoundAccountUsdQuotas("codex", 31);
+
+    expect(result).toMatchObject({ matchedSubscriptions: 1, resetSubscriptions: 1, resetWindows: 2 });
+    const usage = service.subscriptionUsdQuotaUsage(bound.id).codex;
+    expect(usage.fiveHour?.used).toBe(0);
+    expect(usage.weekly?.used).toBe(0);
+    expect(prismaStub.$transaction).toHaveBeenCalled();
   });
 
   it("rebindProduct 拒绝:目标号不存在", async () => {

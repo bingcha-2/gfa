@@ -112,11 +112,12 @@ export type ClaudeManualLoginRunner = (
 type ClaudeAutoOAuthTask = {
   taskId: string;
   phase: string;
-  status: "running" | "done" | "error";
+  status: "running" | "waiting_human_verification" | "done" | "error";
   error?: string;
   email?: string;
   isUpdate?: boolean;
   accountId?: number;
+  adspowerProfileId?: string;
   finishedAt?: number;
 };
 
@@ -825,7 +826,10 @@ export class ClaudeAccountService {
 
     const adspowerProfileId = resolveAnthropicAdspowerProfileId(payload.adspowerProfileId, storedAdspowerProfileId);
     const rawSessionKey = String(payload.sessionKey || "").trim();
-    const sessionKey = password ? "" : rawSessionKey;
+    // SK login is the explicit fast path. A parsed account line often includes both the
+    // mailbox password and sessionKey; keeping the password must not silently downgrade the
+    // operator's "SK one-click login" action to the magic-link flow.
+    const sessionKey = rawSessionKey;
     console.log(
       `[auto-oauth] start requested: email=${email || "(empty)"}, mode=${sessionKey ? "sk" : "password"}, ` +
       `hasPassword=${Boolean(password)}, hasSessionKey=${Boolean(rawSessionKey)}, ` +
@@ -875,6 +879,7 @@ export class ClaudeAccountService {
       email: t.email,
       isUpdate: t.isUpdate,
       accountId: t.accountId,
+      adspowerProfileId: t.adspowerProfileId,
     };
   }
 
@@ -891,7 +896,13 @@ export class ClaudeAccountService {
     const task = this.autoOAuthTasks.get(taskId)!;
     const step = (phase: string) => {
       task.phase = phase;
+      if (task.status === "waiting_human_verification") task.status = "running";
       console.log(`[auto-oauth] ${email}: ${phase}`);
+    };
+    const waitForHumanVerification = ({ timeoutMs }: { url: string; timeoutMs: number }) => {
+      task.status = "waiting_human_verification";
+      task.phase = `等待人工完成人机验证（浏览器保持打开，${Math.round(timeoutMs / 60_000)} 分钟内完成后自动继续）`;
+      console.log(`[auto-oauth] ${email}: ${task.phase}`);
     };
     // Per-run browser session (local, not shared) so concurrent runs never close each other's.
     let session: PlaywrightOAuthSession | null = null;
@@ -924,6 +935,7 @@ export class ClaudeAccountService {
       }
       pending.adspowerProfileId = adspowerProfileId;
       pending.proxyUrl = proxyUrl || pending.proxyUrl;
+      task.adspowerProfileId = adspowerProfileId;
 
       if (sessionKey && sessionKey.trim()) {
         step(adspowerProfileId ? `SK 直登 (AdsPower ${adspowerProfileId})` : "SK 直登 (SOCKS5)");
@@ -932,6 +944,7 @@ export class ClaudeAccountService {
           sessionKey: sessionKey.trim(),
           proxyUrl,
           adspowerProfileId,
+          onHumanVerificationRequired: waitForHumanVerification,
         });
         if (!sk.ok || !sk.code) throw new Error(sk.error || "SK 直登未拿到 code");
 
@@ -969,6 +982,7 @@ export class ClaudeAccountService {
         adspowerProfileId,
         recoveryEmail,
         totpSecret,
+        onHumanVerificationRequired: waitForHumanVerification,
       });
       if (!trigger.ok || !trigger.session) {
         throw new Error(trigger.error || "浏览器触发失败");
@@ -1004,7 +1018,9 @@ export class ClaudeAccountService {
       }
 
       // 4. Consume magic link in browser → OAuth code
-      const consume = await session.consumeMagicLink(mailResultUrl, 60_000, pending.authUrl);
+      const consume = await session.consumeMagicLink(mailResultUrl, 60_000, pending.authUrl, {
+        onHumanVerificationRequired: waitForHumanVerification,
+      });
       await session.close().catch(() => {});
       session = null;
 

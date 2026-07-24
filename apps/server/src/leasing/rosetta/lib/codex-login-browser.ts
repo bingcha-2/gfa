@@ -7,14 +7,14 @@
 // 各步页面/选择器均来自本仓库实跑验证（见 scripts/test_codex_login.ts）。
 // 接码格式与解析见 extractSmsCode。返回授权 code 交由 codex.service 换 token 落库。
 
+import { spawn, type ChildProcess } from "child_process";
+import * as fs from "fs";
+import * as net from "net";
+import * as path from "path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { startLocalSocksRelay, parseUpstream, generateGoogleTOTP } from "./playwright-oauth";
 import { toSocks5ProxyUrl } from "./store";
-import {
-  makeDefaultAdsPowerClient,
-  parseProxyToAdsPowerUserConfig,
-} from "./adspower-profile-manager";
-import type { AdsPowerClient } from "./adspower-client";
+import { fetchOpenAIVerificationCodeViaWeb } from "./mailcom-web-magic-link";
 
 export interface CodexBrowserLoginOpts {
   /** codex OAuth 授权 URL（含 PKCE challenge，与后续换 token 的 codeVerifier 同源） */
@@ -28,12 +28,17 @@ export interface CodexBrowserLoginOpts {
   phoneNumber?: string;
   /** 接码网址 */
   smsUrl?: string;
-  /** 出口代理（任意受支持格式，非 AdsPower 时内部归一化为 socks5://） */
+  /** 出口代理（任意受支持格式，内部归一化为 socks5://） */
   proxyUrl?: string;
-  /** 已绑定的 AdsPower profile；优先使用它打开浏览器并保留 Cookie */
-  adspowerProfileId?: string;
-  /** 默认 false：与 Anthropic 流程一致（服务器侧需有显示/xvfb），降低被检测概率 */
-  headless?: boolean;
+  /** Stable Edge user-data directory. When supplied, Edge is launched natively
+   * and Playwright attaches over CDP so OpenAI does not see webdriver=true. */
+  browserProfileDir?: string;
+  /** After a successful OpenAI login, open chatgpt.com/api/auth/session in the
+   * same Edge context and return its authenticated JSON payload. */
+  captureChatGptSession?: boolean;
+  /** Log in through chatgpt.com and return a session without requiring a
+   * Codex OAuth authorization code. */
+  sessionOnly?: boolean;
   /** 进度回调，上报当前步骤名 */
   onStep?: (step: string) => void;
   maxSteps?: number;
@@ -43,6 +48,7 @@ export interface CodexBrowserLoginOpts {
 export interface CodexBrowserLoginResult {
   ok: boolean;
   code?: string;
+  session?: string;
   error?: string;
   /** 失败时停留的步骤/URL，便于定位 */
   step?: string;
@@ -57,6 +63,74 @@ const SECURITY_VERIFICATION_POLL_MS = 1_000;
 const LOGIN_SURFACE_SETTLE_MS = 2_000;
 const HUMAN_INPUT_DELAY_MS = 80;
 const POST_INPUT_SETTLE_MS = 350;
+const CHATGPT_SESSION_URL = "https://chatgpt.com/api/auth/session";
+
+function reserveLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function resolveEdgeExecutable(): string {
+  const candidates = [
+    path.join(process.env["ProgramFiles(x86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env.ProgramFiles || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+  ].filter(Boolean);
+  const executable = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!executable) throw new Error("服务器未安装 Microsoft Edge，无法启动 Codex 登录");
+  return executable;
+}
+
+async function connectToNativeEdge(
+  profileDir: string,
+  relay: { port: number } | null,
+): Promise<{ browser: Browser; context: BrowserContext; process: ChildProcess }> {
+  fs.mkdirSync(profileDir, { recursive: true });
+  const port = await reserveLoopbackPort();
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profileDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "about:blank",
+  ];
+  if (relay) args.unshift(`--proxy-server=socks5://127.0.0.1:${relay.port}`);
+  const edgeProcess = spawn(resolveEdgeExecutable(), args, {
+    stdio: "ignore",
+    windowsHide: false,
+  });
+
+  let browser: Browser | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (edgeProcess.exitCode != null) break;
+    try {
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      break;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  if (!browser) {
+    edgeProcess.kill();
+    throw new Error(`无法连接服务器 Edge 调试端口: ${lastError instanceof Error ? lastError.message : "启动失败"}`);
+  }
+  const context = browser.contexts()[0];
+  if (!context) {
+    await browser.close().catch(() => {});
+    edgeProcess.kill();
+    throw new Error("服务器 Edge 未提供可用浏览器上下文");
+  }
+  return { browser, context, process: edgeProcess };
+}
 
 /**
  * 解析接码接口返回里的验证码。yuntl.cc 纯文本：
@@ -438,12 +512,55 @@ async function pollSms(context: BrowserContext, smsUrl: string, timeoutMs: numbe
   return null;
 }
 
-const STEALTH_INIT = () => {
-  Object.defineProperty(navigator, "webdriver", { get: () => false });
-  (window as any).chrome = { runtime: {}, loadTimes: function () {}, csi: function () {}, app: {} };
-  const pdfViewer = { name: "Chrome PDF Viewer", filename: "internal-pdf-viewer", description: "Portable Document Format" };
-  Object.defineProperty(navigator, "plugins", { get: () => [pdfViewer] });
-};
+async function fetchOpenAIEmailCode(
+  context: BrowserContext,
+  opts: CodexBrowserLoginOpts,
+  sinceMs: number,
+): Promise<string | null> {
+  const domain = opts.email.split("@")[1]?.toLowerCase() || "";
+  if (["outlook.com", "hotmail.com", "live.com", "msn.com"].includes(domain)) {
+    return fetchOutlookOpenAICode(context, opts.email, opts.password);
+  }
+  const result = await fetchOpenAIVerificationCodeViaWeb({
+    email: opts.email,
+    password: opts.password,
+    proxyUrl: opts.proxyUrl,
+    sinceMs,
+    waitMs: 90_000,
+  });
+  return result.ok ? result.code || null : null;
+}
+
+async function readChatGptSession(context: BrowserContext): Promise<string | null> {
+  const page = await context.newPage();
+  try {
+    await page.goto(CHATGPT_SESSION_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const raw = (await bodyText(page)).trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return parsed.user || parsed.accessToken ? raw : null;
+  } catch {
+    return null;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+async function resultAfterLogin(
+  context: BrowserContext,
+  opts: CodexBrowserLoginOpts,
+  code: string,
+  onStep: (step: string) => void,
+): Promise<CodexBrowserLoginResult> {
+  if (!opts.captureChatGptSession) return { ok: true, code };
+  onStep("reading_chatgpt_session");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const session = await readChatGptSession(context);
+    if (session) return { ok: true, code, session };
+    await sleep(1_000);
+  }
+  return { ok: false, error: "登录完成，但未能从 ChatGPT 读取有效 session", step: "reading_chatgpt_session" };
+}
 
 export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise<CodexBrowserLoginResult> {
   const onStep = opts.onStep ?? (() => {});
@@ -452,45 +569,42 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
 
   let relay: { port: number; close: () => void } | null = null;
   let browser: Browser | null = null;
-  let adspower: { client: AdsPowerClient; profileId: string } | null = null;
+  let nativeEdgeProcess: ChildProcess | null = null;
 
   try {
-    let context: BrowserContext;
-    if (opts.adspowerProfileId) {
-      const client = makeDefaultAdsPowerClient();
-      const proxyConfig = opts.proxyUrl ? parseProxyToAdsPowerUserConfig(opts.proxyUrl) : undefined;
-      const opened = await client.openProfile(opts.adspowerProfileId, proxyConfig);
-      adspower = { client, profileId: opts.adspowerProfileId };
-      browser = await chromium.connectOverCDP(opened.debugUrl);
-      context = browser.contexts()[0];
-      if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
-      await context.addInitScript(STEALTH_INIT).catch(() => {});
-    } else {
-      const normalizedProxy = toSocks5ProxyUrl(opts.proxyUrl);
-      if (!normalizedProxy) return { ok: false, error: "代理为空或格式无法识别" };
+    const normalizedProxy = toSocks5ProxyUrl(opts.proxyUrl);
+    if (opts.proxyUrl?.trim() && !normalizedProxy) {
+      return { ok: false, error: "代理格式无法识别" };
+    }
+    if (normalizedProxy) {
       const upstream = parseUpstream(normalizedProxy);
       relay = await startLocalSocksRelay(upstream);
+    }
 
+    // Production flows supply a stable profile directory. Launch msedge.exe
+    // itself and attach over CDP, avoiding Playwright's webdriver launch flag.
+    // Tests and direct library callers without a profile keep the isolated
+    // Playwright Edge context for deterministic behavior.
+    let context: BrowserContext;
+    if (opts.browserProfileDir) {
+      const nativeEdge = await connectToNativeEdge(opts.browserProfileDir, relay);
+      browser = nativeEdge.browser;
+      context = nativeEdge.context;
+      nativeEdgeProcess = nativeEdge.process;
+    } else {
       browser = await chromium.launch({
-        headless: opts.headless ?? false,
-        proxy: { server: `socks5://127.0.0.1:${relay.port}` },
-        ignoreDefaultArgs: ["--enable-automation"],
-        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        channel: "msedge",
+        headless: false,
+        ...(relay ? { proxy: { server: `socks5://127.0.0.1:${relay.port}` } } : {}),
+        args: ["--no-sandbox"],
       });
-      context = await browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        viewport: { width: 1280, height: 800 },
-        locale: "en-US",
-        timezoneId: "America/New_York",
-      });
-      await context.addInitScript(STEALTH_INIT);
+      context = await browser.newContext();
     }
 
     // 截获回调 code（redirect_uri 不会真正可达，靠导航/请求 URL 抓取）
     let authCode: string | null = null;
     const grab = (u: string) => {
-      if (u.startsWith(opts.redirectUri)) {
+      if (opts.redirectUri && u.startsWith(opts.redirectUri)) {
         try {
           const c = new URL(u).searchParams.get("code");
           if (c) authCode = c;
@@ -509,6 +623,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
     if (securityGate) return securityGate;
 
     let emailDone = false;
+    let emailSubmittedAt = Date.now();
     let pwdDone = false;
     let emailCodeDone = false;
     let totpDone = false;
@@ -518,7 +633,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
       await sleep(1200);
 
-      if (authCode || page.url().startsWith(opts.redirectUri)) {
+      if (authCode || (opts.redirectUri && page.url().startsWith(opts.redirectUri))) {
         if (!authCode) {
           try {
             authCode = new URL(page.url()).searchParams.get("code");
@@ -528,7 +643,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
         }
         if (authCode) {
           onStep("got_code");
-          return { ok: true, code: authCode };
+          return resultAfterLogin(context, opts, authCode, onStep);
         }
       }
 
@@ -536,6 +651,14 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       const inputs = await readInputs(page);
       const pageText = await bodyText(page);
       const has = (re: RegExp) => matchesInput(inputs, re);
+      if (opts.sessionOnly && (
+        (emailCodeDone || pwdDone) ||
+        (/chatgpt\.com/i.test(url) && !/\/auth\/login/i.test(url))
+      )) {
+        onStep("reading_chatgpt_session");
+        const session = await readChatGptSession(context);
+        if (session) return { ok: true, session };
+      }
       if (looksLikeOpenAiSecurityVerification(url, await pageTitle(page), pageText)) {
         const securityRetry = await waitForOpenAiSecurityVerification(page, onStep);
         if (securityRetry) return securityRetry;
@@ -557,6 +680,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       if (!emailDone && has(/email|username/i) && !has(/password/i)) {
         onStep("email");
         if (await fillFirst(page, 'input[type="email"], input[name="email"], input[autocomplete="username"], input[id*="email" i]', opts.email)) {
+          emailSubmittedAt = Date.now();
           await clickContinue(page);
           emailDone = true;
           continue;
@@ -580,9 +704,9 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
         !/phone|sms|text message/i.test(pageText);
       if (!emailCodeDone && looksLikeEmailCode) {
         onStep("email_code_polling");
-        const code = await fetchOutlookOpenAICode(context, opts.email, opts.password);
+        const code = await fetchOpenAIEmailCode(context, opts, emailSubmittedAt - 30_000);
         if (!code) {
-          return { ok: false, error: "未能从 Outlook 邮箱自动获取 OpenAI 邮箱验证码，可能需要人工处理 Microsoft 安全验证", step: "email_code_polling", lastUrl: url };
+          return { ok: false, error: "未能自动获取 OpenAI 邮箱验证码，请检查邮箱密码或稍后重试", step: "email_code_polling", lastUrl: url };
         }
         onStep("email_code_fill");
         await fillVerificationCode(page, code);
@@ -605,6 +729,20 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       if (!phoneEntered && /\/add-phone/i.test(url)) {
         onStep("add_phone");
         if (!opts.phoneNumber) {
+          const skipped = await clickFirst(page, [
+            'button:has-text("Skip")',
+            'button:has-text("Not now")',
+            'button:has-text("Maybe later")',
+            'a:has-text("Skip")',
+            'button:has-text("跳过")',
+            'button:has-text("暂不")',
+            'button:has-text("以后再说")',
+          ]);
+          if (skipped) {
+            onStep("skip_phone");
+            await sleep(1_500);
+            continue;
+          }
           return { ok: false, error: "账号要求绑定手机号，请补充接码手机号后重试", step: "add_phone", lastUrl: url };
         }
         await fillFirst(page, '#tel, input[type="tel"][autocomplete="tel"], input[type="tel"]', opts.phoneNumber);
@@ -639,13 +777,18 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       onStep(`waiting(${url})`);
     }
 
-    if (authCode) return { ok: true, code: authCode };
+    if (authCode) return resultAfterLogin(context, opts, authCode, onStep);
+    if (opts.sessionOnly) {
+      const session = await readChatGptSession(context);
+      if (session) return { ok: true, session };
+      return { ok: false, error: "ChatGPT 登录完成前流程已耗尽，未能读取 session", step: "reading_chatgpt_session", lastUrl: page.url() };
+    }
     return { ok: false, error: "登录未完成（步骤耗尽）", step: "exhausted", lastUrl: page.url() };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     if (browser) await browser.close().catch(() => {});
-    if (adspower) await adspower.client.closeProfile(adspower.profileId).catch(() => {});
+    if (nativeEdgeProcess && nativeEdgeProcess.exitCode == null) nativeEdgeProcess.kill();
     if (relay) relay.close();
   }
 }

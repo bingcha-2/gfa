@@ -793,6 +793,25 @@ model Subscription {
   @@index([status, createdAt])
 }
 
+/// Runtime-only Codex spillover route. The subscription's permanent binding,
+/// quota, window state and dates remain authoritative and are never rewritten.
+model CodexOverflowRoute {
+  subscriptionId   String   @id
+  homeAccountId    Int
+  servingAccountId Int
+  reason           String
+  reservedUsd      Float
+  sourceResetAt    DateTime?
+  servingResetAt   DateTime?
+  status           String   @default("ACTIVE")
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([servingAccountId, status, expiresAt])
+  @@index([homeAccountId, status, expiresAt])
+}
+
 /// Versioned plan catalog: global pricing / level / usage rules, published to clients.
 /// `config` is a JSON string (sqlite has no Json type) holding
 /// products/levels/usageTiers/pricing/durationDays/windowMs — see spec §4.1.

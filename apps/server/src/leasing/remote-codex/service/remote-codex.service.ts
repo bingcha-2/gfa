@@ -7,6 +7,7 @@ import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
+import { CodexOverflowRouter } from "./codex-overflow-router";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -30,6 +31,7 @@ type ServiceOptions = {
   /** Test-only timing override; omitted by production DI. */
   fairShareFlushIntervalMs?: number;
   relayConfigProvider?: () => Promise<RelayFulfillmentConfig | null>;
+  publishedCatalogProvider?: () => Promise<any>;
 };
 
 /** HTTP error thrown by the codex lease server. Subclass so RemoteCodexController
@@ -44,6 +46,8 @@ export class RemoteCodexHttpError extends RemoteAccessHttpError {}
  */
 @Injectable()
 export class RemoteCodexService extends LeaseService<CodexAccount> implements OnModuleDestroy {
+  private readonly overflowRouter: CodexOverflowRouter | null;
+
   constructor(@Optional() options: ServiceOptions = {}) {
     const provider = new CodexProvider({
       accountsFilePath: options.accountsFilePath,
@@ -72,6 +76,13 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
       algorithm: options.fairShareAlgorithm
         ?? (process.env.BCAI_CODEX_FAIR_SHARE_ALGO === "segment-v1" ? "segment-v1" : "window-cu-v1"),
     });
+    const overflowRouter = options.prisma && options.publishedCatalogProvider
+      ? new CodexOverflowRouter({
+          prisma: options.prisma,
+          getPublishedCatalog: options.publishedCatalogProvider,
+          now: options.now,
+        })
+      : null;
     super(
       provider,
       {
@@ -89,17 +100,24 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         relayConfigProvider: options.relayConfigProvider
           ? async () => options.relayConfigProvider!()
           : undefined,
+        boundAccountOverflowRouter: overflowRouter || undefined,
         mode: "remote-codex-server",
         noAccountMessage: "No available Codex accounts",
         errorClass: RemoteCodexHttpError,
       },
     );
     service = this;
+    this.overflowRouter = overflowRouter;
   }
 
   /** Periodically pull the live Codex model list from upstream (best-effort). */
   @Cron(CronExpression.EVERY_6_HOURS)
   async refreshModelCatalog(): Promise<void> {
     await this.refreshModels();
+  }
+
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async cleanupOverflowRoutes(): Promise<void> {
+    await this.overflowRouter?.cleanup();
   }
 }

@@ -136,13 +136,43 @@ export async function ensureAdspowerProfileForAccount(
   }
 
   const defaults = PROVIDER_DEFAULTS[opts.provider];
-  const created = await client.createProfile({
+  const createInput = {
     name: buildProfileName(opts.provider, opts.account),
     domainName: defaults.domainName,
     openUrls: defaults.openUrls,
     proxyConfig,
     fingerprintConfig: defaultFingerprintConfig(),
-  });
+  };
+  let created: { profileId: string; raw: any };
+  try {
+    created = await client.createProfile(createInput);
+  } catch (error) {
+    // AdsPower can reject a create even when its paginated profile list is below
+    // the configured cap. For Claude onboarding, reclaim one oldest idle profile
+    // and retry once so a full AdsPower workspace does not block a new account.
+    if (opts.provider !== "anthropic" || deletedProfileId || !isAdsPowerProfileCapacityError(error)) {
+      return { ok: false, error: errorMessage(error) };
+    }
+    const deleted = await deleteOldestSafeProfile({
+      dataDir: opts.dataDir,
+      currentProvider: opts.provider,
+      currentAccount: opts.account,
+      profileIds,
+      client,
+      now,
+      // A capacity rejection means an operator explicitly needs a slot now.
+      // Still skip active/shared/protected profiles, but do not delay reclaiming
+      // an otherwise idle profile solely because it was recently created.
+      protectMinutes: 0,
+    });
+    if (!deleted.ok) return { ok: false, error: `${errorMessage(error)}; ${deleted.error}` };
+    deletedProfileId = deleted.profileId;
+    try {
+      created = await client.createProfile(createInput);
+    } catch (retryError) {
+      return { ok: false, error: errorMessage(retryError) };
+    }
+  }
 
   opts.account.proxyUrl = proxyUrl;
   opts.account.adspowerProfileId = created.profileId;
@@ -292,4 +322,13 @@ function timestampOf(value: unknown): number {
   if (!text) return 0;
   const n = Date.parse(text);
   return Number.isFinite(n) ? n : 0;
+}
+
+function isAdsPowerProfileCapacityError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return /(?:profile|user).{0,40}(?:limit|quota|full|capacity)|(?:limit|quota|capacity).{0,40}(?:profile|user)|no.{0,30}(?:slot|space|capacity)|没有.{0,12}(?:空位|名额|容量)|(?:账号|环境).{0,16}(?:已满|上限)/i.test(message);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "AdsPower profile operation failed");
 }

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { AccountBoundSubscriptionActions } from "@/components/console/leasing/account-bound-subscription-actions";
 import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
 import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
 import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
@@ -668,7 +669,7 @@ export default function ClaudeAccountsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: importParsed.email,
-          password: importParsed.password,
+          password: skMode ? "" : importParsed.password,
           proxyUrl: importParsed.proxyUrl,
           adspowerProfileId: importParsed.adspowerProfileId,
           sessionKey: skMode ? importParsed.sessionKey : "",
@@ -700,6 +701,7 @@ export default function ClaudeAccountsPage() {
       // 2. Poll for status every 2s
       const taskId = start.taskId;
       const poll = async (): Promise<void> => {
+        let announcedHumanVerification = false;
         for (;;) {
           await new Promise((r) => setTimeout(r, 2000));
           try {
@@ -707,6 +709,10 @@ export default function ClaudeAccountsPage() {
             const st = await sr.json().catch(() => null);
             if (!st) continue;
             setAutoPhase(st.phase || "");
+            if (st.status === "waiting_human_verification" && !announcedHumanVerification) {
+              announcedHumanVerification = true;
+              toast.warning("浏览器正在等待人工验证；完成验证后会自动继续上号");
+            }
             if (st.status === "done") {
               setAutoResult({ ok: true, email: st.email });
               toast.success(st.isUpdate ? `全自动已更新 ${st.email}` : `全自动已添加 ${st.email}`);
@@ -1583,6 +1589,12 @@ export default function ClaudeAccountsPage() {
                             onClick={() => handleRefresh(a)}>
                             {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
                           </Button>
+                          <AccountBoundSubscriptionActions
+                            product="anthropic"
+                            account={a}
+                            disabled={busyId === a.id || pwSaving}
+                            onChanged={() => fetchAccounts(true)}
+                          />
                           <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
                             onClick={() => handleReactivate(a)}>
                             <BadgeCheckIcon className="size-4 text-amber-500" />

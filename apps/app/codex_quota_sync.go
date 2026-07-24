@@ -225,6 +225,30 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 	l.mu.Unlock()
 }
 
+// ConfirmWeeklyExhausted performs a fresh upstream usage read and only returns
+// true when the weekly window is explicitly present and at or below 0.5%
+// remaining. A generic 429, a 5h-only exhaustion, or a failed/unknown usage
+// response cannot authorize hidden overflow routing.
+func (l *CodexLeaser) ConfirmWeeklyExhausted(card, upstreamProxy string, lease *CodexTokenLease) bool {
+	if lease == nil || lease.IsRelay() || !lease.AllowBoundOverflow {
+		return false
+	}
+	startedAt := time.Now().UnixMilli()
+	l.RefreshQuotaUpstream(card, upstreamProxy, lease, true)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := l.lastQuota
+	if snapshot == nil || snapshot.AccountId != lease.AccountId || snapshot.FetchedAt < startedAt {
+		return false
+	}
+	window := snapshot.CodexQuota
+	return window != nil &&
+		window.WeeklyPresent != nil &&
+		*window.WeeklyPresent &&
+		window.WeeklyPercent >= 0 &&
+		window.WeeklyPercent <= 0.5
+}
+
 // mergeCodexDisplayWindow 只用于客户端展示缓存:新值未知时保留上次已知值,明确 absent 时清空。
 // 上报服务端仍使用原始 window(-1=unknown),避免把历史值伪装成本次新观测。
 func mergeCodexDisplayWindow(previous, incoming *CodexQuotaWindow) *CodexQuotaWindow {

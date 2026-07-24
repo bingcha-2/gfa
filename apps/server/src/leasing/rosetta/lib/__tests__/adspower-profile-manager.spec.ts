@@ -332,4 +332,46 @@ describe("ensureAdspowerProfileForAccount", () => {
       adspowerProfileStatus: "trashed",
     });
   });
+
+  it("reclaims the oldest idle Claude profile when AdsPower reports no available profile slot", async () => {
+    writeJson(path.join(dataDir, "anthropic-accounts.json"), {
+      accounts: [
+        {
+          id: 7,
+          email: "old@claude.test",
+          adspowerProfileId: "old-claude-profile",
+          adspowerProfileStatus: "active",
+          adspowerProfileLastUsedAt: "2026-06-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const account: any = {
+      id: 8,
+      email: "new@claude.test",
+      proxyUrl: "socks5://127.0.0.1:1080",
+    };
+    const client = mockClient({
+      listProfiles: vi.fn(async () => [{ userId: "old-claude-profile" }]),
+      createProfile: vi.fn()
+        .mockRejectedValueOnce(new Error("[adspower] createProfile failed: profile quota is full"))
+        .mockResolvedValueOnce({ profileId: "new-claude-profile" }),
+    });
+
+    const result = await ensureAdspowerProfileForAccount({
+      dataDir,
+      provider: "anthropic",
+      account,
+      client,
+      now: () => new Date("2026-06-25T12:00:00.000Z"),
+      profileCap: 10,
+      protectMinutes: 60,
+      allowRebuildOnMissing: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, created: true, profileId: "new-claude-profile", deletedProfileId: "old-claude-profile" });
+    expect(client.deleteProfiles).toHaveBeenCalledWith(["old-claude-profile"]);
+    expect(client.createProfile).toHaveBeenCalledTimes(2);
+    const stored = JSON.parse(fs.readFileSync(path.join(dataDir, "anthropic-accounts.json"), "utf8"));
+    expect(stored.accounts[0].adspowerProfileStatus).toBe("trashed");
+  });
 });

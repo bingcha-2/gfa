@@ -39,6 +39,7 @@ export type WebMagicLinkCreds = {
 export type MagicLinkResult = {
   ok: boolean;
   url?: string;
+  code?: string;
   subject?: string;
   date?: string;
   error?: string;
@@ -78,6 +79,17 @@ class CookieJar {
 }
 
 export async function fetchAnthropicMagicLinkViaWeb(creds: WebMagicLinkCreds): Promise<MagicLinkResult> {
+  return fetchMailcomLoginMessageViaWeb(creds, "anthropic");
+}
+
+export async function fetchOpenAIVerificationCodeViaWeb(creds: WebMagicLinkCreds): Promise<MagicLinkResult> {
+  return fetchMailcomLoginMessageViaWeb(creds, "openai");
+}
+
+async function fetchMailcomLoginMessageViaWeb(
+  creds: WebMagicLinkCreds,
+  provider: "anthropic" | "openai",
+): Promise<MagicLinkResult> {
   const jar = new CookieJar();
   const proxyUrl = creds.proxyUrl?.trim() || "";
 
@@ -186,8 +198,36 @@ export async function fetchAnthropicMagicLinkViaWeb(creds: WebMagicLinkCreds): P
         subject: decodeEntities(m[3]).trim(),
       }));
 
-      const isMagic = (s: string) =>
-        /secure link to log in to claude/i.test(s) ||
+      if (provider === "openai") {
+        let sawOlderMessage = false;
+        for (const item of items.slice(0, 12)) {
+          if (sinceMs && item.ts && item.ts < sinceMs - TOLERANCE_MS) {
+            sawOlderMessage = true;
+            break;
+          }
+          const detailUrl = new URL(item.href, "https://lightmailer.mail.com/").href;
+          const detail = await navigate(detailUrl, inboxUrl);
+          const iframe = detail.body.match(/<iframe[^>]*src="([^"]+)"/i)?.[1];
+          const bodyHtml = iframe
+            ? (await navigate(new URL(decodeEntities(iframe), detailUrl).href, detailUrl)).body
+            : detail.body;
+          const code = extractOpenAIVerificationCode(bodyHtml);
+          if (!code) continue;
+          const [subjectText] = item.subject.split("|");
+          return {
+            stale: false,
+            result: {
+              ok: true,
+              code,
+              subject: subjectText.trim(),
+              date: item.ts ? new Date(item.ts).toISOString() : "",
+            },
+          };
+        }
+        return sawOlderMessage ? { stale: true, result: { ok: false, error: "" } } : null;
+      }
+
+      const isMagic = (s: string) => /secure link to log in to claude/i.test(s) ||
         (/claude\.ai|anthropic/i.test(s) && /log in|sign in|secure link/i.test(s));
       // messagelist is newest-first; the first match is the newest magic email.
       const newest = items.find((i) => isMagic(i.subject));
@@ -226,7 +266,7 @@ export async function fetchAnthropicMagicLinkViaWeb(creds: WebMagicLinkCreds): P
       if (hit && !hit.stale) return hit.result; // found a fresh link (or a hard parse error)
       if (Date.now() >= deadline) {
         if (sinceMs) return { ok: false, error: "未找到触发时间之后的新登录邮件(请确认已触发发送,稍等几秒重试)" };
-        return { ok: false, error: "收件箱未找到 Claude 登录邮件(请先触发登录/OAuth 再获取)" };
+        return { ok: false, error: provider === "openai" ? "收件箱未找到 OpenAI 验证码邮件" : "收件箱未找到 Claude 登录邮件(请先触发登录/OAuth 再获取)" };
       }
       await new Promise((r) => setTimeout(r, 3000));
     }
@@ -237,6 +277,23 @@ export async function fetchAnthropicMagicLinkViaWeb(creds: WebMagicLinkCreds): P
     }
     return { ok: false, error: `mail.com 网页抓取失败: ${message}` };
   }
+}
+
+export function extractOpenAIVerificationCode(html: string): string {
+  const text = decodeEntities(
+    String(html || "")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " "),
+  );
+  const preferred = text.match(
+    /(?:openai|chatgpt|verification|security|one-time|temporary|code)[^\d]{0,180}(\d(?:[\s-]?\d){5})(?!\d)/i,
+  );
+  if (preferred) return preferred[1].replace(/\D/g, "");
+  const candidates = [...text.matchAll(/(?<!\d)(\d(?:[\s-]?\d){5})(?!\d)/g)]
+    .map((match) => match[1].replace(/\D/g, ""));
+  return candidates.length === 1 ? candidates[0] : "";
 }
 
 // Pull the real Claude magic link out of the mail body. mail.com wraps outbound

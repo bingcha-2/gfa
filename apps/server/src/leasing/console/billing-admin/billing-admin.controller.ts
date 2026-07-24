@@ -114,6 +114,38 @@ export class BillingAdminController {
     return result;
   }
 
+  @Post("account-bindings/reset")
+  async resetBoundAccountQuotas(
+    @Body() body: { product?: string; accountId?: number },
+    @Request() req: any,
+  ) {
+    const result = await this.billingAdmin.resetBoundAccountQuotas(String(body?.product || ""), Number(body?.accountId || 0));
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "RESET_ACCOUNT_BOUND_USD_QUOTAS",
+      targetType: "UpstreamAccount",
+      targetId: `${result.product}:${result.accountId}`,
+      detail: result,
+    });
+    return result;
+  }
+
+  @Post("account-bindings/rebind")
+  async rebindBoundAccountSubscriptions(
+    @Body() body: { product?: string; accountId?: number },
+    @Request() req: any,
+  ) {
+    const result = await this.billingAdmin.rebindBoundAccountSubscriptions(String(body?.product || ""), Number(body?.accountId || 0));
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "REBIND_ACCOUNT_SUBSCRIPTIONS",
+      targetType: "UpstreamAccount",
+      targetId: `${result.product}:${result.sourceAccountId}`,
+      detail: result,
+    });
+    return result;
+  }
+
   @Post("subscriptions/:id/revoke")
   async revokeSubscription(@Param("id") id: string, @Request() req: any) {
     const result = await this.billingAdmin.revokeSubscription(id);
@@ -129,6 +161,31 @@ export class BillingAdminController {
       },
     });
 
+    return result;
+  }
+
+  @Post("subscriptions/:id/seats/upgrade")
+  async upgradeSubscriptionSeats(
+    @Param("id") id: string,
+    @Body() body: { shareSeats?: number },
+    @Request() req: any,
+  ) {
+    const result = await this.billingAdmin.upgradeSubscriptionSeats(id, Number(body?.shareSeats || 0));
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "UPGRADE_SUBSCRIPTION_SEATS",
+      targetType: "Subscription",
+      targetId: id,
+      detail: {
+        customerId: result.subscription.customerId,
+        previousShareSeats: result.previousShareSeats,
+        shareSeats: result.shareSeats,
+        alreadyAtTarget: result.alreadyAtTarget,
+        reboundProducts: result.reboundProducts,
+        startsAt: result.subscription.startsAt?.toISOString() ?? null,
+        expiresAt: result.subscription.expiresAt?.toISOString() ?? null,
+      },
+    });
     return result;
   }
 

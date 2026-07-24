@@ -180,6 +180,41 @@ export class RosettaController {
     return this.rosetta.getAutomatedCodexLoginStatus(String(jobId || ""));
   }
 
+  @Get("codex-precharge-accounts")
+  listCodexPrechargeAccounts() {
+    return this.rosetta.listCodexPrechargeAccounts();
+  }
+
+  @Post("codex-precharge-import")
+  importCodexPrechargeAccounts(@Body() body: any) {
+    return this.rosetta.importCodexPrechargeAccounts(body);
+  }
+
+  @Post("codex-precharge-session-login")
+  startCodexPrechargeSessionLogin(@Body() body: any) {
+    return this.rosetta.startCodexPrechargeSessionLogin(body);
+  }
+
+  @Post("codex-precharge-onboard")
+  startCodexPrechargeOnboard(@Body() body: any) {
+    return this.rosetta.startCodexPrechargeOnboard(body);
+  }
+
+  @Get("codex-precharge-session-login-status")
+  getCodexPrechargeSessionLoginStatus(@Query("taskId") taskId?: string) {
+    return this.rosetta.getCodexPrechargeSessionLoginStatus(String(taskId || ""));
+  }
+
+  @Post("codex-precharge-session")
+  getCodexPrechargeSession(@Body() body: any) {
+    return this.rosetta.getCodexPrechargeSession(body);
+  }
+
+  @Post("codex-precharge-delete")
+  deleteCodexPrechargeAccount(@Body() body: any) {
+    return this.rosetta.deleteCodexPrechargeAccount(body);
+  }
+
   @Post("codex-toggle-account")
   toggleCodexAccount(@Body() body: any) {
     return this.rosetta.toggleCodexAccount(body);

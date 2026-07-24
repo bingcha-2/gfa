@@ -146,6 +146,35 @@ export type RelayFulfillmentConfig = {
   modelMap?: Record<string, string>;
 };
 
+export type BoundAccountOverflowSignal = {
+  accountId: number;
+  leaseId: string;
+  reason: "quota_exhausted";
+};
+
+export type BoundAccountOverflowContext<TAccount extends { id: number }> = {
+  subscriptionId: string;
+  record: any;
+  homeAccountId: number;
+  modelKey: string;
+  accounts: TAccount[];
+  eligibleAccountIds: Set<number>;
+  overflowSignal?: BoundAccountOverflowSignal;
+  activeLeaseCount: (accountId: number) => number;
+};
+
+export type BoundAccountOverflowDecision = {
+  servingAccountId: number;
+  overflow: boolean;
+  reason?: string;
+};
+
+export type BoundAccountOverflowRouter<TAccount extends { id: number }> = {
+  resolve: (
+    context: BoundAccountOverflowContext<TAccount>,
+  ) => Promise<BoundAccountOverflowDecision>;
+};
+
 export type LeaseServiceOptions = {
   accessKeysFilePath?: string;
   /** Shared AccessKeyStore injected so all product pools share one usage cache. */
@@ -169,6 +198,8 @@ export type LeaseServiceOptions = {
   fairShareTracker?: FairShareTracker;
   /** Optional accountless fulfillment. Used by Codex NewAPI relay plans. */
   relayConfigProvider?: (record: any) => Promise<RelayFulfillmentConfig | null>;
+  /** Optional runtime-only fallback for a statically-bound account. */
+  boundAccountOverflowRouter?: BoundAccountOverflowRouter<any>;
   /** Error class thrown by fail(); the controller routes on `instanceof`. */
   errorClass?: LeaseHttpErrorClass;
   /** getStatus().mode label. Default "remote-token-server". */
@@ -182,6 +213,9 @@ export type LeaseServiceOptions = {
 type LeaseRecord = {
   leaseId: string;
   accountId: number;
+  homeAccountId?: number;
+  overflow?: boolean;
+  overflowReason?: string;
   email: string;
   projectId: string;
   clientId: string;
@@ -203,6 +237,9 @@ type LeaseProofPayload = {
   provider: string;
   leaseId: string;
   accountId: number;
+  homeAccountId?: number;
+  overflow?: boolean;
+  overflowReason?: string;
   accessKeyId: string;
   accessKeySessionId: string;
   clientId: string;
@@ -338,6 +375,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly maxRetainedLeaseRecords: number;
   private readonly leaseProofSecret: string;
   private readonly relayConfigProvider: ((record: any) => Promise<RelayFulfillmentConfig | null>) | null;
+  private readonly boundAccountOverflowRouter: BoundAccountOverflowRouter<TAccount> | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly banEventRecorder: BanEventRecorder | null;
   private readonly requestLogRecorder: RequestLogRecorder | null;
@@ -401,6 +439,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       || "",
     );
     this.relayConfigProvider = options.relayConfigProvider || null;
+    this.boundAccountOverflowRouter = options.boundAccountOverflowRouter || null;
     this.tokenUsageTracker = options.tokenUsageTracker || null;
     this.banEventRecorder = options.banEventRecorder || null;
     this.requestLogRecorder = options.requestLogRecorder || null;
@@ -766,6 +805,45 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       throw this.fail(409, "服务开通中，请稍后重试或联系客服");
     }
 
+    this.cleanupExpiredLeases();
+    const leaseIndex = this.buildActiveLeaseIndex();
+    let servingPinnedAccountId = hardPinnedAccountId;
+    let overflowDecision: BoundAccountOverflowDecision | null = null;
+    const allowBoundOverflow = hardPinnedAccountId > 0
+      && this.provider.id === "codex"
+      && usesUsdQuotaForProduct(auth.record, this.provider.id)
+      && Boolean(this.boundAccountOverflowRouter);
+    if (allowBoundOverflow) {
+      const accounts = this.readAccounts();
+      const eligibleAccountIds = new Set(
+        accounts
+          .filter((candidate) => this.isOverflowAccountEligible(candidate, modelKey, payload))
+          .map((candidate) => candidate.id),
+      );
+      const overflowSignal = this.validateBoundOverflowSignal({
+        payload,
+        subscriptionId: auth.record.id,
+        clientId,
+        modelKey,
+      });
+      overflowDecision = await this.boundAccountOverflowRouter!.resolve({
+        subscriptionId: auth.record.id,
+        record: auth.record,
+        homeAccountId: hardPinnedAccountId,
+        modelKey,
+        accounts,
+        eligibleAccountIds,
+        overflowSignal,
+        activeLeaseCount: (accountId) => this.activeLeaseCountFrom(leaseIndex, accountId, modelKey),
+      });
+      const requestedServingId = Number(overflowDecision.servingAccountId || 0);
+      if (requestedServingId > 0 && eligibleAccountIds.has(requestedServingId)) {
+        servingPinnedAccountId = requestedServingId;
+      } else {
+        overflowDecision = null;
+      }
+    }
+
     // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
     if (hardPinnedAccountId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(auth.record, this.provider.id)) {
       const bucket = bucketKey(this.provider.id, modelKey);
@@ -797,14 +875,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let accessToken = "";
     let rotated = false;
 
-    this.cleanupExpiredLeases();
-    const leaseIndex = this.buildActiveLeaseIndex();
-
     const candidatePool = isPreferredDynamic
       ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
       : isDisplayBoundPool
         ? this.displayBoundPoolAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
-        : this.availableAccounts(payload, modelKey, hardPinnedAccountId);
+        : this.availableAccounts(payload, modelKey, servingPinnedAccountId);
     // A bound card has at most one candidate (its account), so there is nothing to
     // scan past — one attempt, then the busy error. No fallback to other accounts.
     const maxAttempts = hardPinnedAccountId
@@ -823,7 +898,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         ? this.preferredDynamicAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
         : isDisplayBoundPool
           ? this.displayBoundPoolAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
-          : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, hardPinnedAccountId);
+          : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, servingPinnedAccountId);
       if (!account) break;
 
       try {
@@ -860,7 +935,25 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // A successful lease means the account is alive again — clear any persisted
     // dead verdict so it doesn't get re-marked on the next restart.
     this.clearPersistedAccountError(account.id);
-    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, hardPinnedAccountId, accessToken);
+    const isOverflowLease = Boolean(
+      overflowDecision?.overflow
+      && hardPinnedAccountId > 0
+      && account.id !== hardPinnedAccountId,
+    );
+    const displayAccount = isOverflowLease
+      ? this.readAccounts().find((candidate) => candidate.id === hardPinnedAccountId) || account
+      : account;
+    const lease = this.createLease(
+      account,
+      accessKeySessionId,
+      auth.record.id,
+      clientId,
+      modelKey,
+      payload,
+      hardPinnedAccountId,
+      accessToken,
+      isOverflowLease ? overflowDecision?.reason : undefined,
+    );
     this.leases.set(lease.leaseId, lease);
     this.rememberAffinity(clientId, modelKey, account.id);
     this.totalLeases++;
@@ -871,7 +964,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     accStats.lastUsedAt = this.now();
 
     // Pre-compute account-level and per-card fair-share quota fractions.
-    const accountBucketsData = this.accountBucketQuotas(account);
+    const accountBucketsData = this.accountBucketQuotas(displayAccount);
     const rawFairShare = (hardPinnedAccountId > 0 && this.fairShareTracker && !usesUsdQuotaForProduct(auth.record, this.provider.id))
       ? this.fairShareTracker.getCardQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
@@ -907,24 +1000,24 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // 绑定卡:把账号对齐的窗口 reset 下发,客户端本地额度窗口据此与服务端对齐(号池卡为 0,不改)。
       accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       accountId: account.id,
-      emailHint: maskEmail(account.email),
+      emailHint: maskEmail(displayAccount.email),
       serviceAccount: {
-        accountId: account.id,
-        emailHint: maskEmail(account.email),
-        planType: (account as any).planType || "",
+        accountId: displayAccount.id,
+        emailHint: maskEmail(displayAccount.email),
+        planType: (displayAccount as any).planType || "",
       },
       // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
       // 供客户端「绑定账号信息」面板展示。账号尚无快照时为空串。
-      planType: (account as any).planType || "",
+      planType: (displayAccount as any).planType || "",
       accessToken,
       ...(this.provider.bloodBarFraction
-        ? { boundAccount: { id: account.id, ...this.provider.bloodBarFraction(account, modelKey) } }
+        ? { boundAccount: { id: displayAccount.id, ...this.provider.bloodBarFraction(displayAccount, modelKey) } }
         : {}),
       // All known per-bucket quotas for the leased account, so the client can show
       // real blood bars for every model right after activation (not just the one
       // leased). Empty {} when the account has no quota snapshots yet.
       accountBuckets: accountBucketsData,
-      ...this.provider.leaseResponseExtras(account),
+      ...this.provider.leaseResponseExtras(displayAccount),
       // 通用出口代理:该号绑定的粘性住宅出口(空=未绑定)。客户端据此固定出口 IP。
       accountProxyUrl: String((account as any).proxyUrl || "").trim(),
       // 出口策略下发为布尔,客户端无需写死 provider 名:
@@ -938,6 +1031,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // to skip the futile "exclude account + re-lease" rotation on 429/503, while
       // STILL allowing wait-and-retry on the SAME account for transient capacity.
       bound: hardPinnedAccountId > 0,
+      allowBoundOverflow,
       displayBound: isPreferredDynamic || isDisplayBoundPool || displayBoundAccountId > 0,
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
@@ -2131,6 +2225,52 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.accessKeyStore.flush();
   }
 
+  private validateBoundOverflowSignal(input: {
+    payload: any;
+    subscriptionId: string;
+    clientId: string;
+    modelKey: string;
+  }): BoundAccountOverflowSignal | undefined {
+    if (String(input.payload?.overflowReason || "") !== "quota_exhausted") return undefined;
+    const leaseId = String(input.payload?.overflowFromLeaseId || "").trim();
+    const proof = input.payload?.overflowFromLeaseProof;
+    if (!leaseId || typeof proof !== "string" || !proof) return undefined;
+    const lease = this.leases.get(leaseId) || this.restoreLeaseFromProof(leaseId, proof);
+    if (!lease
+      || lease.accountId <= 0
+      || lease.accessKeyId !== input.subscriptionId
+      || lease.clientId !== input.clientId
+      || lease.modelKey !== input.modelKey
+      || lease.createdAt < this.now() - 2 * 60 * 60_000) {
+      return undefined;
+    }
+    return { accountId: lease.accountId, leaseId, reason: "quota_exhausted" };
+  }
+
+  private isOverflowAccountEligible(account: TAccount, modelKey: string, payload: any): boolean {
+    const excluded = new Set(
+      (Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [])
+        .map((value: unknown) => Number(value))
+        .filter((value: number) => Number.isFinite(value) && value > 0),
+    );
+    const raw = account as any;
+    const status = String(raw.status || "").trim().toLowerCase();
+    const unhealthyStatus = status
+      && status !== "active"
+      && status !== "ready"
+      && status !== "healthy";
+    return raw.enabled !== false
+      && !excluded.has(account.id)
+      && this.provider.isAccountEligible(account)
+      && Boolean(account.refreshToken || raw.accessToken)
+      && !unhealthyStatus
+      && raw.banned !== true
+      && raw.verificationRequired !== true
+      && raw.needsVerification !== true
+      && !String(raw.error || "").trim()
+      && !this.isAccountBlocked(account.id, modelKey, this.now(), false);
+  }
+
   private availableAccounts(
     payload: any,
     modelKey?: string,
@@ -2335,6 +2475,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     payload: any,
     boundAccountId = 0,
     accessToken = "",
+    overflowReason?: string,
   ): LeaseRecord {
     let ttlMs = Math.max(60_000, Math.min(this.leaseTtlMs, MAX_REMOTE_LEASE_TTL_MS));
     // Bound card: the account is fixed, so there is no rebalancing reason to
@@ -2349,6 +2490,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return {
       leaseId: this.randomId(),
       accountId: account.id,
+      ...(boundAccountId > 0 ? { homeAccountId: boundAccountId } : {}),
+      ...(overflowReason ? { overflow: true, overflowReason } : {}),
       email: account.email,
       projectId: String((account as any).projectId || ""),
       clientId,
@@ -2399,6 +2542,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       provider: this.provider.id,
       leaseId: lease.leaseId,
       accountId: lease.accountId,
+      homeAccountId: lease.homeAccountId,
+      overflow: lease.overflow,
+      overflowReason: lease.overflowReason,
       accessKeyId: lease.accessKeyId,
       accessKeySessionId: lease.accessKeySessionId,
       clientId: lease.clientId,
@@ -2455,6 +2601,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const lease: LeaseRecord = {
       leaseId: proof.leaseId,
       accountId: proof.accountId,
+      homeAccountId: Number(proof.homeAccountId || 0) || undefined,
+      overflow: proof.overflow === true,
+      overflowReason: String(proof.overflowReason || "") || undefined,
       email: account?.email || "",
       projectId: String((account as any)?.projectId || ""),
       clientId: String(proof.clientId || ""),

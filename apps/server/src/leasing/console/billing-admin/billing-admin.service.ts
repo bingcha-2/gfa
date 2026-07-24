@@ -92,6 +92,26 @@ export class BillingAdminService {
     return result;
   }
 
+  async resetBoundAccountQuotas(product: string, accountId: number) {
+    if (product !== "codex" && product !== "anthropic") throw new ConflictException(`Product ${product} does not support account quota reset`);
+    return this.entitlementSync.resetBoundAccountUsdQuotas(product, Number(accountId));
+  }
+
+  async rebindBoundAccountSubscriptions(product: string, accountId: number) {
+    if (product !== "codex" && product !== "anthropic") throw new ConflictException(`Product ${product} does not support account rebinding`);
+    const result = await this.entitlementSync.rebindBoundAccountSubscriptions(product, Number(accountId));
+    if (!result.ok) throw new ConflictException({ error: "ACCOUNT_REBIND_FAILED", message: result.error });
+    return result;
+  }
+
+  async upgradeSubscriptionSeats(subscriptionId: string, shareSeats: number) {
+    const result = await this.entitlementSync.upgradeSubscriptionSeats(subscriptionId, Number(shareSeats));
+    if (!result.ok) {
+      throw new ConflictException({ error: "SEAT_UPGRADE_FAILED", message: result.error });
+    }
+    return result;
+  }
+
   /**
    * Admin plan-order list: paginated, filterable by status/payChannel and
    * searchable by outTradeNo or customer email. Joins plan name + customer

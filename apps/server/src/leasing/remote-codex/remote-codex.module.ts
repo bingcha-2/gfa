@@ -18,6 +18,7 @@ const remoteCodexProvider = {
         const settings = await planCatalog.resolveCodexRelaySettings();
         return settings.enabled ? settings : null;
       },
+      publishedCatalogProvider: () => planCatalog.getPublished(),
     }),
   inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService, PlanCatalogService],
 };

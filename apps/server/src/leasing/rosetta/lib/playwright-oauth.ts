@@ -32,7 +32,68 @@ export type PlaywrightOAuthOpts = {
   totpSecret?: string;
   proxyUrl?: string; // socks5://user:pass@host:port
   adspowerProfileId?: string;
+  onHumanVerificationRequired?: (details: { url: string; timeoutMs: number }) => void;
+  manualVerificationTimeoutMs?: number;
 };
+
+const DEFAULT_MANUAL_VERIFICATION_TIMEOUT_MS = 15 * 60_000;
+
+async function isHumanVerificationVisible(page: Page): Promise<boolean> {
+  const challenge = page.locator('iframe[title*="hCaptcha challenge" i]').first();
+  return challenge.isVisible().catch(() => false);
+}
+
+async function waitForVisibleHumanVerification(
+  page: Page,
+  onRequired?: PlaywrightOAuthOpts["onHumanVerificationRequired"],
+  timeoutMs = DEFAULT_MANUAL_VERIFICATION_TIMEOUT_MS,
+): Promise<boolean> {
+  if (!(await isHumanVerificationVisible(page))) return false;
+  onRequired?.({ url: page.url(), timeoutMs });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isHumanVerificationVisible(page))) return true;
+    await page.waitForTimeout(1_000).catch(() => {});
+  }
+  throw new Error(`等待人工完成人机验证超时（${Math.round(timeoutMs / 60_000)} 分钟）`);
+}
+
+async function waitForOAuthCallback(
+  page: Page,
+  codePromise: Promise<{ code: string; state: string; url: string }>,
+  opts: {
+    automaticTimeoutMs: number;
+    manualVerificationTimeoutMs?: number;
+    onHumanVerificationRequired?: PlaywrightOAuthOpts["onHumanVerificationRequired"];
+  },
+): Promise<{ code: string; state: string; url: string }> {
+  let result: { code: string; state: string; url: string } | undefined;
+  let callbackError: unknown;
+  void codePromise.then(
+    (value) => { result = value; },
+    (error) => { callbackError = error; },
+  );
+
+  let deadline = Date.now() + opts.automaticTimeoutMs;
+  let waitingForHuman = false;
+  const manualTimeoutMs = opts.manualVerificationTimeoutMs || DEFAULT_MANUAL_VERIFICATION_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    if (result) return result;
+    if (callbackError) throw callbackError;
+    if (!waitingForHuman && await isHumanVerificationVisible(page)) {
+      waitingForHuman = true;
+      deadline = Date.now() + manualTimeoutMs;
+      opts.onHumanVerificationRequired?.({ url: page.url(), timeoutMs: manualTimeoutMs });
+    }
+    await page.waitForTimeout(1_000).catch(() => {});
+  }
+
+  if (waitingForHuman) {
+    throw new Error(`等待人工完成人机验证及 OAuth 回调超时（${Math.round(manualTimeoutMs / 60_000)} 分钟）`);
+  }
+  throw new Error("等待 OAuth 回调超时");
+}
 
 export function generateGoogleTOTP(secret: string): string {
   const cleaned = secret.replace(/[\s\-=]/g, "").toUpperCase();
@@ -198,16 +259,18 @@ export class PlaywrightOAuthSession {
     private adspowerOpts?: { client: AdsPowerClient; profileId: string },
   ) {}
 
-  async consumeMagicLink(magicLinkUrl: string, timeoutMs = 60_000, authorizeUrl?: string): Promise<ConsumeResult> {
+  async consumeMagicLink(
+    magicLinkUrl: string,
+    timeoutMs = 60_000,
+    authorizeUrl?: string,
+    humanVerification?: Pick<PlaywrightOAuthOpts, "onHumanVerificationRequired" | "manualVerificationTimeoutMs">,
+  ): Promise<ConsumeResult> {
     try {
       const callbackPattern = /\/oauth\/code\/callback\?/;
 
       const codePromise = new Promise<{ code: string; state: string; url: string }>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("等待 OAuth 回调超时")), timeoutMs);
-
         const check = (url: string) => {
           if (!callbackPattern.test(url)) return;
-          clearTimeout(timer);
           try {
             const parsed = new URL(url);
             resolve({
@@ -228,6 +291,11 @@ export class PlaywrightOAuthSession {
 
       if (magicLinkUrl) {
         await this.page.goto(magicLinkUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+        await waitForVisibleHumanVerification(
+          this.page,
+          humanVerification?.onHumanVerificationRequired,
+          humanVerification?.manualVerificationTimeoutMs,
+        );
       }
 
       // The SPA may show a consent screen
@@ -267,7 +335,11 @@ export class PlaywrightOAuthSession {
         }
       }
 
-      const result = await codePromise;
+      const result = await waitForOAuthCallback(this.page, codePromise, {
+        automaticTimeoutMs: timeoutMs,
+        manualVerificationTimeoutMs: humanVerification?.manualVerificationTimeoutMs,
+        onHumanVerificationRequired: humanVerification?.onHumanVerificationRequired,
+      });
       return {
         ok: Boolean(result.code),
         code: result.code,
@@ -507,7 +579,6 @@ export async function readClaudeOrganizationsViaSessionKey(opts: {
       browser = await chromium.connectOverCDP(openRes.debugUrl);
       context = browser.contexts()[0];
       if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
-      await context.clearCookies().catch(() => {});
       page = context.pages()[0] || (await context.newPage());
     } else {
       if (!opts.proxyUrl) throw new Error("未提供 SOCKS5 代理 URL，且未使用指纹浏览器");
@@ -603,6 +674,8 @@ export async function loginViaSessionKey(opts: {
   proxyUrl?: string;
   adspowerProfileId?: string;
   timeoutMs?: number;
+  onHumanVerificationRequired?: PlaywrightOAuthOpts["onHumanVerificationRequired"];
+  manualVerificationTimeoutMs?: number;
 }): Promise<ConsumeResult> {
   let relay: RelayHandle | null = null;
   let browser: Browser | null = null;
@@ -640,7 +713,6 @@ export async function loginViaSessionKey(opts: {
       context = browser.contexts()[0];
       if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
 
-      await context.clearCookies().catch(() => {});
       page = context.pages()[0] || (await context.newPage());
     } else {
       if (!opts.proxyUrl) throw new Error("未提供 SOCKS5 代理 URL，且未使用指纹浏览器");
@@ -671,10 +743,8 @@ export async function loginViaSessionKey(opts: {
 
     const callbackPattern = /\/oauth\/code\/callback\?/;
     const codePromise = new Promise<{ code: string; state: string; url: string }>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("等待 OAuth 回调超时")), timeoutMs);
       const check = (url: string) => {
         if (!callbackPattern.test(url)) return;
-        clearTimeout(timer);
         try {
           const parsed = new URL(url);
           resolve({ code: parsed.searchParams.get("code") || "", state: parsed.searchParams.get("state") || "", url });
@@ -702,7 +772,11 @@ export async function loginViaSessionKey(opts: {
       // No consent button: authorized accounts may redirect immediately.
     }
 
-    const result = await codePromise;
+    const result = await waitForOAuthCallback(page, codePromise, {
+      automaticTimeoutMs: timeoutMs,
+      manualVerificationTimeoutMs: opts.manualVerificationTimeoutMs,
+      onHumanVerificationRequired: opts.onHumanVerificationRequired,
+    });
     return {
       ok: Boolean(result.code),
       code: result.code,
@@ -755,7 +829,6 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
         throw new Error("未在 AdsPower 浏览器实例中找到上下文");
       }
 
-      await context.clearCookies().catch(() => {});
       page = context.pages()[0] || await context.newPage();
     } else {
       if (!opts.proxyUrl) {
@@ -789,6 +862,11 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
 
     console.log("[playwright-oauth] navigating to authorize URL...");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await waitForVisibleHumanVerification(
+      page,
+      opts.onHumanVerificationRequired,
+      opts.manualVerificationTimeoutMs,
+    );
 
     const isGmail = opts.email.toLowerCase().endsWith("@gmail.com");
 
@@ -1155,6 +1233,11 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
       await typeIntoLoginInput(page, emailInput, opts.email);
       await clickEmailSubmit(page);
       await page.waitForTimeout(2000);
+      await waitForVisibleHumanVerification(
+        page,
+        opts.onHumanVerificationRequired,
+        opts.manualVerificationTimeoutMs,
+      );
 
       const bodyText = await page.textContent("body").catch(() => "");
       console.log(`[playwright-oauth] after submit, page text: ${(bodyText || "").slice(0, 200)}`);

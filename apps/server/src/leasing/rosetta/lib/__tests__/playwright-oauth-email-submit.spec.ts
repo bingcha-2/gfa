@@ -24,7 +24,7 @@ vi.mock("../adspower-client", () => ({
   parseProxyToAdsPowerUserConfig: vi.fn(() => ({ proxy_type: "socks5" })),
 }));
 
-import { PlaywrightOAuthSession, clickEmailSubmit, triggerMagicLinkViaBrowser } from "../playwright-oauth";
+import { PlaywrightOAuthSession, clickEmailSubmit, loginViaSessionKey, triggerMagicLinkViaBrowser } from "../playwright-oauth";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,6 +83,8 @@ describe("PlaywrightOAuthSession.consumeMagicLink", () => {
     page.mainFrame = vi.fn(() => mainFrame);
     page.url = vi.fn(() => currentUrl);
     page.textContent = vi.fn(async () => "Claude home");
+    page.locator = vi.fn(() => ({ first: () => ({ isVisible: vi.fn(async () => false) }) }));
+    page.waitForTimeout = vi.fn(async () => {});
     page.getByRole = vi.fn(() => ({
       waitFor: vi.fn(async () => {
         throw new Error("no consent button");
@@ -126,11 +128,15 @@ describe("triggerMagicLinkViaBrowser", () => {
       isVisible: vi.fn(async () => true),
       click: vi.fn(async () => { events.push("click-submit"); }),
     };
+    const hiddenChallenge = {
+      first: () => hiddenChallenge,
+      isVisible: vi.fn(async () => false),
+    };
     const page = {
       goto: vi.fn(async () => { events.push("goto"); }),
       waitForLoadState: vi.fn(async () => { events.push("load"); }),
       waitForTimeout: vi.fn(async (ms: number) => { events.push(`wait:${ms}`); }),
-      locator: vi.fn(() => emailInput),
+      locator: vi.fn((selector: string) => selector.includes("hCaptcha") ? hiddenChallenge : emailInput),
       getByRole: vi.fn(() => submitButton),
       evaluate: vi.fn(async () => true),
       textContent: vi.fn(async () => "Check your email"),
@@ -161,7 +167,66 @@ describe("triggerMagicLinkViaBrowser", () => {
     expect(settleIndex).toBeGreaterThan(events.indexOf("goto"));
     expect(pressIndex).toBeGreaterThan(settleIndex);
     expect(emailInput.fill).not.toHaveBeenCalledWith("mail-user@example.com");
+    expect(context.clearCookies).not.toHaveBeenCalled();
 
     await result.session?.close();
+  });
+});
+
+describe("loginViaSessionKey", () => {
+  it("keeps profile cookies and resumes automatically after a human challenge is completed", async () => {
+    const page = new EventEmitter() as any;
+    const callbackUrl = "https://platform.claude.com/oauth/code/callback?code=code-1&state=state-1";
+    const mainFrame = {};
+    let challengeVisible = false;
+    let callbackEmitted = false;
+
+    const challenge = {
+      first: () => challenge,
+      isVisible: vi.fn(async () => challengeVisible),
+    };
+    const authorizeButton = {
+      waitFor: vi.fn(async () => {}),
+      click: vi.fn(async () => { challengeVisible = true; }),
+    };
+    page.mainFrame = vi.fn(() => mainFrame);
+    page.url = vi.fn(() => "https://claude.ai/oauth/authorize");
+    page.goto = vi.fn(async () => {});
+    page.locator = vi.fn(() => challenge);
+    page.getByRole = vi.fn(() => authorizeButton);
+    page.textContent = vi.fn(async () => "Authorize");
+    page.waitForTimeout = vi.fn(async () => {
+      if (challengeVisible && !callbackEmitted) {
+        challengeVisible = false;
+        callbackEmitted = true;
+        queueMicrotask(() => page.emit("request", { url: () => callbackUrl }));
+      }
+    });
+
+    const context = {
+      clearCookies: vi.fn(async () => {}),
+      addCookies: vi.fn(async () => {}),
+      pages: vi.fn(() => [page]),
+    };
+    const browser = {
+      contexts: vi.fn(() => [context]),
+      close: vi.fn(async () => {}),
+    };
+    oauthMocks.connectOverCDP.mockResolvedValueOnce(browser);
+    const onHumanVerificationRequired = vi.fn();
+
+    const result = await loginViaSessionKey({
+      authorizeUrl: "https://claude.com/cai/oauth/authorize",
+      sessionKey: "sk-ant-sid02-test",
+      adspowerProfileId: "profile-1",
+      timeoutMs: 100,
+      manualVerificationTimeoutMs: 100,
+      onHumanVerificationRequired,
+    });
+
+    expect(result).toMatchObject({ ok: true, code: "code-1", state: "state-1" });
+    expect(onHumanVerificationRequired).toHaveBeenCalledTimes(1);
+    expect(context.clearCookies).not.toHaveBeenCalled();
+    expect(context.addCookies).toHaveBeenCalled();
   });
 });

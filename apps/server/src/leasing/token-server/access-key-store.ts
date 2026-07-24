@@ -276,9 +276,17 @@ function resetUpstreamObservation(
 ): void {
   const usage = usdProductUsage(record, product);
   if (!usage) return;
+  const previousFiveHourResetAt = Number(usage.upstreamFiveHour?.resetAt || 0);
+  const previousWeeklyResetAt = Number(usage.upstreamWeekly?.resetAt || 0);
   usage.upstreamAccountId = undefined;
-  usage.upstreamFiveHour = baselineReason ? { baselineReason } : undefined;
-  usage.upstreamWeekly = baselineReason ? { baselineReason } : undefined;
+  usage.upstreamFiveHour = baselineReason ? {
+    baselineReason,
+    ...(previousFiveHourResetAt > 0 ? { resetAt: previousFiveHourResetAt } : {}),
+  } : undefined;
+  usage.upstreamWeekly = baselineReason ? {
+    baselineReason,
+    ...(previousWeeklyResetAt > 0 ? { resetAt: previousWeeklyResetAt } : {}),
+  } : undefined;
 }
 
 function normalizeObservedAt(value: unknown, fallback: number): number {
@@ -366,6 +374,16 @@ function applyUpstreamWindowSnapshot(
   }
 
   const trustedResetEventId = String(sample.trustedResetEventId || '');
+  if (state.baselineReason === 'rebind') {
+    // A rebind must never turn an account change into an early personal quota
+    // reset. The first new-mother sample is baseline-only, and the transition
+    // window ends at the later of the old and new reset epochs. After that
+    // boundary, ordinary upstream snapshots align future windows normally.
+    state.resetAt = Math.max(previousResetAt, incomingResetAt) || undefined;
+    baselineFraction();
+    commitMeta();
+    return true;
+  }
   if (trustedResetEventId && state.appliedResetEventId !== trustedResetEventId) {
     // Anthropic can refill every account in-place while leaving the next
     // scheduled resetAt unchanged. The caller only supplies this event after it

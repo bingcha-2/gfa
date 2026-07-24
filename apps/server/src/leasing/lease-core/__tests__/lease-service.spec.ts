@@ -818,6 +818,72 @@ describe("LeaseService (generic core)", () => {
     expect((r as any).bound).toBe(true);
   });
 
+  it("validates the old lease proof, serves from overflow, and keeps the home account hidden", async () => {
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "home@example.com", refreshToken: "rt-1", enabled: true, planType: "pro" },
+        { id: 2, email: "overflow@example.com", refreshToken: "rt-2", enabled: true, planType: "pro" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        bindings: { codex: 1 },
+        quotaAlgorithm: "usd",
+        usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 } },
+      }],
+    });
+    refreshToken.mockImplementation(async (account: any) => `token-${account.id}`);
+    const resolve = vi.fn(async (context: any) => context.overflowSignal
+      ? { servingAccountId: 2, overflow: true, reason: "quota_exhausted" }
+      : { servingAccountId: 1, overflow: false });
+    let sequence = 0;
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "codex"),
+      {
+        accessKeysFilePath,
+        now: () => Date.now(),
+        randomId: () => `overflow-lease-${++sequence}`,
+        minClientVersion: "",
+        leaseProofSecret: "overflow-proof-secret",
+        boundAccountOverflowRouter: { resolve },
+      },
+    ));
+
+    const home = await service.leaseToken(REQ, {
+      clientId: "c1",
+      modelKey: "gpt-5.4",
+    });
+    const overflow = await service.leaseToken(REQ, {
+      clientId: "c1",
+      modelKey: "gpt-5.4",
+      excludeAccountIds: [1],
+      overflowFromLeaseId: home.leaseId,
+      overflowFromLeaseProof: home.leaseProof,
+      overflowReason: "quota_exhausted",
+    });
+
+    expect(resolve).toHaveBeenLastCalledWith(expect.objectContaining({
+      subscriptionId: "card-1",
+      homeAccountId: 1,
+      overflowSignal: expect.objectContaining({ accountId: 1, leaseId: home.leaseId }),
+    }));
+    expect(overflow).toMatchObject({
+      accountId: 2,
+      accessToken: "token-2",
+      bound: true,
+      allowBoundOverflow: true,
+      serviceAccount: {
+        accountId: 1,
+        planType: "pro",
+      },
+    });
+    expect((service as any).accessKeyStore.findById("card-1").bindings.codex).toBe(1);
+  });
+
   it("marks a pool lease bound:false (client may still rotate across accounts)", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {

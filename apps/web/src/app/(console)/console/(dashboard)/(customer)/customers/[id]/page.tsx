@@ -177,6 +177,15 @@ export default function CustomerDetailPage() {
     }
   }
 
+  async function openSubscriptionDetail(subscriptionId: string) {
+    try {
+      const subscription = await apiRequest<ConsoleSubscription>(`subscriptions/${subscriptionId}`);
+      setDetail(subscription);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
   function openSubEdit(sub: ConsoleSubscriptionLite) {
     setEditingSub(sub);
     setSubEditForm({ expiresAt: toDatetimeLocal(sub.expiresAt) });
@@ -306,7 +315,7 @@ export default function CustomerDetailPage() {
                     {c.subscriptions.map((s) => (
                       <TableRow key={s.id}>
                         <TableCell className="font-medium">
-                          <button className="text-blue-600 hover:underline" onClick={() => setDetail({ ...s, customerId: c.id, customer: { email: c.email }, line: undefined, plan: null } as ConsoleSubscription)}>
+                          <button className="text-blue-600 hover:underline" onClick={() => void openSubscriptionDetail(s.id)}>
                             {selectionName(s.config)}
                           </button>
                           <div className="text-xs text-muted-foreground mt-0.5">

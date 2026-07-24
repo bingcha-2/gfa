@@ -96,7 +96,7 @@ describe("startAutoClaudeOAuth SK direct login", () => {
     );
   });
 
-  it("prefers the mailbox login path when both password and sessionKey are provided", () => {
+  it("prefers explicit SK login when both password and sessionKey are provided", () => {
     const svc = new ClaudeAccountService({ dataDir } as any, stubAccessKey);
     const run = vi.spyOn(svc as any, "runAutoOAuth").mockResolvedValue(undefined);
 
@@ -117,7 +117,7 @@ describe("startAutoClaudeOAuth SK direct login", () => {
       "k1bvbavq",
       undefined,
       undefined,
-      "",
+      "sk-ant-sid02-AbCdEf1234567890",
     );
   });
 

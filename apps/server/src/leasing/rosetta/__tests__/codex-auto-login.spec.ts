@@ -36,7 +36,6 @@ describe("Codex automated login", () => {
       email: "outlook-user@example.test",
       password: "mail-password",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
-      adspowerProfileId: "profile-1",
     });
 
     expect(result).toMatchObject({ ok: true, jobId: expect.any(String) });
@@ -46,12 +45,63 @@ describe("Codex automated login", () => {
         email: "outlook-user@example.test",
         phoneNumber: "",
         smsUrl: "",
-        adspowerProfileId: "profile-1",
+        proxyUrl: "socks5://user:pass@198.51.100.10:443",
       }),
     );
   });
 
-  it("persists the AdsPower profile id on the saved Codex account after OAuth exchange", async () => {
+  it("stores Codex precharge credentials without exposing the password or session in the list", () => {
+    const svc = new CodexService({ dataDir, codexOAuthPort: 1455 } as any, stubAccessKey);
+
+    const result = svc.importCodexPrechargeAccounts({
+      lines: "precharge@example.test----mail-password",
+    });
+
+    expect(result).toMatchObject({ ok: true, successCount: 1 });
+    const listed = svc.listCodexPrechargeAccounts().accounts[0] as Record<string, unknown>;
+    expect(listed).toMatchObject({ email: "precharge@example.test", proxyUrl: "", hasSession: false, status: "NEW" });
+    expect(listed).not.toHaveProperty("password");
+    expect(listed).not.toHaveProperty("session");
+  });
+
+  it("captures a ChatGPT session in Edge and returns it only through the explicit copy endpoint", async () => {
+    vi.mocked(runCodexBrowserLogin).mockResolvedValueOnce({ ok: true, code: "oauth-code", session: "{\"user\":{\"email\":\"precharge@example.test\"},\"accessToken\":\"secret\"}" });
+    const svc = new CodexService({ dataDir, codexOAuthPort: 1455 } as any, stubAccessKey);
+    svc.importCodexPrechargeAccounts({
+      lines: "precharge@example.test----mail-password",
+    });
+
+    const started = svc.startCodexPrechargeSessionLogin({ accountId: 1 });
+
+    expect(started).toMatchObject({ ok: true, taskId: expect.any(String) });
+    await vi.waitFor(() => expect(svc.getCodexPrechargeSessionLoginStatus(started.taskId).status).toBe("completed"));
+    expect(runCodexBrowserLogin).toHaveBeenCalledWith(expect.objectContaining({
+      email: "precharge@example.test",
+      authorizeUrl: "https://chatgpt.com/auth/login",
+      proxyUrl: "",
+      captureChatGptSession: true,
+      sessionOnly: true,
+    }));
+    expect(svc.getCodexPrechargeSession({ accountId: 1 })).toMatchObject({ ok: true, session: expect.stringContaining("accessToken") });
+    expect((svc.listCodexPrechargeAccounts().accounts[0] as Record<string, unknown>).hasSession).toBe(true);
+  });
+
+  it("starts Codex onboarding from a precharge account without requiring a proxy", async () => {
+    const svc = new CodexService({ dataDir, codexOAuthPort: 1455 } as any, stubAccessKey);
+    svc.importCodexPrechargeAccounts({ lines: "precharge@example.test----mail-password" });
+
+    const started = svc.startCodexPrechargeOnboard({ accountId: 1 });
+
+    expect(started).toMatchObject({ ok: true, jobId: expect.any(String), browser: "edge" });
+    await vi.waitFor(() => expect(runCodexBrowserLogin).toHaveBeenCalled());
+    expect(runCodexBrowserLogin).toHaveBeenCalledWith(expect.objectContaining({
+      email: "precharge@example.test",
+      proxyUrl: "",
+      browserProfileDir: expect.stringContaining("codex-edge-profiles"),
+    }));
+  });
+
+  it("keeps the egress proxy on the saved Codex account after OAuth exchange", async () => {
     const tokenFetch = vi.fn(async () => new Response(JSON.stringify({
       id_token: "eyJhbGciOiJub25lIn0.eyJlbWFpbCI6ImF1dG9Ab3BlbmFpLnRlc3QifQ.sig",
       access_token: "access-token",
@@ -65,7 +115,6 @@ describe("Codex automated login", () => {
       email: "auto@openai.test",
       password: "mail-password",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
-      adspowerProfileId: "profile-1",
     });
 
     expect(result).toMatchObject({ ok: true });
@@ -73,7 +122,6 @@ describe("Codex automated login", () => {
       const stored = JSON.parse(fs.readFileSync(path.join(dataDir, "codex-accounts.json"), "utf8"));
       expect(stored.accounts[0]).toMatchObject({
         email: "auto@openai.test",
-        adspowerProfileId: "profile-1",
         proxyUrl: "socks5://user:pass@198.51.100.10:443",
       });
     });
@@ -91,7 +139,6 @@ describe("Codex automated login", () => {
       email: "pending@openai.test",
       password: "mail-password",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
-      adspowerProfileId: "profile-pending",
     });
 
     expect(result).toMatchObject({ ok: true, jobId: expect.any(String) });
@@ -102,7 +149,6 @@ describe("Codex automated login", () => {
         autoLoginStatus: "failed",
         autoLoginStep: "email_code_polling",
         autoLoginError: "mail-code-timeout",
-        adspowerProfileId: "profile-pending",
       });
     });
 
@@ -141,7 +187,6 @@ describe("Codex automated login", () => {
       email: "retry@openai.test",
       password: "mail-password",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
-      adspowerProfileId: "profile-retry",
     });
 
     expect(result).toMatchObject({ ok: true, jobId: expect.any(String) });
@@ -158,7 +203,7 @@ describe("Codex automated login", () => {
     });
   });
 
-  it("exposes profile metadata in listCodexAccounts", () => {
+  it("does not expose legacy AdsPower metadata in listCodexAccounts", () => {
     writeJson(path.join(dataDir, "codex-accounts.json"), {
       accounts: [{
         id: 3,
@@ -172,11 +217,8 @@ describe("Codex automated login", () => {
     });
     const svc = new CodexService({ dataDir } as any, stubAccessKey);
 
-    expect(svc.listCodexAccounts().accounts[0]).toMatchObject({
-      adspowerProfileId: "profile-3",
-      adspowerProfileStatus: "active",
-      autoLoginStatus: "running",
-      autoLoginStep: "email_code_polling",
-    });
+    const account = svc.listCodexAccounts().accounts[0] as Record<string, unknown>;
+    expect(account).toMatchObject({ autoLoginStatus: "running", autoLoginStep: "email_code_polling" });
+    expect(account).not.toHaveProperty("adspowerProfileId");
   });
 });

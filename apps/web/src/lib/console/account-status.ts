@@ -30,7 +30,6 @@ const CODEX_AUTO_LOGIN_STEP_LABELS: Record<string, string> = {
   choose_account: "\u5207\u6362\u8d26\u53f7",
   email: "\u586b\u5199\u90ae\u7bb1",
   password: "\u586b\u5199\u5bc6\u7801",
-  creating_adspower_profile: "\u521b\u5efa AdsPower \u73af\u5883",
   email_code_polling: "\u90ae\u7bb1\u9a8c\u8bc1\u7801",
   email_code_fill: "\u586b\u5199\u90ae\u7bb1\u9a8c\u8bc1\u7801",
   totp: "\u52a8\u6001\u9a8c\u8bc1\u7801",

@@ -12,6 +12,7 @@ import { ROLES_KEY } from "../../../../shared/auth/roles.decorator";
 let billingAdmin: {
   refundOrder: ReturnType<typeof vi.fn>;
   revokeSubscription: ReturnType<typeof vi.fn>;
+  upgradeSubscriptionSeats: ReturnType<typeof vi.fn>;
   updateSubscription: ReturnType<typeof vi.fn>;
   resetSubscriptionUsdQuotaUsage: ReturnType<typeof vi.fn>;
 };
@@ -24,6 +25,7 @@ beforeEach(() => {
   billingAdmin = {
     refundOrder: vi.fn(),
     revokeSubscription: vi.fn(),
+    upgradeSubscriptionSeats: vi.fn(),
     updateSubscription: vi.fn(),
     resetSubscriptionUsdQuotaUsage: vi.fn(),
   };
@@ -90,6 +92,44 @@ describe("POST console/subscriptions/:id/revoke", () => {
       targetType: "Subscription",
       targetId: "sub-1",
       detail: { alreadyCancelled: false, customerId: "cust-1" },
+    });
+  });
+});
+
+describe("POST console/subscriptions/:id/seats/upgrade", () => {
+  it("delegates the in-place seat upgrade and records unchanged subscription dates", async () => {
+    billingAdmin.upgradeSubscriptionSeats.mockResolvedValue({
+      subscription: {
+        id: "sub-1",
+        customerId: "cust-1",
+        startsAt: new Date("2026-07-01T00:00:00.000Z"),
+        expiresAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
+      previousShareSeats: 1,
+      shareSeats: 2,
+      alreadyAtTarget: false,
+      reboundProducts: [],
+      usageByProduct: { codex: { weekly: { used: 100, limit: 200 } } },
+    });
+
+    const result = await controller.upgradeSubscriptionSeats("sub-1", { shareSeats: 2 }, req);
+
+    expect(billingAdmin.upgradeSubscriptionSeats).toHaveBeenCalledWith("sub-1", 2);
+    expect(result.shareSeats).toBe(2);
+    expect(auditLog.log).toHaveBeenCalledWith({
+      operatorId: "admin-1",
+      action: "UPGRADE_SUBSCRIPTION_SEATS",
+      targetType: "Subscription",
+      targetId: "sub-1",
+      detail: {
+        customerId: "cust-1",
+        previousShareSeats: 1,
+        shareSeats: 2,
+        alreadyAtTarget: false,
+        reboundProducts: [],
+        startsAt: "2026-07-01T00:00:00.000Z",
+        expiresAt: "2026-08-01T00:00:00.000Z",
+      },
     });
   });
 });

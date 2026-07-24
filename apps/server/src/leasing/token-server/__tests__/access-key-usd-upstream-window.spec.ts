@@ -300,11 +300,22 @@ describe('AccessKeyStore upstream-driven USD windows', () => {
     apply({ h: 30, hReset: T0 + HOUR }, T0 + 1, 'mother-11');
     store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
     expect(usage().used5h).toBe(80);
-    expect(usage().upstreamFiveHour).toEqual({ baselineReason: 'rebind' });
+    expect(usage().upstreamFiveHour).toEqual({ baselineReason: 'rebind', resetAt: T0 + HOUR });
 
     apply({ h: 99, hReset: T0 + 6 * HOUR }, T0 + 2, 'mother-12', 'codex', 12);
     expect(status().fiveHour.used).toBe(80);
     expect(usage().upstreamAccountId).toBe(12);
+    expect(usage().upstreamFiveHour?.resetAt).toBe(T0 + 6 * HOUR);
+  });
+
+  it('rebind never moves the first personal reset earlier than the old mother epoch', () => {
+    apply({ h: 30, hReset: T0 + 6 * HOUR }, T0 + 1, 'mother-11');
+    store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
+
+    apply({ h: 99, hReset: T0 + HOUR }, T0 + 2, 'mother-12', 'codex', 12);
+
+    expect(status().fiveHour.used).toBe(80);
+    expect(usage().upstreamFiveHour?.resetAt).toBe(T0 + 6 * HOUR);
   });
 
   it('rebind ignores trusted rollover evidence from before the subscription moved accounts', () => {

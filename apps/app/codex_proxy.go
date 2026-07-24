@@ -449,6 +449,88 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	// A bound Codex USD subscription may borrow another same-level mother
+	// account, but only after a fresh upstream usage check proves that the
+	// weekly window (not merely a transient 429 or the retired 5h window) is
+	// exhausted. The old signed lease is sent back so the server can validate
+	// subscription/account/model attribution before selecting a fallback.
+	if !relayLease && resp.StatusCode == http.StatusTooManyRequests && lease.AllowBoundOverflow {
+		quotaEgress, _ := resolveEgress(lease.EgressInfo, upstreamProxy)
+		if GetCodexLeaser().ConfirmWeeklyExhausted(card, quotaEgress, lease) {
+			failedBody, _ := io.ReadAll(resp.Body)
+			overflowOptions := map[string]interface{}{
+				"modelKey":               modelKey,
+				"bodyBytes":              len(body),
+				"excludeAccountIds":      []int{lease.AccountId},
+				"overflowFromLeaseId":    lease.LeaseId,
+				"overflowFromLeaseProof": lease.LeaseProof,
+				"overflowReason":         "quota_exhausted",
+			}
+			overflowLease, leaseErr := leaseFunc(card, deviceId, true, overflowOptions, upstreamProxy)
+			if leaseErr == nil && overflowLease != nil && overflowLease.AccountId > 0 &&
+				overflowLease.AccountId != lease.AccountId && !overflowLease.IsRelay() {
+				failedDetails := codexReportDetails(resp.StatusCode, modelKey, failedBody)
+				failedDetails.Reason = "quota_exhausted"
+				failedDetails.ErrorText = string(failedBody)
+				failedDetails.RequestStartedAt = reqStart.UnixMilli()
+				failedDetails.UpstreamCompletedAt = time.Now().UnixMilli()
+				failedDetails.ServiceTier = effServiceTier
+				failedDetails.Surface = surfaceTag
+				failedDetails.Headers = reportHeaders
+				failedDetails.UserId = reportUserID
+				p.reportProblemSafe(card, deviceId, failedDetails, upstreamProxy, lease)
+				_ = resp.Body.Close()
+
+				lease = overflowLease
+				audit.accountID = lease.AccountId
+				audit.token = lease.AccessToken
+				body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), "")
+				body = applyCodexServiceTier(body, fastWanted, lease.PlanType)
+				audit.reqBody = body
+				effServiceTier = codexRequestServiceTier(body)
+				audit.serviceTier = effServiceTier
+
+				req, err = http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
+				if err == nil {
+					copyCodexHeaders(req.Header, r.Header)
+					req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Host", mustParseURL(targetURL).Host)
+					applyCodexOfficialHeaders(req.Header, r.Header)
+					accountIDForLog = extractChatGPTAccountId(lease.AccessToken)
+					if accountIDForLog != "" {
+						req.Header.Set("ChatGPT-Account-Id", accountIDForLog)
+					} else {
+						accountIDForLog = "(none)"
+						req.Header.Del("ChatGPT-Account-Id")
+					}
+					reqStart = time.Now()
+					resp, err = doUpstreamWithFallback(
+						lease.EgressInfo,
+						upstreamProxy,
+						body,
+						req,
+						createCodexStreamingHttpClient,
+					)
+				}
+				if err != nil {
+					atomic.AddInt64(&p.totalErrors, 1)
+					audit.status = http.StatusBadGateway
+					audit.note = "Codex overflow upstream request failed: " + err.Error()
+					p.reportProblemSafe(card, deviceId, ReportDetails{
+						StatusCode: http.StatusBadGateway,
+						ModelKey:   modelKey,
+						Reason:     "upstream_error",
+						ErrorText:  err.Error(),
+					}, upstreamProxy, lease)
+					p.sendJSONError(w, http.StatusBadGateway, err.Error())
+					return
+				}
+			} else {
+				resp.Body = io.NopCloser(bytes.NewReader(failedBody))
+			}
+		}
+	}
 	defer resp.Body.Close()
 	_ = accountIDForLog
 	audit.status = resp.StatusCode

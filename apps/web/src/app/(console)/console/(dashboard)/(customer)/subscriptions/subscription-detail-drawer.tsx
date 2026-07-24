@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +43,9 @@ export function SubscriptionDetailDrawer({
   const [usdQuotaUsageByProduct, setUsdQuotaUsageByProduct] = useState<NonNullable<ConsoleSubscription["usdQuotaUsageByProduct"]>>({});
   const [savingUsd, setSavingUsd] = useState(false);
   const [resettingWindow, setResettingWindow] = useState<string | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeTarget, setUpgradeTarget] = useState("");
+  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     if (!sub) return;
@@ -58,6 +62,8 @@ export function SubscriptionDetailDrawer({
         }];
       })));
     setUsdQuotaUsageByProduct(sub.usdQuotaUsageByProduct ?? {});
+    const currentSeats = Math.max(1, Math.floor(Number(sub.shareSeats ?? sub.weight) || 1));
+    setUpgradeTarget(String([2, 4, 8].find((seats) => seats > currentSeats) ?? ""));
   }, [sub]);
 
   if (!sub) return null;
@@ -127,6 +133,38 @@ export function SubscriptionDetailDrawer({
     }
   }
 
+  async function upgradeSeats() {
+    const target = Number(upgradeTarget);
+    if (!(target > shareSeats)) {
+      toast.error("请选择高于当前份数的目标");
+      return;
+    }
+    try {
+      setUpgrading(true);
+      const result = await apiRequest<{
+        shareSeats: number;
+        reboundProducts: Array<{ product: string; previousAccountId: number | null; accountId: number }>;
+        usageByProduct: NonNullable<ConsoleSubscription["usdQuotaUsageByProduct"]>;
+      }>(`subscriptions/${sub!.id}/seats/upgrade`, {
+        method: "POST",
+        body: { shareSeats: target },
+      });
+      setUsdQuotaUsageByProduct(result.usageByProduct ?? {});
+      toast.success(
+        result.reboundProducts.length
+          ? `已升级到 ${result.shareSeats} 份，${result.reboundProducts.length} 个产品已自动换绑`
+          : `已升级到 ${result.shareSeats} 份，当前已用额度和重置时间保持不变`,
+      );
+      setUpgradeOpen(false);
+      onOpenChange(false);
+      await onChanged();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setUpgrading(false);
+    }
+  }
+
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
       <DrawerContent className="ml-auto h-full w-full max-w-md">
@@ -157,6 +195,59 @@ export function SubscriptionDetailDrawer({
             <span className="text-xs text-muted-foreground">
               拼车 {shareSeats} 份 · 设备 {view.deviceLimit} 台
             </span>
+            {sub.status === "ACTIVE" && view.line === "bind" && shareSeats < 8 && (
+              <AlertDialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>
+                <AlertDialogTrigger
+                  render={<Button type="button" size="sm" variant="outline" className="ml-auto h-7 px-2 text-xs" />}
+                >
+                  升级席位
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>升级订阅席位</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      订阅编号、密钥、绑定和起止时间保持不变。升级只增加额度上限，不会清零当前已用额度。
+                      如果当前母号容纳不下，系统会自动换绑，首次整体重置取新旧母号重置时间中较晚的一个。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-sm font-medium">目标份数</div>
+                      <ToggleGroup
+                        value={upgradeTarget ? [upgradeTarget] : []}
+                        onValueChange={(value) => value[0] && setUpgradeTarget(value[0])}
+                        variant="outline"
+                        aria-label="选择升级后的席位份数"
+                      >
+                        {[2, 4, 8].filter((seats) => seats > shareSeats).map((seats) => (
+                          <ToggleGroupItem key={seats} value={String(seats)} aria-label={`升级到 ${seats} 份`}>
+                            {seats} 份
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    </div>
+                    <SeatUpgradePreview
+                      sub={sub}
+                      currentSeats={shareSeats}
+                      targetSeats={Number(upgradeTarget)}
+                      usageByProduct={usdQuotaUsageByProduct}
+                    />
+                  </div>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={upgrading}>取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={upgrading || !(Number(upgradeTarget) > shareSeats)}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void upgradeSeats();
+                      }}
+                    >
+                      {upgrading ? "升级中…" : `确认升级到 ${upgradeTarget || "—"} 份`}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
           {view.line === "bind" ? (
             <>
@@ -236,6 +327,59 @@ export function SubscriptionDetailDrawer({
         </div>
       </DrawerContent>
     </Drawer>
+  );
+}
+
+function SeatUpgradePreview({
+  sub,
+  currentSeats,
+  targetSeats,
+  usageByProduct,
+}: {
+  sub: ConsoleSubscription;
+  currentSeats: number;
+  targetSeats: number;
+  usageByProduct: NonNullable<ConsoleSubscription["usdQuotaUsageByProduct"]>;
+}) {
+  const ratio = targetSeats > currentSeats ? targetSeats / currentSeats : 1;
+  const products = Object.entries(sub.usdQuotaByProduct ?? {})
+    .filter(([, quota]) => Number(quota?.weekly) > 0);
+
+  if (products.length === 0) {
+    return (
+      <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+        套餐额度将按份数同比增加；当前窗口用量和原定重置时间不变。
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md bg-muted px-3 py-3">
+      {products.map(([product, quota]) => {
+        const usage = usageByProduct[product]?.weekly ?? null;
+        const used = Math.max(0, Number(usage?.used) || 0);
+        const currentLimit = Math.max(0, Number(quota.weekly) || 0);
+        const targetLimit = currentLimit * ratio;
+        const available = Math.max(0, targetLimit - used);
+        return (
+          <div key={product} className="flex flex-col gap-1 text-sm">
+            <div className="font-medium">{product === "codex" ? "Codex" : "Anthropic"} 每周额度</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+              <span>当前已用</span>
+              <span className="text-right tabular-nums">{formatUsd(used)}</span>
+              <span>升级后总额</span>
+              <span className="text-right tabular-nums">{formatUsd(targetLimit)}</span>
+              <span>升级后可用</span>
+              <span className="text-right tabular-nums">{formatUsd(available)}</span>
+              <span>整体重置</span>
+              <span className="text-right tabular-nums">
+                {formatResetAt(usage?.resetAt) || "沿用当前窗口"}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

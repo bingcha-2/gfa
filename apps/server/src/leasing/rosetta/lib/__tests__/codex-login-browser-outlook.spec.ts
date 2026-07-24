@@ -213,17 +213,16 @@ describe("runCodexBrowserLogin Outlook email code handling", () => {
       addInitScript: vi.fn(async () => {}),
       on: vi.fn(),
     };
-    mocks.connectOverCDP.mockResolvedValue({
-      contexts: () => [context],
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
       close: vi.fn(async () => {}),
     });
 
     const resultPromise = runCodexBrowserLogin({
       authorizeUrl: "https://auth.openai.com/oauth/authorize",
       redirectUri: "http://localhost:1455/auth/callback",
-      email: "outlook-user@example.test",
+      email: "outlook-user@outlook.com",
       password: "mail-password",
-      adspowerProfileId: "profile-1",
       proxyUrl: "socks5://user:pass@198.51.100.10:443",
       maxSteps: 8,
     });

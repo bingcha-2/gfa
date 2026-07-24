@@ -25,6 +25,7 @@ let entitlementSync: {
   syncSubscription: ReturnType<typeof vi.fn>;
   expireShadowRecord: ReturnType<typeof vi.fn>;
   resetSubscriptionUsdQuotaUsage: ReturnType<typeof vi.fn>;
+  upgradeSubscriptionSeats: ReturnType<typeof vi.fn>;
 };
 let billing: {
   refundEpayOrder: ReturnType<typeof vi.fn>;
@@ -81,6 +82,7 @@ beforeEach(async () => {
     syncSubscription: vi.fn(),
     expireShadowRecord: vi.fn(),
     resetSubscriptionUsdQuotaUsage: vi.fn(),
+    upgradeSubscriptionSeats: vi.fn(),
   };
   // refund/revoke only exercise SubscriptionService.cancelSubscription, which
   // touches neither the catalog nor rosetta — stub them.
@@ -278,6 +280,44 @@ describe("BillingAdminService.revokeSubscription", () => {
     expect(second.subscription.status).toBe("CANCELLED");
     expect(entitlementSync.expireShadowRecord).toHaveBeenCalledTimes(1);
     expect(await prisma.notification.count({ where: { customerId: customer.id } })).toBe(1);
+  });
+});
+
+describe("BillingAdminService.upgradeSubscriptionSeats", () => {
+  it("delegates the in-place upgrade and returns the preserved subscription", async () => {
+    entitlementSync.upgradeSubscriptionSeats.mockResolvedValue({
+      ok: true,
+      subscription: {
+        id: "sub-upgrade",
+        customerId: "cust-1",
+        startsAt: new Date("2026-07-01T00:00:00.000Z"),
+        expiresAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
+      previousShareSeats: 1,
+      shareSeats: 2,
+      alreadyAtTarget: false,
+      reboundProducts: [],
+      usageByProduct: { codex: { weekly: { used: 100, limit: 200 } } },
+    });
+
+    const result = await service.upgradeSubscriptionSeats("sub-upgrade", 2);
+
+    expect(entitlementSync.upgradeSubscriptionSeats).toHaveBeenCalledWith("sub-upgrade", 2);
+    expect(result).toMatchObject({
+      previousShareSeats: 1,
+      shareSeats: 2,
+      usageByProduct: { codex: { weekly: { used: 100, limit: 200 } } },
+    });
+  });
+
+  it("maps an unsafe upgrade plan to a console conflict", async () => {
+    entitlementSync.upgradeSubscriptionSeats.mockResolvedValue({
+      ok: false,
+      error: "No enabled codex pro account can hold 2 seats",
+    });
+
+    await expect(service.upgradeSubscriptionSeats("sub-upgrade", 2))
+      .rejects.toThrow(ConflictException);
   });
 });
 

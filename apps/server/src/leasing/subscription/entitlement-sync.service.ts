@@ -27,11 +27,32 @@ import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
 import type { CatalogConfig } from "../plan-catalog/pricing";
+import { oversellCeiling } from "../plan-catalog/unified-entitlement";
 import { boundSeatsByAccount, isExclusive, occupiedSharesByAccount, quotaSeatCapacityForProduct, seatWeight } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 import { migrateBindSubscriptionToUsd } from "./subscription-usd-migration";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
+const UPGRADE_SEAT_OPTIONS = [1, 2, 4, 8] as const;
+
+export type UpgradeSubscriptionSeatsResult =
+  | {
+      ok: true;
+      subscription: Subscription;
+      previousShareSeats: number;
+      shareSeats: number;
+      alreadyAtTarget: boolean;
+      reboundProducts: Array<{
+        product: string;
+        previousAccountId: number | null;
+        accountId: number;
+      }>;
+      usageByProduct: Record<string, {
+        fiveHour: { used: number; limit: number; resetAt: string } | null;
+        weekly: { used: number; limit: number; resetAt: string } | null;
+      }>;
+    }
+  | { ok: false; error: string };
 
 @Injectable()
 export class EntitlementSyncService {
@@ -92,6 +113,372 @@ export class EntitlementSyncService {
       ...reset,
       usageByProduct: this.subscriptionUsdQuotaUsage(subscriptionId),
     };
+  }
+
+  /** Reset every active bind-line subscription currently routed to one upstream
+   * account. This clears only local customer USD counters; it does not mutate
+   * the plan's limits or the upstream account's own quota observations. */
+  async resetBoundAccountUsdQuotas(
+    product: "codex" | "anthropic",
+    accountId: number,
+  ): Promise<{ product: "codex" | "anthropic"; accountId: number; matchedSubscriptions: number; resetSubscriptions: number; resetWindows: number; skippedSubscriptions: number }> {
+    if (product !== "codex" && product !== "anthropic") throw new Error("Unsupported USD product");
+    const normalizedAccountId = Number(accountId);
+    if (!(normalizedAccountId > 0)) throw new Error("Invalid accountId");
+
+    return withAccessKeysWriteLock(async () => {
+      const rows = await this.prisma.subscription.findMany({ where: { status: "ACTIVE" } });
+      const matched = rows.filter((sub: any) => {
+        const config = rowToConfig(sub);
+        return config.line === "bind" && Number((config.bindings as Record<string, unknown> | undefined)?.[product]) === normalizedAccountId;
+      });
+      const snapshots = new Map<string, unknown>();
+      const updates: Array<{ id: string; windowState: string | null }> = [];
+      let resetSubscriptions = 0;
+      let resetWindows = 0;
+
+      for (const sub of matched) {
+        const before = this.accessKeyStore.snapshotSubscriptionUsage(sub.id);
+        snapshots.set(sub.id, before);
+        let changed = false;
+        for (const scope of ["fiveHour", "weekly"] as const) {
+          if (!this.accessKeyStore.resetSubscriptionUsdUsage(sub.id, product, scope)) continue;
+          changed = true;
+          resetWindows += 1;
+        }
+        if (!changed) continue;
+        resetSubscriptions += 1;
+        updates.push({
+          id: sub.id,
+          windowState: this.accessKeyStore.serializeSubscriptionWindows().find((item) => item.id === sub.id)?.windowState ?? null,
+        });
+      }
+
+      try {
+        if (updates.length) {
+          await this.prisma.$transaction(updates.map(({ id, windowState }) =>
+            this.prisma.subscription.update({ where: { id }, data: { windowState } }),
+          ));
+        }
+      } catch (error) {
+        for (const [subscriptionId, snapshot] of snapshots) {
+          this.accessKeyStore.restoreSubscriptionUsage(subscriptionId, snapshot as any);
+        }
+        throw error;
+      }
+
+      return {
+        product,
+        accountId: normalizedAccountId,
+        matchedSubscriptions: matched.length,
+        resetSubscriptions,
+        resetWindows,
+        skippedSubscriptions: matched.length - resetSubscriptions,
+      };
+    });
+  }
+
+  /** Move all active subscriptions bound to an account across one or more
+   * eligible accounts of the exact same level. Planning happens before any
+   * write, so this is an all-or-nothing operation when their combined capacity
+   * is insufficient. */
+  async rebindBoundAccountSubscriptions(
+    product: "codex" | "anthropic",
+    sourceAccountId: number,
+  ): Promise<{ ok: true; product: "codex" | "anthropic"; sourceAccountId: number; movedSubscriptions: number; targets: Array<{ accountId: number; email: string | null; count: number }> } | { ok: false; error: string }> {
+    if (product !== "codex" && product !== "anthropic") return { ok: false, error: "Unsupported USD product" };
+    const sourceId = Number(sourceAccountId);
+    if (!(sourceId > 0)) return { ok: false, error: "Invalid accountId" };
+
+    return withAccessKeysWriteLock(async () => {
+      const rows = await this.prisma.subscription.findMany({ where: { status: "ACTIVE" } });
+      const configs = rows.map((sub: any) => ({ sub, config: rowToConfig(sub) }));
+      const sourceRows = configs.filter(({ config }) =>
+        config.line === "bind" && Number((config.bindings as Record<string, unknown> | undefined)?.[product]) === sourceId,
+      );
+      if (!sourceRows.length) {
+        return { ok: true, product, sourceAccountId: sourceId, movedSubscriptions: 0, targets: [] };
+      }
+
+      const accountingConfigs = configs.map(({ sub, config }) => ({ id: sub.id, ...config }));
+      const shares = occupiedSharesByAccount(accountingConfigs, product);
+      const counts = boundSeatsByAccount(accountingConfigs, product);
+      for (const { config } of sourceRows) {
+        const weight = seatWeight(config);
+        shares.set(sourceId, Math.max(0, (shares.get(sourceId) || 0) - weight));
+        counts.set(sourceId, Math.max(0, (counts.get(sourceId) || 0) - 1));
+      }
+
+      // Rebinding is an operational move performed under the CURRENT supply
+      // policy. Historical quotaSeatCapacity snapshots must keep protecting a
+      // customer's purchased quota, but must not make an old subscription see
+      // less pool capacity than the currently published oversell ceiling.
+      const published = await this.planCatalog.getPublished();
+      const currentCatalog = (published?.config ?? {}) as Partial<CatalogConfig>;
+      const runtimeBaseCapacity = Number(currentCatalog.shareCapacity) || ACCOUNT_SHARE_CAPACITY;
+      const currentOversellCeiling = oversellCeiling(currentCatalog, runtimeBaseCapacity);
+
+      const plan: Array<{ sub: any; config: Record<string, any>; targetId: number }> = [];
+      const excluded = new Set([sourceId]);
+      // Place larger subscriptions first. The allocator updates the simulated
+      // occupancy after every choice, so later subscriptions can spill into a
+      // second/third account instead of requiring one account to fit the whole
+      // source batch. Largest-first also avoids rejecting a valid combined-
+      // capacity plan merely because smaller subscriptions fragmented it.
+      const planningRows = [...sourceRows].sort((a, b) =>
+        seatWeight(b.config) - seatWeight(a.config) || String(a.sub.id).localeCompare(String(b.sub.id)),
+      );
+      for (const { sub, config } of planningRows) {
+        const level = String((config.levels as Record<string, unknown> | undefined)?.[product] || "").trim();
+        if (!level) return { ok: false, error: `Subscription ${sub.id} has no ${product} level and cannot be safely rebound` };
+        const weight = seatWeight(config);
+        const targetId = this.rosetta.assignSeatForProductFromShares(
+          product,
+          weight,
+          level,
+          shares,
+          counts,
+          currentOversellCeiling,
+          { oversellCeiling: currentOversellCeiling, excludeAccountIds: excluded },
+        );
+        if (!targetId) {
+          return { ok: false, error: `Enabled ${product} accounts do not have enough combined same-level capacity for all subscriptions (${level}; blocked at ${sub.id})` };
+        }
+        shares.set(targetId, (shares.get(targetId) || 0) + weight);
+        counts.set(targetId, (counts.get(targetId) || 0) + 1);
+        plan.push({ sub, config, targetId });
+      }
+
+      try {
+        await this.prisma.$transaction(plan.map(({ sub, config, targetId }) => {
+          const bindings = { ...(config.bindings as Record<string, number> | undefined), [product]: targetId };
+          const nextConfig = { ...config, line: "bind", bindings };
+          return this.prisma.subscription.update({
+            where: { id: sub.id },
+            data: { config: JSON.stringify(nextConfig), bindings: JSON.stringify(bindings) },
+          });
+        }));
+      } catch (error) {
+        this.logger.error(`[account-rebind] failed to persist ${product} account #${sourceId}: ${String(error)}`);
+        throw error;
+      }
+
+      for (const item of plan) {
+        item.config.bindings = { ...(item.config.bindings as Record<string, number> | undefined), [product]: item.targetId };
+        item.config.line = "bind";
+        this.registerRecord(item.sub, item.config);
+      }
+      await Promise.all([
+        this.tokenServer.reloadAccessKeys(),
+        this.remoteCodex.reloadAccessKeys(),
+        this.remoteAnthropic.reloadAccessKeys(),
+      ]);
+
+      const targets = new Map<number, number>();
+      for (const { targetId } of plan) targets.set(targetId, (targets.get(targetId) || 0) + 1);
+      return {
+        ok: true,
+        product,
+        sourceAccountId: sourceId,
+        movedSubscriptions: plan.length,
+        targets: [...targets].map(([accountId, count]) => ({
+          accountId,
+          email: this.rosetta.poolAccountById(product, accountId)?.email ?? null,
+          count,
+        })),
+      };
+    });
+  }
+
+  /**
+   * Increase a bind subscription's purchased shares without creating a new
+   * subscription or a new quota window. Limits grow in the same proportion,
+   * while AccessKeyStore keeps the existing used amounts and reset epochs.
+   *
+   * Capacity is planned against the currently published oversell ceiling. A
+   * product stays on its current mother account when the larger subscription
+   * still fits; otherwise only that product is moved to an enabled, same-level
+   * account that can hold the complete upgraded subscription.
+   */
+  async upgradeSubscriptionSeats(
+    subscriptionId: string,
+    requestedShareSeats: number,
+  ): Promise<UpgradeSubscriptionSeatsResult> {
+    const targetShareSeats = Math.floor(Number(requestedShareSeats));
+    if (!UPGRADE_SEAT_OPTIONS.includes(targetShareSeats as (typeof UPGRADE_SEAT_OPTIONS)[number])) {
+      return { ok: false, error: "Seats must be one of 1, 2, 4, or 8" };
+    }
+
+    return withAccessKeysWriteLock(async () => {
+      const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
+      if (!sub) return { ok: false, error: "Subscription not found" };
+      if (sub.status !== "ACTIVE" || (sub.expiresAt && sub.expiresAt.getTime() <= Date.now())) {
+        return { ok: false, error: "Only an unexpired ACTIVE subscription can be upgraded" };
+      }
+
+      const config = rowToConfig(sub as any);
+      if (config.line !== "bind") {
+        return { ok: false, error: "Only a bound-account subscription supports seat upgrades" };
+      }
+      const previousShareSeats = seatWeight(config);
+      if (targetShareSeats < previousShareSeats) {
+        return { ok: false, error: "Seat upgrades cannot reduce the current seat count" };
+      }
+      if (targetShareSeats === previousShareSeats) {
+        return {
+          ok: true,
+          subscription: sub,
+          previousShareSeats,
+          shareSeats: targetShareSeats,
+          alreadyAtTarget: true,
+          reboundProducts: [],
+          usageByProduct: this.subscriptionUsdQuotaUsage(sub.id),
+        };
+      }
+
+      const published = await this.planCatalog.getPublished();
+      const currentCatalog = (published?.config ?? {}) as Partial<CatalogConfig>;
+      const runtimeBaseCapacity = Number(currentCatalog.shareCapacity) || ACCOUNT_SHARE_CAPACITY;
+      const currentOversellCeiling = oversellCeiling(currentCatalog, runtimeBaseCapacity);
+      const purchasedShareCapacity = Math.max(
+        1,
+        Math.floor(Number(config.shareCapacity) || runtimeBaseCapacity),
+      );
+      if (targetShareSeats > purchasedShareCapacity) {
+        return {
+          ok: false,
+          error: `Target seats ${targetShareSeats} exceed this subscription's share capacity ${purchasedShareCapacity}`,
+        };
+      }
+
+      const rows = await this.prisma.subscription.findMany({ where: { status: "ACTIVE" } });
+      const accountingConfigs = rows.map((row: any) => ({ id: row.id, ...rowToConfig(row) }));
+      const products = Array.isArray(config.products) ? config.products.map(String) : [];
+      const levels = config.levels && typeof config.levels === "object"
+        ? config.levels as Record<string, unknown>
+        : {};
+      const currentBindings = config.bindings && typeof config.bindings === "object"
+        ? config.bindings as Record<string, number>
+        : {};
+      const nextBindings = { ...currentBindings };
+      const reboundProducts: Array<{
+        product: string;
+        previousAccountId: number | null;
+        accountId: number;
+      }> = [];
+
+      for (const product of products) {
+        const level = String(levels[product] || "").trim();
+        if (!level) {
+          return { ok: false, error: `Subscription ${sub.id} has no ${product} level` };
+        }
+        const shares = occupiedSharesByAccount(accountingConfigs, product, sub.id);
+        const counts = boundSeatsByAccount(accountingConfigs, product, sub.id);
+        const previousAccountId = Number(currentBindings[product]) > 0
+          ? Number(currentBindings[product])
+          : null;
+        const previousAccount = previousAccountId
+          ? this.rosetta.poolAccountById(product, previousAccountId)
+          : null;
+        const currentStillFits = Boolean(
+          previousAccount
+          && previousAccount.enabled !== false
+          && (shares.get(previousAccountId!) || 0) + targetShareSeats <= currentOversellCeiling,
+        );
+
+        let accountId = currentStillFits ? previousAccountId! : 0;
+        if (!accountId) {
+          accountId = this.rosetta.assignSeatForProductFromShares(
+            product,
+            targetShareSeats,
+            level,
+            shares,
+            counts,
+            currentOversellCeiling,
+            {
+              exclusive: config.exclusive === true || targetShareSeats >= purchasedShareCapacity,
+              oversellCeiling: currentOversellCeiling,
+              ...(previousAccountId ? { excludeAccountIds: new Set([previousAccountId]) } : {}),
+            },
+          ) ?? 0;
+        }
+        if (!(accountId > 0)) {
+          return {
+            ok: false,
+            error: `No enabled ${product} ${level} account can hold ${targetShareSeats} seats under the current published limit ${currentOversellCeiling}`,
+          };
+        }
+
+        nextBindings[product] = accountId;
+        if (accountId !== previousAccountId) {
+          reboundProducts.push({ product, previousAccountId, accountId });
+        }
+      }
+
+      const ratio = targetShareSeats / previousShareSeats;
+      const nextConfig: Record<string, any> = {
+        ...config,
+        bindings: nextBindings,
+        shareSeats: targetShareSeats,
+        weight: targetShareSeats,
+        shareCapacity: purchasedShareCapacity,
+        exclusive: config.exclusive === true || targetShareSeats >= purchasedShareCapacity,
+      };
+      if (config.usdQuotaByProduct && typeof config.usdQuotaByProduct === "object") {
+        nextConfig.usdQuotaByProduct = scaleQuotaByProduct(config.usdQuotaByProduct, ratio);
+        nextConfig.quotaSeatCapacity = currentOversellCeiling;
+      }
+      if (config.bucketLimits && typeof config.bucketLimits === "object") {
+        nextConfig.bucketLimits = scaleNumericMap(config.bucketLimits, ratio);
+      }
+      if (config.weeklyBucketLimits && typeof config.weeklyBucketLimits === "object") {
+        nextConfig.weeklyBucketLimits = scaleNumericMap(config.weeklyBucketLimits, ratio);
+      }
+      if (Number(config.weeklyTokenLimit) > 0) {
+        nextConfig.weeklyTokenLimit = Math.round(Number(config.weeklyTokenLimit) * ratio);
+      }
+
+      const updated = await this.prisma.$transaction([
+        this.prisma.subscription.update({
+          where: { id: sub.id },
+          data: {
+            config: JSON.stringify(nextConfig),
+            bindings: Object.keys(nextBindings).length ? JSON.stringify(nextBindings) : null,
+            weight: targetShareSeats,
+            bucketLimits: nextConfig.bucketLimits ? JSON.stringify(nextConfig.bucketLimits) : sub.bucketLimits,
+            weeklyTokenLimit: Number(nextConfig.weeklyTokenLimit) > 0
+              ? Number(nextConfig.weeklyTokenLimit)
+              : sub.weeklyTokenLimit,
+          },
+        }),
+      ]).then(([row]) => row);
+
+      // loadSubscriptionRecords refreshes only configuration fields. It
+      // deliberately retains usdUsageByProduct, including usedWeekly and both
+      // reset epochs, so an upgrade cannot become an early quota reset.
+      this.registerRecord(updated, nextConfig);
+      await Promise.all([
+        this.tokenServer.reloadAccessKeys(),
+        this.remoteCodex.reloadAccessKeys(),
+        this.remoteAnthropic.reloadAccessKeys(),
+      ]);
+
+      this.logger.log(
+        `[seat-upgrade] subscription ${sub.id}: ${previousShareSeats} -> ${targetShareSeats}`
+        + (reboundProducts.length
+          ? `; rebound ${reboundProducts.map((item) => `${item.product}:${item.previousAccountId ?? "none"}->${item.accountId}`).join(",")}`
+          : ""),
+      );
+      return {
+        ok: true,
+        subscription: updated,
+        previousShareSeats,
+        shareSeats: targetShareSeats,
+        alreadyAtTarget: false,
+        reboundProducts,
+        usageByProduct: this.subscriptionUsdQuotaUsage(sub.id),
+      };
+    });
   }
 
   /**
@@ -348,4 +735,29 @@ export class EntitlementSyncService {
   expireShadowRecord(subscriptionId: string): void {
     this.accessKeyStore.loadSubscriptionRecords([{ id: subscriptionId, status: "expired" } as any]);
   }
+}
+
+function scaleQuotaByProduct(
+  value: Record<string, any>,
+  ratio: number,
+): Record<string, { fiveHour: number; weekly: number }> {
+  return Object.fromEntries(Object.entries(value).map(([product, quota]) => [
+    product,
+    {
+      fiveHour: scaleQuotaAmount(quota?.fiveHour, ratio),
+      weekly: scaleQuotaAmount(quota?.weekly, ratio),
+    },
+  ]));
+}
+
+function scaleNumericMap(value: Record<string, any>, ratio: number): Record<string, number> {
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, amount]): [string, number] => [key, Math.round(Number(amount) * ratio)])
+    .filter((entry): entry is [string, number] => Number.isFinite(entry[1]) && entry[1] > 0));
+}
+
+function scaleQuotaAmount(value: unknown, ratio: number): number {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount * ratio * 1_000_000) / 1_000_000;
 }
