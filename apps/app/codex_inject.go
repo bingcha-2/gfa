@@ -47,8 +47,12 @@ const (
 	codexProviderID      = "bingchaai"
 	codexModelProvider   = "model_provider"
 	codexOpenAIBaseURL   = "openai_base_url"
-	codexActorHeader     = "x-openai-actor-authorization"
-	codexActorValue      = "bingchaai"
+	// Codex 官方支持 file / keyring / auto。无 OAuth 的远程接管把 API Key
+	// 投影写在 auth.json，因此必须显式选 file；否则客户机器若原本配置成
+	// keyring，Desktop 会完全忽略有效的 auth.json 并停在登录页。
+	codexAuthCredentialsStore = "cli_auth_credentials_store"
+	codexActorHeader          = "x-openai-actor-authorization"
+	codexActorValue           = "bingchaai"
 )
 
 func codexHomeDir() string {
@@ -79,10 +83,13 @@ func codexProxyBaseURL(proxyPort int) string {
 }
 
 type codexBackup struct {
-	Injected          bool        `json:"injected"`
-	HadConfig         bool        `json:"hadConfig"`
-	PrevModelProvider interface{} `json:"prevModelProvider"`
-	PrevOpenAIBaseURL interface{} `json:"prevOpenAIBaseURL"`
+	Injected                    bool        `json:"injected"`
+	HadConfig                   bool        `json:"hadConfig"`
+	PrevModelProvider           interface{} `json:"prevModelProvider"`
+	PrevOpenAIBaseURL           interface{} `json:"prevOpenAIBaseURL"`
+	AuthStoreCaptured           bool        `json:"authStoreCaptured"`
+	PrevAuthCredentialsStore    interface{} `json:"prevAuthCredentialsStore"`
+	AuthCredentialsStoreManaged bool        `json:"authCredentialsStoreManaged"`
 }
 
 // loadCodexConfig 读取 config.toml 为通用 map(仅用于读当前状态)。
@@ -135,6 +142,26 @@ func prevOpenAIBaseURLFromBackup() string {
 	return prev
 }
 
+func readCodexBackup() (*codexBackup, error) {
+	data, err := os.ReadFile(codexBackupPath())
+	if err != nil {
+		return nil, err
+	}
+	var backup codexBackup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return nil, fmt.Errorf("解析 Codex 接管备份失败: %w", err)
+	}
+	return &backup, nil
+}
+
+func writeCodexBackup(backup *codexBackup) error {
+	encoded, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+}
+
 func ensureCodexBackup(hadConfig bool) error {
 	config, _, err := loadCodexConfig()
 	if err != nil {
@@ -143,19 +170,17 @@ func ensureCodexBackup(hadConfig bool) error {
 	data, err := os.ReadFile(codexBackupPath())
 	if os.IsNotExist(err) {
 		backup := codexBackup{
-			Injected:          true,
-			HadConfig:         hadConfig,
-			PrevModelProvider: config[codexModelProvider],
-			PrevOpenAIBaseURL: config[codexOpenAIBaseURL],
-		}
-		encoded, marshalErr := json.MarshalIndent(backup, "", "  ")
-		if marshalErr != nil {
-			return marshalErr
+			Injected:                 true,
+			HadConfig:                hadConfig,
+			PrevModelProvider:        config[codexModelProvider],
+			PrevOpenAIBaseURL:        config[codexOpenAIBaseURL],
+			AuthStoreCaptured:        true,
+			PrevAuthCredentialsStore: config[codexAuthCredentialsStore],
 		}
 		if err := os.MkdirAll(codexHomeDir(), 0o755); err != nil {
 			return err
 		}
-		return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+		return writeCodexBackup(&backup)
 	}
 	if err != nil {
 		return err
@@ -164,19 +189,72 @@ func ensureCodexBackup(hadConfig bool) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
 	}
-	if _, exists := fields["prevOpenAIBaseURL"]; exists {
+	_, hasPrevBaseURL := fields["prevOpenAIBaseURL"]
+	_, hasAuthStoreCaptured := fields["authStoreCaptured"]
+	if hasPrevBaseURL && hasAuthStoreCaptured {
 		return nil
 	}
 	var backup codexBackup
 	if err := json.Unmarshal(data, &backup); err != nil {
 		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
 	}
-	backup.PrevOpenAIBaseURL = config[codexOpenAIBaseURL]
-	encoded, err := json.MarshalIndent(backup, "", "  ")
-	if err != nil {
-		return err
+	if !hasPrevBaseURL {
+		backup.PrevOpenAIBaseURL = config[codexOpenAIBaseURL]
 	}
-	return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+	// 13.7.7 及以前没有管理该键。升级时当前值仍是客户原配置，
+	// 可以安全补录；之后再把 keyring/auto 临时切到 file。
+	if !hasAuthStoreCaptured {
+		backup.AuthStoreCaptured = true
+		backup.PrevAuthCredentialsStore = config[codexAuthCredentialsStore]
+	}
+	return writeCodexBackup(&backup)
+}
+
+// applyCodexAuthCredentialsStore 把无 OAuth 接管固定到 auth.json(file)。
+// 有 OAuth 时若前一轮曾由 GFA 改成 file，则先恢复客户原存储模式，让
+// Keychain OAuth 继续由 Codex 自己管理。
+func applyCodexAuthCredentialsStore(content string, requiresOpenAIAuth bool) (string, error) {
+	backup, err := readCodexBackup()
+	if err != nil {
+		return "", err
+	}
+	if !requiresOpenAIAuth {
+		content = setTopLevelString(content, codexAuthCredentialsStore, "file")
+		backup.AuthCredentialsStoreManaged = true
+		if err := writeCodexBackup(backup); err != nil {
+			return "", err
+		}
+		return content, nil
+	}
+	if !backup.AuthCredentialsStoreManaged {
+		return content, nil
+	}
+	if current, _ := loadCodexConfigString(content, codexAuthCredentialsStore); current == "file" {
+		content = restoreCodexAuthCredentialsStore(content, backup)
+	}
+	backup.AuthCredentialsStoreManaged = false
+	if err := writeCodexBackup(backup); err != nil {
+		return "", err
+	}
+	return content, nil
+}
+
+func loadCodexConfigString(content, key string) (string, bool) {
+	var config map[string]interface{}
+	if toml.Unmarshal([]byte(content), &config) != nil {
+		return "", false
+	}
+	value, ok := config[key].(string)
+	return strings.TrimSpace(value), ok
+}
+
+func restoreCodexAuthCredentialsStore(content string, backup *codexBackup) string {
+	if backup != nil && backup.AuthStoreCaptured {
+		if previous, ok := backup.PrevAuthCredentialsStore.(string); ok && strings.TrimSpace(previous) != "" {
+			return setTopLevelString(content, codexAuthCredentialsStore, previous)
+		}
+	}
+	return removeTopLevelKey(content, codexAuthCredentialsStore)
 }
 
 // InjectCodexSettings 把远程托管 provider 指向本地代理 /v1。
@@ -200,6 +278,10 @@ func InjectCodexSettings(proxyPort int, preserveOAuthCapabilities ...bool) error
 	content = removeTopLevelKey(content, codexOpenAIBaseURL)
 	content = setTopLevelString(content, codexModelProvider, codexProviderID)
 	requiresOpenAIAuth := len(preserveOAuthCapabilities) > 0 && preserveOAuthCapabilities[0]
+	content, err = applyCodexAuthCredentialsStore(content, requiresOpenAIAuth)
+	if err != nil {
+		return err
+	}
 	requiresOpenAIAuthValue := "false"
 	if requiresOpenAIAuth {
 		requiresOpenAIAuthValue = "true"
@@ -247,6 +329,17 @@ func restoreCodexSettingsManaged() (bool, error) {
 	content = removeProviderTable(content, codexProviderID)
 	content = removeProviderTable(content, codexLocalProviderID) // 自定义厂商接管的表
 	content = stripLegacyLocalCodexBaseURL(content)
+	backup, backupErr := readCodexBackup()
+	if backupErr != nil && !os.IsNotExist(backupErr) {
+		return false, backupErr
+	}
+	// provider 是否仍由 GFA 管理与凭据存储键分开判断：即使用户在接管
+	// 期间切了 provider，只要该键仍是 GFA 写入的 file，就应恢复原值。
+	if backup != nil && backup.AuthCredentialsStoreManaged {
+		if current, _ := loadCodexConfigString(content, codexAuthCredentialsStore); current == "file" {
+			content = restoreCodexAuthCredentialsStore(content, backup)
+		}
+	}
 	if wasManaged {
 		prevProvider := prevProviderFromBackup()
 		if prevProvider != "" && !isCodexManagedProvider(prevProvider) {
@@ -335,9 +428,12 @@ func IsCodexInjected(proxyPort int) bool {
 	baseURL, _ := provider["base_url"].(string)
 	providerName, _ := provider["name"].(string)
 	bearerToken, _ := provider["experimental_bearer_token"].(string)
+	requiresOpenAIAuth, _ := provider["requires_openai_auth"].(bool)
+	authStore, _ := m[codexAuthCredentialsStore].(string)
 	return baseURL == codexProxyBaseURL(proxyPort) &&
 		providerName == codexRemoteProviderName &&
 		bearerToken == codexTakeoverAPIKey &&
+		(requiresOpenAIAuth || strings.EqualFold(strings.TrimSpace(authStore), "file")) &&
 		providerHasCodexActorAuthorization(provider)
 }
 

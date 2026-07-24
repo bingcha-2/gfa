@@ -361,24 +361,64 @@ func TestCodexAuthHasOAuthIdentity(t *testing.T) {
 	}
 }
 
-func TestSelectCodexOAuthIdentityUsesMacDesktopLoginFact(t *testing.T) {
+func TestSelectCodexOAuthIdentityFollowsConfiguredStore(t *testing.T) {
 	fileOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"file-id","access_token":"file-access","refresh_token":"file-refresh","account_id":"file-account"}}`)
 	keychainOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"key-id","access_token":"key-access","refresh_token":"key-refresh","account_id":"key-account"}}`)
 
-	identity, ok := selectCodexOAuthIdentity(fileOAuth, keychainOAuth, true)
+	identity, ok := selectCodexOAuthIdentityForStore(fileOAuth, keychainOAuth, "keyring")
 	if !ok || identity.Store != codexOAuthStoreKeychain || identity.AccessToken != "key-access" {
-		t.Fatalf("macOS 应优先 Keychain: ok=%v identity=%+v", ok, identity)
+		t.Fatalf("keyring 模式应使用 Keychain: ok=%v identity=%+v", ok, identity)
 	}
-	if identity, ok = selectCodexOAuthIdentity(fileOAuth, nil, true); ok {
-		t.Fatalf("macOS Keychain 已无登录项时不得用残留 auth.json 桥接: %+v", identity)
+	if identity, ok = selectCodexOAuthIdentityForStore(fileOAuth, keychainOAuth, "file"); !ok ||
+		identity.Store != codexOAuthStoreAuthFile || identity.AccessToken != "file-access" {
+		t.Fatalf("file 模式必须忽略残留 Keychain: ok=%v identity=%+v", ok, identity)
 	}
-	identity, ok = selectCodexOAuthIdentity(fileOAuth, keychainOAuth, false)
+	if identity, ok = selectCodexOAuthIdentityForStore(fileOAuth, nil, "keyring"); ok {
+		t.Fatalf("keyring 模式已无钥匙串项时不得用残留 auth.json 桥接: %+v", identity)
+	}
+	identity, ok = selectCodexOAuthIdentityForStore(fileOAuth, keychainOAuth, "auto")
+	if !ok || identity.Store != codexOAuthStoreKeychain || identity.AccessToken != "key-access" {
+		t.Fatalf("auto 模式应优先可解析的 Keychain: ok=%v identity=%+v", ok, identity)
+	}
+	identity, ok = selectCodexOAuthIdentityForStore(fileOAuth, []byte("broken"), "auto")
 	if !ok || identity.Store != codexOAuthStoreAuthFile || identity.AccessToken != "file-access" {
-		t.Fatalf("非 macOS 应使用 auth.json: ok=%v identity=%+v", ok, identity)
+		t.Fatalf("auto 模式 Keychain 损坏时应回退 auth.json: ok=%v identity=%+v", ok, identity)
 	}
 	apiKeyMode := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}`)
-	if identity, ok = selectCodexOAuthIdentity(apiKeyMode, keychainOAuth, true); ok {
-		t.Fatalf("显式 API Key 模式不得借用残留 Keychain OAuth: %+v", identity)
+	if identity, ok = selectCodexOAuthIdentityForStore(apiKeyMode, keychainOAuth, "file"); ok {
+		t.Fatalf("file 中显式 API Key 模式不得借用残留 Keychain OAuth: %+v", identity)
+	}
+}
+
+func TestCurrentCodexOAuthIdentityIgnoresStaleKeychainInDefaultFileMode(t *testing.T) {
+	home := isolateCodexHome(t)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("model = \"gpt-5.5\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 客户现场：Codex 已退出登录、默认 file 中没有 auth.json，但 macOS
+	// Keychain 仍残留旧 OAuth。纯选择逻辑验证该残留绝不能触发桥接。
+	staleKeychain := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"old-id","access_token":"old-access","refresh_token":"old-refresh","account_id":"old-account"}}`)
+	if identity, ok := selectCodexOAuthIdentityForStore(nil, staleKeychain, currentCodexAuthCredentialsStore()); ok {
+		t.Fatalf("默认 file 模式误用了残留 Keychain: %+v", identity)
+	}
+	if store := currentCodexAuthCredentialsStore(); store != "file" {
+		t.Fatalf("官方默认凭据存储应为 file, got %q", store)
+	}
+}
+
+func TestCurrentCodexAuthCredentialsStoreReadsExplicitMode(t *testing.T) {
+	home := isolateCodexHome(t)
+	for _, mode := range []string{"file", "keyring", "auto", "ephemeral"} {
+		if err := os.WriteFile(
+			filepath.Join(home, "config.toml"),
+			[]byte(`cli_auth_credentials_store = "`+mode+`"`+"\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if got := currentCodexAuthCredentialsStore(); got != mode {
+			t.Fatalf("mode=%q got=%q", mode, got)
+		}
 	}
 }
 
