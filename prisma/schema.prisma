@@ -451,7 +451,7 @@ model FaqItem {
 }
 
 model SiteSetting {
-  key       String   @id               // e.g. "contact_wechat", "contact_qrcode_url"
+  key       String   @id               // e.g. "contact_name", "contact_wechat", "contact_qrcode_url"
   value     String                     // Value (text, URL, etc.)
   updatedAt DateTime @updatedAt
 }

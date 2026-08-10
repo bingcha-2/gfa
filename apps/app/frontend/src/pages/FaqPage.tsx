@@ -5,7 +5,8 @@ import { Search, ChevronDown, Loader2, AlertCircle, BookOpen, MessageCircle, Mes
 import * as api from '@/services/wails'
 import { useT } from '@/i18n'
 
-const CACHE_KEY = 'bcai_faq_cache'
+const LEGACY_CACHE_KEY = 'bcai_faq_cache'
+const CACHE_KEY = 'bcai_faq_cache_v2'
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24h
 
 interface FaqItem {
@@ -24,6 +25,8 @@ interface FaqCache {
 
 function loadCache(): FaqCache | null {
   try {
+    // v1 may contain the previous owner's contact details. Never render it.
+    localStorage.removeItem(LEGACY_CACHE_KEY)
     const raw = localStorage.getItem(CACHE_KEY)
     if (!raw) return null
     const cache: FaqCache = JSON.parse(raw)
@@ -60,12 +63,23 @@ export function FaqPage() {
     // Fetch via Wails IPC (Go backend), bypassing CORS
     api.getFaqData()
       .then((data) => {
+        // The Go bridge fetches these endpoints independently, so update whichever
+        // payload arrived instead of tying contact refresh to a non-empty FAQ list.
+        const hasItems = Array.isArray(data.items)
+        const hasSettings = data.settings !== undefined
         const faqItems = (data.items || []) as FaqItem[]
         const faqSettings = (data.settings || {}) as Record<string, string>
-        if (faqItems.length > 0) {
+        if (hasItems) {
           setItems(faqItems)
+        }
+        if (hasSettings) {
           setSettings(faqSettings)
-          saveCache(faqItems, faqSettings)
+        }
+        if (hasItems || hasSettings) {
+          saveCache(
+            hasItems ? faqItems : cache?.items || [],
+            hasSettings ? faqSettings : cache?.settings || {},
+          )
         }
         setLoading(false)
         setError('')
@@ -134,7 +148,7 @@ export function FaqPage() {
         </div>
       )}
 
-      {!loading && <div className="grid grid-cols-2 gap-3"><Card><CardContent className="flex items-center gap-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--bg-tertiary)]"><MessageSquare size={17} /></span><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-[var(--text-primary)]">{t('faq.githubTitle')}</div><div className="truncate text-[9px] text-[var(--text-muted)]">{t('faq.githubDesc')}</div></div><button onClick={() => api.openURL(api.PORTAL_URLS.home)} className="text-[9px] font-semibold text-[var(--primary-strong)]">{t('faq.githubCta')}</button></CardContent></Card><Card><CardContent className="flex items-center gap-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--primary-light)] text-[var(--primary-strong)]"><MessageCircle size={17} /></span><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-[var(--text-primary)]">{t('faq.noAnswer')}</div><div className="truncate text-[9px] text-[var(--text-muted)]">{settings.contact_wechat ? t('faq.wechatContact', { wechat: settings.contact_wechat }) : t('faq.groupContact')}</div></div><a href={api.SITE_URLS.faq} target="_blank" rel="noopener noreferrer" className="text-[9px] font-semibold text-[var(--primary-strong)]">{t('faq.viewFull')}</a></CardContent></Card></div>}
+      {!loading && <div className="grid grid-cols-2 gap-3"><Card><CardContent className="flex items-center gap-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--bg-tertiary)]"><MessageSquare size={17} /></span><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-[var(--text-primary)]">{t('faq.githubTitle')}</div><div className="truncate text-[9px] text-[var(--text-muted)]">{t('faq.githubDesc')}</div></div><button onClick={() => api.openURL(api.PORTAL_URLS.home)} className="text-[9px] font-semibold text-[var(--primary-strong)]">{t('faq.githubCta')}</button></CardContent></Card><Card><CardContent className="flex items-center gap-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-[10px] bg-[var(--primary-light)] text-[var(--primary-strong)]"><MessageCircle size={17} /></span><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-[var(--text-primary)]">{settings.contact_name || t('faq.noAnswer')}</div><div className="truncate text-[9px] text-[var(--text-muted)]">{settings.contact_wechat ? t('faq.wechatContact', { wechat: settings.contact_wechat }) : t('faq.groupContact')}</div></div><a href={api.SITE_URLS.faq} target="_blank" rel="noopener noreferrer" className="text-[9px] font-semibold text-[var(--primary-strong)]">{t('faq.viewFull')}</a></CardContent></Card></div>}
     </div>
   )
 }

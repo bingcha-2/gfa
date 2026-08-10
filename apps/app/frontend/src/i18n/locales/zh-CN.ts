@@ -273,7 +273,7 @@ export const zhCN = {
     empty: '暂无常见问题',
     noAnswer: '没有找到答案?',
     wechatContact: '加微信 {wechat} 联系客服',
-    groupContact: '加入售后群联系客服',
+    groupContact: '前往官网查看客服微信',
     viewFull: '查看完整版',
     githubTitle: '问题反馈与帮助',
     githubDesc: '前往用户中心提交问题、建议或联系客服',

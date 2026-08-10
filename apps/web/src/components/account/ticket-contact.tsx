@@ -4,21 +4,23 @@ import { useState } from "react";
 import { useDict } from "@/lib/i18n/client";
 
 /**
- * 工单页顶部的「售后客服」联系卡:展示客服微信号(可一键复制)+ 客服二维码。
- * 数据与官网 FAQ 同源 —— 都来自 GET /console/faq/settings 的 contact_wechat /
- * contact_qrcode_url(siteSetting 表),改一处全站生效。两者都没配置时不渲染。
+ * 工单页顶部的「售后客服」联系卡:展示客服姓名、微信号(可一键复制)+ 客服二维码。
+ * 数据与官网 FAQ 同源 —— 都来自 GET /console/faq/settings 的 contact_name /
+ * contact_wechat / contact_qrcode_url(siteSetting 表),改一处全站生效。
  */
 export function TicketContact({
+  name,
   wechat,
   qrcodeUrl,
 }: {
+  name?: string;
   wechat?: string;
   qrcodeUrl?: string;
 }) {
   const t = useDict().faqPage;
   const [copied, setCopied] = useState(false);
 
-  if (!wechat && !qrcodeUrl) return null;
+  if (!name && !wechat && !qrcodeUrl) return null;
 
   function copyWechat() {
     if (!wechat) return;
@@ -39,7 +41,7 @@ export function TicketContact({
       <div className="account-support__main">
         <div className="account-panel__header">
           <div>
-            <h3>{t.contactTitle}</h3>
+            <h3>{t.contactTitle}{name ? ` · ${name}` : ""}</h3>
             <p>{t.contactDesc}</p>
           </div>
         </div>

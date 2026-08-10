@@ -23,7 +23,11 @@ export default async function TicketsPage() {
   return (
     <div className="account-page">
       <PageHeader title={t.pages.ticketsTitle} />
-      <TicketContact wechat={settings.contact_wechat} qrcodeUrl={settings.contact_qrcode_url} />
+      <TicketContact
+        name={settings.contact_name}
+        wechat={settings.contact_wechat}
+        qrcodeUrl={settings.contact_qrcode_url}
+      />
       <TicketsList />
     </div>
   );

@@ -254,7 +254,7 @@ export const zhTW: DeepPartialDict = {
     empty: '暫無常見問題',
     noAnswer: '沒有找到答案?',
     wechatContact: '加微信 {wechat} 聯絡客服',
-    groupContact: '加入售後群組聯絡客服',
+    groupContact: '前往官網查看客服微信',
     viewFull: '查看完整版',
     githubTitle: '問題回饋與協助',
     githubDesc: '前往使用者中心提交問題、建議或聯絡客服',

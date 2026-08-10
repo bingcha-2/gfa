@@ -44,7 +44,12 @@ export default async function FaqRoute() {
             <p>{t.faqPage.sub}</p>
           </div>
           <div className="mkt-support-panel">
-            <FaqList faqs={faqs} contactWechat={settings.contact_wechat} contactQrcodeUrl={settings.contact_qrcode_url} />
+            <FaqList
+              faqs={faqs}
+              contactName={settings.contact_name}
+              contactWechat={settings.contact_wechat}
+              contactQrcodeUrl={settings.contact_qrcode_url}
+            />
           </div>
         </div>
       </section>

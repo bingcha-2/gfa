@@ -272,7 +272,7 @@ export const en: DeepPartialDict = {
     empty: 'No FAQ entries yet',
     noAnswer: 'Didn\'t find an answer?',
     wechatContact: 'Add {wechat} on WeChat for support',
-    groupContact: 'Join the support group',
+    groupContact: 'View the support WeChat on our website',
     viewFull: 'View full version',
     githubTitle: 'Feedback & help',
     githubDesc: 'Submit issues, suggest features, or contact support in your account',

@@ -17,6 +17,12 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 
+const CONTACT_SETTING_KEYS = [
+  'contact_name',
+  'contact_wechat',
+  'contact_qrcode_url',
+] as const;
+
 @Controller("console/faq")
 export class FaqController {
   constructor(private readonly prisma: PrismaService) {}
@@ -67,7 +73,7 @@ export class FaqController {
     // This endpoint is public. Never return unrelated private SiteSetting rows
     // such as upstream API credentials.
     const rows = await this.prisma.siteSetting.findMany({
-      where: { key: { in: ['contact_wechat', 'contact_qrcode_url'] } },
+      where: { key: { in: [...CONTACT_SETTING_KEYS] } },
     });
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
@@ -80,10 +86,10 @@ export class FaqController {
    */
   @Patch('settings')
   async updateSettings(@Body() body: Record<string, string>) {
-    const ALLOWED_KEYS = ['contact_wechat', 'contact_qrcode_url'];
+    const allowedKeys = new Set<string>(CONTACT_SETTING_KEYS);
     const results: Record<string, string> = {};
     for (const [key, value] of Object.entries(body)) {
-      if (!ALLOWED_KEYS.includes(key)) continue;
+      if (!allowedKeys.has(key)) continue;
       await this.prisma.siteSetting.upsert({
         where: { key },
         update: { value: String(value) },

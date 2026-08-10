@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 
 type FaqItem = {
   id: string;
@@ -55,6 +56,7 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
   }, []);
 
   // --- Contact settings ---
+  const [settingsName, setSettingsName] = useState("");
   const [settingsWechat, setSettingsWechat] = useState("");
   const [settingsQrUrl, setSettingsQrUrl] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -65,6 +67,7 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
   const loadSettings = useCallback(async () => {
     try {
       const data = await apiRequest<Record<string, string>>("faq/settings");
+      setSettingsName(data.contact_name ?? "");
       setSettingsWechat(data.contact_wechat ?? "");
       setSettingsQrUrl(data.contact_qrcode_url ?? "");
     } catch { /* ignore */ }
@@ -431,8 +434,8 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
             <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '2px' }}>📱 售后客服设置</div>
             <div className="muted" style={{ fontSize: '0.8rem' }}>
               {!settingsEditing && (
-                settingsWechat
-                  ? <>微信号: <strong>{settingsWechat}</strong>{settingsQrUrl ? ' · 已设置二维码' : ' · 未设置二维码'}</>
+                settingsName || settingsWechat || settingsQrUrl
+                  ? <>{settingsName && <>客服: <strong>{settingsName}</strong></>}{settingsName && settingsWechat && ' · '}{settingsWechat && <>微信号: <strong>{settingsWechat}</strong></>}{settingsQrUrl ? ' · 已设置二维码' : ' · 未设置二维码'}</>
                   : '未设置客服信息'
               )}
             </div>
@@ -448,65 +451,73 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
         </div>
         {settingsEditing && (
           <div style={{ display: 'grid', gap: '12px' }}>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
-              <label style={{ flex: 1, minWidth: 200, display: 'grid', gap: '4px', fontSize: '12px', fontWeight: 700, color: 'var(--foreground-muted)' }}>
-                客服微信号
+            <FieldGroup className="grid gap-3 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="support-contact-name">客服姓名</FieldLabel>
                 <Input
+                  id="support-contact-name"
+                  value={settingsName}
+                  onChange={(e) => setSettingsName(e.target.value)}
+                  placeholder="例如: Mr. 淦"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="support-contact-wechat">客服微信号</FieldLabel>
+                <Input
+                  id="support-contact-wechat"
                   value={settingsWechat}
                   onChange={(e) => setSettingsWechat(e.target.value)}
-                  placeholder="例如: BingCha_Service"
-                  style={{ padding: '8px 12px', border: '1px solid var(--line-strong)', borderRadius: '10px', fontSize: '14px' }}
+                  placeholder="例如: 18339526286"
                 />
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
-              <label style={{ flex: 1, minWidth: 200, display: 'grid', gap: '4px', fontSize: '12px', fontWeight: 700, color: 'var(--foreground-muted)' }}>
-                二维码图片 URL
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <Input
-                    value={settingsQrUrl}
-                    onChange={(e) => setSettingsQrUrl(e.target.value)}
-                    placeholder="/api/faq-images/xxx.png 或外部 URL"
-                    style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--line-strong)', borderRadius: '10px', fontSize: '14px' }}
-                  />
-                  <Input
-                    ref={qrFileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      if (file.size > 10 * 1024 * 1024) { showToast('error', '图片不能超过 10MB'); return; }
-                      const dataUrl = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result as string);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(file);
-                      });
-                      showToast('info', '正在上传二维码图片...');
-                      try {
-                        const result = await apiRequest<{ url: string }>('faq/upload-image', { method: 'POST', body: { data: dataUrl } });
-                        setSettingsQrUrl(result.url);
-                        showToast('success', '二维码图片已上传');
-                      } catch (err) {
-                        showToast('error', `上传失败: ${getErrorMessage(err)}`);
-                      }
-                      e.target.value = '';
-                    }}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => qrFileRef.current?.click()}
-                    type="button"
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    📷 上传图片
-                  </Button>
-                </div>
-              </label>
-            </div>
+              </Field>
+            </FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="support-contact-qr">二维码图片 URL</FieldLabel>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Input
+                  id="support-contact-qr"
+                  value={settingsQrUrl}
+                  onChange={(e) => setSettingsQrUrl(e.target.value)}
+                  placeholder="/api/faq-images/xxx.png 或外部 URL"
+                  style={{ flex: 1 }}
+                />
+                <Input
+                  ref={qrFileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 10 * 1024 * 1024) { showToast('error', '图片不能超过 10MB'); return; }
+                    const dataUrl = await new Promise<string>((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result as string);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(file);
+                    });
+                    showToast('info', '正在上传二维码图片...');
+                    try {
+                      const result = await apiRequest<{ url: string }>('faq/upload-image', { method: 'POST', body: { data: dataUrl } });
+                      setSettingsQrUrl(result.url);
+                      showToast('success', '二维码图片已上传');
+                    } catch (err) {
+                      showToast('error', `上传失败: ${getErrorMessage(err)}`);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => qrFileRef.current?.click()}
+                  type="button"
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  📷 上传图片
+                </Button>
+              </div>
+            </Field>
             {settingsQrUrl && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span className="muted" style={{ fontSize: '12px' }}>预览:</span>
@@ -527,7 +538,11 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
                   try {
                     await apiRequest('faq/settings', {
                       method: 'PATCH',
-                      body: { contact_wechat: settingsWechat, contact_qrcode_url: settingsQrUrl },
+                      body: {
+                        contact_name: settingsName.trim(),
+                        contact_wechat: settingsWechat.trim(),
+                        contact_qrcode_url: settingsQrUrl.trim(),
+                      },
                     });
                     showToast('success', '客服设置已保存');
                     setSettingsEditing(false);
