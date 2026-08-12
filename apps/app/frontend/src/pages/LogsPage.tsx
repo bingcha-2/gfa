@@ -5,13 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
-import { Copy, Filter, FolderOpen, Pause, Play, Search, Trash2 } from 'lucide-react'
+import { exportDiagnosticBundle } from '@/services/wails'
+import { Copy, Download, Filter, FolderOpen, Loader2, Pause, Play, Search, Trash2 } from 'lucide-react'
 
 export function LogsPage() {
   const t = useT()
   const { filter, searchQuery, setFilter, setSearchQuery, clearLogs, getFilteredLogs, logs } = useLogStore()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [follow, setFollow] = useState(true)
+  const [exporting, setExporting] = useState(false)
+  const [exportNotice, setExportNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const filters: { id: LogFilter; label: string }[] = [
     { id: 'all', label: t('logs.filterAll') },
@@ -28,21 +31,53 @@ export function LogsPage() {
 
   const handleCopyLogs = () => navigator.clipboard.writeText(filteredLogs.map((log) => log.raw).join('\n'))
 
+  const handleExportDiagnostics = async () => {
+    if (exporting) return
+    setExporting(true)
+    setExportNotice(null)
+    try {
+      const path = await exportDiagnosticBundle()
+      if (path) setExportNotice({ kind: 'success', message: t('logs.exportSuccess', { path }) })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      setExportNotice({ kind: 'error', message: t('logs.exportFailed', { error: detail }) })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="mx-auto flex h-full w-full max-w-[1080px] flex-col gap-4 pt-3">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">{t('nav.logs')}</h2>
-          <p className="mt-1 text-[12px] text-[var(--text-secondary)]">{t('logs.subtitle')}</p>
+      <div>
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">{t('nav.logs')}</h2>
+            <p className="mt-1 text-[12px] text-[var(--text-secondary)]">{t('logs.subtitle')}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" disabled={exporting} onClick={() => void handleExportDiagnostics()}>
+              {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              {exporting ? t('logs.exporting') : t('logs.exportBundle')}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setFollow((value) => !value)}>
+              {follow ? <Pause size={13} /> : <Play size={13} />}
+              {follow ? t('logs.pause') : t('logs.resume')}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleCopyLogs}><Copy size={13} />{t('logs.copy')}</Button>
+            <Button size="sm" variant="secondary" onClick={clearLogs}><Trash2 size={13} />{t('logs.clear')}</Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setFollow((value) => !value)}>
-            {follow ? <Pause size={13} /> : <Play size={13} />}
-            {follow ? t('logs.pause') : t('logs.resume')}
-          </Button>
-          <Button size="sm" variant="secondary" onClick={handleCopyLogs}><Copy size={13} />{t('logs.copy')}</Button>
-          <Button size="sm" variant="secondary" onClick={clearLogs}><Trash2 size={13} />{t('logs.clear')}</Button>
-        </div>
+        {exportNotice && (
+          <p
+            role={exportNotice.kind === 'error' ? 'alert' : 'status'}
+            className={cn(
+              'mt-2 break-all text-[11px]',
+              exportNotice.kind === 'error' ? 'text-[var(--danger)]' : 'text-[var(--success)]'
+            )}
+          >
+            {exportNotice.message}
+          </p>
+        )}
       </div>
 
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-sm)]">

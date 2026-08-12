@@ -181,6 +181,7 @@ const appMethods: Record<string, (...args: unknown[]) => Promise<unknown>> = {
   HeartbeatCheck: async () => ({}),
   RefreshUsageSummary: async () => ({}),
   GetLogs: async () => [],
+  ExportDiagnosticBundle: async () => 'C:\\Users\\demo\\Downloads\\BingchaAI-diagnostics.zip',
   GetAppVersion: async () => 'mock',
   CheckForUpdate: async () => ({}),
   DetectCompetingClaudeConfig: async () => [],
