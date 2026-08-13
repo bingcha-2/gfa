@@ -16,8 +16,8 @@ describe("migrateBindSubscriptionToUsd", () => {
     expect(result.config).toMatchObject({
       quotaAlgorithm: "usd",
       quotaSeatCapacity: 6,
-      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
-      usdQuotaMigrationVersion: 5,
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
+      usdQuotaMigrationVersion: 6,
     });
   });
 
@@ -47,11 +47,29 @@ describe("migrateBindSubscriptionToUsd", () => {
     };
     const result = migrateBindSubscriptionToUsd(input);
 
-    expect(result.config.usdQuotaByProduct).toEqual({ codex: { fiveHour: 0, weekly: 291.666667 } });
+    expect(result.config.usdQuotaByProduct).toEqual({ codex: { fiveHour: 0, weekly: 100 } });
     expect(result.config.usdLimit5h).toBeUndefined();
     expect(result.config.usdLimitWeekly).toBeUndefined();
     expect(result.config.products).toEqual(["codex", "antigravity"]);
     expect(migrateBindSubscriptionToUsd(result.config).changed).toBe(false);
+  });
+
+  it("refreshes version-5 built-in Codex quotas to $100 per purchased share", () => {
+    const result = migrateBindSubscriptionToUsd({
+      line: "bind",
+      products: ["codex"],
+      levels: { codex: "pro" },
+      shareSeats: 2,
+      shareCapacity: 8,
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+      usdQuotaSource: "catalog",
+      usdQuotaMigrationVersion: 5,
+    });
+
+    expect(result.config).toMatchObject({
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
+      usdQuotaMigrationVersion: 6,
+    });
   });
 
   it("refreshes version-4 built-in estimates but preserves a valid manual override", () => {
@@ -67,7 +85,7 @@ describe("migrateBindSubscriptionToUsd", () => {
     const refreshed = migrateBindSubscriptionToUsd(priorDefault);
     expect(refreshed.config).toMatchObject({
       usdQuotaByProduct: { anthropic: { fiveHour: 30, weekly: 158.333333 } },
-      usdQuotaMigrationVersion: 5,
+      usdQuotaMigrationVersion: 6,
     });
 
     const manual = migrateBindSubscriptionToUsd({
@@ -78,7 +96,7 @@ describe("migrateBindSubscriptionToUsd", () => {
     expect(manual.config).toMatchObject({
       usdQuotaByProduct: { anthropic: { fiveHour: 12, weekly: 34 } },
       usdQuotaSource: "manual",
-      usdQuotaMigrationVersion: 5,
+      usdQuotaMigrationVersion: 6,
     });
   });
 
@@ -136,7 +154,7 @@ describe("migrateBindSubscriptionToUsd", () => {
     });
 
     expect(result.config.quotaSeatCapacity).toBe(10);
-    expect(result.config.usdQuotaByProduct.codex.weekly).toBe(291.666667);
+    expect(result.config.usdQuotaByProduct.codex.weekly).toBe(100);
     expect(result.config.salesSeatCapacity).toBeUndefined();
   });
 
@@ -201,7 +219,7 @@ describe("migrateBindSubscriptionToUsd", () => {
     expect(result.config).toMatchObject({
       line: "bind",
       quotaAlgorithm: "usd",
-      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 291.666667 } },
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 100 } },
     });
   });
 });

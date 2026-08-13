@@ -80,6 +80,27 @@ describe("computePurchase 独享(exclusive)", () => {
 });
 
 describe("computePurchase bind line", () => {
+  it("grants the Codex $100 per-share plan as $100/$200/$800 totals", () => {
+    const catalog = structuredClone(CATALOG) as any;
+    catalog.pricing.bind.usdQuotaPerSeat = {
+      codex: { pro: { fiveHour: 0, weekly: 100 } },
+    };
+
+    for (const [shareSeats, weekly] of [[1, 100], [2, 200], [8, 800]] as const) {
+      const result = computePurchase(catalog, {
+        line: "bind",
+        items: [{ product: "codex", level: "pro" }],
+        shareSeats,
+        deviceLimit: 1,
+      } as any);
+
+      expect(result.config).toMatchObject({
+        shareSeats,
+        usdQuotaByProduct: { codex: { fiveHour: 0, weekly } },
+      });
+    }
+  });
+
   it("multiplies configured per-share USD quotas by the purchased shares", () => {
     const catalog = structuredClone(CATALOG) as any;
     catalog.pricing.bind.usdQuotaPerSeat = {

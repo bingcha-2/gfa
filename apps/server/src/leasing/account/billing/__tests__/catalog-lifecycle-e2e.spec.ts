@@ -869,7 +869,7 @@ describe("E2E 美元额度:套餐 → 下单 → 扣费 → 改额 → 持久化
       quotaAlgorithm: "usd",
       // 内置默认已经是单份额度，购买 2 份直接乘 2。
       quotaSeatCapacity: 6,
-      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
     });
     const record = store.findById(subscriptionId)!;
     expect(store.getHardBoundCardWeights(1, "codex")).toEqual([]);
@@ -893,7 +893,7 @@ describe("E2E 美元额度:套餐 → 下单 → 扣费 → 改额 → 持久化
       usdQuotaByProduct: {
         codex: {
           fiveHour: null,
-          weekly: { used: 1, limit: 583.333334 },
+          weekly: { used: 1, limit: 200 },
         },
       },
     });

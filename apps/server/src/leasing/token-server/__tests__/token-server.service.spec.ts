@@ -170,7 +170,7 @@ describe("TokenServerService", () => {
     const store = (service as any).accessKeyStore;
     expect(JSON.parse(codex.config)).toMatchObject({
       quotaAlgorithm: "usd",
-      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
     });
     expect(JSON.parse(mixed.config)).toMatchObject({
       quotaAlgorithm: "usd",
@@ -179,7 +179,7 @@ describe("TokenServerService", () => {
     expect(JSON.parse(historical.config)).not.toHaveProperty("quotaAlgorithm");
     expect(JSON.parse(expired.config)).not.toHaveProperty("quotaAlgorithm");
     expect(store.findById("sub-old-codex")).toMatchObject({
-      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 583.333334 } },
+      usdQuotaByProduct: { codex: { fiveHour: 0, weekly: 200 } },
     });
     expect(store.getHardBoundCardWeights(1, "codex")).toEqual([]);
     // The same mixed record is USD-managed for Claude but remains a fair-share

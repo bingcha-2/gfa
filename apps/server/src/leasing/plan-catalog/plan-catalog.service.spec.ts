@@ -181,7 +181,7 @@ describe("PlanCatalogService.publish", () => {
       usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 80 } },
       usdQuotaSource: "catalog",
       usdQuotaCatalogVersion: 7,
-      usdQuotaMigrationVersion: 5,
+      usdQuotaMigrationVersion: 6,
     });
     expect(loadSubscriptionRecords).toHaveBeenCalledWith([
       expect.objectContaining({

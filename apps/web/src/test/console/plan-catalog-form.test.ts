@@ -79,8 +79,8 @@ describe("新目录美元额度默认值", () => {
   it("uses fixed per-share defaults and keeps temporary promotions out", () => {
     expect(API_USD_QUOTA_PER_SEAT_DEFAULTS).toEqual({
       codex: {
-        plus: { fiveHour: 0, weekly: 72.916667 },
-        pro: { fiveHour: 0, weekly: 291.666667 },
+        plus: { fiveHour: 0, weekly: 100 },
+        pro: { fiveHour: 0, weekly: 100 },
       },
       anthropic: {
         pro: { fiveHour: 1.5, weekly: 15.833333 },
@@ -120,8 +120,8 @@ describe("configToForm — 拆解 + ÷100", () => {
   it("旧目录没有美元额度字段时自动预填运营默认值", () => {
     expect(form.pricing.bind.usdQuotaPerSeat).toEqual({
       codex: {
-        plus: { fiveHour: "0", weekly: "72.916667" },
-        pro: { fiveHour: "0", weekly: "291.666667" },
+        plus: { fiveHour: "0", weekly: "100" },
+        pro: { fiveHour: "0", weekly: "100" },
       },
       anthropic: {
         pro: { fiveHour: "1.5", weekly: "15.833333" },

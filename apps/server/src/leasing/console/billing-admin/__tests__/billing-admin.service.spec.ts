@@ -10,6 +10,7 @@ import { ConflictException, NotFoundException, ServiceUnavailableException } fro
 import { BillingAdminService } from "../billing-admin.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import type { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
+import { SUBSCRIPTION_USD_MIGRATION_VERSION } from "../../../subscription/subscription-usd-migration";
 import {
   cleanCustomerTables,
   createTestCustomer,
@@ -347,7 +348,7 @@ describe("BillingAdminService.updateSubscription", () => {
 
     expect(config.usdQuotaByProduct).toEqual({ anthropic: { fiveHour: 10, weekly: 40 } });
     expect(config.usdQuotaSource).toBe("manual");
-    expect(config.usdQuotaMigrationVersion).toBe(5);
+    expect(config.usdQuotaMigrationVersion).toBe(SUBSCRIPTION_USD_MIGRATION_VERSION);
     expect(saved.windowState).toContain('apiValueUsd');
     expect(saved.expiresAt?.toISOString()).toBe(sub.expiresAt?.toISOString());
     expect(result.previousUsdQuotaByProduct).toEqual({ anthropic: { fiveHour: 16, weekly: 80 } });

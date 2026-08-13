@@ -16,10 +16,14 @@ interface QuotaReferencePool {
   label: string;
   fiveHour: number;
   weekly: number;
+  fixedPerShare?: {
+    fiveHour: number;
+    weekly: number;
+  };
   status?: string;
 }
 
-const SNAPSHOT_DATE = "2026-07-14";
+const SNAPSHOT_DATE = "2026-08-13";
 const DEFAULT_BASE_SHARES = 8;
 const DEFAULT_OVERSELL_FACTOR = 1.5;
 
@@ -29,16 +33,18 @@ const QUOTA_REFERENCE_POOLS: readonly QuotaReferencePool[] = [
     level: "plus",
     label: "Codex Pro 5x",
     fiveHour: 0,
-    weekly: 875,
-    status: "5h 已停用",
+    weekly: 800,
+    fixedPerShare: { fiveHour: 0, weekly: 100 },
+    status: "每份固定额度",
   },
   {
     product: "codex",
     level: "pro",
     label: "Codex Pro 20x",
     fiveHour: 0,
-    weekly: 3_500,
-    status: "5h 已停用",
+    weekly: 800,
+    fixedPerShare: { fiveHour: 0, weekly: 100 },
+    status: "每份固定额度",
   },
   {
     product: "anthropic",
@@ -104,7 +110,7 @@ export function QuotaReferencePanel({
             母号额度池参考
           </h3>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-            满额使用时的 API 原价等价估值，不是现金余额。单份建议值按 {normalizedBaseShares} 个基础份额 × {formatFactor(normalizedOversellFactor)} 倍超卖，共 {sellableShares} 份换算。
+            满额使用时的 API 原价等价额度，不是现金余额。Codex 每个基础份额固定 $100/周，不随超卖倍率稀释；Claude 单份建议值按 {normalizedBaseShares} 个基础份额 × {formatFactor(normalizedOversellFactor)} 倍超卖，共 {sellableShares} 份换算。
           </p>
         </div>
         <Badge variant="outline" className="shrink-0 bg-background/70 font-mono">
@@ -126,16 +132,25 @@ export function QuotaReferencePanel({
         </TableHeader>
         <TableBody>
           {QUOTA_REFERENCE_POOLS.map((pool) => {
+            const wholeFiveHour = pool.fixedPerShare
+              ? pool.fixedPerShare.fiveHour * normalizedBaseShares
+              : pool.fiveHour;
+            const wholeWeekly = pool.fixedPerShare
+              ? pool.fixedPerShare.weekly * normalizedBaseShares
+              : pool.weekly;
+            const perShareFiveHour = pool.fixedPerShare?.fiveHour ?? pool.fiveHour / sellableShares;
+            const perShareWeekly = pool.fixedPerShare?.weekly ?? pool.weekly / sellableShares;
+
             return (
               <TableRow key={`${pool.product}-${pool.level}`}>
                 <TableCell className="pl-3 font-medium">{pool.label}</TableCell>
                 <TableCell>
                   <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{pool.level}</code>
                 </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatWholeUsd(pool.fiveHour)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatWholeUsd(pool.weekly)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatUsd(pool.fiveHour / sellableShares)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatUsd(pool.weekly / sellableShares)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{formatWholeUsd(wholeFiveHour)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{formatWholeUsd(wholeWeekly)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{formatUsd(perShareFiveHour)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{formatUsd(perShareWeekly)}</TableCell>
                 <TableCell className="pr-3 text-xs text-muted-foreground">
                   {pool.status ?? "常规窗口"}
                 </TableCell>

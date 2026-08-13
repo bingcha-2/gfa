@@ -35,8 +35,8 @@ const CONFIG: CatalogConfig = {
           "max-20x": { fiveHour: 30, weekly: 158.333333 },
         },
         codex: {
-          plus: { fiveHour: 0, weekly: 72.916667 },
-          pro: { fiveHour: 0, weekly: 291.666667 },
+          plus: { fiveHour: 0, weekly: 100 },
+          pro: { fiveHour: 0, weekly: 100 },
         },
       },
       share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
@@ -93,7 +93,7 @@ describe("PricePreview unified bind line", () => {
     expect(quota).toHaveTextContent("配置额度");
     expect(quota).toHaveTextContent("2 份合计");
     expect(quota).toHaveTextContent("5 小时 未启用");
-    expect(quota).toHaveTextContent("每周 $583.333334");
+    expect(quota).toHaveTextContent("每周 $200");
 
     const edited = structuredClone(FORM);
     edited.pricing.bind.usdQuotaPerSeat!.codex.pro.weekly = "200";

@@ -5,7 +5,7 @@ import { accountCapacity, oversellCeiling } from "../plan-catalog/unified-entitl
 import { supportsApiUsdProduct } from "../token-server/api-usd-quota";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
-export const SUBSCRIPTION_USD_MIGRATION_VERSION = 5;
+export const SUBSCRIPTION_USD_MIGRATION_VERSION = 6;
 
 export interface SubscriptionUsdMigrationOptions {
   /** Publishing a catalog intentionally updates every existing subscription. */
@@ -91,6 +91,7 @@ function perSeatQuota(
  *   catalog publish, while used USD and window timestamps remain untouched.
  * - Version 5 refreshes prior built-in estimates without overwriting an
  *   already valid manual per-product quota.
+ * - Version 6 refreshes the built-in Codex allocation to $100 per share.
  * - Antigravity is deliberately excluded and keeps its legacy bucket/fair-share
  *   algorithm even when it shares a subscription with Codex/Claude.
  */
