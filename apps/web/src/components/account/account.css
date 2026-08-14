@@ -625,9 +625,9 @@ html[data-account-theme="dark"] .account-auth {
   background: transparent; border: 0; padding: 0.25rem 0.35rem;
 }
 .account-support__copy:hover { text-decoration: underline; }
-.account-support__qr { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; font-size: 0.76rem; color: var(--ink-muted); }
+.account-support__qr { margin: 0; display: flex; flex: 0 0 auto; flex-direction: column; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--ink-muted); }
 .account-support__qr img {
-  width: 7.5rem; height: 7.5rem; object-fit: contain;
+  width: clamp(9.5rem, 11vw, 11rem); height: auto; aspect-ratio: 1; object-fit: contain;
   border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; padding: 0.35rem;
 }
 
