@@ -7,12 +7,13 @@ import { TokenServerModule } from "../token-server/token-server.module";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PlanCatalogModule } from "../plan-catalog/plan-catalog.module";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
+import { AccountQuotaEstimator } from "../token-server/account-quota-estimator";
 
 const remoteCodexProvider = {
   provide: RemoteCodexService,
-  useFactory: (tokenUsageTracker: TokenUsageTracker, accountQuotaSnapshotTracker: any, banEventRecorder: any, requestLogRecorder: any, accessKeyStore: any, prisma: PrismaService, planCatalog: PlanCatalogService) =>
+  useFactory: (tokenUsageTracker: TokenUsageTracker, accountQuotaSnapshotTracker: any, accountQuotaEstimator: AccountQuotaEstimator, banEventRecorder: any, requestLogRecorder: any, accessKeyStore: any, prisma: PrismaService, planCatalog: PlanCatalogService) =>
     new RemoteCodexService({
-      tokenUsageTracker, accountQuotaSnapshotTracker, banEventRecorder, requestLogRecorder,
+      tokenUsageTracker, accountQuotaSnapshotTracker, accountQuotaEstimator, banEventRecorder, requestLogRecorder,
       accessKeyStore, prisma,
       relayConfigProvider: async () => {
         const settings = await planCatalog.resolveCodexRelaySettings();
@@ -20,7 +21,7 @@ const remoteCodexProvider = {
       },
       publishedCatalogProvider: () => planCatalog.getPublished(),
     }),
-  inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService, PlanCatalogService],
+  inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "ACCOUNT_QUOTA_ESTIMATOR", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService, PlanCatalogService],
 };
 
 @Module({

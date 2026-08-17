@@ -8,6 +8,7 @@ import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
 import { CodexOverflowRouter } from "./codex-overflow-router";
+import type { AccountQuotaEstimator } from "../../token-server/account-quota-estimator";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -21,6 +22,7 @@ type ServiceOptions = {
   leaseTtlMs?: number;
   tokenUsageTracker?: TokenUsageTracker;
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  accountQuotaEstimator?: AccountQuotaEstimator;
   banEventRecorder?: BanEventRecorder;
   requestLogRecorder?: RequestLogRecorder;
   /** PrismaService — persists FairShareWindow (omit in unit tests). */
@@ -94,6 +96,7 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
         accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
+        accountQuotaEstimator: options.accountQuotaEstimator,
         banEventRecorder: options.banEventRecorder,
         requestLogRecorder: options.requestLogRecorder,
         fairShareTracker,

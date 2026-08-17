@@ -82,6 +82,40 @@ describe("RosettaService", () => {
     expect(Array.isArray(stored.accounts)).toBe(true);
   });
 
+  it("retains a successful Codex reset when the immediate quota refetch fails", async () => {
+    const estimator = {
+      markReset: vi.fn(),
+      recordSnapshot: vi.fn(),
+    };
+    const svc = new RosettaService(
+      { dataDir: tempDir },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      estimator as any,
+    );
+    svc.addCodexAccount({ email: "reset@x.com", refreshToken: "rt", planType: "plus" });
+    const accountId = svc.listCodexAccounts().accounts[0].id;
+    vi.spyOn((svc as any).codexSvc, "consumeCodexResetCredit")
+      .mockResolvedValue({
+        ok: true,
+        email: "reset@x.com",
+        hourlyPercent: 42,
+        quotaError: "upstream omitted a fresh five-hour window",
+      });
+
+    await expect(svc.consumeCodexResetCredit({ accountId })).resolves.toMatchObject({ ok: true });
+
+    expect(estimator.markReset).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "codex",
+      fiveHour: true,
+      accountKey: expect.stringMatching(/^[a-f0-9]{32}$/),
+      resetOccurredAt: expect.any(Number),
+    }));
+    expect(estimator.recordSnapshot).not.toHaveBeenCalled();
+  });
+
   it("manages claude accounts in claude-accounts.json (add/list/toggle/delete)", () => {
     const svc = new RosettaService({ dataDir: tempDir });
     expect(svc.listClaudeAccounts().accounts).toHaveLength(0);

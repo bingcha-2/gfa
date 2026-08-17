@@ -23,6 +23,12 @@ import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import type { RosettaContext } from "./lib/context";
 import type { AccessKeyStore } from "../token-server/access-key-store";
+import {
+  AccountQuotaEstimator,
+  quotaEstimatorAccountKey,
+  quotaEstimatorSnapshotFromInputs,
+  type QuotaEstimatorAccountState,
+} from "../token-server/account-quota-estimator";
 import { migrateClaudeProductToAnthropic } from "./lib/migrate";
 import { CachedJsonFile, defaultDataDir, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
 import {
@@ -98,6 +104,12 @@ function nonNegative(value: unknown): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
+function quotaPercentOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const percent = Number(value);
+  return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? percent : null;
+}
+
 function quotaPoolSubscriptionInput(row: any, provider: QuotaPoolProvider): QuotaPoolSubscriptionInput {
   const config = rowToConfig(row) as any;
   const state = parseObject(row.windowState);
@@ -157,6 +169,7 @@ export class RosettaService {
     @Optional() private readonly agentAccounts?: AgentAccountService,
     @Optional() @Inject("SHARED_ACCESS_KEY_STORE") injectedAccessKeyStore?: AccessKeyStore,
     @Optional() private readonly prisma?: PrismaService,
+    @Optional() @Inject("ACCOUNT_QUOTA_ESTIMATOR") private readonly accountQuotaEstimator?: AccountQuotaEstimator,
   ) {
     // Prefer an explicitly-passed store (tests); else the DI-shared one (prod).
     options = { ...options, accessKeyStore: options.accessKeyStore || injectedAccessKeyStore };
@@ -252,14 +265,65 @@ export class RosettaService {
       : this.claudeSvc.listClaudeAccounts().accounts;
     return rows.map((account: any) => ({
       id: Number(account.id || 0),
+      accountKey: quotaEstimatorAccountKey(provider, account.email),
       email: String(account.email || ""),
       planType: String(account.planType || ""),
-      hourlyPercent: Number(provider === "codex" ? account.codexHourlyPercent : account.claudeHourlyPercent),
-      weeklyPercent: Number(provider === "codex" ? account.codexWeeklyPercent : account.claudeWeeklyPercent),
+      hourlyPercent: quotaPercentOrNull(
+        provider === "codex" ? account.codexHourlyPercent : account.claudeHourlyPercent,
+      ),
+      weeklyPercent: quotaPercentOrNull(
+        provider === "codex" ? account.codexWeeklyPercent : account.claudeWeeklyPercent,
+      ),
       hourlyResetAt: String(provider === "codex" ? account.codexHourlyResetTime || "" : account.claudeHourlyResetTime || "") || null,
       weeklyResetAt: String(provider === "codex" ? account.codexWeeklyResetTime || "" : account.claudeWeeklyResetTime || "") || null,
       refreshedAt: Number(account.modelQuotaRefreshedAt || 0),
     }));
+  }
+
+  private quotaEstimatorSnapshotForAccount(
+    provider: QuotaPoolProvider,
+    account: QuotaPoolAccountInput,
+    reset: { fiveHour?: boolean; weekly?: boolean } = {},
+  ) {
+    return quotaEstimatorSnapshotFromInputs([{
+      modelKey: provider === "codex" ? "codex" : "claude",
+      hourlyPercent: account.hourlyPercent,
+      weeklyPercent: account.weeklyPercent,
+      hourlyResetAt: account.hourlyResetAt ? new Date(account.hourlyResetAt) : null,
+      weeklyResetAt: account.weeklyResetAt ? new Date(account.weeklyResetAt) : null,
+    }], account.refreshedAt || Date.now(), reset);
+  }
+
+  private observeQuotaEstimatorAccount(
+    provider: QuotaPoolProvider,
+    accountId: number,
+    reset: { fiveHour?: boolean; weekly?: boolean } = {},
+  ): void {
+    if (!this.accountQuotaEstimator) return;
+    const account = this.quotaPoolAccounts(provider).find((candidate) => candidate.id === accountId);
+    if (!account?.accountKey) return;
+    const snapshot = this.quotaEstimatorSnapshotForAccount(provider, account, reset);
+    if (!snapshot) return;
+    this.accountQuotaEstimator.recordSnapshot({
+      provider,
+      accountKey: account.accountKey,
+      accountId,
+      snapshot,
+    });
+  }
+
+  private async quotaEstimatorStates(
+    accounts: QuotaPoolAccountInput[],
+    provider: QuotaPoolProvider,
+  ): Promise<Map<string, QuotaEstimatorAccountState>> {
+    if (!this.accountQuotaEstimator) return new Map();
+    try {
+      return await this.accountQuotaEstimator.readMany(
+        accounts.map((account) => ({ provider, accountKey: account.accountKey })),
+      );
+    } catch {
+      return new Map();
+    }
   }
 
   private async quotaPoolSubscriptionRows(): Promise<any[]> {
@@ -293,10 +357,19 @@ export class RosettaService {
       : ["codex", "anthropic"];
     const rows = await this.quotaPoolSubscriptionRows();
     const now = Date.now();
-    const pools = providers.flatMap((product) => {
+    const poolGroups = await Promise.all(providers.map(async (product) => {
       const inputs = this.quotaPoolInputs(rows, product);
-      return this.quotaPoolAccounts(product).map((account) => estimateQuotaPool(product, account, inputs, now));
-    });
+      const accounts = this.quotaPoolAccounts(product);
+      const estimator = await this.quotaEstimatorStates(accounts, product);
+      return accounts.map((account) => estimateQuotaPool(
+        product,
+        account,
+        inputs,
+        now,
+        estimator.get(`${product}:${account.accountKey}`),
+      ));
+    }));
+    const pools = poolGroups.flat();
     return { ok: true, pools };
   }
 
@@ -316,7 +389,14 @@ export class RosettaService {
     if (!account) return { ok: true, pool: null };
 
     const inputs = this.quotaPoolInputs(rows, typedProduct);
-    const summary = estimateQuotaPool(typedProduct, account, inputs);
+    const estimator = await this.quotaEstimatorStates([account], typedProduct);
+    const summary = estimateQuotaPool(
+      typedProduct,
+      account,
+      inputs,
+      Date.now(),
+      estimator.get(`${typedProduct}:${account.accountKey}`),
+    );
     const activeRows = rows.filter((row) => {
       const config = rowToConfig(row) as any;
       return String(row.status || "") === "ACTIVE"
@@ -476,9 +556,43 @@ export class RosettaService {
   importCodexAccountsFromText(payload: any) { return this.codexSvc.importCodexAccountsFromText(payload); }
   importCodexAccountCheckedFromText(payload: any) { return this.codexSvc.importCodexAccountCheckedFromText(payload); }
   importCodexAccountsCheckedFromText(payload: any) { return this.codexSvc.importCodexAccountsCheckedFromText(payload); }
-  refreshCodexAccountQuota(payload: any) { return this.codexSvc.refreshCodexAccountQuota(payload); }
+  async refreshCodexAccountQuota(payload: any) {
+    const result = await this.codexSvc.refreshCodexAccountQuota(payload);
+    if (result?.ok && !result?.quotaError) {
+      this.observeQuotaEstimatorAccount("codex", Number(payload?.accountId));
+    }
+    return result;
+  }
   queryCodexResetCredits(payload: any) { return this.codexSvc.queryCodexResetCredits(payload); }
-  consumeCodexResetCredit(payload: any) { return this.codexSvc.consumeCodexResetCredit(payload); }
+  async consumeCodexResetCredit(payload: any) {
+    const result = await this.codexSvc.consumeCodexResetCredit(payload);
+    if (result?.ok) {
+      const accountId = Number(payload?.accountId);
+      const account = this.quotaPoolAccounts("codex")
+        .find((candidate) => candidate.id === accountId);
+      const quotaError = "quotaError" in result ? result.quotaError : undefined;
+      const hourlyPercent = "hourlyPercent" in result ? result.hourlyPercent : undefined;
+      const hasFreshFiveHour = !quotaError && quotaPercentOrNull(hourlyPercent) !== null;
+      if (account?.accountKey) {
+        // The upstream reset has already succeeded even when its immediate
+        // quota refetch fails. Preserve that fact until the next valid 5h
+        // snapshot can advance the Redis epoch. The time boundary prevents a
+        // late, cached pre-reset client snapshot from consuming the marker.
+        this.accountQuotaEstimator?.markReset({
+          provider: "codex",
+          accountKey: account.accountKey,
+          fiveHour: true,
+          resetOccurredAt: hasFreshFiveHour && account.refreshedAt > 0
+            ? account.refreshedAt
+            : Date.now(),
+        });
+      }
+      if (hasFreshFiveHour) {
+        this.observeQuotaEstimatorAccount("codex", accountId);
+      }
+    }
+    return result;
+  }
   startCodexOAuthLogin() { return this.codexSvc.startCodexOAuthLogin(); }
   getCodexOAuthLoginStatus(loginId: string) { return this.codexSvc.getCodexOAuthLoginStatus(loginId); }
   cancelCodexOAuthLogin(loginId: string) { return this.codexSvc.cancelCodexOAuthLogin(loginId); }
@@ -494,7 +608,15 @@ export class RosettaService {
   deleteCodexPrechargeAccount(payload: any) { return this.codexSvc.deleteCodexPrechargeAccount(payload); }
   toggleCodexAccount(payload: any) { return this.codexSvc.toggleCodexAccount(payload); }
   toggleCodexAccountPool(payload: any) { return this.codexSvc.toggleCodexAccountPool(payload); }
-  deleteCodexAccount(payload: any) { return this.codexSvc.deleteCodexAccount(payload); }
+  async deleteCodexAccount(payload: any) {
+    const account = this.quotaPoolAccounts("codex")
+      .find((candidate) => candidate.id === Number(payload?.accountId));
+    const result = this.codexSvc.deleteCodexAccount(payload);
+    if (result?.ok && account?.accountKey) {
+      await this.accountQuotaEstimator?.deleteAccount("codex", account.accountKey);
+    }
+    return result;
+  }
 
   // ── Google OAuth (→ GoogleOAuthService) ─────────────────────────────────
   startGoogleOAuthLogin(options: { targetAccountId?: number } = {}) { return this.googleSvc.startGoogleOAuthLogin(options); }
@@ -521,7 +643,15 @@ export class RosettaService {
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }
   setClaudeAccountMailPassword(payload: any) { return this.claudeSvc.setClaudeAccountMailPassword(payload); }
   setClaudeAccountAdspowerProfile(payload: any) { return this.claudeSvc.setClaudeAccountAdspowerProfile(payload); }
-  deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
+  async deleteClaudeAccount(payload: any) {
+    const account = this.quotaPoolAccounts("anthropic")
+      .find((candidate) => candidate.id === Number(payload?.accountId));
+    const result = this.claudeSvc.deleteClaudeAccount(payload);
+    if (result?.ok && account?.accountKey) {
+      await this.accountQuotaEstimator?.deleteAccount("anthropic", account.accountKey);
+    }
+    return result;
+  }
 
   // -- Claude precharge pool (org-id before top-up, OAuth after top-up) ------
   listClaudePrechargeAccounts() { return this.prechargeSvc.listAccounts(); }
@@ -562,7 +692,13 @@ export class RosettaService {
     if (!fileName) return { ok: false, error: `未知 provider:${provider || "(空)"}(支持 anthropic/codex/antigravity)` };
     return setAccountProxyInPool(path.join(this.dataDir, fileName), Number(payload?.accountId), payload?.proxyUrl);
   }
-  refreshClaudeAccountQuota(payload: any) { return this.claudeSvc.refreshClaudeAccountQuota(payload); }
+  async refreshClaudeAccountQuota(payload: any) {
+    const result = await this.claudeSvc.refreshClaudeAccountQuota(payload);
+    if (result?.ok && !result?.quotaError) {
+      this.observeQuotaEstimatorAccount("anthropic", Number(payload?.accountId));
+    }
+    return result;
+  }
 
   // ── Access keys / 卡密 (→ AccessKeyService) ──────────────────────────────
   // 卡密后台发卡/改卡/绑卡/删卡/批量清理已随激活码改造删除(access-keys.json 卡退役)。

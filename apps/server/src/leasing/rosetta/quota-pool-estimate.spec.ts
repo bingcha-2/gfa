@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { QuotaEstimatorAccountState } from "../token-server/account-quota-estimator";
 import { estimateQuotaPool, type QuotaPoolSubscriptionInput } from "./quota-pool-estimate";
 
 const NOW = Date.parse("2026-07-17T12:00:00.000Z");
 const account = {
   id: 7,
+  accountKey: "stable-account-key",
   email: "mother@example.com",
   planType: "max-20x",
   hourlyPercent: 70,
@@ -12,6 +14,33 @@ const account = {
   hourlyResetAt: "2026-07-17T15:00:00.000Z",
   weeklyResetAt: "2026-07-21T00:00:00.000Z",
   refreshedAt: NOW,
+};
+
+const estimator: QuotaEstimatorAccountState = {
+  fiveHour: {
+    epoch: 3,
+    remainingPercent: 70,
+    resetAt: Date.parse(account.hourlyResetAt),
+    trackedUsedUsd: 30,
+    inferredTotalUsd: 100,
+    sampleCount: 3,
+    sampleBurnBps: 3_000,
+    lastSnapshotAt: NOW,
+    lastSampleAt: NOW,
+    confidence: "high",
+  },
+  weekly: {
+    epoch: 2,
+    remainingPercent: 40,
+    resetAt: Date.parse(account.weeklyResetAt),
+    trackedUsedUsd: 60,
+    inferredTotalUsd: 100,
+    sampleCount: 2,
+    sampleBurnBps: 2_000,
+    lastSnapshotAt: NOW,
+    lastSampleAt: NOW,
+    confidence: "medium",
+  },
 };
 
 function subscription(overrides: Partial<QuotaPoolSubscriptionInput> = {}): QuotaPoolSubscriptionInput {
@@ -32,67 +61,105 @@ function subscription(overrides: Partial<QuotaPoolSubscriptionInput> = {}): Quot
 }
 
 describe("estimateQuotaPool", () => {
-  it("用订阅已用刀数除以母号已消耗比例，分别推算 5h 和周整池", () => {
-    const pool = estimateQuotaPool("anthropic", account, [subscription()], NOW);
+  it("uses same-epoch Redis samples instead of subscription lifetime usage", () => {
+    const pool = estimateQuotaPool("anthropic", account, [subscription()], NOW, estimator);
 
     expect(pool.fiveHour.inferredTotalUsd).toBe(100);
     expect(pool.fiveHour.inferredRemainingUsd).toBe(70);
     expect(pool.weekly.inferredTotalUsd).toBe(100);
     expect(pool.weekly.inferredRemainingUsd).toBe(40);
-    expect(pool.fiveHour.soldLimitUsd).toBe(60);
-    expect(pool.fiveHour.customerRemainingUsd).toBe(30);
+    expect(pool.fiveHour.trackedUsedUsd).toBe(30);
     expect(pool.fiveHour.coverageRatio).toBeCloseTo(70 / 30);
-    expect(pool.boundCustomerEmails).toEqual(["buyer@example.com"]);
   });
 
-  it("仅暴露当前 ACTIVE 绑定订阅的去重客户邮箱，供母号搜索定位", () => {
+  it("does not move historical usage when a subscription changes mother account", () => {
+    const moved = subscription({ id: "moved", usedFiveHour: 900, upstreamAccountId: 8 });
+    const pool = estimateQuotaPool("anthropic", account, [subscription(), moved], NOW, estimator);
+
+    expect(pool.fiveHour.trackedUsedUsd).toBe(30);
+    expect(pool.fiveHour.inferredTotalUsd).toBe(100);
+    expect(pool.fiveHour.soldLimitUsd).toBe(120);
+  });
+
+  it("keeps a reset epoch separate from pre-reset subscription counters", () => {
+    const afterReset: QuotaEstimatorAccountState = {
+      ...estimator,
+      fiveHour: {
+        ...estimator.fiveHour!,
+        epoch: 4,
+        remainingPercent: 90,
+        trackedUsedUsd: 10,
+        inferredTotalUsd: null,
+        sampleCount: 0,
+        sampleBurnBps: 0,
+        lastSampleAt: 0,
+        confidence: "insufficient",
+      },
+    };
+    const pool = estimateQuotaPool(
+      "anthropic",
+      { ...account, hourlyPercent: 90 },
+      [subscription({ usedFiveHour: 90 })],
+      NOW,
+      afterReset,
+    );
+
+    expect(pool.fiveHour.trackedUsedUsd).toBe(10);
+    expect(pool.fiveHour.inferredTotalUsd).toBeNull();
+    expect(pool.fiveHour.inferredRemainingUsd).toBeNull();
+    expect(pool.fiveHour.confidence).toBe("insufficient");
+  });
+
+  it("does not let a fresh account file mask a stale estimator epoch", () => {
+    const staleEstimator: QuotaEstimatorAccountState = {
+      fiveHour: {
+        ...estimator.fiveHour!,
+        remainingPercent: 40,
+        lastSnapshotAt: NOW - 30 * 60 * 1_000,
+      },
+    };
+    const pool = estimateQuotaPool(
+      "codex",
+      { ...account, hourlyPercent: 99, refreshedAt: NOW },
+      [subscription()],
+      NOW,
+      staleEstimator,
+    );
+
+    expect(pool.fiveHour.remainingPercent).toBe(40);
+    expect(pool.fiveHour.inferredRemainingUsd).toBe(40);
+    expect(pool.fiveHour.confidence).toBe("medium");
+    expect(pool.fiveHour.reasons.join(" ")).toContain("15");
+  });
+
+  it("shows sampling instead of falling back to the old inaccurate formula", () => {
+    const pool = estimateQuotaPool("anthropic", account, [subscription()], NOW);
+
+    expect(pool.fiveHour.confidence).toBe("insufficient");
+    expect(pool.fiveHour.inferredTotalUsd).toBeNull();
+    expect(pool.fiveHour.trackedUsedUsd).toBe(0);
+    expect(pool.fiveHour.reasons.join(" ")).toContain("采样");
+  });
+
+  it("exposes only currently ACTIVE bound customer emails for search", () => {
     const pool = estimateQuotaPool("anthropic", account, [
       subscription({ id: "active-1", customerEmail: "Buyer@Example.com" }),
       subscription({ id: "active-2", customerEmail: "buyer@example.com" }),
       subscription({ id: "cancelled", status: "CANCELLED", customerEmail: "old@example.com" }),
       subscription({ id: "other-account", bindingAccountId: 8, customerEmail: "other@example.com" }),
-    ], NOW);
+    ], NOW, estimator);
 
     expect(pool.boundCustomerEmails).toEqual(["buyer@example.com"]);
   });
 
-  it("已取消订阅只保留本窗口母号归因，不再计入已售额度", () => {
-    const cancelled = subscription({
-      id: "cancelled",
-      status: "CANCELLED",
-      fiveHourLimit: 500,
-      usedFiveHour: 15,
-    });
-    const pool = estimateQuotaPool("anthropic", account, [subscription(), cancelled], NOW);
-
-    expect(pool.fiveHour.trackedUsedUsd).toBe(45);
-    expect(pool.fiveHour.soldLimitUsd).toBe(60);
-    expect(pool.activeSubscriptionCount).toBe(1);
-    expect(pool.accountingSubscriptionCount).toBe(2);
-  });
-
-  it("换绑后的旧母号用量不会计入当前母号推算", () => {
-    const moved = subscription({ id: "moved", usedFiveHour: 90, upstreamAccountId: 8 });
-    const pool = estimateQuotaPool("anthropic", account, [subscription(), moved], NOW);
-
-    expect(pool.fiveHour.trackedUsedUsd).toBe(30);
-    expect(pool.fiveHour.soldLimitUsd).toBe(120);
-  });
-
-  it("母号消耗不足 3% 时标记采样不足，不输出虚假的精确刀数", () => {
+  it("marks a missing upstream window unavailable", () => {
     const pool = estimateQuotaPool(
-      "anthropic",
-      { ...account, hourlyPercent: 98 },
-      [subscription({ usedFiveHour: 2 })],
+      "codex",
+      { ...account, hourlyPercent: -1 },
+      [subscription()],
       NOW,
+      { weekly: estimator.weekly },
     );
-
-    expect(pool.fiveHour.confidence).toBe("insufficient");
-    expect(pool.fiveHour.inferredTotalUsd).toBeNull();
-  });
-
-  it("母号没有上报窗口时标记不可用", () => {
-    const pool = estimateQuotaPool("codex", { ...account, hourlyPercent: -1 }, [subscription()], NOW);
 
     expect(pool.fiveHour.confidence).toBe("unavailable");
     expect(pool.fiveHour.remainingPercent).toBeNull();

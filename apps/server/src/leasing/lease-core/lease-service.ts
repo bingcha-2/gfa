@@ -4,6 +4,12 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { sharedClientUsageSummaryCache } from "../account/portal/client-usage-summary-cache";
 import { AccessKeyStore, type ResolveResult } from "../token-server/access-key-store";
+import {
+  AccountQuotaEstimator,
+  quotaEstimatorAccountKey,
+  quotaEstimatorSnapshotFromInputs,
+  type QuotaEstimatorProvider,
+} from "../token-server/account-quota-estimator";
 import { apiValueUsdForEvent, supportsApiUsdProduct, usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker, fairShareCostMultiplierForServiceTier } from "../token-server/fair-share-tracker";
@@ -194,6 +200,8 @@ export type LeaseServiceOptions = {
   /** per-request 热表写入器(仅 codex/anthropic 注入)。 */
   requestLogRecorder?: RequestLogRecorder;
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  /** Redis-backed, best-effort mother-account capacity estimator. */
+  accountQuotaEstimator?: AccountQuotaEstimator;
   /** Fair-share tracker for bound-card dynamic quota. */
   fairShareTracker?: FairShareTracker;
   /** Optional accountless fulfillment. Used by Codex NewAPI relay plans. */
@@ -213,6 +221,8 @@ export type LeaseServiceOptions = {
 type LeaseRecord = {
   leaseId: string;
   accountId: number;
+  /** Privacy-safe stable mother identity, frozen when the lease is issued. */
+  accountKey?: string;
   homeAccountId?: number;
   overflow?: boolean;
   overflowReason?: string;
@@ -237,6 +247,7 @@ type LeaseProofPayload = {
   provider: string;
   leaseId: string;
   accountId: number;
+  accountKey?: string;
   homeAccountId?: number;
   overflow?: boolean;
   overflowReason?: string;
@@ -380,6 +391,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly banEventRecorder: BanEventRecorder | null;
   private readonly requestLogRecorder: RequestLogRecorder | null;
   private readonly accountQuotaSnapshotTracker: AccountQuotaSnapshotRecorder | null;
+  private readonly accountQuotaEstimator: AccountQuotaEstimator | null;
   readonly fairShareTracker: FairShareTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
   private readonly mode: string;
@@ -444,6 +456,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.banEventRecorder = options.banEventRecorder || null;
     this.requestLogRecorder = options.requestLogRecorder || null;
     this.accountQuotaSnapshotTracker = options.accountQuotaSnapshotTracker || null;
+    this.accountQuotaEstimator = options.accountQuotaEstimator || null;
     this.fairShareTracker = options.fairShareTracker || null;
     this.errorClass = options.errorClass || LeaseServiceHttpError;
     this.mode = options.mode || "remote-token-server";
@@ -1590,6 +1603,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // would be added to the old window and immediately erased by the reset.
     // Legacy fair-share keeps its historical usage-first ordering below.
     let accountQuotaSnapshotHandled = false;
+    let estimatorQuotaInputs: ProviderQuotaSnapshotInput[] | undefined;
     if (usdManaged && accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       accountQuotaSnapshotHandled = true;
       // Capture the persisted mother-account water levels before the provider
@@ -1607,6 +1621,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account)
             ?? this.provider.quotaSnapshotInputs?.(account)
             ?? [];
+          estimatorQuotaInputs = rawInputs;
           this.accessKeyStore.applyUpstreamUsdQuotaSnapshot(
             accountId,
             this.provider.id,
@@ -1694,15 +1709,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // (applyAccountQuotaSnapshot also mutates the account + feeds the snapshot tracker.)
     if (!accountQuotaSnapshotHandled && accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       const accepted = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
-      if (accepted && this.fairShareTracker && !usdManaged) {
+      if (accepted && !usdManaged) {
         const account = this.readAccounts().find((a) => a.id === accountId);
         if (account) {
-          const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account);
-          this.syncFairShareQuotaSnapshot(accountId, account, {
-            observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
-            arrivedAt: this.now(),
-            snapshotId: dedupId || String(payload?.traceId || ""),
-          }, rawInputs);
+          const rawInputs = this.provider.quotaSnapshotInputsFromReport?.(payload.accountQuota, account)
+            ?? this.provider.quotaSnapshotInputs?.(account)
+            ?? [];
+          estimatorQuotaInputs = rawInputs;
+          if (this.fairShareTracker) {
+            this.syncFairShareQuotaSnapshot(accountId, account, {
+              observedAt: payload.accountQuota.observedAt ?? payload.accountQuota.fetchedAt,
+              arrivedAt: this.now(),
+              snapshotId: dedupId || String(payload?.traceId || ""),
+            }, rawInputs);
+          }
         }
       }
     }
@@ -1843,6 +1863,47 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           occurredAt,
         });
       }
+    }
+
+    // Mother-account estimation is deliberately placed after every durable/
+    // legacy exactly-once gate above. All accounting variants converge here,
+    // and attribution uses the accountKey frozen into the lease instead of the
+    // subscription's current binding (which may have changed mid-request).
+    if (
+      this.accountQuotaEstimator
+      && lease?.accountKey
+      && accountId > 0
+      && (this.provider.id === "codex" || this.provider.id === "anthropic")
+    ) {
+      const detail = usageDetail;
+      const apiValueUsd = detail.totalTokens > 0 ? apiValueUsdForEvent({
+        product: this.provider.id,
+        modelKey,
+        serviceTier: String(payload?.serviceTier || ""),
+        inputTokens: detail.inputTokens,
+        outputTokens: detail.outputTokens,
+        cachedInputTokens: detail.cachedInputTokens,
+        cacheWrite5mTokens: usage.cacheWrite5mTokens ?? detail.cacheCreationTokens,
+        cacheWrite1hTokens: usage.cacheWrite1hTokens,
+        contextTokens: usage.contextTokens,
+        occurredAt,
+      }) : 0;
+      const snapshot = quotaEstimatorSnapshotFromInputs(
+        estimatorQuotaInputs,
+        this.clampEventTime(
+          payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? occurredAt,
+          0,
+          reportArrivedAt,
+        ),
+      );
+      this.accountQuotaEstimator.recordReport({
+        provider: this.provider.id as QuotaEstimatorProvider,
+        accountKey: lease.accountKey,
+        accountId,
+        apiValueUsd,
+        usageOccurredAt: occurredAt,
+        snapshot,
+      });
     }
 
     this.totalReports++;
@@ -2490,6 +2551,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return {
       leaseId: this.randomId(),
       accountId: account.id,
+      accountKey: quotaEstimatorAccountKey(this.provider.id, account.email, this.leaseProofSecret),
       ...(boundAccountId > 0 ? { homeAccountId: boundAccountId } : {}),
       ...(overflowReason ? { overflow: true, overflowReason } : {}),
       email: account.email,
@@ -2542,6 +2604,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       provider: this.provider.id,
       leaseId: lease.leaseId,
       accountId: lease.accountId,
+      accountKey: lease.accountKey,
       homeAccountId: lease.homeAccountId,
       overflow: lease.overflow,
       overflowReason: lease.overflowReason,
@@ -2593,14 +2656,23 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       || !Number.isFinite(proof.proofExpiresAt)
       || proof.proofExpiresAt <= this.now()
     ) return undefined;
+    const frozenAccountKey = String(proof.accountKey || "");
     const account = proof.accountId > 0
-      ? this.readAccounts().find((candidate) => candidate.id === proof.accountId)
+      ? frozenAccountKey
+          ? this.readAccounts().find((candidate) => (
+            quotaEstimatorAccountKey(this.provider.id, candidate.email, this.leaseProofSecret) === frozenAccountKey
+          ))
+        : this.readAccounts().find((candidate) => candidate.id === proof.accountId)
       : undefined;
     if (proof.accountId > 0 && !account) return undefined;
 
     const lease: LeaseRecord = {
       leaseId: proof.leaseId,
-      accountId: proof.accountId,
+      accountId: account?.id ?? proof.accountId,
+      // Legacy proofs have no stable identity. Keep serving them by the old
+      // numeric fallback, but do not feed the estimator because a pool reload
+      // may have reassigned that number to a different mother account.
+      accountKey: frozenAccountKey,
       homeAccountId: Number(proof.homeAccountId || 0) || undefined,
       overflow: proof.overflow === true,
       overflowReason: String(proof.overflowReason || "") || undefined,

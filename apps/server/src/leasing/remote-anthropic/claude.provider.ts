@@ -147,6 +147,25 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
     ];
   }
 
+  /** Extract only windows present in this client report. Unknown (-1) windows
+   * must not be replaced with persisted account values and stamped as fresh. */
+  quotaSnapshotInputsFromReport(quota: unknown, _account: ClaudeAccount) {
+    const cq = (quota as any)?.claudeQuota;
+    if (!cq || typeof cq !== "object") return [];
+    const rawHourly = Number(cq.hourlyPercent);
+    const rawWeekly = Number(cq.weeklyPercent);
+    const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0;
+    const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0;
+    if (!hourlyKnown && !weeklyKnown) return [];
+    return [{
+      modelKey: "claude",
+      hourlyPercent: hourlyKnown ? clampPercent(rawHourly) : null,
+      weeklyPercent: weeklyKnown ? clampPercent(rawWeekly) : null,
+      hourlyResetAt: hourlyKnown ? parseSnapshotDate(cq.hourlyResetTime) : null,
+      weeklyResetAt: weeklyKnown ? parseSnapshotDate(cq.weeklyResetTime) : null,
+    }];
+  }
+
   /**
    * Apply a Claude quota snapshot: hourly(5h) + weekly remaining percentages,
    * parsed by the client from the anthropic-ratelimit-unified-* / retry-after

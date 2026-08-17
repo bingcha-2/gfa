@@ -628,13 +628,14 @@ export class CodexService {
       await consumeResetCreditUpstream(token, acc.proxyUrl);
       // 重置后额度已变,拉一次落盘(失败不影响重置本身已成功)。
       const refreshed = (await this.refreshCodexAccountQuota({ accountId }).catch(() => null)) as
-        | { hourlyPercent?: number; weeklyPercent?: number }
+        | { hourlyPercent?: number; weeklyPercent?: number; quotaError?: string }
         | null;
       return {
         ok: true,
         email: acc.email,
         hourlyPercent: refreshed?.hourlyPercent,
         weeklyPercent: refreshed?.weeklyPercent,
+        ...(refreshed?.quotaError ? { quotaError: refreshed.quotaError } : {}),
       };
     } catch (err: any) {
       return { ok: false, email: acc.email, error: String(err?.message || err) };

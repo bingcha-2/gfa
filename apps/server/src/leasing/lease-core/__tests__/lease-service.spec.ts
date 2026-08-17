@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -7,6 +8,7 @@ import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
 import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
+import { quotaEstimatorAccountKey } from "../../token-server/account-quota-estimator";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -315,6 +317,113 @@ describe("LeaseService (generic core)", () => {
     );
     expect(restoredCall?.[0]).toBe(1);
     expect(restoredCall?.[2]).toMatchObject({ accountId: 1 });
+  });
+
+  it("keeps estimator attribution on the leased mother after the subscription is rebound", async () => {
+    const now = Date.parse("2030-01-01T00:00:00Z");
+    const proofSecret = "stable-proof-secret-for-rebind-attribution";
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active",
+        durationMs: 60 * 60 * 1000, bindings: { codex: 1 },
+      }],
+    });
+    const first = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
+      accessKeysFilePath,
+      now: () => now,
+      randomId: () => "rebind-proof-lease",
+      minClientVersion: "",
+      leaseProofSecret: proofSecret,
+    }));
+    const lease = await first.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    // The card moves to mother #2 while mother #1's already-issued request is
+    // still in flight. A restarted process must recover mother #1 from proof.
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active",
+        durationMs: 60 * 60 * 1000, bindings: { codex: 2 },
+      }],
+    });
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 9, email: "one@example.com", refreshToken: "rt-1", enabled: true },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true },
+      ],
+    });
+    const estimator = { recordReport: vi.fn() };
+    const restarted = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
+      accessKeysFilePath,
+      now: () => now,
+      randomId: () => "unused-after-rebind",
+      minClientVersion: "",
+      leaseProofSecret: proofSecret,
+      accountQuotaEstimator: estimator as any,
+    }));
+    await expect(restarted.reportResult(REQ, {
+      leaseId: lease.leaseId,
+      leaseProof: lease.leaseProof,
+      reportId: "rebind-proof-report",
+      status: 200,
+      modelKey: "gpt-5-codex",
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      rawTotalTokens: 1_100,
+      requestStartedAt: now - 1_000,
+      upstreamCompletedAt: now,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(estimator.recordReport).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "codex",
+      accountId: 9,
+      accountKey: quotaEstimatorAccountKey("codex", "one@example.com", proofSecret),
+    }));
+  });
+
+  it("serves an old proof without guessing a stable estimator identity", async () => {
+    const now = Date.parse("2030-01-01T00:00:00Z");
+    const proofSecret = "legacy-proof-secret-for-estimator-compatibility";
+    refreshToken.mockResolvedValue("tok");
+    const first = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
+      accessKeysFilePath,
+      now: () => now,
+      randomId: () => "legacy-proof-lease",
+      minClientVersion: "",
+      leaseProofSecret: proofSecret,
+    }));
+    const lease = await first.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    const [version, encoded] = String(lease.leaseProof).split(".");
+    const proof = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    delete proof.accountKey;
+    const legacyEncoded = Buffer.from(JSON.stringify(proof)).toString("base64url");
+    const signature = crypto.createHmac("sha256", proofSecret).update(legacyEncoded).digest("base64url");
+    const legacyProof = `${version}.${legacyEncoded}.${signature}`;
+
+    const estimator = { recordReport: vi.fn() };
+    const restarted = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
+      accessKeysFilePath,
+      now: () => now,
+      minClientVersion: "",
+      leaseProofSecret: proofSecret,
+      accountQuotaEstimator: estimator as any,
+    }));
+    await expect(restarted.reportResult(REQ, {
+      leaseId: lease.leaseId,
+      leaseProof: legacyProof,
+      reportId: "legacy-proof-report",
+      status: 200,
+      modelKey: "gpt-5-codex",
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      rawTotalTokens: 1_100,
+      requestStartedAt: now - 1_000,
+      upstreamCompletedAt: now,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(estimator.recordReport).not.toHaveBeenCalled();
   });
 
   // 未完成上报的长流必须保留归因映射,不能拿 token lease 的到期时间猜请求

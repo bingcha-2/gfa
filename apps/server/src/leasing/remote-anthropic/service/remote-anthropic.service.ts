@@ -7,6 +7,7 @@ import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { ClaudeAccount } from "../auth/claude-token-provider";
 import { ClaudeProvider } from "../claude.provider";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
+import type { AccountQuotaEstimator } from "../../token-server/account-quota-estimator";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -20,6 +21,7 @@ type ServiceOptions = {
   leaseTtlMs?: number;
   tokenUsageTracker?: TokenUsageTracker;
   accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  accountQuotaEstimator?: AccountQuotaEstimator;
   banEventRecorder?: BanEventRecorder;
   requestLogRecorder?: RequestLogRecorder;
   /** PrismaService — persists FairShareWindow (omit in unit tests). */
@@ -83,6 +85,7 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
         accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
+        accountQuotaEstimator: options.accountQuotaEstimator,
         banEventRecorder: options.banEventRecorder,
         requestLogRecorder: options.requestLogRecorder,
         fairShareTracker,

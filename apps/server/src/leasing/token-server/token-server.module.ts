@@ -1,4 +1,6 @@
-import { Inject, Module, OnModuleInit } from "@nestjs/common";
+import { Inject, Module, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import Redis from "ioredis";
 
 import { TokenServerController } from "./token-server.controller";
 import { TokenServerService } from "./token-server.service";
@@ -6,6 +8,7 @@ import { TokenUsageTracker } from "./token-usage-tracker";
 import { BanEventTracker } from "./ban-event-tracker";
 import { RequestLogTracker } from "./request-log-tracker";
 import { AccountQuotaSnapshotTracker } from "./account-quota-snapshot-tracker";
+import { AccountQuotaEstimator } from "./account-quota-estimator";
 import { ApiWriteQueue } from "./api-write-queue";
 import { AccessKeyStore } from "./access-key-store";
 import { SessionTokenResolver } from "./session-token-resolver";
@@ -39,6 +42,20 @@ const accountQuotaSnapshotTrackerProvider = {
   inject: [PrismaService, "API_WRITE_QUEUE"],
 };
 
+const accountQuotaEstimatorProvider = {
+  provide: "ACCOUNT_QUOTA_ESTIMATOR",
+  useFactory: (config: ConfigService) => {
+    const redis = new Redis(config.get<string>("REDIS_URL", "redis://localhost:6379"), {
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 500,
+      commandTimeout: 300,
+    });
+    return new AccountQuotaEstimator(redis);
+  },
+  inject: [ConfigService],
+};
+
 // 封号事件记录器。共享一份(内存环按 provider+accountId 隔离)。只被 codex/anthropic
 // 模块注入(antigravity 不接 → 不记封号),见各自 module 的 BAN_EVENT_TRACKER inject。
 const banEventTrackerProvider = {
@@ -70,12 +87,13 @@ const tokenServerProvider = {
   // (verifies customer session JWTs on the lease hot path).
   imports: [CustomerAuthModule],
   controllers: [TokenServerController],
-  providers: [apiWriteQueueProvider, tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, banEventTrackerProvider, requestLogTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
-  exports: [TokenServerService, "API_WRITE_QUEUE", "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
+  providers: [apiWriteQueueProvider, tokenUsageTrackerProvider, accountQuotaSnapshotTrackerProvider, accountQuotaEstimatorProvider, banEventTrackerProvider, requestLogTrackerProvider, sharedAccessKeyStoreProvider, tokenServerProvider, SessionTokenResolver],
+  exports: [TokenServerService, "API_WRITE_QUEUE", "TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "ACCOUNT_QUOTA_ESTIMATOR", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", SessionTokenResolver],
 })
-export class TokenServerModule implements OnModuleInit {
+export class TokenServerModule implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject("SHARED_ACCESS_KEY_STORE") private readonly accessKeyStore: AccessKeyStore,
+    @Inject("ACCOUNT_QUOTA_ESTIMATOR") private readonly accountQuotaEstimator: AccountQuotaEstimator,
     private readonly sessionTokenResolver: SessionTokenResolver,
   ) {}
 
@@ -87,5 +105,9 @@ export class TokenServerModule implements OnModuleInit {
    */
   onModuleInit(): void {
     this.accessKeyStore.setSessionResolver(this.sessionTokenResolver);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.accountQuotaEstimator.destroy();
   }
 }

@@ -74,6 +74,31 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
     expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0.94, 5);
   });
 
+  it("does not stamp a persisted weekly value as fresh for an hourly-only report", () => {
+    const provider = new ClaudeProvider();
+    const rows = provider.quotaSnapshotInputsFromReport!({
+      claudeQuota: {
+        hourlyPercent: 94,
+        weeklyPercent: -1,
+        hourlyResetTime: "2099-06-10T05:00:00Z",
+        weeklyResetTime: "",
+      },
+    }, {
+      id: 1,
+      email: "a@b.c",
+      refreshToken: "r",
+      claudeWeeklyPercent: 98,
+      claudeWeeklyResetTime: "2099-06-16T14:00:00Z",
+    } as any);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      hourlyPercent: 94,
+      weeklyPercent: null,
+      weeklyResetAt: null,
+    });
+  });
+
   it("honors a genuine 0 (real exhaustion is a known value, not unknown)", () => {
     const { account } = snap({
       claudeQuota: {

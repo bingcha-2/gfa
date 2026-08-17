@@ -8,10 +8,10 @@ import { RosettaService } from "../rosetta.service";
 // 母号 → 绑定订阅(点 email 看关联订单/账户)。口径:只数 config.line=bind 且
 // bindings.anthropic 命中的 ACTIVE 订阅,带出客户 email + 下单 PlanOrder。
 
-function makeService(prisma: any) {
+function makeService(prisma: any, estimator?: any) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-subs-"));
-  // ctor: (options, automation?, agentAccounts?, injectedAccessKeyStore?, prisma?)
-  const svc = new RosettaService({ dataDir }, undefined, undefined, undefined, prisma);
+  // ctor: (options, automation?, agentAccounts?, injectedAccessKeyStore?, prisma?, estimator?)
+  const svc = new RosettaService({ dataDir }, undefined, undefined, undefined, prisma, estimator);
   return { svc, dataDir };
 }
 
@@ -157,7 +157,24 @@ describe("RosettaService.getQuotaPool", () => {
         paidAt: new Date("2026-07-01T00:00:00.000Z"),
       }]) },
     };
-    const { svc, dataDir } = makeService(prisma);
+    const quotaEstimator = {
+      readMany: vi.fn(async (accounts: Array<{ provider: string; accountKey: string }>) => new Map([[
+        `anthropic:${accounts[0].accountKey}`,
+        {
+          fiveHour: {
+            epoch: 1, remainingPercent: 60, resetAt: 0, trackedUsedUsd: 8,
+            inferredTotalUsd: 20, sampleCount: 2, sampleBurnBps: 1_000,
+            lastSnapshotAt: Date.now(), lastSampleAt: Date.now(), confidence: "medium",
+          },
+          weekly: {
+            epoch: 1, remainingPercent: 70, resetAt: 0, trackedUsedUsd: 30,
+            inferredTotalUsd: 100, sampleCount: 3, sampleBurnBps: 3_000,
+            lastSnapshotAt: Date.now(), lastSampleAt: Date.now(), confidence: "high",
+          },
+        },
+      ]])),
+    };
+    const { svc, dataDir } = makeService(prisma, quotaEstimator);
     cleanup.push(dataDir);
     fs.writeFileSync(path.join(dataDir, "anthropic-accounts.json"), JSON.stringify({ accounts: [{
       id: 7,
