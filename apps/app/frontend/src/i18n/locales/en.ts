@@ -262,6 +262,10 @@ export const en: DeepPartialDict = {
     paused: 'Paused',
     visible: '{count} shown',
     localOnly: 'Logs are stored on this device only',
+    exportBundle: 'Export diagnostic report',
+    exporting: 'Generating diagnostic report…',
+    exportSuccess: 'Diagnostic report saved to {path}. Send this file to support.',
+    exportFailed: 'Could not generate diagnostic report: {error}',
   },
 
   faq: {

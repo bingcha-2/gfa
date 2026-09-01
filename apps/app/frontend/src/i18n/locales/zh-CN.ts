@@ -263,6 +263,10 @@ export const zhCN = {
     paused: '已暂停滚动',
     visible: '{count} 条可见',
     localOnly: '日志仅保存在本机',
+    exportBundle: '生成环境诊断报告',
+    exporting: '正在生成诊断报告…',
+    exportSuccess: '诊断报告已生成：{path}，请将此文件发给客服。',
+    exportFailed: '诊断报告生成失败：{error}',
   },
 
   faq: {

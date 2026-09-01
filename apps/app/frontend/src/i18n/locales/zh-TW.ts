@@ -244,6 +244,10 @@ export const zhTW: DeepPartialDict = {
     paused: '已暫停滾動',
     visible: '{count} 條可見',
     localOnly: '日誌僅保存在本機',
+    exportBundle: '產生環境診斷報告',
+    exporting: '正在產生診斷報告…',
+    exportSuccess: '診斷報告已產生：{path}，請將此檔案傳給客服。',
+    exportFailed: '診斷報告產生失敗：{error}',
   },
 
   faq: {
