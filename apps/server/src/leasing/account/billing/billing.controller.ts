@@ -4,7 +4,6 @@
  * All endpoints are @Public() (skip global JwtAuthGuard) + @UseGuards(CustomerJwtGuard).
  */
 import {
-  Body,
   Controller,
   DefaultValuePipe,
   Get,
@@ -13,6 +12,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
 
@@ -21,7 +21,6 @@ import { CustomerJwtGuard } from "../customer-auth/customer-jwt.guard";
 import { CurrentCustomer } from "../customer-auth/customer.decorator";
 import type { CustomerUser } from "../customer-auth/customer-jwt.strategy";
 import { BillingService } from "./billing.service";
-import { CreateCatalogOrderDto } from "./dto/create-catalog-order.dto";
 
 @Public()
 @UseGuards(CustomerJwtGuard)
@@ -32,11 +31,11 @@ export class BillingController {
   /** POST /api/account/billing/catalog-orders → 201 (catalog-driven selection order, spec §8) */
   @Post("billing/catalog-orders")
   @HttpCode(201)
-  createCatalogOrder(
-    @CurrentCustomer() customer: CustomerUser,
-    @Body() dto: CreateCatalogOrderDto,
-  ) {
-    return this.billingService.createCatalogOrder(customer.customerId, dto.selection, dto.channel, dto.useCreditCents);
+  createCatalogOrder() {
+    throw new ServiceUnavailableException({
+      error: "ONLINE_PAYMENT_DISABLED",
+      message: "支付暂时遇到故障，请添加售后微信协助购买",
+    });
   }
 
   /** GET /api/account/billing/orders?page=&pageSize= */

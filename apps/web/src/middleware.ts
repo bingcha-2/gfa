@@ -231,6 +231,9 @@ function gateAccountHost(request: NextRequest, pathname: string): NextResponse |
     // public /api/plan-catalog proxy (no cookie, backend root) — not under
     // /api/account, so allow it explicitly.
     matchesPathPrefix(pathname, "/api/plan-catalog") ||
+    // The disabled-payment dialog reads only public customer-service fields
+    // through this narrow server-side proxy.
+    matchesPathPrefix(pathname, "/api/contact-settings") ||
     // The tickets page embeds the customer-service QR (and any FAQ image in
     // portal content), served from the same backend static mount the
     // marketing/console hosts use. Public, no cookie — let it through.

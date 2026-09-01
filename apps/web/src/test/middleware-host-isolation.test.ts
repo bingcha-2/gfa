@@ -470,6 +470,11 @@ describe("full split (all three host envs set)", () => {
     expectPassThrough(middleware(makeRequest(accountUrl("/api/plan-catalog"))));
   });
 
+  it("account host serves the narrow public contact-settings proxy", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(accountUrl("/api/contact-settings"))));
+  });
+
   it("account host does not let /api/account leak the console namespace (exact-segment match)", async () => {
     const middleware = await loadMiddleware(env);
     // sibling-prefix probe: /api/account-evil is neither /api/account nor

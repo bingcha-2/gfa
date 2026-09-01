@@ -41,33 +41,8 @@ const CATALOG: CatalogConfig = {
   windowMs: 18000000,
 };
 
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function createdOrder() {
-  return {
-    outTradeNo: "C1",
-    amountCents: 29900,
-    baseCents: 29900,
-    feeCents: 0,
-    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-    payUrl: "https://pay.example/catalog",
-    qrDataUri: "data:image/png;base64,CATALOGQR",
-  };
-}
-
-function postCalls(mockFetch: ReturnType<typeof vi.fn>) {
-  return mockFetch.mock.calls.filter(
-    ([, init]) => (init as RequestInit | undefined)?.method === "POST",
-  );
-}
-
 function checkoutBtn() {
-  return screen.getByRole("button", { name: "去支付" });
+  return screen.getByRole("button", { name: "联系微信购买" });
 }
 
 afterEach(() => {
@@ -117,13 +92,13 @@ describe("CatalogPurchase unified bind line", () => {
     expect(checkoutBtn()).toBeEnabled();
   });
 
-  it("posts only the unified bind selection when checking out", async () => {
-    const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      if (init?.method === "POST") {
-        return Promise.resolve(jsonResponse(createdOrder()));
-      }
-      return Promise.resolve(jsonResponse({ outTradeNo: "C1", status: "PENDING" }));
-    });
+  it("opens the after-sales contact flow without creating an online order", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ contact_qrcode_url: "/api/faq-images/support.jpg" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", mockFetch);
 
     render(<CatalogPurchase catalog={CATALOG} />);
@@ -131,27 +106,21 @@ describe("CatalogPurchase unified bind line", () => {
     fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));
     fireEvent.click(checkoutBtn());
 
-    await waitFor(() => expect(postCalls(mockFetch)).toHaveLength(1));
-    const body = JSON.parse((postCalls(mockFetch)[0][1] as RequestInit).body as string);
-
-    expect(body.selection).toEqual({
-      line: "bind",
-      items: [{ product: "anthropic", level: "pro" }],
-      shareSeats: 2,
-      deviceLimit: 1,
-    });
-    expect(body.selection).not.toHaveProperty("shareUsers");
-    expect(body.selection).not.toHaveProperty("usageTier");
-    expect(body.selection).not.toHaveProperty("products");
+    await waitFor(() => expect(screen.getByAltText("售后微信二维码")).toBeInTheDocument());
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/contact-settings",
+      expect.objectContaining({ headers: { accept: "application/json" } }),
+    );
+    expect(mockFetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(false);
   });
 
-  it("caps seat choices by catalog shareCapacity but still submits shareSeats", async () => {
-    const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      if (init?.method === "POST") {
-        return Promise.resolve(jsonResponse(createdOrder()));
-      }
-      return Promise.resolve(jsonResponse({ outTradeNo: "C1", status: "PENDING" }));
-    });
+  it("caps seat choices by catalog shareCapacity before opening after-sales contact", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ contact_qrcode_url: "/api/faq-images/support.jpg" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", mockFetch);
 
     render(<CatalogPurchase catalog={{ ...CATALOG, shareCapacity: 4 }} />);
@@ -167,13 +136,7 @@ describe("CatalogPurchase unified bind line", () => {
     fireEvent.click(screen.getByRole("radio", { name: "4/4 席" }));
     fireEvent.click(checkoutBtn());
 
-    await waitFor(() => expect(postCalls(mockFetch)).toHaveLength(1));
-    const body = JSON.parse((postCalls(mockFetch)[0][1] as RequestInit).body as string);
-    expect(body.selection).toMatchObject({
-      line: "bind",
-      shareSeats: 4,
-      deviceLimit: 1,
-    });
-    expect(body.selection).not.toHaveProperty("shareUsers");
+    await waitFor(() => expect(screen.getByAltText("售后微信二维码")).toBeInTheDocument());
+    expect(mockFetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(false);
   });
 });
