@@ -332,8 +332,18 @@ async function clickFirst(page: Page, selectors: string[]): Promise<boolean> {
     for (let i = 0; i < n; i++) {
       const el = loc.nth(i);
       if (await el.isVisible().catch(() => false)) {
-        await el.click({ timeout: 3500 }).catch(() => el.evaluate((node: HTMLElement) => node.click()).catch(() => {}));
-        return true;
+        try {
+          await el.click({ timeout: 3500 });
+          return true;
+        } catch {
+          const clicked = await el.evaluate((node: HTMLElement) => {
+            const disabled = (node as HTMLButtonElement).disabled || node.getAttribute("aria-disabled") === "true";
+            if (disabled) return false;
+            node.click();
+            return true;
+          }).catch(() => false);
+          if (clicked) return true;
+        }
       }
     }
   }
@@ -368,20 +378,31 @@ async function fillVerificationCode(page: Page, code: string): Promise<boolean> 
 
 type OutlookLoginResult = { ok: boolean; code?: string };
 
+const OUTLOOK_INBOX_URL = "https://outlook.live.com/mail/0/inbox";
+
 function normalizeOutlookLoginResult(result: OutlookLoginResult | boolean): OutlookLoginResult {
   return typeof result === "boolean" ? { ok: result } : result;
 }
 
 async function outlookLoginIfNeeded(page: Page, email: string, password: string): Promise<OutlookLoginResult | boolean> {
+  const promptAttempts = new Map<string, number>();
+  const mayRetryPrompt = (prompt: string) => {
+    const attempts = (promptAttempts.get(prompt) || 0) + 1;
+    promptAttempts.set(prompt, attempts);
+    return attempts <= 3;
+  };
+  let directInboxAttempted = false;
+
   for (let i = 0; i < 12; i++) {
     await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
     await sleep(1200);
     const url = page.url();
     const text = await bodyText(page);
-    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other/i.test(text)) {
+    const isRecoveryEnrollmentUrl = /account\.live\.com\/proofs\/Add/i.test(url);
+    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱|重点|其他/i.test(text)) {
       return { ok: true, code: extractOpenAIEmailCode(text) || undefined };
     }
-    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱/i.test(text)) return true;
+    if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱|重点|其他/i.test(text)) return true;
 
     if (await fillFirst(page, 'input[type="email"], input[name="loginfmt"], input[autocomplete="username"]', email)) {
       await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")']);
@@ -391,34 +412,80 @@ async function outlookLoginIfNeeded(page: Page, email: string, password: string)
       await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")', 'button:has-text("Sign in")']);
       continue;
     }
-    if (/Stay signed in/i.test(text)) {
-      await clickFirst(page, ['button:has-text("No")', 'input[value="No"]']);
+    if (/Stay signed in|保持登录状态|是否保持登录/i.test(text)) {
+      if (!mayRetryPrompt("stay-signed-in")) return false;
+      const accepted = await clickFirst(page, [
+        'button:has-text("Yes")',
+        'input[value="Yes"]',
+        'button:text-is("是")',
+        'input[value="是"]',
+      ]);
+      if (!accepted) return false;
       continue;
     }
-    if (/A quick note about your Microsoft account|Your privacy is our priority/i.test(text)) {
+    if (/A quick note about your Microsoft account|Your privacy is our priority|关于你的 Microsoft (?:帐户|账户)的简短说明|你的隐私是我们的首要任务/i.test(text)) {
+      if (!mayRetryPrompt("privacy-notice")) return false;
       const clicked = await clickFirst(page, [
         'button:has-text("OK")',
         'input[value="OK"]',
         '[role="button"]:has-text("OK")',
+        'button:text-is("确定")',
+        'input[value="确定"]',
+        'button:text-is("好的")',
       ]);
       if (!clicked) return false;
       continue;
     }
-    if (/You have a pending security action|Add a recovery email address/i.test(text)) {
+    if (
+      /Verify your identity|Enter (?:the )?(?:security )?code|验证你的身份|输入(?:安全)?代码/i.test(text)
+      || (!isRecoveryEnrollmentUrl && /security code|安全代码/i.test(text))
+    ) {
+      return false;
+    }
+    if (/setting up (?:a )?passkey|set up (?:a )?passkey|create (?:a )?passkey|正在设置密钥|设置密钥/i.test(text)) {
+      if (!mayRetryPrompt("passkey-setup")) return false;
+      const cancelled = await clickFirst(page, [
+        'button:has-text("Cancel")',
+        'input[value="Cancel"]',
+        '[role="button"]:has-text("Cancel")',
+        'button:has-text("Not now")',
+        'button:has-text("No thanks")',
+        'button:has-text("取消")',
+        'input[value="取消"]',
+        '[role="button"]:has-text("取消")',
+        'button:has-text("暂不")',
+      ]);
+      if (!cancelled) return false;
+      continue;
+    }
+    if (/Help us protect your account|You have a pending security action|Add a recovery email address|让我们来保护你的(?:帐户|账户)|添加备用邮箱|待处理的安全操作/i.test(text)) {
+      if (!mayRetryPrompt("recovery-enrollment")) return false;
       const dismissed = await clickFirst(page, [
+        'button:has-text("Skip for now")',
+        'input[value="Skip for now"]',
+        '[role="button"]:has-text("Skip for now")',
+        'button:has-text("Not now")',
+        'button:has-text("Maybe later")',
+        'button:has-text("暂时跳过")',
+        'button:has-text("以后再说")',
         'button[aria-label="Close"]',
         'button[title="Close"]',
         'button:has-text("Close")',
       ]);
-      if (!dismissed) return false;
+      if (!dismissed) {
+        if (!isRecoveryEnrollmentUrl) return false;
+        if (directInboxAttempted) return false;
+        directInboxAttempted = true;
+        // Fresh Outlook accounts sometimes make the recovery-email prompt
+        // non-dismissible. The mailbox remains accessible by navigating to it
+        // directly, which is also the documented manual recovery path.
+        await page.goto(OUTLOOK_INBOX_URL, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+      }
       continue;
     }
     if (/account\.microsoft\.com/i.test(url) && /Open Outlook\.com|Outlook/i.test(text)) {
-      await page.goto("https://outlook.live.com/mail/0/inbox", { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+      await page.goto(OUTLOOK_INBOX_URL, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
       continue;
-    }
-    if (/Help us protect your account|Verify your identity|Enter code|security code/i.test(text)) {
-      return false;
     }
     if (await clickFirst(page, [
       'a:has-text("Sign in")',
@@ -471,7 +538,8 @@ async function fetchOutlookOpenAICode(context: BrowserContext, email: string, pa
     }).catch(() => {});
     const firstLogin = normalizeOutlookLoginResult(await outlookLoginIfNeeded(page, email, password));
     if (firstLogin.code) return firstLogin.code;
-    await page.goto("https://outlook.live.com/mail/0/inbox", { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+    if (!firstLogin.ok) return null;
+    await page.goto(OUTLOOK_INBOX_URL, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
     const loggedIn = normalizeOutlookLoginResult(await outlookLoginIfNeeded(page, email, password));
     if (!loggedIn.ok) return null;
     if (loggedIn.code) return loggedIn.code;
