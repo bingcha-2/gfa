@@ -192,8 +192,19 @@ function killPort(port) {
 
   const pids = new Set();
   for (const line of result.stdout.split("\n")) {
-    const m = line.match(/\s+(\d+)\s*$/);
-    if (m && line.includes(`:${port}`)) pids.add(m[1]);
+    const parts = line.trim().split(/\s+/);
+    // netstat also lists processes that merely have an ESTABLISHED connection
+    // to the target port. Only terminate the process that owns the local TCP
+    // listener, otherwise a restart can kill reverse proxies such as Caddy.
+    if (
+      parts.length >= 5 &&
+      parts[0].toUpperCase() === "TCP" &&
+      parts[1].endsWith(`:${port}`) &&
+      parts[3].toUpperCase() === "LISTENING" &&
+      /^\d+$/.test(parts[4])
+    ) {
+      pids.add(parts[4]);
+    }
   }
 
   for (const pid of pids) {

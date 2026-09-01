@@ -1,7 +1,6 @@
 import {
   IsIn,
   IsInt,
-  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -43,18 +42,4 @@ export class GrantCatalogSubscriptionDto {
   @Min(1)
   @Max(3650)
   durationDays?: number;
-}
-
-export class GrantTrialDto {
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(365)
-  durationDays?: number;
-
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 6 })
-  @Min(0.000001)
-  @Max(1_000_000)
-  weeklyUsdLimit?: number;
 }

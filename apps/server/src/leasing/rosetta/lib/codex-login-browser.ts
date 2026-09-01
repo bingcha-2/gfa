@@ -14,7 +14,10 @@ import * as path from "path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { startLocalSocksRelay, parseUpstream, generateGoogleTOTP } from "./playwright-oauth";
 import { toSocks5ProxyUrl } from "./store";
-import { fetchOpenAIVerificationCodeViaWeb } from "./mailcom-web-magic-link";
+import {
+  extractOpenAIVerificationCode as extractOpenAIVerificationCodeFromMailHtml,
+  fetchOpenAIVerificationCodeViaWeb,
+} from "./mailcom-web-magic-link";
 
 export interface CodexBrowserLoginOpts {
   /** codex OAuth 授权 URL（含 PKCE challenge，与后续换 token 的 codeVerifier 同源） */
@@ -60,6 +63,8 @@ const DEFAULT_SMS_TIMEOUT_MS = 90_000;
 const SMS_POLL_INTERVAL_MS = 3_000;
 const SECURITY_VERIFICATION_TIMEOUT_MS = 120_000;
 const SECURITY_VERIFICATION_POLL_MS = 1_000;
+const EMAIL_CODE_SUBMIT_TIMEOUT_MS = 20_000;
+const EMAIL_CODE_SUBMIT_POLL_MS = 500;
 const LOGIN_SURFACE_SETTLE_MS = 2_000;
 const HUMAN_INPUT_DELAY_MS = 80;
 const POST_INPUT_SETTLE_MS = 350;
@@ -366,6 +371,36 @@ async function fillVerificationCode(page: Page, code: string): Promise<boolean> 
   return false;
 }
 
+async function waitForEmailVerificationExit(page: Page): Promise<{ ok: true } | { ok: false; error: string }> {
+  const deadline = Date.now() + EMAIL_CODE_SUBMIT_TIMEOUT_MS;
+  let exitedAt = 0;
+  while (Date.now() < deadline) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+    const url = page.url();
+    const text = await bodyText(page);
+    if (/invalid|incorrect|expired|wrong code|try again|验证码.{0,12}(?:错误|无效|过期)|代码.{0,12}(?:错误|无效|过期)/i.test(text)) {
+      return { ok: false, error: "OpenAI 拒绝了邮箱验证码（验证码错误或已过期）" };
+    }
+    const inputs = await readInputs(page);
+    const emailCodeUrl = /\/email-verification/i.test(url);
+    const emailCodeSurface =
+      /check your email|enter.*code|verification code|verify your email|security code/i.test(text) &&
+      matchesInput(inputs, /code|one-time|numeric/i) &&
+      !/phone|sms|text message/i.test(text);
+    if (emailCodeUrl || emailCodeSurface) {
+      exitedAt = 0;
+    } else if (!exitedAt) {
+      // React 会在提交时短暂卸载验证码输入框；必须稳定离开验证码页，
+      // 不能把这个渲染空档误判为验证成功。
+      exitedAt = Date.now();
+    } else if (Date.now() - exitedAt >= 1_500) {
+      return { ok: true };
+    }
+    await sleep(EMAIL_CODE_SUBMIT_POLL_MS);
+  }
+  return { ok: false, error: "邮箱验证码已填写，但 OpenAI 验证页面在 20 秒内没有完成提交" };
+}
+
 type OutlookLoginResult = { ok: boolean; code?: string };
 
 function normalizeOutlookLoginResult(result: OutlookLoginResult | boolean): OutlookLoginResult {
@@ -481,6 +516,176 @@ async function fetchOutlookOpenAICode(context: BrowserContext, email: string, pa
   }
 }
 
+function mailIdReceivedAtMs(href: string): number {
+  const mailId = String(href || "").match(/[?&]mailId=(\d+)/i)?.[1] || "";
+  if (mailId.length < 13) return 0;
+  const receivedAt = Number(mailId.slice(0, 13));
+  return Number.isFinite(receivedAt) ? receivedAt : 0;
+}
+
+function mailcomTrace(event: string, details: Record<string, unknown> = {}) {
+  if (process.env.GFA_CODEX_MAIL_TRACE !== "1") return;
+  console.log(`[codex-mailcom] ${event} ${JSON.stringify(details)}`);
+}
+
+function safePageLocation(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "unknown";
+  }
+}
+
+async function openMailcomLightInbox(page: Page, email: string, password: string): Promise<string | null> {
+  // Browser fallback may already have an authenticated lightmailer cookie from
+  // an earlier run. Try that fast path before doing the full interactive login.
+  await page.goto("https://lightmailer.mail.com/folderlist?tep=startup&fcs=true", {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  }).catch(() => {});
+
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+    await sleep(1_000);
+    const url = page.url();
+    mailcomTrace("login-attempt", { attempt, location: safePageLocation(url) });
+
+    if (/lightmailer\.mail\.com\/messagelist/i.test(url)) {
+      mailcomTrace("inbox-ready");
+      return url;
+    }
+    if (/lightmailer\.mail\.com\/folderlist/i.test(url)) {
+      const href = await page.locator('a[href*="messagelist"]').first().getAttribute("href").catch(() => null);
+      if (!href) {
+        mailcomTrace("folderlist-missing-inbox-link");
+        return null;
+      }
+      const inboxUrl = new URL(href, url).href;
+      mailcomTrace("opening-inbox");
+      await page.goto(inboxUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+      continue;
+    }
+
+    if (/navigator-[^.]+\.mail\.com\/mail/i.test(url)) {
+      const barrierFree = page.locator('a:has-text("barrier-free inbox")').first();
+      const href = await barrierFree.getAttribute("href").catch(() => null);
+      if (!href) {
+        mailcomTrace("navigator-missing-barrier-free-link");
+        return null;
+      }
+      mailcomTrace("opening-barrier-free-inbox");
+      await page.goto(new URL(href, url).href, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
+      continue;
+    }
+
+    await clickFirst(page, [
+      'button:has-text("Accept all")',
+      'button:has-text("Agree")',
+      'button:has-text("Accept")',
+    ]);
+
+    const loginVisible = await page.locator('input[name="username"], #login-email').first().isVisible().catch(() => false);
+    if (!loginVisible) {
+      mailcomTrace("opening-login-form");
+      await clickFirst(page, [
+        'button:has-text("Log in")',
+        'a:has-text("Log in")',
+      ]);
+      continue;
+    }
+
+    const emailFilled = await fillFirst(page, 'input[name="username"], #login-email', email);
+    const passwordFilled = await fillFirst(page, 'input[name="password"], #login-password', password);
+    if (!emailFilled || !passwordFilled) {
+      mailcomTrace("login-fields-unavailable", { emailFilled, passwordFilled });
+      return null;
+    }
+    mailcomTrace("submitting-login");
+    await clickFirst(page, [
+      'button[type="submit"]:has-text("Log in")',
+      'button.login-submit',
+    ]);
+    await sleep(2_000);
+  }
+  mailcomTrace("login-attempts-exhausted");
+  return null;
+}
+
+async function extractMailcomMessageCode(page: Page, detailUrl: string): Promise<string | null> {
+  await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+  await sleep(500);
+  let code = extractOpenAIEmailCode(await bodyText(page));
+  if (code) return code;
+
+  const iframeSrc = await page.locator('iframe[src*="mailbody"], iframe[src*="/mailbody/"]').first().getAttribute("src").catch(() => null);
+  if (!iframeSrc) {
+    const iframeLocations = await page.locator("iframe[src]").evaluateAll((frames) => frames
+      .slice(0, 10)
+      .map((frame) => {
+        try {
+          const parsed = new URL(frame.getAttribute("src") || "", location.href);
+          return `${parsed.origin}${parsed.pathname}`;
+        } catch {
+          return "unknown";
+        }
+      })).catch(() => []);
+    mailcomTrace("mailbody-frame-missing", { location: safePageLocation(page.url()), iframeLocations });
+  }
+  if (iframeSrc) {
+    mailcomTrace("opening-mailbody", { location: safePageLocation(new URL(iframeSrc, page.url()).href) });
+    await page.goto(new URL(iframeSrc, page.url()).href, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+    code = extractOpenAIVerificationCodeFromMailHtml(await page.content().catch(() => "")) || extractOpenAIEmailCode(await bodyText(page));
+  }
+  return code;
+}
+
+async function fetchMailcomOpenAICode(
+  context: BrowserContext,
+  email: string,
+  password: string,
+  sinceMs: number,
+): Promise<string | null> {
+  const page = await context.newPage();
+  try {
+    const initialInboxUrl = await openMailcomLightInbox(page, email, password);
+    if (!initialInboxUrl) {
+      mailcomTrace("inbox-unavailable");
+      return null;
+    }
+    const deadline = Date.now() + 90_000;
+    const toleranceMs = 60_000;
+
+    while (Date.now() < deadline) {
+      await page.goto(initialInboxUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+      const messages = page.locator('a[href*="messagedetail"]');
+      const count = Math.min(await messages.count().catch(() => 0), 20);
+      mailcomTrace("poll", { count });
+      for (let index = 0; index < count; index++) {
+        const message = messages.nth(index);
+        const href = await message.getAttribute("href").catch(() => null);
+        if (!href) continue;
+        const receivedAt = mailIdReceivedAtMs(href);
+        if (sinceMs && receivedAt && receivedAt < sinceMs - toleranceMs) break;
+        const subject = await message.innerText().catch(() => "");
+        if (!/openai|chatgpt/i.test(subject) || !/code|代码|验证码/i.test(subject)) continue;
+        mailcomTrace("candidate-message", { index, receivedAt, freshEnough: !sinceMs || !receivedAt || receivedAt >= sinceMs - toleranceMs });
+        const code = await extractMailcomMessageCode(page, new URL(href, initialInboxUrl).href);
+        if (code) {
+          mailcomTrace("code-found");
+          return code;
+        }
+        mailcomTrace("candidate-without-code", { index });
+        break;
+      }
+      await sleep(3_000);
+    }
+    return null;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 /** 新开标签 goto(smsUrl) 读 body —— 走浏览器代理出口、绕过 CORS */
 async function fetchSmsRaw(context: BrowserContext, smsUrl: string): Promise<string> {
   const page = await context.newPage();
@@ -520,6 +725,18 @@ async function fetchOpenAIEmailCode(
   const domain = opts.email.split("@")[1]?.toLowerCase() || "";
   if (["outlook.com", "hotmail.com", "live.com", "msn.com"].includes(domain)) {
     return fetchOutlookOpenAICode(context, opts.email, opts.password);
+  }
+  if (domain === "mail.com") {
+    const lightweight = await fetchOpenAIVerificationCodeViaWeb({
+      email: opts.email,
+      password: opts.password,
+      proxyUrl: opts.proxyUrl,
+      sinceMs,
+      waitMs: 90_000,
+    });
+    if (lightweight.ok && lightweight.code) return lightweight.code;
+    mailcomTrace("lightweight-failed-using-browser", { error: lightweight.error || "unknown" });
+    return fetchMailcomOpenAICode(context, opts.email, opts.password, sinceMs);
   }
   const result = await fetchOpenAIVerificationCodeViaWeb({
     email: opts.email,
@@ -652,7 +869,7 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
       const pageText = await bodyText(page);
       const has = (re: RegExp) => matchesInput(inputs, re);
       if (opts.sessionOnly && (
-        (emailCodeDone || pwdDone) ||
+        emailCodeDone ||
         (/chatgpt\.com/i.test(url) && !/\/auth\/login/i.test(url))
       )) {
         onStep("reading_chatgpt_session");
@@ -709,8 +926,21 @@ export async function runCodexBrowserLogin(opts: CodexBrowserLoginOpts): Promise
           return { ok: false, error: "未能自动获取 OpenAI 邮箱验证码，请检查邮箱密码或稍后重试", step: "email_code_polling", lastUrl: url };
         }
         onStep("email_code_fill");
-        await fillVerificationCode(page, code);
+        const filled = await fillVerificationCode(page, code);
+        if (!filled) {
+          return { ok: false, error: "已取得邮箱验证码，但页面上未找到可填写的验证码输入框", step: "email_code_fill", lastUrl: page.url() };
+        }
+        await sleep(500);
         await clickContinue(page);
+        onStep("email_code_submit");
+        const submitted = await waitForEmailVerificationExit(page);
+        if (!submitted.ok) {
+          if (opts.sessionOnly) {
+            const session = await readChatGptSession(context);
+            if (session) return { ok: true, session };
+          }
+          return { ok: false, error: submitted.error, step: "email_code_submit", lastUrl: page.url() };
+        }
         emailCodeDone = true;
         continue;
       }

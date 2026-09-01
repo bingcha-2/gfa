@@ -39,9 +39,6 @@ var (
 
 	codexAppInjectionMu   sync.Mutex
 	codexAppInjectionStop chan struct{}
-	// report-result / lease 返回新 accessKeyStatus 后立即唤醒额度注入。
-	// 缓冲 1 且发送非阻塞：高并发请求的连续额度回报会合并成一次 DOM 刷新。
-	codexAppInjectionRefresh chan struct{}
 )
 
 type codexAppLaunchPlan struct {
@@ -178,22 +175,6 @@ func stopCodexRemoteBrandingInjection() {
 		close(codexAppInjectionStop)
 		codexAppInjectionStop = nil
 	}
-	codexAppInjectionRefresh = nil
-}
-
-// notifyCodexRemoteBrandingQuotaChanged 让 Codex 内嵌额度与冰茶 2s 状态面板使用同一份
-// accessKeyStatus 后同步刷新。30s ticker 仍作为 DOM 重建/CDP 短暂掉线时的兜底。
-func notifyCodexRemoteBrandingQuotaChanged() {
-	codexAppInjectionMu.Lock()
-	refresh := codexAppInjectionRefresh
-	codexAppInjectionMu.Unlock()
-	if refresh == nil {
-		return
-	}
-	select {
-	case refresh <- struct{}{}:
-	default:
-	}
 }
 
 func startCodexRemoteBrandingInjection(port int) {
@@ -202,15 +183,13 @@ func startCodexRemoteBrandingInjection(port int) {
 	}
 	stopCodexRemoteBrandingInjection()
 	stop := make(chan struct{})
-	refresh := make(chan struct{}, 1)
 	codexAppInjectionMu.Lock()
 	codexAppInjectionStop = stop
-	codexAppInjectionRefresh = refresh
 	codexAppInjectionMu.Unlock()
-	go runCodexRemoteBrandingInjection(port, stop, refresh)
+	go runCodexRemoteBrandingInjection(port, stop)
 }
 
-func runCodexRemoteBrandingInjection(port int, stop, refresh <-chan struct{}) {
+func runCodexRemoteBrandingInjection(port int, stop <-chan struct{}) {
 	ticker := time.NewTicker(codexAppInjectionInterval)
 	defer ticker.Stop()
 	client := &http.Client{Timeout: codexAppInjectionHTTPTimeout}
@@ -255,7 +234,6 @@ func runCodexRemoteBrandingInjection(port int, stop, refresh <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case <-refresh:
 		case <-ticker.C:
 		}
 	}

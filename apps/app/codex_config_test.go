@@ -116,7 +116,6 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	injected, _ := os.ReadFile(cfgPath)
 	for _, must := range []string{
 		`model_provider = "bingchaai"`,
-		`cli_auth_credentials_store = "file"`,
 		`[model_providers.bingchaai]`,
 		`name = "冰茶 AI"`,
 		`base_url = "http://127.0.0.1:8080/v1"`,
@@ -149,10 +148,7 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 	}
 	restored, _ := os.ReadFile(cfgPath)
 	// 原本没有 provider/base URL,还原后应彻底移除。
-	if strings.Contains(string(restored), "model_provider") ||
-		strings.Contains(string(restored), "openai_base_url") ||
-		strings.Contains(string(restored), "cli_auth_credentials_store") ||
-		strings.Contains(string(restored), "bingchaai") {
+	if strings.Contains(string(restored), "model_provider") || strings.Contains(string(restored), "openai_base_url") || strings.Contains(string(restored), "bingchaai") {
 		t.Fatalf("还原后仍残留接管配置:\n%s", restored)
 	}
 	// 关键:用户的 projects / desktop / 注释 全部保留。
@@ -181,9 +177,6 @@ func TestInjectCodexSettingsPreservesOAuthAccountCapabilities(t *testing.T) {
 	if !strings.Contains(string(got), `requires_openai_auth = true`) {
 		t.Fatalf("已有 OAuth 时必须保留账号能力:\n%s", got)
 	}
-	if strings.Contains(string(got), `cli_auth_credentials_store = "file"`) {
-		t.Fatalf("已有 OAuth 时不得强制改成 file，避免绕过客户的 Keychain 登录态:\n%s", got)
-	}
 	if !strings.Contains(string(got), `experimental_bearer_token = "gfa_codex_takeover"`) {
 		t.Fatalf("OAuth 组合接管仍须携带本地 provider bearer:\n%s", got)
 	}
@@ -192,132 +185,6 @@ func TestInjectCodexSettingsPreservesOAuthAccountCapabilities(t *testing.T) {
 	}
 	if !IsCodexInjected(8080) {
 		t.Fatal("OAuth 组合接管应识别为已接管")
-	}
-}
-
-func TestNoOAuthTakeoverOverridesKeyringAndRestoresIt(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	configPath := filepath.Join(home, "config.toml")
-	original := `cli_auth_credentials_store = "keyring"
-model = "gpt-5.5"
-`
-	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InjectCodexSettings(8080, false); err != nil {
-		t.Fatal(err)
-	}
-	injected, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(injected), `cli_auth_credentials_store = "file"`) {
-		t.Fatalf("无 OAuth 接管必须强制读取 auth.json，而不是客户原 Keychain:\n%s", injected)
-	}
-	if !IsCodexInjected(8080) {
-		t.Fatal("补齐 file 存储后应识别为已接管")
-	}
-
-	if err := RestoreCodexSettings(); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(restored), `cli_auth_credentials_store = "keyring"`) {
-		t.Fatalf("退出接管后应恢复客户原 Keychain 配置:\n%s", restored)
-	}
-}
-
-func TestOAuthTakeoverKeepsCustomerKeyringMode(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	configPath := filepath.Join(home, "config.toml")
-	original := `cli_auth_credentials_store = "keyring"
-model = "gpt-5.5"
-`
-	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InjectCodexSettings(8080, true); err != nil {
-		t.Fatal(err)
-	}
-	injected, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(injected), `cli_auth_credentials_store = "keyring"`) {
-		t.Fatalf("OAuth 桥接必须保留客户原 Keychain 配置:\n%s", injected)
-	}
-}
-
-func TestRestoreDoesNotOverwriteAuthStoreChangedDuringTakeover(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	configPath := filepath.Join(home, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`cli_auth_credentials_store = "keyring"`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := InjectCodexSettings(8080, false); err != nil {
-		t.Fatal(err)
-	}
-	during, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := setTopLevelString(string(during), codexAuthCredentialsStore, "auto")
-	if err := os.WriteFile(configPath, []byte(changed), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := RestoreCodexSettings(); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(restored), `cli_auth_credentials_store = "auto"`) {
-		t.Fatalf("用户在接管期间改成 auto 后不得被旧备份覆盖:\n%s", restored)
-	}
-}
-
-func TestInjectBackfillsAuthStoreIntoLegacyBackup(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	configPath := filepath.Join(home, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`cli_auth_credentials_store = "keyring"`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	legacyBackup := `{"injected":true,"hadConfig":true,"prevModelProvider":"openai","prevOpenAIBaseURL":null}`
-	if err := os.WriteFile(codexBackupPath(), []byte(legacyBackup), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InjectCodexSettings(8080, false); err != nil {
-		t.Fatal(err)
-	}
-	backup, err := readCodexBackup()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !backup.AuthStoreCaptured || backup.PrevAuthCredentialsStore != "keyring" ||
-		!backup.AuthCredentialsStoreManaged {
-		t.Fatalf("旧备份未补录客户原凭据存储模式: %+v", backup)
-	}
-	if err := RestoreCodexSettings(); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(restored), `cli_auth_credentials_store = "keyring"`) {
-		t.Fatalf("旧备份迁移后未恢复客户原配置:\n%s", restored)
 	}
 }
 
@@ -568,29 +435,6 @@ supports_websockets = false
 	}
 	if IsCodexInjected(8080) {
 		t.Fatal("缺少 image_gen actor header 的旧 provider 不应继续判定为接管正常")
-	}
-}
-
-func TestIsCodexInjectedRejectsNoOAuthProviderThatMayIgnoreAuthJSON(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	legacy := `model_provider = "bingchaai"
-cli_auth_credentials_store = "keyring"
-
-[model_providers.bingchaai]
-name = "冰茶 AI"
-base_url = "http://127.0.0.1:8080/v1"
-wire_api = "responses"
-requires_openai_auth = false
-experimental_bearer_token = "gfa_codex_takeover"
-http_headers = { "x-openai-actor-authorization" = "bingchaai" }
-supports_websockets = false
-`
-	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if IsCodexInjected(8080) {
-		t.Fatal("无 OAuth 但仍读 Keychain 的旧配置必须触发重新接管修复")
 	}
 }
 

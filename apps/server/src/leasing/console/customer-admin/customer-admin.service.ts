@@ -15,7 +15,6 @@ import { BillingService } from "../../account/billing/billing.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
 import type { Selection } from "../../plan-catalog/pricing";
 import { UpdateCustomerDto } from "./dto/customer-admin.dto";
-import { TrialService } from "../../trial/trial.service";
 
 export interface ListCustomersParams {
   page: number;
@@ -32,7 +31,6 @@ export class CustomerAdminService {
     private readonly prisma: PrismaService,
     private readonly billing: BillingService,
     private readonly subscriptions: SubscriptionService,
-    private readonly trials: TrialService,
   ) {}
 
   /**
@@ -148,7 +146,6 @@ export class CustomerAdminService {
           select: {
             id: true,
             status: true,
-            isTrial: true,
             startsAt: true,
             expiresAt: true,
             productEntitlements: true,
@@ -197,10 +194,6 @@ export class CustomerAdminService {
     return {
       ...customer,
       referralLink: `${webBase}/account/register?ref=${customer.referralCode}`,
-      trialDefaults: {
-        durationDays: this.trials.getDefaultDurationDays(),
-        weeklyUsdLimit: this.trials.getDefaultWeeklyUsdLimit(),
-      },
     };
   }
 
@@ -263,20 +256,5 @@ export class CustomerAdminService {
       `[customer-admin] granted catalog subscription ${sub.id} to customer ${id} (order ${order.id})`,
     );
     return sub;
-  }
-
-  /** 发放一次性试用。已有试用时幂等返回原订阅，不延长、不重复建单。 */
-  grantTrial(
-    id: string,
-    options: {
-      durationDays?: number;
-      weeklyUsdLimit?: number;
-    } = {},
-  ) {
-    return this.trials.grantTrial(id, {
-      durationDays: options.durationDays ?? this.trials.getDefaultDurationDays(),
-      weeklyUsdLimit:
-        options.weeklyUsdLimit ?? this.trials.getDefaultWeeklyUsdLimit(),
-    });
   }
 }

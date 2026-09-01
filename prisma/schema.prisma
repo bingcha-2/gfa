@@ -451,7 +451,7 @@ model FaqItem {
 }
 
 model SiteSetting {
-  key       String   @id               // e.g. "contact_name", "contact_wechat", "contact_qrcode_url"
+  key       String   @id               // e.g. "contact_wechat", "contact_qrcode_url"
   value     String                     // Value (text, URL, etc.)
   updatedAt DateTime @updatedAt
 }
@@ -681,7 +681,6 @@ enum PayChannel {
   ALIPAY
   WXPAY
   GRANT // 管理员手动授予(目录版):¥0、无支付,仅作订单→订阅审计链的来源标记
-  TRIAL // 管理员手动发放的试用:¥0、每位客户终身一笔
   ACTIVATION_CODE // 激活码兑换:不走支付,amountCents 记激活当时目录算出的等值价格,作订单→订阅审计链来源
   CREDIT // 余额全额抵扣:¥0 现金、无支付,creditAppliedCents 记抵扣额,作订单→订阅审计链来源
 }
@@ -760,7 +759,6 @@ model Subscription {
   id                  String             @id @default(cuid())
   customerId          String
   status              SubscriptionStatus @default(ACTIVE)
-  isTrial             Boolean            @default(false)
   startsAt            DateTime           @default(now())
   expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
   activatedFromOrderId String?           // PlanOrder.id that created/last extended this sub — exact order→sub link for reconcile + refund

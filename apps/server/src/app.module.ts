@@ -51,7 +51,6 @@ import { NotificationModule } from "./leasing/account/notification/notification.
 import { TicketModule } from "./leasing/account/ticket/ticket.module";
 import { ReferralModule } from "./leasing/account/referral/referral.module";
 import { SupportAgentModule } from "./leasing/account/support-agent/support-agent.module";
-import { TrialModule } from "./leasing/trial/trial.module";
 
 @Module({
   imports: [
@@ -119,7 +118,6 @@ import { TrialModule } from "./leasing/trial/trial.module";
     TicketModule,
     ReferralModule,
     SupportAgentModule,
-    TrialModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [

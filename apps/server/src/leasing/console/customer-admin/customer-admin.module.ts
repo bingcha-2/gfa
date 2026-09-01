@@ -4,7 +4,6 @@ import { CustomerAdminController } from "./customer-admin.controller";
 import { CustomerAdminService } from "./customer-admin.service";
 import { BillingModule } from "../../account/billing/billing.module";
 import { SubscriptionModule } from "../../subscription/subscription.module";
-import { TrialModule } from "../../trial/trial.module";
 
 /**
  * CustomerAdminModule — console customer-management surface (list / detail /
@@ -13,7 +12,7 @@ import { TrialModule } from "../../trial/trial.module";
  * 提供手动授予所需服务。
  */
 @Module({
-  imports: [BillingModule, SubscriptionModule, TrialModule],
+  imports: [BillingModule, SubscriptionModule],
   controllers: [CustomerAdminController],
   providers: [CustomerAdminService],
 })

@@ -15,7 +15,6 @@ import {
   ForceReleaseProxyPort as _ForceReleaseProxyPort,
   GetLogs,
   ClearLogs as _ClearLogs,
-  ExportDiagnosticBundle as _ExportDiagnosticBundle,
   GetIDEStatus,
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   OpenCACertForTrust as _OpenCACertForTrust,
@@ -262,10 +261,6 @@ export async function getLogs(): Promise<string[]> {
 
 export async function clearLogs(): Promise<boolean> {
   return _ClearLogs()
-}
-
-export async function exportDiagnosticBundle(): Promise<string> {
-  return _ExportDiagnosticBundle()
 }
 
 // ===== IDE =====

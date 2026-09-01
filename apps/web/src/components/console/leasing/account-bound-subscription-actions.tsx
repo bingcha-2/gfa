@@ -36,6 +36,7 @@ type ResetResult = {
 type RebindResult = {
   movedSubscriptions: number;
   targets: Array<{ accountId: number; email: string | null; count: number }>;
+  force: boolean;
 };
 
 async function post<T>(resource: string, body: object): Promise<T> {
@@ -56,7 +57,7 @@ export function AccountBoundSubscriptionActions({
   disabled = false,
 }: AccountBoundSubscriptionActionsProps) {
   const [dialog, setDialog] = useState<"reset" | "rebind" | null>(null);
-  const [busy, setBusy] = useState<"reset" | "rebind" | null>(null);
+  const [busy, setBusy] = useState<"reset" | "rebind" | "forceRebind" | null>(null);
   const boundCount = Number(account.boundCardCount || 0);
   const unavailable = disabled;
   const productName = product === "codex" ? "Codex" : "Claude";
@@ -77,18 +78,20 @@ export function AccountBoundSubscriptionActions({
     }
   }
 
-  async function rebind() {
-    setBusy("rebind");
+  async function rebind(force = false) {
+    setBusy(force ? "forceRebind" : "rebind");
     try {
-      const result = await post<RebindResult>("account-bindings/rebind", { product, accountId: account.id });
+      const result = await post<RebindResult>("account-bindings/rebind", { product, accountId: account.id, force });
       const targetSummary = result.targets.map((target) => `#${target.accountId} ${target.count} 人`).join("；");
-      toast.success(`已换绑 ${result.movedSubscriptions} 个 ${productName} 订阅`, {
+      toast.success(`${force ? "已强制超容量换绑" : "已换绑"} ${result.movedSubscriptions} 个 ${productName} 订阅`, {
         description: targetSummary || "当前账号没有需要换绑的订阅。",
       });
       setDialog(null);
       await onChanged();
     } catch (error) {
-      toast.error("一键换绑失败", { description: error instanceof Error ? error.message : "请检查同等级账号是否有空位" });
+      toast.error(force ? "强制超容量换绑失败" : "一键换绑失败", {
+        description: error instanceof Error ? error.message : force ? "请检查是否存在已启用的同等级账号" : "请检查同等级账号是否有空位",
+      });
     } finally {
       setBusy(null);
     }
@@ -123,12 +126,16 @@ export function AccountBoundSubscriptionActions({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>一键换绑全部用户</AlertDialogTitle>
-            <AlertDialogDescription>将账号 #{account.id}（{account.email || productName}）下所有绑定订阅迁移至一个或多个同等级、启用且有空位的账号。</AlertDialogDescription>
+            <AlertDialogDescription>将账号 #{account.id}（{account.email || productName}）下所有绑定订阅迁移至一个或多个同等级且已启用的账号。</AlertDialogDescription>
           </AlertDialogHeader>
-          <p className="text-sm text-muted-foreground">系统会汇总多个账号的剩余容量并自动分配；总容量不足时，整批不会变更。</p>
+          <p className="text-sm text-muted-foreground">普通换绑会遵守容量上限；强制换绑允许目标账号超容量。两种方式都会先完成整批规划，无法安排时不会变更任何订阅。</p>
+          <p className="text-sm font-medium text-destructive">强制换绑会稀释目标账号现有用户的可用额度，仅在必须立即迁出当前账号时使用。</p>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy === "rebind"}>取消</AlertDialogCancel>
-            <AlertDialogAction disabled={busy === "rebind"} onClick={(event) => { event.preventDefault(); void rebind(); }}>{busy === "rebind" ? <Spinner size={14} /> : null}确认换绑</AlertDialogAction>
+            <AlertDialogCancel disabled={busy !== null}>取消</AlertDialogCancel>
+            <Button variant="destructive" disabled={busy !== null} onClick={() => void rebind(true)}>
+              {busy === "forceRebind" ? <Spinner size={14} /> : null}强制超容量换绑
+            </Button>
+            <AlertDialogAction disabled={busy !== null} onClick={(event) => { event.preventDefault(); void rebind(false); }}>{busy === "rebind" ? <Spinner size={14} /> : null}普通换绑</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

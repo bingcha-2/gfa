@@ -37,7 +37,6 @@ export const PAY_CHANNEL_LABEL: Record<string, string> = {
   ALIPAY: "支付宝",
   WXPAY: "微信",
   GRANT: "管理员授予",
-  TRIAL: "试用",
   ACTIVATION_CODE: "激活码",
   CREDIT: "余额抵扣",
 };

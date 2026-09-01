@@ -373,56 +373,51 @@ func parseCodexOAuthIdentity(data []byte, store ...codexOAuthStore) (codexOAuthI
 	}, true
 }
 
-func selectCodexOAuthIdentityForStore(authJSON, keychainJSON []byte, store string) (codexOAuthIdentity, bool) {
-	switch strings.ToLower(strings.TrimSpace(store)) {
-	case "keyring":
-		return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
-	case "auto":
-		// 对齐 Codex AutoAuthStorage：Keychain 有一份可解析的凭据就以它为准；
-		// 只有不存在或损坏时才回退 auth.json。Keychain 中的 API Key 也是一份
-		// 有效非 OAuth 凭据，不能再借文件中的旧 OAuth。
-		if len(keychainJSON) > 0 && json.Valid(keychainJSON) {
-			return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
+func selectCodexOAuthIdentity(authJSON, keychainJSON []byte, preferKeychain bool) (codexOAuthIdentity, bool) {
+	// 对齐 Cockpit:auth.json 明确声明 API Key 时，不得从残留 Keychain 借 OAuth。
+	if len(authJSON) > 0 {
+		var header struct {
+			AuthMode string `json:"auth_mode"`
 		}
-		return parseCodexOAuthIdentity(authJSON, codexOAuthStoreAuthFile)
-	case "ephemeral":
-		return codexOAuthIdentity{}, false
-	default: // 官方默认值是 file
-		return parseCodexOAuthIdentity(authJSON, codexOAuthStoreAuthFile)
+		if json.Unmarshal(authJSON, &header) == nil && isCodexAPIKeyAuthMode(header.AuthMode) {
+			return codexOAuthIdentity{}, false
+		}
 	}
+	if preferKeychain {
+		// macOS Desktop 以 Keychain 为登录事实来源。auth.json 即使结构完整，
+		// Desktop 也可能已经因账号失效清掉 Keychain 并显示登录页；此时回退文件
+		// 会把“已退出登录”误判成可桥接 OAuth。
+		if len(keychainJSON) == 0 {
+			return codexOAuthIdentity{}, false
+		}
+		return parseCodexOAuthIdentity(keychainJSON, codexOAuthStoreKeychain)
+	}
+	if len(authJSON) > 0 {
+		if identity, ok := parseCodexOAuthIdentity(authJSON, codexOAuthStoreAuthFile); ok {
+			return identity, true
+		}
+	}
+	return codexOAuthIdentity{}, false
 }
 
-func currentCodexAuthCredentialsStore() string {
-	config, had, err := loadCodexConfig()
-	if err != nil || !had {
-		return "file"
-	}
-	store, _ := config[codexAuthCredentialsStore].(string)
-	switch normalized := strings.ToLower(strings.TrimSpace(store)); normalized {
-	case "file", "keyring", "auto", "ephemeral":
-		return normalized
-	default:
-		return "file"
-	}
-}
-
-// currentCodexOAuthIdentity 严格按 Codex 自己的 cli_auth_credentials_store
-// 选择登录事实来源。不能因为运行在 macOS 就一律信 Keychain：官方默认是
-// file，用户退出登录或切回 file 后钥匙串可能仍留有旧 OAuth；13.7.7 正是
-// 因把这类残留误判为有效登录，跳过 API Key 投影后让客户停在登录页。
+// currentCodexOAuthIdentity:
+// auth.json 明确 API Key → 不桥接 OAuth；macOS Desktop 只认 Keychain 是否仍有
+// 登录事实，其他平台使用 auth.json。
 func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
 	authJSON, _ := os.ReadFile(codexAuthPath())
 	var keychainJSON []byte
-	store := currentCodexAuthCredentialsStore()
-	if runtime.GOOS == "darwin" && (store == "keyring" || store == "auto") {
+	if runtime.GOOS == "darwin" {
 		secret, existed, err := readCodexKeychainSecret()
 		if err != nil {
-			Log("[codex] 读取 Keychain OAuth 失败，将按 %s 模式判定: %v", store, err)
+			Log("[codex] 读取 Keychain OAuth 失败，按未登录处理: %v", err)
 		} else if existed {
 			keychainJSON = codexKeychainAuthBytes(secret)
 		}
 	}
-	return selectCodexOAuthIdentityForStore(authJSON, keychainJSON, store)
+	// 单测禁止访问真实 Keychain，故测试环境只验证 auth.json 分支；macOS 生产
+	// Desktop 必须严格以 Keychain 为准。
+	preferKeychain := runtime.GOOS == "darwin" && !appActionsSuppressed()
+	return selectCodexOAuthIdentity(authJSON, keychainJSON, preferKeychain)
 }
 
 // detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的登录形态。

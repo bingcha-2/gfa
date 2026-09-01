@@ -207,7 +207,6 @@ export type ConsoleCustomerList = {
 export type ConsoleSubscriptionLite = {
   id: string;
   status: string;
-  isTrial: boolean;
   startsAt: string;
   expiresAt: string | null;
   productEntitlements: string;
@@ -255,10 +254,6 @@ export type ConsoleCustomerDetail = {
   subscriptions: ConsoleSubscriptionLite[];
   planOrders: ConsoleOrderLite[];
   devices: ConsoleDeviceLite[];
-  trialDefaults: {
-    durationDays: number;
-    weeklyUsdLimit: number;
-  };
 };
 
 // 客户订单（含套餐名 + 客户邮箱）

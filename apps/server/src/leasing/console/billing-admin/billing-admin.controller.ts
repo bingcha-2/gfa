@@ -132,16 +132,17 @@ export class BillingAdminController {
 
   @Post("account-bindings/rebind")
   async rebindBoundAccountSubscriptions(
-    @Body() body: { product?: string; accountId?: number },
+    @Body() body: { product?: string; accountId?: number; force?: boolean },
     @Request() req: any,
   ) {
-    const result = await this.billingAdmin.rebindBoundAccountSubscriptions(String(body?.product || ""), Number(body?.accountId || 0));
+    const force = body?.force === true;
+    const result = await this.billingAdmin.rebindBoundAccountSubscriptions(String(body?.product || ""), Number(body?.accountId || 0), force);
     await this.auditLog.log({
       operatorId: req.user?.id,
       action: "REBIND_ACCOUNT_SUBSCRIPTIONS",
       targetType: "UpstreamAccount",
       targetId: `${result.product}:${result.sourceAccountId}`,
-      detail: result,
+      detail: { ...result, force },
     });
     return result;
   }

@@ -8,12 +8,10 @@ type FaqItem = { id: string; category: string; question: string; answer: string;
 
 export function FaqList({
   faqs,
-  contactName,
   contactWechat,
   contactQrcodeUrl,
 }: {
   faqs: FaqItem[];
-  contactName?: string;
   contactWechat?: string;
   contactQrcodeUrl?: string;
 }) {
@@ -49,12 +47,10 @@ export function FaqList({
 
   return (
     <div className="mkt-faq">
-      {(contactName || contactWechat || contactQrcodeUrl) && (
+      {(contactWechat || contactQrcodeUrl) && (
         <div className="mkt-faq__contact mkt-support-panel__item">
           <div>
-            <div className="mkt-faq__contact-t">
-              {t.faqPage.contactTitle}{contactName ? ` · ${contactName}` : ""}
-            </div>
+            <div className="mkt-faq__contact-t">{t.faqPage.contactTitle}</div>
             <div className="mkt-faq__contact-d">{t.faqPage.contactDesc}</div>
             {contactWechat && (
               <div className="mkt-faq__wechat">

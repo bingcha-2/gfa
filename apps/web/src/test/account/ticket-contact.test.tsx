@@ -6,12 +6,11 @@ import { TicketContact } from "@/components/account/ticket-contact";
 describe("TicketContact (工单页·售后客服联系卡)", () => {
   it("renders the WeChat id (with copy) and QR when configured", () => {
     const { container } = render(
-      <TicketContact name="Mr. 淦" wechat="18339526286" qrcodeUrl="https://cdn.example/qr.png" />,
+      <TicketContact wechat="bcai-kefu" qrcodeUrl="https://cdn.example/qr.png" />,
     );
 
-    expect(screen.getByRole("heading", { name: "售后客服 · Mr. 淦" })).toBeInTheDocument();
     // 微信号原样展示 + 可复制
-    expect(screen.getByText("18339526286")).toBeInTheDocument();
+    expect(screen.getByText("bcai-kefu")).toBeInTheDocument();
     expect(container.querySelector(".account-support__copy")).toBeInTheDocument();
 
     // 二维码沿用官网 FAQ 的外链 img
@@ -29,10 +28,5 @@ describe("TicketContact (工单页·售后客服联系卡)", () => {
     const { container } = render(<TicketContact wechat="bcai-kefu" />);
     expect(screen.getByText("bcai-kefu")).toBeInTheDocument();
     expect(container.querySelector(".account-support__qr")).toBeNull();
-  });
-
-  it("shows a named contact even when WeChat and QR are not configured", () => {
-    render(<TicketContact name="Mr. 淦" />);
-    expect(screen.getByRole("heading", { name: "售后客服 · Mr. 淦" })).toBeInTheDocument();
   });
 });

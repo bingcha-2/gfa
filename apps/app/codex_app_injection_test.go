@@ -168,54 +168,6 @@ func TestCodexAppQuotaRuntimeShapeCanOverrideStaleSubscription(t *testing.T) {
 	}
 }
 
-func TestCodexBrandingQuotaRefreshSignalCoalesces(t *testing.T) {
-	refresh := make(chan struct{}, 1)
-	codexAppInjectionMu.Lock()
-	previous := codexAppInjectionRefresh
-	codexAppInjectionRefresh = refresh
-	codexAppInjectionMu.Unlock()
-	t.Cleanup(func() {
-		codexAppInjectionMu.Lock()
-		codexAppInjectionRefresh = previous
-		codexAppInjectionMu.Unlock()
-	})
-
-	// 连续 report-result 不应阻塞请求线程，也不需要重复做 DOM 注入。
-	notifyCodexRemoteBrandingQuotaChanged()
-	notifyCodexRemoteBrandingQuotaChanged()
-	if len(refresh) != 1 {
-		t.Fatalf("refresh signals = %d, want one coalesced wake-up", len(refresh))
-	}
-}
-
-func TestSyncFromServerWakesCodexBrandingQuotaRefresh(t *testing.T) {
-	refresh := make(chan struct{}, 1)
-	codexAppInjectionMu.Lock()
-	previous := codexAppInjectionRefresh
-	codexAppInjectionRefresh = refresh
-	codexAppInjectionMu.Unlock()
-	t.Cleanup(func() {
-		codexAppInjectionMu.Lock()
-		codexAppInjectionRefresh = previous
-		codexAppInjectionMu.Unlock()
-	})
-
-	l := &Leaser{}
-	l.syncFromServer(map[string]interface{}{
-		"id": "sub-1",
-		"usdQuotaByProduct": map[string]interface{}{
-			"codex": map[string]interface{}{
-				"weekly": map[string]interface{}{"used": float64(18), "limit": float64(100)},
-			},
-		},
-	})
-	select {
-	case <-refresh:
-	default:
-		t.Fatal("syncFromServer must wake Codex quota injection immediately")
-	}
-}
-
 func TestCodexRemoteBrandingScriptContainsAvatarAndQuota(t *testing.T) {
 	script := codexRemoteBrandingScript(codexAppQuotaView{
 		Weekly: intPointer(64),

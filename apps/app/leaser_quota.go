@@ -120,8 +120,6 @@ func (l *Leaser) ClearAccessKeyStatus() {
 	l.accessKeyStatus = nil
 	l.accessKeyStatusAt = time.Time{}
 	l.mu.Unlock()
-	// 换卡/登出后同步隐藏 Codex 内嵌的旧额度。
-	notifyCodexRemoteBrandingQuotaChanged()
 }
 
 // ResetLocalQuota 换卡时清空本地额度跟踪

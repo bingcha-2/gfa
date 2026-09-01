@@ -180,15 +180,17 @@ export class EntitlementSyncService {
 
   /** Move all active subscriptions bound to an account across one or more
    * eligible accounts of the exact same level. Planning happens before any
-   * write, so this is an all-or-nothing operation when their combined capacity
-   * is insufficient. */
+   * write. Normal mode enforces the published oversell ceiling; force mode
+   * removes only that ceiling while retaining target eligibility checks. */
   async rebindBoundAccountSubscriptions(
     product: "codex" | "anthropic",
     sourceAccountId: number,
-  ): Promise<{ ok: true; product: "codex" | "anthropic"; sourceAccountId: number; movedSubscriptions: number; targets: Array<{ accountId: number; email: string | null; count: number }> } | { ok: false; error: string }> {
+    opts: { force?: boolean } = {},
+  ): Promise<{ ok: true; product: "codex" | "anthropic"; sourceAccountId: number; movedSubscriptions: number; targets: Array<{ accountId: number; email: string | null; count: number }>; force: boolean } | { ok: false; error: string }> {
     if (product !== "codex" && product !== "anthropic") return { ok: false, error: "Unsupported USD product" };
     const sourceId = Number(sourceAccountId);
     if (!(sourceId > 0)) return { ok: false, error: "Invalid accountId" };
+    const force = opts.force === true;
 
     return withAccessKeysWriteLock(async () => {
       const rows = await this.prisma.subscription.findMany({ where: { status: "ACTIVE" } });
@@ -197,7 +199,7 @@ export class EntitlementSyncService {
         config.line === "bind" && Number((config.bindings as Record<string, unknown> | undefined)?.[product]) === sourceId,
       );
       if (!sourceRows.length) {
-        return { ok: true, product, sourceAccountId: sourceId, movedSubscriptions: 0, targets: [] };
+        return { ok: true, product, sourceAccountId: sourceId, movedSubscriptions: 0, targets: [], force };
       }
 
       const accountingConfigs = configs.map(({ sub, config }) => ({ id: sub.id, ...config }));
@@ -239,10 +241,20 @@ export class EntitlementSyncService {
           shares,
           counts,
           currentOversellCeiling,
-          { oversellCeiling: currentOversellCeiling, excludeAccountIds: excluded },
+          {
+            // Forced account evacuation still requires an enabled, same-level
+            // target, but intentionally removes the configured oversell cap.
+            oversellCeiling: force ? undefined : currentOversellCeiling,
+            excludeAccountIds: excluded,
+          },
         );
         if (!targetId) {
-          return { ok: false, error: `Enabled ${product} accounts do not have enough combined same-level capacity for all subscriptions (${level}; blocked at ${sub.id})` };
+          return {
+            ok: false,
+            error: force
+              ? `No enabled same-level ${product} target account is available (${level}; blocked at ${sub.id})`
+              : `Enabled ${product} accounts do not have enough combined same-level capacity for all subscriptions (${level}; blocked at ${sub.id})`,
+          };
         }
         shares.set(targetId, (shares.get(targetId) || 0) + weight);
         counts.set(targetId, (counts.get(targetId) || 0) + 1);
@@ -276,11 +288,15 @@ export class EntitlementSyncService {
 
       const targets = new Map<number, number>();
       for (const { targetId } of plan) targets.set(targetId, (targets.get(targetId) || 0) + 1);
+      if (force && plan.length > 0) {
+        this.logger.warn(`[account-rebind] force-moved ${plan.length} ${product} subscriptions from account #${sourceId} without a capacity ceiling`);
+      }
       return {
         ok: true,
         product,
         sourceAccountId: sourceId,
         movedSubscriptions: plan.length,
+        force,
         targets: [...targets].map(([accountId, count]) => ({
           accountId,
           email: this.rosetta.poolAccountById(product, accountId)?.email ?? null,

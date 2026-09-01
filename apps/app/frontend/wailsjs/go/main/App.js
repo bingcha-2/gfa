@@ -34,10 +34,6 @@ export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
 }
 
-export function ExportDiagnosticBundle() {
-  return window['go']['main']['App']['ExportDiagnosticBundle']();
-}
-
 export function ForceReleaseProxyPort() {
   return window['go']['main']['App']['ForceReleaseProxyPort']();
 }

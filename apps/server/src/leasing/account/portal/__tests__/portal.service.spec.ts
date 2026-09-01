@@ -103,7 +103,6 @@ describe("PortalService.getOverview", () => {
       subscriptions: [
         {
           id: "sub-1",
-          isTrial: true,
           migratedFromKey: null,
           status: "ACTIVE",
           productEntitlements: '["antigravity"]',
@@ -121,7 +120,6 @@ describe("PortalService.getOverview", () => {
 
     expect(result.subscriptions[0].planName).toBeNull();
     expect(result.subscriptions[0].migratedFromCard).toBe(false);
-    expect(result.subscriptions[0].isTrial).toBe(true);
     expect(result.subscriptions[0].priority).toBe(2);
   });
 

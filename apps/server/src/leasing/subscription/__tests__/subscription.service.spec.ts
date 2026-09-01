@@ -251,42 +251,6 @@ describe("SubscriptionService.createFromCatalog / activateForOrder (catalog 下�
     expect(second.activatedFromOrderId).toBe("code-order-2");
   });
 
-  it("正式套餐与同配置试用保持独立，并在正式权益生效后取消试用", async () => {
-    const customer = await createTestCustomer();
-    await publishCatalog(30, 1);
-    const poolConfig = {
-      line: "pool",
-      products: ["anthropic"],
-      bucketLimits: { "anthropic-claude": 50_000 },
-      weeklyTokenLimit: 250_000,
-      deviceLimit: 1,
-      windowMs: 18_000_000,
-    };
-    const trial = await service.activateForOrder({
-      id: "trial-order",
-      customerId: customer.id,
-      config: JSON.stringify({ ...poolConfig, trial: { durationDays: 3 } }),
-      catalogVersion: 1,
-      payChannel: "TRIAL",
-    });
-    expect(trial.isTrial).toBe(true);
-
-    const paid = await service.activateForOrder({
-      id: "paid-order",
-      customerId: customer.id,
-      config: JSON.stringify(poolConfig),
-      catalogVersion: 1,
-      payChannel: "ALIPAY",
-    });
-
-    expect(paid.id).not.toBe(trial.id);
-    expect(paid.isTrial).toBe(false);
-    expect(paid.status).toBe("ACTIVE");
-    const reloadedTrial = await prisma.subscription.findUnique({ where: { id: trial.id } });
-    expect(reloadedTrial?.status).toBe("CANCELLED");
-    expect(readKeys().find((record) => record.id === trial.id)?.status).toBe("expired");
-  });
-
   it("过期订阅不参与续费去重:同配置但已 EXPIRED → 新建,不延长", async () => {
     const customer = await createTestCustomer();
     await publishCatalog(30, 1);

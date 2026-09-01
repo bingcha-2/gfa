@@ -467,6 +467,41 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(prismaStub.$transaction).not.toHaveBeenCalled();
   });
 
+  it("force-rebinds the whole batch to enabled same-level accounts beyond the capacity ceiling", async () => {
+    planCatalog.getPublished.mockResolvedValue({ config: { accountCapacity: CAP, oversellFactor: 1 } });
+    writeJson(path.join(tmpDir, "anthropic-accounts.json"), {
+      accounts: [
+        { id: 21, email: "source@pool.test", refreshToken: "rt-source", enabled: false, planType: "max" },
+        { id: 22, email: "full@pool.test", refreshToken: "rt-full", enabled: true, planType: "max" },
+      ],
+    });
+    const bindConfig = (accountId: number, weight: number) => ({
+      line: "bind",
+      products: ["anthropic"],
+      levels: { anthropic: "max" },
+      bindings: { anthropic: accountId },
+      weight,
+      quotaSeatCapacity: CAP,
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    });
+    seed(makeSub({ id: "force-target-full", config: bindConfig(22, CAP) }));
+    const sourceIds = ["force-source-1", "force-source-2"];
+    for (const id of sourceIds) seed(makeSub({ id, config: bindConfig(21, 1) }));
+
+    const result = await service.rebindBoundAccountSubscriptions("anthropic", 21, { force: true });
+
+    expect(result).toMatchObject({
+      ok: true,
+      sourceAccountId: 21,
+      movedSubscriptions: 2,
+      force: true,
+      targets: [{ accountId: 22, count: 2 }],
+    });
+    expect(sourceIds.map((id) => JSON.parse(subs.get(id).config).bindings.anthropic)).toEqual([22, 22]);
+    expect(prismaStub.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it("resets only the local USD windows of subscriptions bound to the account", async () => {
     const bound = seed(makeSub({
       id: "sub-batch-reset",

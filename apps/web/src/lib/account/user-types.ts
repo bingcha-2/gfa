@@ -41,7 +41,7 @@ export type PlanCatalogResponse = {
   config: import("./catalog-pricing").CatalogConfig | null;
 };
 
-export type PayChannel = "ALIPAY" | "WXPAY" | "GRANT" | "TRIAL" | "ACTIVATION_CODE" | "CREDIT";
+export type PayChannel = "ALIPAY" | "WXPAY" | "GRANT" | "ACTIVATION_CODE";
 
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED" | "CANCELLED";
 
@@ -91,7 +91,6 @@ export type Subscription = {
   /** null for card-migrated subscriptions — display 迁移卡密订阅. */
   planName: string | null;
   status: string;
-  isTrial?: boolean;
   products: string[];
   expiresAt: string | null;
   deviceLimit: number;

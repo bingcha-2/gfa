@@ -131,12 +131,7 @@ func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
 // syncFromServer 用服务端返回的 accessKeyStatus 校准本地额度
 func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	l.mu.Lock()
-	defer func() {
-		l.mu.Unlock()
-		// Codex 品牌额度和前端 GetStats 都读 accessKeyStatus。状态写入完成后立即
-		// 唤醒 CDP 注入，避免前端已显示新值而 Codex 徽标最多滞后 30 秒。
-		notifyCodexRemoteBrandingQuotaChanged()
-	}()
+	defer l.mu.Unlock()
 
 	l.accessKeyStatus = mergeAccessKeyStatus(l.accessKeyStatus, aks)
 	l.accessKeyStatusAt = time.Now()

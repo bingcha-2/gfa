@@ -97,9 +97,9 @@ export class BillingAdminService {
     return this.entitlementSync.resetBoundAccountUsdQuotas(product, Number(accountId));
   }
 
-  async rebindBoundAccountSubscriptions(product: string, accountId: number) {
+  async rebindBoundAccountSubscriptions(product: string, accountId: number, force: boolean) {
     if (product !== "codex" && product !== "anthropic") throw new ConflictException(`Product ${product} does not support account rebinding`);
-    const result = await this.entitlementSync.rebindBoundAccountSubscriptions(product, Number(accountId));
+    const result = await this.entitlementSync.rebindBoundAccountSubscriptions(product, Number(accountId), { force });
     if (!result.ok) throw new ConflictException({ error: "ACCOUNT_REBIND_FAILED", message: result.error });
     return result;
   }

@@ -75,7 +75,10 @@ class FakePage {
   readonly gotoUrls: string[] = [];
   clickedOpenOutlook = false;
 
-  constructor(private readonly role: "auth" | "outlook") {}
+  constructor(
+    private readonly role: "auth" | "outlook",
+    private readonly rejectCodeSubmission = false,
+  ) {}
 
   async goto(url: string) {
     this.gotoUrls.push(url);
@@ -180,7 +183,7 @@ class FakePage {
       this.stage = "auth-code";
       return;
     }
-    if ((selector.includes("button") || selector.includes("submit")) && this.stage === "auth-code" && this.codeFilled) {
+    if ((selector.includes("button") || selector.includes("submit")) && this.stage === "auth-code" && this.codeFilled && !this.rejectCodeSubmission) {
       this.stage = "redirect";
     }
   }
@@ -232,5 +235,38 @@ describe("runCodexBrowserLogin Outlook email code handling", () => {
     expect(result).toMatchObject({ ok: true, code: "oauth-code" });
     expect(outlookPage.clickedOpenOutlook).toBe(false);
     expect(outlookPage.gotoUrls).toContain("https://outlook.live.com/mail/0/inbox");
+  });
+
+  it("does not pretend login completed when the verification page never accepts the code", async () => {
+    const authPage = new FakePage("auth", true);
+    const outlookPage = new FakePage("outlook");
+    const context = {
+      pages: () => [authPage],
+      newPage: vi.fn(async () => outlookPage),
+      addInitScript: vi.fn(async () => {}),
+      on: vi.fn(),
+    };
+    mocks.launch.mockResolvedValue({
+      newContext: vi.fn(async () => context),
+      close: vi.fn(async () => {}),
+    });
+
+    const resultPromise = runCodexBrowserLogin({
+      authorizeUrl: "https://auth.openai.com/oauth/authorize",
+      redirectUri: "http://localhost:1455/auth/callback",
+      email: "outlook-user@outlook.com",
+      password: "mail-password",
+      proxyUrl: "socks5://user:pass@198.51.100.10:443",
+      maxSteps: 8,
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({
+      ok: false,
+      step: "email_code_submit",
+      lastUrl: "https://auth.openai.com/email-verification",
+    });
+    expect(result.error).toContain("20 秒内没有完成提交");
   });
 });

@@ -99,32 +99,4 @@ describe("AccountBillingCenter", () => {
     expect(screen.getAllByText("激活码").length).toBeGreaterThan(0);
     expect(screen.getByText("套餐目录")).toBeInTheDocument();
   });
-
-  it("labels trial subscriptions and trial orders explicitly", () => {
-    render(
-      <AccountBillingCenter
-        subscriptions={[{ ...subscriptions[0], isTrial: true }]}
-        plans={plans}
-        orders={{
-          total: 1,
-          orders: [{
-            ...orders[0],
-            outTradeNo: "trial_cust_1",
-            amountCents: 0,
-            payChannel: "TRIAL",
-            status: "PAID",
-          }],
-        }}
-        page={1}
-        totalPages={1}
-        loadError={false}
-        onBound={vi.fn()}
-        onPage={vi.fn()}
-        onPurchase={vi.fn()}
-      />
-    );
-
-    expect(screen.getByText("试用 · 年度会员")).toBeInTheDocument();
-    expect(screen.getByText("试用发放")).toBeInTheDocument();
-  });
 });
