@@ -77,6 +77,7 @@ class FakePage {
   clickedRecoverySkip = false;
   clickedPasskeyCancel = false;
   clickedStaySignedInYes = false;
+  clickedChineseNext = false;
   readonly inboxNavigationOrigins: string[] = [];
 
   constructor(
@@ -86,12 +87,17 @@ class FakePage {
     private readonly mandatoryIdentityPrompt = false,
     private readonly inboxRedirectsToRecovery = false,
     private readonly rejectCodeSubmission = false,
+    private readonly startsAtMicrosoftCredentialPage = false,
   ) {}
 
   async goto(url: string) {
     this.gotoUrls.push(url);
     if (this.role === "auth") {
       this.stage = "auth-email";
+      return;
+    }
+    if (this.startsAtMicrosoftCredentialPage && !this.microsoftSetupDone && !url.includes("outlook.live.com/mail")) {
+      this.stage = "microsoft-email";
       return;
     }
     if (url.includes("outlook.live.com/mail")) {
@@ -116,6 +122,7 @@ class FakePage {
     }
     if (this.stage === "outlook-mail") return "https://outlook.live.com/mail/0/inbox";
     if (this.stage === "microsoft-account") return "https://account.microsoft.com/?lang=en-US&refd=account.live.com";
+    if (this.stage === "microsoft-email" || this.stage === "microsoft-password") return "https://login.live.com/login.srf";
     if (this.stage === "microsoft-recovery-prompt") return "https://account.live.com/proofs/Add";
     if (this.stage === "microsoft-passkey") return "https://account.live.com/proofs/passkey";
     if (this.stage === "microsoft-stay-signed-in") return "https://login.live.com/ppsecure/post.srf";
@@ -156,6 +163,8 @@ class FakePage {
         ? "关于你的 Microsoft 帐户的简短说明 你的隐私是我们的首要任务 确定"
         : "A quick note about your Microsoft account Your privacy is our priority OK";
     }
+    if (this.stage === "microsoft-email") return "登录 使用你的 Microsoft 帐户。电子邮件地址或电话号码 下一步";
+    if (this.stage === "microsoft-password") return "输入密码 登录";
     if (this.stage === "microsoft-recovery-prompt") {
       return this.language === "zh"
         ? "让我们来保护你的账户 添加备用邮箱 暂时跳过"
@@ -179,6 +188,8 @@ class FakePage {
   countFor(selector: string) {
     if (selector === "body") return 1;
     if (this.role === "outlook") {
+      if (this.stage === "microsoft-email" && (selector.includes("email") || selector.includes("loginfmt") || selector.includes("username") || selector.includes("下一步"))) return 1;
+      if (this.stage === "microsoft-password" && (selector.includes("password") || selector.includes("passwd") || selector.includes("Sign in"))) return 1;
       if (this.stage === "microsoft-privacy-notice" && selector.includes(this.language === "zh" ? "确定" : "OK")) return 1;
       if (this.stage === "microsoft-recovery-prompt" && this.recoveryPromptHasSkip && selector.includes(this.language === "zh" ? "暂时跳过" : "Skip for now")) return 1;
       if (this.stage === "microsoft-passkey" && selector.includes(this.language === "zh" ? "取消" : "Cancel")) return 1;
@@ -194,6 +205,15 @@ class FakePage {
 
   clickFor(selector: string) {
     if (this.role === "outlook") {
+      if (this.stage === "microsoft-email" && selector.includes("下一步")) {
+        this.clickedChineseNext = true;
+        this.stage = "microsoft-password";
+        return;
+      }
+      if (this.stage === "microsoft-password" && selector.includes("Sign in")) {
+        this.stage = "microsoft-privacy-notice";
+        return;
+      }
       if (this.stage === "microsoft-privacy-notice" && selector.includes(this.language === "zh" ? "确定" : "OK")) {
         this.stage = this.mandatoryIdentityPrompt ? "microsoft-identity-verification" : "microsoft-recovery-prompt";
         return;
@@ -316,6 +336,14 @@ describe("runCodexBrowserLogin Outlook email code handling", () => {
       lastUrl: "https://auth.openai.com/email-verification",
     });
     expect(result.error).toContain("20 秒内没有完成提交");
+  });
+
+  it("submits the Chinese Microsoft email page instead of repeatedly retyping the address", async () => {
+    const outlookPage = new FakePage("outlook", true, "zh", false, false, false, true);
+    const result = await runOutlookLogin(outlookPage);
+
+    expect(result).toMatchObject({ ok: true, code: "oauth-code" });
+    expect(outlookPage.clickedChineseNext).toBe(true);
   });
 
   it("opens the inbox directly when the recovery-email prompt has no skip action", async () => {

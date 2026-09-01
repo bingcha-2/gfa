@@ -415,6 +415,24 @@ type OutlookLoginResult = { ok: boolean; code?: string };
 
 const OUTLOOK_INBOX_URL = "https://outlook.live.com/mail/0/inbox";
 
+async function submitOutlookCredentialPage(page: Page): Promise<boolean> {
+  const clicked = await clickFirst(page, [
+    "#idSIButton9",
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button:has-text("Next")',
+    '[role="button"]:has-text("Next")',
+    'button:has-text("下一步")',
+    '[role="button"]:has-text("下一步")',
+    'button:has-text("Sign in")',
+    '[role="button"]:has-text("Sign in")',
+    'button:has-text("登录")',
+    '[role="button"]:has-text("登录")',
+  ]);
+  if (clicked) return true;
+  return page.keyboard.press("Enter").then(() => true, () => false);
+}
+
 function normalizeOutlookLoginResult(result: OutlookLoginResult | boolean): OutlookLoginResult {
   return typeof result === "boolean" ? { ok: result } : result;
 }
@@ -427,6 +445,8 @@ async function outlookLoginIfNeeded(page: Page, email: string, password: string)
     return attempts <= 3;
   };
   let directInboxAttempted = false;
+  let emailSubmitted = false;
+  let passwordSubmitted = false;
 
   for (let i = 0; i < 12; i++) {
     await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
@@ -439,12 +459,14 @@ async function outlookLoginIfNeeded(page: Page, email: string, password: string)
     }
     if (/outlook\.live\.com\/mail/i.test(url) && /Inbox|Focused|Other|收件箱|重点|其他/i.test(text)) return true;
 
-    if (await fillFirst(page, 'input[type="email"], input[name="loginfmt"], input[autocomplete="username"]', email)) {
-      await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")']);
+    if (!emailSubmitted && await fillFirst(page, 'input[type="email"], input[name="loginfmt"], input[autocomplete="username"]', email)) {
+      if (!await submitOutlookCredentialPage(page)) return false;
+      emailSubmitted = true;
       continue;
     }
-    if (await fillFirst(page, 'input[type="password"], input[name="passwd"]', password)) {
-      await clickFirst(page, ['input[type="submit"]', 'button:has-text("Next")', 'button:has-text("Sign in")']);
+    if (!passwordSubmitted && await fillFirst(page, 'input[type="password"], input[name="passwd"]', password)) {
+      if (!await submitOutlookCredentialPage(page)) return false;
+      passwordSubmitted = true;
       continue;
     }
     if (/Stay signed in|保持登录状态|是否保持登录/i.test(text)) {
