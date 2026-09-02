@@ -266,6 +266,17 @@ export const en: DeepPartialDict = {
     exporting: 'Generating diagnostic report…',
     exportSuccess: 'Diagnostic report saved to {path}. Send this file to support.',
     exportFailed: 'Could not generate diagnostic report: {error}',
+    repairAuth: 'Repair Codex sign-in',
+    repairingAuth: 'Repairing sign-in…',
+    repairAuthConfirmTitle: 'Repair Codex sign-in',
+    repairAuthConfirmBody: 'This moves the current Codex auth.json to a backup. If BingchaAI manages the file, its previous credentials are restored instead. Close Codex first. You will need to sign in again when this is done.',
+    repairAuthConfirm: 'Repair sign-in',
+    repairAuthCancel: 'Cancel',
+    repairAuthSuccess: 'Moved auth.json to a backup at {path}. Restart Codex and sign in again.',
+    repairAuthKeychainPresent: 'Moved auth.json to a backup at {path}. The macOS Keychain entry was not changed. If the issue remains, sign out of Codex and sign in again there.',
+    repairAuthRestored: 'Restored the Codex credentials from before BingchaAI takeover. Restart Codex; sign in again if needed.',
+    repairAuthMissing: 'auth.json was not found. It may already be clean. Restart Codex and sign in again.',
+    repairAuthFailed: 'Could not repair Codex sign-in: {error}',
   },
 
   faq: {

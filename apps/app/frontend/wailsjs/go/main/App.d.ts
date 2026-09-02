@@ -350,6 +350,8 @@ export function RefreshUsageSummary():Promise<Record<string, any>>;
 
 export function ReleaseHostProtectionTarget(arg1:string):Promise<main.HostProtectionStatus>;
 
+export function RepairCodexAuth():Promise<string>;
+
 export function RestartProxy():Promise<void>;
 
 export function RestartToUpdate():Promise<void>;

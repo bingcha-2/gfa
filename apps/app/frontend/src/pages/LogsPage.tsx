@@ -5,15 +5,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
-import { exportDiagnosticBundle } from '@/services/wails'
-import { CheckCircle2, Copy, Download, Filter, FolderOpen, Loader2, Pause, Play, Search, Trash2, AlertCircle } from 'lucide-react'
+import { exportDiagnosticBundle, repairCodexAuth } from '@/services/wails'
+import { Modal, useModal } from '@/components/Modal'
+import { AlertCircle, CheckCircle2, Copy, Download, Filter, FolderOpen, KeyRound, Loader2, Pause, Play, Search, Trash2 } from 'lucide-react'
 
 export function LogsPage() {
   const t = useT()
   const { filter, searchQuery, setFilter, setSearchQuery, clearLogs, getFilteredLogs, logs } = useLogStore()
+  const { modalProps, showConfirm } = useModal()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [follow, setFollow] = useState(true)
   const [exporting, setExporting] = useState(false)
+  const [repairingAuth, setRepairingAuth] = useState(false)
   const [exportNotice, setExportNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const filters: { id: LogFilter; label: string }[] = [
@@ -46,6 +49,38 @@ export function LogsPage() {
     }
   }
 
+  const handleRepairCodexAuth = async () => {
+    if (repairingAuth) return
+    setRepairingAuth(true)
+    const confirmed = await showConfirm(t('logs.repairAuthConfirmTitle'), t('logs.repairAuthConfirmBody'), {
+      confirmLabel: t('logs.repairAuthConfirm'),
+      cancelLabel: t('logs.repairAuthCancel'),
+    })
+    if (!confirmed) {
+      setRepairingAuth(false)
+      return
+    }
+    setExportNotice(null)
+    try {
+      const result = await repairCodexAuth()
+      const keychainPresent = result.startsWith('removed-keychain-present:')
+      const backupPath = keychainPresent ? result.slice('removed-keychain-present:'.length) : result
+      const message = result === 'restored-managed'
+        ? t('logs.repairAuthRestored')
+        : result === 'missing'
+          ? t('logs.repairAuthMissing')
+          : keychainPresent
+            ? t('logs.repairAuthKeychainPresent', { path: backupPath })
+            : t('logs.repairAuthSuccess', { path: backupPath })
+      setExportNotice({ kind: 'success', message })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      setExportNotice({ kind: 'error', message: t('logs.repairAuthFailed', { error: detail }) })
+    } finally {
+      setRepairingAuth(false)
+    }
+  }
+
   return (
     <div className="mx-auto flex h-full w-full max-w-[1080px] flex-col gap-4 pt-3">
       <div className="flex items-end justify-between gap-4">
@@ -57,6 +92,10 @@ export function LogsPage() {
           <Button size="sm" variant="secondary" disabled={exporting} onClick={() => void handleExportDiagnostics()}>
             {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
             {exporting ? t('logs.exporting') : t('logs.exportBundle')}
+          </Button>
+          <Button size="sm" variant="secondary" disabled={repairingAuth} onClick={() => void handleRepairCodexAuth()}>
+            {repairingAuth ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
+            {repairingAuth ? t('logs.repairingAuth') : t('logs.repairAuth')}
           </Button>
           <Button size="sm" variant="secondary" onClick={() => setFollow((value) => !value)}>
             {follow ? <Pause size={13} /> : <Play size={13} />}
@@ -126,6 +165,7 @@ export function LogsPage() {
           <span className="flex items-center gap-1"><FolderOpen size={11} />{t('logs.localOnly')}</span>
         </div>
       </section>
+      <Modal {...modalProps} />
     </div>
   )
 }

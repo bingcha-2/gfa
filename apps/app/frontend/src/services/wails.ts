@@ -48,6 +48,7 @@ import {
   GetReferralInfo as _GetReferralInfo,
   HeartbeatCheck as _HeartbeatCheck,
   RefreshUsageSummary as _RefreshUsageSummary,
+  RepairCodexAuth as _RepairCodexAuth,
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
   SandboxGetStatus as _SandboxGetStatus,
@@ -146,6 +147,10 @@ export async function heartbeatCheck(): Promise<Record<string, unknown>> {
 // 用户主动刷新时绕过服务端五分钟用量缓存；会话与订阅校验逻辑与普通心跳相同。
 export async function refreshUsageSummary(): Promise<Record<string, unknown>> {
   return _RefreshUsageSummary()
+}
+
+export async function repairCodexAuth(): Promise<string> {
+  return _RepairCodexAuth()
 }
 
 // 调整订阅接力优先级(↑↓);成功后调用方应 heartbeat() 刷新本地多订阅快照。

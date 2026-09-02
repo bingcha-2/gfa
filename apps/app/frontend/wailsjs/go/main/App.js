@@ -670,6 +670,10 @@ export function ReleaseHostProtectionTarget(arg1) {
   return window['go']['main']['App']['ReleaseHostProtectionTarget'](arg1);
 }
 
+export function RepairCodexAuth() {
+  return window['go']['main']['App']['RepairCodexAuth']();
+}
+
 export function RestartProxy() {
   return window['go']['main']['App']['RestartProxy']();
 }

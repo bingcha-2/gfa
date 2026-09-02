@@ -248,6 +248,17 @@ export const zhTW: DeepPartialDict = {
     exporting: '正在產生診斷報告…',
     exportSuccess: '診斷報告已產生：{path}，請將此檔案傳給客服。',
     exportFailed: '診斷報告產生失敗：{error}',
+    repairAuth: '修復 Codex 登入狀態',
+    repairingAuth: '正在修復登入狀態…',
+    repairAuthConfirmTitle: '修復 Codex 登入狀態',
+    repairAuthConfirmBody: '這會移出目前的 Codex auth.json 並保留備份；如果檔案由冰茶接管產生，則會先還原原始憑證。請先關閉 Codex，再繼續。完成後需要重新登入。',
+    repairAuthConfirm: '繼續修復',
+    repairAuthCancel: '取消',
+    repairAuthSuccess: '已移出 auth.json，備份檔案保存在：{path}。請重新啟動 Codex 並重新登入。',
+    repairAuthKeychainPresent: '已移出 auth.json，備份檔案保存在：{path}。macOS 的 Keychain 登入資訊未改動，如問題仍在，請先在 Codex 中登出，再重新登入。',
+    repairAuthRestored: '已還原冰茶接管前的 Codex 憑證。請重新啟動 Codex；如問題仍在，再重新登入。',
+    repairAuthMissing: '找不到 auth.json，目前可能已經是清理後的狀態。請重新啟動 Codex 並重新登入。',
+    repairAuthFailed: '修復 Codex 登入狀態失敗：{error}',
   },
 
   faq: {

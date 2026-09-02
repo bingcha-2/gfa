@@ -267,6 +267,17 @@ export const zhCN = {
     exporting: '正在生成诊断报告…',
     exportSuccess: '诊断报告已生成：{path}，请将此文件发给客服。',
     exportFailed: '诊断报告生成失败：{error}',
+    repairAuth: '修复 Codex 登录状态',
+    repairingAuth: '正在修复登录状态…',
+    repairAuthConfirmTitle: '修复 Codex 登录状态',
+    repairAuthConfirmBody: '这会移出当前 Codex auth.json 并保留备份；如果文件由冰茶接管生成，则会先还原原凭证。请先关闭 Codex，再继续。完成后需要重新登录。',
+    repairAuthConfirm: '继续修复',
+    repairAuthCancel: '取消',
+    repairAuthSuccess: '已移出 auth.json，备份文件保存在：{path}。请重启 Codex 并重新登录。',
+    repairAuthKeychainPresent: '已移出 auth.json，备份文件保存在：{path}。macOS 的 Keychain 登录信息未改动，如问题仍在，请先在 Codex 中退出登录，再重新登录。',
+    repairAuthRestored: '已还原冰茶接管前的 Codex 凭证。请重启 Codex；如问题仍在，再重新登录。',
+    repairAuthMissing: '未找到 auth.json，当前可能已经是清理后的状态。请重启 Codex 并重新登录。',
+    repairAuthFailed: '修复 Codex 登录状态失败：{error}',
   },
 
   faq: {
