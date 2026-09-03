@@ -361,6 +361,17 @@ func TestCodexAuthHasOAuthIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexAuthHasOAuthIdentityRejectsExpiredAccessToken(t *testing.T) {
+	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if codexAuthHasOAuthIdentity(expired) {
+		t.Fatal("过期 access token 不应继续桥接 OAuth，应回落 API-Key/file")
+	}
+	nearExpiry := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(2*time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if codexAuthHasOAuthIdentity(nearExpiry) {
+		t.Fatal("临近过期 access token 不应继续桥接 OAuth")
+	}
+}
+
 func TestSelectCodexOAuthIdentityUsesMacDesktopLoginFact(t *testing.T) {
 	fileOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"file-id","access_token":"file-access","refresh_token":"file-refresh","account_id":"file-account"}}`)
 	keychainOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"key-id","access_token":"key-access","refresh_token":"key-refresh","account_id":"key-account"}}`)

@@ -296,6 +296,12 @@ func codexAuthHasOAuthIdentity(data []byte) bool {
 	if strings.HasPrefix(strings.TrimSpace(auth.Tokens.AccountID), "bcai-") {
 		return false
 	}
+	// Codex 会在 access token 过期/临近过期时尝试 refresh；如果 Keychain
+	// 中的 refresh token 已失效，桌面端会直接回到登录页。远程接管不应
+	// 把这类残留 OAuth 当成可桥接身份，改走 API-Key/file 投影更稳定。
+	if exp, ok := codexJWTExp(auth.Tokens.AccessToken); ok && exp <= time.Now().Add(5*time.Minute).Unix() {
+		return false
+	}
 	return strings.TrimSpace(auth.Tokens.IDToken) != "" &&
 		strings.TrimSpace(auth.Tokens.AccessToken) != "" &&
 		strings.TrimSpace(auth.Tokens.RefreshToken) != ""
@@ -420,7 +426,7 @@ func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
 	return selectCodexOAuthIdentity(authJSON, keychainJSON, preferKeychain)
 }
 
-// detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的登录形态。
+// detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存且未过期的登录形态。
 // 远程接管不是账号管理器：不得主动请求 usage 验号、不得消费轮换型 refresh token，
 // 也不得因一次 401 就覆盖用户登录态。只要本地是完整 OAuth，就原样保留并让 Codex
 // 自己负责续期；只有明确没有 OAuth（未登录/API Key）时才投影受管 API Key。
