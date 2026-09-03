@@ -307,6 +307,43 @@ func codexAuthHasOAuthIdentity(data []byte) bool {
 		strings.TrimSpace(auth.Tokens.RefreshToken) != ""
 }
 
+// codexAuthOAuthExpiryReason describes an OAuth-shaped credential rejected
+// because its access token is expired or about to expire. Keep this separate
+// from codexAuthHasOAuthIdentity so support logs can explain the API-Key/file
+// fallback without changing the boolean predicate used by callers.
+func codexAuthOAuthExpiryReason(data []byte) string {
+	var auth struct {
+		AuthMode string `json:"auth_mode"`
+		Tokens   struct {
+			IDToken      string `json:"id_token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			AccountID    string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(data, &auth) != nil || isCodexAPIKeyAuthMode(auth.AuthMode) {
+		return ""
+	}
+	if strings.HasPrefix(strings.TrimSpace(auth.Tokens.AccountID), "bcai-") ||
+		strings.TrimSpace(auth.Tokens.IDToken) == "" ||
+		strings.TrimSpace(auth.Tokens.AccessToken) == "" ||
+		strings.TrimSpace(auth.Tokens.RefreshToken) == "" {
+		return ""
+	}
+	exp, ok := codexJWTExp(auth.Tokens.AccessToken)
+	if !ok {
+		return ""
+	}
+	remaining := exp - time.Now().Unix()
+	if remaining <= 0 {
+		return "检测到 OAuth access token 已过期"
+	}
+	if remaining <= 5*60 {
+		return fmt.Sprintf("检测到 OAuth access token 将在 %d 秒内过期", remaining)
+	}
+	return ""
+}
+
 func isCodexAPIKeyAuthMode(mode string) bool {
 	normalized := strings.NewReplacer("_", "", "-", "", " ", "").
 		Replace(strings.ToLower(strings.TrimSpace(mode)))
@@ -433,6 +470,9 @@ func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
 func detectCodexOAuthCapabilityBridge() (bool, string) {
 	identity, ok := currentCodexOAuthIdentity()
 	if !ok {
+		if reason := codexOAuthBridgeExpiryReason(); reason != "" {
+			return false, reason
+		}
 		return false, "未发现完整 OAuth 登录态"
 	}
 	store := "auth.json"
@@ -447,6 +487,32 @@ func detectCodexOAuthCapabilityBridge() (bool, string) {
 		}
 	}
 	return true, "保留现有 OAuth 登录态（" + store + "，不验号、不刷新）"
+}
+
+// codexOAuthBridgeExpiryReason checks the same source Codex Desktop uses for
+// login truth (Keychain on macOS, auth.json elsewhere). It is read-only.
+func codexOAuthBridgeExpiryReason() string {
+	if runtime.GOOS == "darwin" && !appActionsSuppressed() {
+		secret, existed, err := readCodexKeychainSecret()
+		if err != nil {
+			return ""
+		}
+		if !existed {
+			// Desktop treats a missing Keychain item as logged out; do not
+			// misdiagnose an unrelated auth.json token as the login-page cause.
+			return ""
+		}
+		if reason := codexAuthOAuthExpiryReason(codexKeychainAuthBytes(secret)); reason != "" {
+			return "macOS Keychain " + reason + "（将回落 API-Key/file）"
+		}
+		return ""
+	}
+	if data, err := os.ReadFile(codexAuthPath()); err == nil {
+		if reason := codexAuthOAuthExpiryReason(data); reason != "" {
+			return reason + "（将回落 API-Key/file）"
+		}
+	}
+	return ""
 }
 
 func normalizeCodexKeychainOAuthSecret(secret string) (string, bool) {

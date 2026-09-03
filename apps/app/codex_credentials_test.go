@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -372,6 +373,21 @@ func TestCodexAuthHasOAuthIdentityRejectsExpiredAccessToken(t *testing.T) {
 	}
 }
 
+func TestCodexOAuthExpiryReasonExplainsFallback(t *testing.T) {
+	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if got := codexAuthOAuthExpiryReason(expired); got != "检测到 OAuth access token 已过期" {
+		t.Fatalf("过期 OAuth 原因不明确: %q", got)
+	}
+	nearExpiry := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(2*time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if got := codexAuthOAuthExpiryReason(nearExpiry); !strings.Contains(got, "将在") {
+		t.Fatalf("临近过期 OAuth 原因不明确: %q", got)
+	}
+	valid := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"opaque-access","refresh_token":"refresh","account_id":"account-1"}}`)
+	if got := codexAuthOAuthExpiryReason(valid); got != "" {
+		t.Fatalf("opaque token 不应误报过期: %q", got)
+	}
+}
+
 func TestSelectCodexOAuthIdentityUsesMacDesktopLoginFact(t *testing.T) {
 	fileOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"file-id","access_token":"file-access","refresh_token":"file-refresh","account_id":"file-account"}}`)
 	keychainOAuth := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"key-id","access_token":"key-access","refresh_token":"key-refresh","account_id":"key-account"}}`)
@@ -433,6 +449,55 @@ func TestDetectCodexOAuthCapabilityBridgeRejectsOnlyNonOAuthShape(t *testing.T) 
 	}
 	if ok, reason := detectCodexOAuthCapabilityBridge(); ok || reason == "" {
 		t.Fatalf("API Key 形态不得当成 OAuth: ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestDetectCodexOAuthCapabilityBridgeReportsExpiredOAuth(t *testing.T) {
+	isolateCodexHome(t)
+	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if err := os.WriteFile(codexAuthPath(), expired, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, reason := detectCodexOAuthCapabilityBridge(); ok || !strings.Contains(reason, "已过期") || !strings.Contains(reason, "API-Key/file") {
+		t.Fatalf("过期 OAuth 应明确回落 API-Key/file: ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestExpiredOAuthFallbackProjectsAPIKeyFileShape(t *testing.T) {
+	isolateCodexHome(t)
+	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
+	if err := os.WriteFile(codexAuthPath(), expired, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preserve, _ := detectCodexOAuthCapabilityBridge()
+	if preserve {
+		t.Fatal("过期 OAuth 不应进入 OAuth 桥接路径")
+	}
+	if err := InjectCodexAPIKeyAuth(); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(8080, preserve); err != nil {
+		t.Fatal(err)
+	}
+	projected, err := os.ReadFile(codexAuthPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auth map[string]interface{}
+	if err := json.Unmarshal(projected, &auth); err != nil {
+		t.Fatal(err)
+	}
+	if auth["auth_mode"] != "apikey" || auth["OPENAI_API_KEY"] != codexTakeoverAPIKey {
+		t.Fatalf("过期 OAuth 未切换到 API-Key auth.json: %#v", auth)
+	}
+	config, err := os.ReadFile(codexConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`cli_auth_credentials_store = "file"`, "requires_openai_auth = false"} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("过期 OAuth 回落后缺少 %q:\n%s", want, config)
+		}
 	}
 }
 
