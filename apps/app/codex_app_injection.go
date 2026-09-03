@@ -54,6 +54,8 @@ type codexAppQuotaView struct {
 
 type codexCDPTarget struct {
 	Type         string `json:"type"`
+	Title        string `json:"title"`
+	URL          string `json:"url"`
 	WebSocketURL string `json:"webSocketDebuggerUrl"`
 }
 
@@ -224,6 +226,10 @@ func runCodexRemoteBrandingInjection(port int, stop <-chan struct{}) {
 			Log("[codex-ui] 界面注入已连接: cdp=%d targets=%d evaluated=%d avatar=%v quota=%v",
 				port, len(targets), evaluated, renderedAvatar, renderedQuota)
 			injectionReady = true
+		} else if evaluated > 0 && !renderedAvatar && !renderedQuota &&
+			(lastDiagnostic.IsZero() || time.Since(lastDiagnostic) >= 15*time.Second) {
+			Log("[codex-ui] 页面已执行注入脚本但未找到品牌锚点: cdp=%d targets=%s", port, summarizeCodexCDPTargets(targets))
+			lastDiagnostic = time.Now()
 		} else if evaluated == 0 && time.Since(startedAt) >= 4*time.Second &&
 			(lastDiagnostic.IsZero() || time.Since(lastDiagnostic) >= 15*time.Second) {
 			Log("[codex-ui] 界面注入尚未就绪: cdp=%d targets=%d error=%v", port, len(targets), queryErr)
@@ -237,6 +243,31 @@ func runCodexRemoteBrandingInjection(port int, stop <-chan struct{}) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func summarizeCodexCDPTargets(targets []codexCDPTarget) string {
+	parts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.Type != "page" && target.Type != "webview" {
+			continue
+		}
+		title := strings.TrimSpace(target.Title)
+		url := strings.TrimSpace(target.URL)
+		if cut := strings.IndexAny(url, "?#"); cut >= 0 {
+			url = url[:cut] + "…"
+		}
+		if len(title) > 80 {
+			title = title[:80] + "…"
+		}
+		if len(url) > 120 {
+			url = url[:120] + "…"
+		}
+		parts = append(parts, fmt.Sprintf("%q <%s>", title, url))
+	}
+	if len(parts) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func queryCodexCDPTargets(client *http.Client, port int) ([]codexCDPTarget, error) {

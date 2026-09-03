@@ -121,6 +121,7 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 		`base_url = "http://127.0.0.1:8080/v1"`,
 		`wire_api = "responses"`,
 		`requires_openai_auth = false`,
+		`cli_auth_credentials_store = "file"`,
 		`experimental_bearer_token = "gfa_codex_takeover"`,
 		`http_headers = { "x-openai-actor-authorization" = "bingchaai" }`,
 		`supports_websockets = false`,
@@ -156,6 +157,48 @@ func TestInjectRestoreRoundTripNoPriorProvider(t *testing.T) {
 		if !strings.Contains(string(restored), must) {
 			t.Fatalf("还原后丢失了 %q:\n%s", must, restored)
 		}
+	}
+}
+
+func TestInjectRestoreRoundTripRestoresCodexAuthStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	configPath := filepath.Join(home, "config.toml")
+	original := "cli_auth_credentials_store = \"keyring\"\n" + sampleConfig
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectCodexSettings(8080); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	injected, _ := os.ReadFile(configPath)
+	if !strings.Contains(string(injected), `cli_auth_credentials_store = "file"`) {
+		t.Fatalf("API-Key 接管必须强制使用 auth.json: %s", injected)
+	}
+	if err := RestoreCodexSettings(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	restored, _ := os.ReadFile(configPath)
+	if !strings.Contains(string(restored), `cli_auth_credentials_store = "keyring"`) {
+		t.Fatalf("还原后未恢复原凭据存储方式: %s", restored)
+	}
+}
+
+func TestInjectOAuthDoesNotForceFileAuthStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	configPath := filepath.Join(home, "config.toml")
+	original := "cli_auth_credentials_store = \"keyring\"\n" + sampleConfig
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(8080, true); err != nil {
+		t.Fatalf("inject OAuth: %v", err)
+	}
+	injected, _ := os.ReadFile(configPath)
+	if !strings.Contains(string(injected), `cli_auth_credentials_store = "keyring"`) {
+		t.Fatalf("OAuth 接管不应覆盖用户原凭据存储方式: %s", injected)
 	}
 }
 

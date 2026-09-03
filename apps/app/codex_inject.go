@@ -47,8 +47,12 @@ const (
 	codexProviderID      = "bingchaai"
 	codexModelProvider   = "model_provider"
 	codexOpenAIBaseURL   = "openai_base_url"
-	codexActorHeader     = "x-openai-actor-authorization"
-	codexActorValue      = "bingchaai"
+	// Codex 官方支持 file / keyring / auto。无 OAuth 的远程接管把 API Key
+	// 投影写在 auth.json，因此必须显式选 file；否则 Desktop 可能忽略有效
+	// 的 auth.json 并停在登录页。
+	codexAuthCredentialsStore = "cli_auth_credentials_store"
+	codexActorHeader           = "x-openai-actor-authorization"
+	codexActorValue            = "bingchaai"
 )
 
 func codexHomeDir() string {
@@ -79,10 +83,13 @@ func codexProxyBaseURL(proxyPort int) string {
 }
 
 type codexBackup struct {
-	Injected          bool        `json:"injected"`
-	HadConfig         bool        `json:"hadConfig"`
-	PrevModelProvider interface{} `json:"prevModelProvider"`
-	PrevOpenAIBaseURL interface{} `json:"prevOpenAIBaseURL"`
+	Injected                    bool        `json:"injected"`
+	HadConfig                   bool        `json:"hadConfig"`
+	PrevModelProvider           interface{} `json:"prevModelProvider"`
+	PrevOpenAIBaseURL           interface{} `json:"prevOpenAIBaseURL"`
+	AuthStoreCaptured           bool        `json:"authStoreCaptured"`
+	PrevAuthCredentialsStore    interface{} `json:"prevAuthCredentialsStore"`
+	AuthCredentialsStoreManaged bool        `json:"authCredentialsStoreManaged"`
 }
 
 // loadCodexConfig 读取 config.toml 为通用 map(仅用于读当前状态)。
@@ -143,10 +150,12 @@ func ensureCodexBackup(hadConfig bool) error {
 	data, err := os.ReadFile(codexBackupPath())
 	if os.IsNotExist(err) {
 		backup := codexBackup{
-			Injected:          true,
-			HadConfig:         hadConfig,
-			PrevModelProvider: config[codexModelProvider],
-			PrevOpenAIBaseURL: config[codexOpenAIBaseURL],
+			Injected:                 true,
+			HadConfig:                hadConfig,
+			PrevModelProvider:        config[codexModelProvider],
+			PrevOpenAIBaseURL:        config[codexOpenAIBaseURL],
+			AuthStoreCaptured:        true,
+			PrevAuthCredentialsStore: config[codexAuthCredentialsStore],
 		}
 		encoded, marshalErr := json.MarshalIndent(backup, "", "  ")
 		if marshalErr != nil {
@@ -164,19 +173,75 @@ func ensureCodexBackup(hadConfig bool) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
 	}
-	if _, exists := fields["prevOpenAIBaseURL"]; exists {
+	_, hasPrevBaseURL := fields["prevOpenAIBaseURL"]
+	authStoreCaptured := false
+	if raw, ok := fields["authStoreCaptured"]; ok {
+		_ = json.Unmarshal(raw, &authStoreCaptured)
+	}
+	if hasPrevBaseURL && authStoreCaptured {
 		return nil
 	}
 	var backup codexBackup
 	if err := json.Unmarshal(data, &backup); err != nil {
 		return fmt.Errorf("解析 Codex 接管备份失败: %w", err)
 	}
-	backup.PrevOpenAIBaseURL = config[codexOpenAIBaseURL]
+	if !hasPrevBaseURL {
+		backup.PrevOpenAIBaseURL = config[codexOpenAIBaseURL]
+	}
+	// 旧版本没有管理该键。升级时当前值仍是客户原配置，可以安全补录；
+	// 之后无 OAuth 接管会临时切到 file。
+	if !authStoreCaptured {
+		backup.AuthStoreCaptured = true
+		backup.PrevAuthCredentialsStore = config[codexAuthCredentialsStore]
+	}
 	encoded, err := json.MarshalIndent(backup, "", "  ")
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(codexBackupPath(), encoded, 0o644)
+}
+
+func loadCodexConfigString(content, key string) string {
+	var config map[string]interface{}
+	if toml.Unmarshal([]byte(content), &config) != nil {
+		return ""
+	}
+	value, _ := config[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func restoreCodexAuthCredentialsStore(content string, backup *codexBackup) string {
+	if backup != nil && backup.AuthStoreCaptured {
+		if previous, ok := backup.PrevAuthCredentialsStore.(string); ok {
+			return setTopLevelString(content, codexAuthCredentialsStore, previous)
+		}
+	}
+	return removeTopLevelKey(content, codexAuthCredentialsStore)
+}
+
+// applyCodexAuthCredentialsStore 把无 OAuth 接管固定到 auth.json(file)。
+// 有 OAuth 时若前一轮曾由 GFA 改成 file，则恢复客户原存储模式。
+func applyCodexAuthCredentialsStore(content string, requiresOpenAIAuth bool) (string, error) {
+	data, err := os.ReadFile(codexBackupPath())
+	if err != nil {
+		return "", err
+	}
+	var backup codexBackup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return "", fmt.Errorf("解析 Codex 接管备份失败: %w", err)
+	}
+	if !requiresOpenAIAuth {
+		content = setTopLevelString(content, codexAuthCredentialsStore, "file")
+		backup.AuthCredentialsStoreManaged = true
+	} else if backup.AuthCredentialsStoreManaged && loadCodexConfigString(content, codexAuthCredentialsStore) == "file" {
+		content = restoreCodexAuthCredentialsStore(content, &backup)
+		backup.AuthCredentialsStoreManaged = false
+	}
+	encoded, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return content, writeFileAtomic(codexBackupPath(), encoded, 0o644)
 }
 
 // InjectCodexSettings 把远程托管 provider 指向本地代理 /v1。
@@ -200,6 +265,10 @@ func InjectCodexSettings(proxyPort int, preserveOAuthCapabilities ...bool) error
 	content = removeTopLevelKey(content, codexOpenAIBaseURL)
 	content = setTopLevelString(content, codexModelProvider, codexProviderID)
 	requiresOpenAIAuth := len(preserveOAuthCapabilities) > 0 && preserveOAuthCapabilities[0]
+	content, err = applyCodexAuthCredentialsStore(content, requiresOpenAIAuth)
+	if err != nil {
+		return err
+	}
 	requiresOpenAIAuthValue := "false"
 	if requiresOpenAIAuth {
 		requiresOpenAIAuthValue = "true"
@@ -247,6 +316,19 @@ func restoreCodexSettingsManaged() (bool, error) {
 	content = removeProviderTable(content, codexProviderID)
 	content = removeProviderTable(content, codexLocalProviderID) // 自定义厂商接管的表
 	content = stripLegacyLocalCodexBaseURL(content)
+	backupData, backupErr := os.ReadFile(codexBackupPath())
+	if backupErr != nil && !os.IsNotExist(backupErr) {
+		return false, backupErr
+	}
+	if backupErr == nil {
+		var backup codexBackup
+		if err := json.Unmarshal(backupData, &backup); err != nil {
+			return false, fmt.Errorf("解析 Codex 接管备份失败: %w", err)
+		}
+		if backup.AuthCredentialsStoreManaged && loadCodexConfigString(content, codexAuthCredentialsStore) == "file" {
+			content = restoreCodexAuthCredentialsStore(content, &backup)
+		}
+	}
 	if wasManaged {
 		prevProvider := prevProviderFromBackup()
 		if prevProvider != "" && !isCodexManagedProvider(prevProvider) {
@@ -335,9 +417,12 @@ func IsCodexInjected(proxyPort int) bool {
 	baseURL, _ := provider["base_url"].(string)
 	providerName, _ := provider["name"].(string)
 	bearerToken, _ := provider["experimental_bearer_token"].(string)
+	requiresOpenAIAuth, _ := provider["requires_openai_auth"].(bool)
+	authStore, _ := m[codexAuthCredentialsStore].(string)
 	return baseURL == codexProxyBaseURL(proxyPort) &&
 		providerName == codexRemoteProviderName &&
 		bearerToken == codexTakeoverAPIKey &&
+		(requiresOpenAIAuth || strings.EqualFold(authStore, "file")) &&
 		providerHasCodexActorAuthorization(provider)
 }
 
@@ -490,10 +575,10 @@ func launchCodexGUIProcess(path string, launchPlan codexAppLaunchPlan) error {
 		// 会直接以子进程方式运行该 CLI(headless),并不会拉起 GUI —— 表现为"无法唤醒 Codex"。
 		// 因此先把路径归一到外层 .app bundle 再 `open`,确保拉起的是 GUI。
 		if bundle := codexAppBundlePath(path); strings.HasSuffix(bundle, ".app") {
-			openArgs := []string{bundle}
-			if len(launchArgs) > 0 {
-				openArgs = append(append(openArgs, "--args"), launchArgs...)
-			}
+			// Codex is a single-instance Electron app. Without -n, macOS may
+			// simply activate an existing process and silently discard the new
+			// --remote-debugging-port arguments, leaving the CDP port closed.
+			openArgs := codexMacOpenArgs(bundle, launchArgs)
 			if err := exec.Command("open", openArgs...).Start(); err != nil {
 				return err
 			}
@@ -520,6 +605,15 @@ func launchCodexGUIProcess(path string, launchPlan codexAppLaunchPlan) error {
 	Log("[codex-ui] Codex 已带界面注入参数启动: cdp=%d isolatedProfile=%v",
 		launchPlan.CDPPort, launchPlan.ElectronUserDataDir != "")
 	return nil
+}
+
+func codexMacOpenArgs(bundle string, launchArgs []string) []string {
+	args := []string{"-n", bundle}
+	if len(launchArgs) > 0 {
+		args = append(args, "--args")
+		args = append(args, launchArgs...)
+	}
+	return args
 }
 
 // codexAppBundlePath 把 bundle 内的任意路径归一到外层 .app bundle 路径。

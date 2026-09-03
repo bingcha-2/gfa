@@ -94,6 +94,32 @@ func TestWindowsCodexInjectionProfileKeepsCodexHomeAndAddsElectronIsolation(t *t
 	}
 }
 
+func TestCodexMacOpenArgsForceFreshInstanceAndForwardCDP(t *testing.T) {
+	args := codexMacOpenArgs("/Applications/ChatGPT.app", []string{
+		"--remote-debugging-address=127.0.0.1",
+		"--remote-debugging-port=53243",
+	})
+	joined := strings.Join(args, " ")
+	if len(args) < 4 || args[0] != "-n" || args[1] != "/Applications/ChatGPT.app" || args[2] != "--args" {
+		t.Fatalf("unexpected macOS open args: %v", args)
+	}
+	for _, want := range []string{"--remote-debugging-address=127.0.0.1", "--remote-debugging-port=53243"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("open args missing %q: %v", want, args)
+		}
+	}
+}
+
+func TestSummarizeCodexCDPTargetsIncludesSafeTargetMetadata(t *testing.T) {
+	got := summarizeCodexCDPTargets([]codexCDPTarget{
+		{Type: "page", Title: "Codex", URL: "file:///index.html"},
+		{Type: "worker", Title: "ignored", URL: "https://example.test"},
+	})
+	if !strings.Contains(got, `"Codex"`) || !strings.Contains(got, "file:///index.html") || strings.Contains(got, "ignored") {
+		t.Fatalf("unexpected target summary: %s", got)
+	}
+}
+
 func TestQuotaRemainingPercentForCodexApp(t *testing.T) {
 	cases := []struct {
 		used, limit float64
