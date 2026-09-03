@@ -54,8 +54,9 @@ var codexDebugUsage = false
 // Codex 官方客户端身份头(值对照 cockpit DEFAULT_CODEX_*)。chatgpt.com 的
 // /backend-api/codex 用它们校验请求来自合法 Codex 客户端,缺则 401。
 const (
-	codexDefaultUserAgent  = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
-	codexDefaultOriginator = "codex-tui"
+	codexDefaultUserAgent       = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexDefaultOriginator      = "codex-tui"
+	codexRelayDefaultUserAgent  = "bingcha-codex-relay/1.0"
 )
 
 // codexAttestationFailureEnvelope 是「app-server 尝试取设备证明但失败」的信封
@@ -858,13 +859,12 @@ func rewriteCodexModel(body []byte, model string) []byte {
 	return out
 }
 
-// applyCodexRelayHeaders 补中转模式需要的头(对照 cockpit 的 API 卡密路径):保留
-// User-Agent(codex_cli_rs)+ Accept(SSE)+ Connection,但显式删掉 Originator 与
+// applyCodexRelayHeaders 补中转模式需要的头(对照 cockpit 的 API 卡密路径)。
+// 第三方中转请求强制使用稳定的 Bingcha UA,避免把 OpenAI SDK/Codex 的
+// SDK 专属 UA 带到 Cloudflare/WAF 后的中转站;同时显式删掉 Originator 与
 // ChatGPT-Account-Id —— 这些是 chatgpt.com 校验官方客户端用的,中转站不认。
 func applyCodexRelayHeaders(dst, src http.Header) {
-	if src.Get("User-Agent") == "" {
-		dst.Set("User-Agent", codexDefaultUserAgent)
-	}
+	dst.Set("User-Agent", codexRelayDefaultUserAgent)
 	if src.Get("Accept") == "" {
 		dst.Set("Accept", "text/event-stream")
 	}

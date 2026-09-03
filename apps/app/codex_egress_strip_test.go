@@ -74,4 +74,21 @@ func TestApplyCodexOfficialHeaders_NoAttestationStaysAbsent(t *testing.T) {
 	if got := dst.Get("X-Oai-Attestation"); got != "" {
 		t.Fatalf("src 无证明时出口不应回填, got %q", got)
 	}
+	if got := dst.Get("User-Agent"); got != "codex_cli_rs/0.144.0" {
+		t.Fatalf("官方出口应保留 Codex User-Agent, got %q", got)
+	}
+}
+
+// 第三方中转站可能按 OpenAI SDK/Codex 的 UA 指纹触发 Cloudflare 403。
+// 中转出口必须覆盖下游带来的 SDK UA,而不是仅在 UA 为空时补默认值。
+func TestApplyCodexRelayHeaders_OverridesSDKUserAgent(t *testing.T) {
+	src := http.Header{}
+	src.Set("User-Agent", "OpenAI/Python 2.36.0")
+
+	dst := http.Header{}
+	applyCodexRelayHeaders(dst, src)
+
+	if got := dst.Get("User-Agent"); got != codexRelayDefaultUserAgent {
+		t.Fatalf("relay 出口应覆盖 SDK User-Agent, got %q", got)
+	}
 }
