@@ -282,10 +282,16 @@ function resetUpstreamObservation(
   usage.upstreamFiveHour = baselineReason ? {
     baselineReason,
     ...(previousFiveHourResetAt > 0 ? { resetAt: previousFiveHourResetAt } : {}),
+    // Keep the receipt for the retained epoch: otherwise the next status/usage
+    // read consumes an already expired epoch again and erases post-reset usage.
+    ...(usage.upstreamFiveHour?.appliedResetAt === previousFiveHourResetAt
+      && previousFiveHourResetAt > 0 ? { appliedResetAt: previousFiveHourResetAt } : {}),
   } : undefined;
   usage.upstreamWeekly = baselineReason ? {
     baselineReason,
     ...(previousWeeklyResetAt > 0 ? { resetAt: previousWeeklyResetAt } : {}),
+    ...(usage.upstreamWeekly?.appliedResetAt === previousWeeklyResetAt
+      && previousWeeklyResetAt > 0 ? { appliedResetAt: previousWeeklyResetAt } : {}),
   } : undefined;
 }
 

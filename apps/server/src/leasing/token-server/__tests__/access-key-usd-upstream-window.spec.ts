@@ -308,6 +308,30 @@ describe('AccessKeyStore upstream-driven USD windows', () => {
     expect(usage().upstreamFiveHour?.resetAt).toBe(T0 + 6 * HOUR);
   });
 
+  it.each([false, true])('rebind preserves an already consumed reset epoch (restart=%s)', (restart) => {
+    apply({ h: 30, w: 30, hReset: T0 + HOUR, wReset: T0 + HOUR }, T0 + 1, 'old');
+    vi.setSystemTime(T0 + HOUR + 1);
+    expect(status()).toMatchObject({ fiveHour: { used: 0 }, weekly: { used: 0 } });
+    // Usage in the new personal window, before the old mother refreshes its epoch.
+    usage().used5h = 12;
+    usage().usedWeekly = 34;
+    usage().windowStartedAt5h = T0 + HOUR + 1;
+    usage().windowStartedAtWeekly = T0 + HOUR + 1;
+    const saved = store.serializeSubscriptionWindows()[0].windowState;
+    if (restart) {
+      store = new AccessKeyStore(path.join(dir, 'access-keys.json'));
+      store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
+      store.restoreSubscriptionWindow('sub-1', saved);
+    } else {
+      store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
+    }
+    expect(status()).toMatchObject({ fiveHour: { used: 12 }, weekly: { used: 34 } });
+    apply({ h: 99, w: 99, hReset: T0 + 6 * HOUR, wReset: T0 + DAY }, T0 + HOUR + 2, 'new', 'codex', 12);
+    expect(status()).toMatchObject({ fiveHour: { used: 12 }, weekly: { used: 34 } });
+    vi.setSystemTime(T0 + 6 * HOUR);
+    expect(status()).toMatchObject({ fiveHour: { used: 0 }, weekly: { used: 34 } });
+  });
+
   it('rebind never moves the first personal reset earlier than the old mother epoch', () => {
     apply({ h: 30, hReset: T0 + 6 * HOUR }, T0 + 1, 'mother-11');
     store.loadSubscriptionRecords([config({ codex: 12, anthropic: 22 })] as any);
