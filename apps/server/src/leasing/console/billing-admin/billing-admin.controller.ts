@@ -218,7 +218,7 @@ export class BillingAdminController {
   @Patch("subscriptions/:id")
   async updateSubscription(
     @Param("id") id: string,
-    @Body() body: { expiresAt?: string; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
+    @Body() body: { expiresAt?: string; deviceLimit?: number; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
     @Request() req: any,
   ) {
     const result = await this.billingAdmin.updateSubscription(id, body);
@@ -231,6 +231,8 @@ export class BillingAdminController {
       detail: {
         customerId: result.subscription.customerId,
         previousExpiresAt: result.previousExpiresAt?.toISOString() ?? null,
+        previousDeviceLimit: result.previousDeviceLimit,
+        deviceLimit: result.subscription.deviceLimit,
         expiresAt: result.subscription.expiresAt?.toISOString() ?? null,
         previousUsdQuotaByProduct: result.previousUsdQuotaByProduct,
         usdQuotaByProduct: result.subscription.config ? JSON.parse(result.subscription.config).usdQuotaByProduct ?? {} : {},

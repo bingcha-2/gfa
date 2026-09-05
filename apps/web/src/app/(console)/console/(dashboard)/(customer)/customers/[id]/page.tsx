@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -99,7 +100,7 @@ export default function CustomerDetailPage() {
   const [detail, setDetail] = useState<ConsoleSubscription | null>(null);
   const [subEditOpen, setSubEditOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<ConsoleSubscriptionLite | null>(null);
-  const [subEditForm, setSubEditForm] = useState({ expiresAt: "" });
+  const [subEditForm, setSubEditForm] = useState({ expiresAt: "", deviceLimit: "1" });
   const [savingSub, setSavingSub] = useState(false);
 
   const load = useCallback(async () => {
@@ -188,24 +189,30 @@ export default function CustomerDetailPage() {
 
   function openSubEdit(sub: ConsoleSubscriptionLite) {
     setEditingSub(sub);
-    setSubEditForm({ expiresAt: toDatetimeLocal(sub.expiresAt) });
+    setSubEditForm({ expiresAt: toDatetimeLocal(sub.expiresAt), deviceLimit: String(sub.deviceLimit) });
     setSubEditOpen(true);
   }
 
   async function saveSubEdit() {
     if (!editingSub) return;
     const expiresAt = fromDatetimeLocal(subEditForm.expiresAt);
-    if (!expiresAt) {
+    const expiryChanged = subEditForm.expiresAt !== toDatetimeLocal(editingSub.expiresAt);
+    if (expiryChanged && !expiresAt) {
       toast.error("请选择有效的到期时间");
+      return;
+    }
+    const deviceLimit = Number(subEditForm.deviceLimit);
+    if (!Number.isInteger(deviceLimit) || deviceLimit < 1 || deviceLimit > 2_147_483_647) {
+      toast.error("可用设备数必须是大于等于 1 的有效整数");
       return;
     }
     try {
       setSavingSub(true);
       await apiRequest(`subscriptions/${editingSub.id}`, {
         method: "PATCH",
-        body: { expiresAt },
+        body: { ...(expiryChanged ? { expiresAt } : {}), deviceLimit },
       });
-      toast.success("订阅到期时间已更新");
+      toast.success("订阅已更新");
       setSubEditOpen(false);
       await load();
     } catch (err) {
@@ -483,28 +490,45 @@ export default function CustomerDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 编辑订阅到期时间 */}
+      {/* 编辑订阅到期时间与设备上限 */}
       <Dialog open={subEditOpen} onOpenChange={setSubEditOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>编辑订阅</DialogTitle>
             <DialogDescription>{editingSub ? selectionName(editingSub.config) : ""}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <Label htmlFor="subscription-expires-at">到期时间</Label>
+          <FieldGroup className="py-2">
+            <Field>
+              <FieldLabel htmlFor="subscription-expires-at">到期时间</FieldLabel>
               <Input
                 id="subscription-expires-at"
                 type="datetime-local"
                 value={subEditForm.expiresAt}
-                onChange={(e) => setSubEditForm({ expiresAt: e.target.value })}
-                className="mt-1"
+                onChange={(e) => setSubEditForm((form) => ({ ...form, expiresAt: e.target.value }))}
+                disabled={savingSub}
               />
-            </div>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="subscription-device-limit">可用设备数</FieldLabel>
+              <Input
+                id="subscription-device-limit"
+                type="number"
+                min={1}
+                max={2_147_483_647}
+                step={1}
+                value={subEditForm.deviceLimit}
+                onChange={(e) => setSubEditForm((form) => ({ ...form, deviceLimit: e.target.value }))}
+                disabled={savingSub}
+                aria-describedby="subscription-device-limit-help"
+              />
+              <FieldDescription id="subscription-device-limit-help">
+                多条有效订阅取设备数最大值；调低上限不会自动移除已登录设备。
+              </FieldDescription>
+            </Field>
             <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
               剩余 {remainingDays(fromDatetimeLocal(subEditForm.expiresAt))}
             </div>
-          </div>
+          </FieldGroup>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSubEditOpen(false)} disabled={savingSub}>取消</Button>
             <Button onClick={() => void saveSubEdit()} disabled={savingSub}>

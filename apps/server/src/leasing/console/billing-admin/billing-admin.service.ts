@@ -47,6 +47,7 @@ export interface RevokeResult {
 export interface UpdateSubscriptionResult {
   subscription: Subscription;
   previousExpiresAt: Date | null;
+  previousDeviceLimit: number;
   previousUsdQuotaByProduct: Record<string, { fiveHour: number; weekly: number }>;
 }
 
@@ -425,13 +426,20 @@ export class BillingAdminService {
 
   async updateSubscription(
     subscriptionId: string,
-    dto: { expiresAt?: string; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
+    dto: { expiresAt?: string; deviceLimit?: number; usdQuotaPerSeatByProduct?: Record<string, { fiveHour?: number; weekly?: number }> },
   ): Promise<UpdateSubscriptionResult> {
     const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
     if (!sub) throw new NotFoundException(`Subscription "${subscriptionId}" not found`);
 
     const config = rowToConfig(sub as any) as Record<string, any>;
     const previousUsdQuotaByProduct = structuredClone(config.usdQuotaByProduct || {});
+    if (dto.deviceLimit !== undefined) {
+      if (typeof dto.deviceLimit !== "number" || !Number.isInteger(dto.deviceLimit)
+        || dto.deviceLimit < 1 || dto.deviceLimit > 2_147_483_647) {
+        throw new ConflictException("可用设备数必须是大于等于 1 的有效整数");
+      }
+      config.deviceLimit = dto.deviceLimit;
+    }
     if (dto.usdQuotaPerSeatByProduct !== undefined) {
       config.quotaAlgorithm = "usd";
       config.usdQuotaSource = "manual";
@@ -460,7 +468,7 @@ export class BillingAdminService {
     const expiresAt = dto.expiresAt === undefined ? sub.expiresAt : parseExpiresAt(dto.expiresAt);
     const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },
-      data: { expiresAt, config: JSON.stringify(config) },
+      data: { expiresAt, config: JSON.stringify(config), ...(dto.deviceLimit !== undefined ? { deviceLimit: dto.deviceLimit } : {}) },
     });
     try {
       await this.entitlementSync.syncSubscription(updated);
@@ -470,7 +478,7 @@ export class BillingAdminService {
       // refresh fails instead of returning an error after a half-applied edit.
       const restored = await this.prisma.subscription.update({
         where: { id: subscriptionId },
-        data: { expiresAt: sub.expiresAt, config: sub.config },
+        data: { expiresAt: sub.expiresAt, config: sub.config, deviceLimit: sub.deviceLimit },
       });
       try {
         await this.entitlementSync.syncSubscription(restored);
@@ -483,7 +491,7 @@ export class BillingAdminService {
     }
 
     this.logger.log(`[billing-admin] subscription ${subscriptionId} configuration updated`);
-    return { subscription: updated, previousExpiresAt: sub.expiresAt, previousUsdQuotaByProduct };
+    return { subscription: updated, previousExpiresAt: sub.expiresAt, previousDeviceLimit: sub.deviceLimit, previousUsdQuotaByProduct };
   }
 
   async resetSubscriptionUsdQuotaUsage(

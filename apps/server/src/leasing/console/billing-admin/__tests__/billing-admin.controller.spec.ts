@@ -135,6 +135,17 @@ describe("POST console/subscriptions/:id/seats/upgrade", () => {
 });
 
 describe("PATCH console/subscriptions/:id", () => {
+  it("edits device limit independently and records old and new limits", async () => {
+    billingAdmin.updateSubscription.mockResolvedValue({
+      subscription: { id: "sub-1", customerId: "cust-1", expiresAt: null, deviceLimit: 3, config: "{}" },
+      previousExpiresAt: null, previousDeviceLimit: 1, previousUsdQuotaByProduct: {},
+    });
+    await controller.updateSubscription("sub-1", { deviceLimit: 3 }, req);
+    expect(billingAdmin.updateSubscription).toHaveBeenCalledWith("sub-1", { deviceLimit: 3 });
+    expect(auditLog.log).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.objectContaining({ previousDeviceLimit: 1, deviceLimit: 3 }),
+    }));
+  });
   it("delegates to the service and audit-logs the expiry update", async () => {
     billingAdmin.updateSubscription.mockResolvedValue({
       subscription: {
