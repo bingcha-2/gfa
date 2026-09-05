@@ -681,6 +681,8 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 
 // RefreshUsageSummary performs the same session/subscription refresh as a normal
 // heartbeat but asks the server to bypass its five-minute usage-summary cache.
+// Large decreases in used quota are confirmed once before replacing local USD
+// quota snapshots, including the lease cache used by the dashboard.
 // It is intentionally separate from HeartbeatCheck so older callers keep the
 // no-argument Wails contract used by background polling.
 func (a *App) RefreshUsageSummary() (map[string]interface{}, error) {
@@ -711,45 +713,57 @@ func (a *App) heartbeatCheck(refreshUsage bool) (map[string]interface{}, error) 
 		payload["refreshUsage"] = true
 	}
 
-	body, status, err := doAuthPostWithBearer("/app/heartbeat", payload, cfg.UserToken)
-	if err != nil {
-		// Network failure — keep the session untouched, only surface the error.
-		return nil, fmt.Errorf("heartbeat network error: %w", err)
-	}
+	var result map[string]interface{}
+	for attempt := 0; ; attempt++ {
+		body, status, err := doAuthPostWithBearer("/app/heartbeat", payload, cfg.UserToken)
+		if err != nil {
+			// Network failure — keep the session untouched, only surface the error.
+			return nil, fmt.Errorf("heartbeat network error: %w", err)
+		}
 
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		var errResp loginErrorResponse
-		if jsonErr := json.Unmarshal(body, &errResp); jsonErr == nil && errResp.Error != "" {
-			switch errCode := strings.ToUpper(errResp.Error); errCode {
-			case "SESSION_INVALID", "DEVICE_REVOKED", "DEVICE_LIMIT_EXCEEDED":
-				// Forced local logout (no server POST — the token is already dead).
-				Log("[auth] Heartbeat fatal (%s): clearing local session", errCode)
-				stopServicesForUser()
-				clearLocalCardState()
-				GetUsageStats().SwitchNamespace("")
-				clearUserSession(&cfg)
-				if saveErr := SaveConfig(cfg); saveErr != nil {
-					Log("[auth] Failed to clear session after %s: %v", errCode, saveErr)
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			var errResp loginErrorResponse
+			if jsonErr := json.Unmarshal(body, &errResp); jsonErr == nil && errResp.Error != "" {
+				switch errCode := strings.ToUpper(errResp.Error); errCode {
+				case "SESSION_INVALID", "DEVICE_REVOKED", "DEVICE_LIMIT_EXCEEDED":
+					// Forced local logout (no server POST — the token is already dead).
+					Log("[auth] Heartbeat fatal (%s): clearing local session", errCode)
+					stopServicesForUser()
+					clearLocalCardState()
+					GetUsageStats().SwitchNamespace("")
+					clearUserSession(&cfg)
+					if saveErr := SaveConfig(cfg); saveErr != nil {
+						Log("[auth] Failed to clear session after %s: %v", errCode, saveErr)
+					}
+					return nil, fmt.Errorf("%s", errCode)
+				case "SUBSCRIPTION_EXPIRED":
+					// Keep the session; stop leasing and raise the dashboard banner
+					// (existing cardUnusable mechanism).
+					Log("[auth] Heartbeat: subscription expired — marking card unusable")
+					GetLeaser().markCardUnusable(fmt.Errorf("SUBSCRIPTION_EXPIRED"))
+					return nil, fmt.Errorf("%s", errCode)
 				}
-				return nil, fmt.Errorf("%s", errCode)
-			case "SUBSCRIPTION_EXPIRED":
-				// Keep the session; stop leasing and raise the dashboard banner
-				// (existing cardUnusable mechanism).
-				Log("[auth] Heartbeat: subscription expired — marking card unusable")
-				GetLeaser().markCardUnusable(fmt.Errorf("SUBSCRIPTION_EXPIRED"))
-				return nil, fmt.Errorf("%s", errCode)
+			}
+			return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
+		}
+
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
+		}
+
+		result = nil
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("heartbeat parse error: %w", err)
+		}
+		if refreshUsage {
+			if _, present := parseHeartbeatSubscriptions(result); !present {
+				return nil, fmt.Errorf("quota refresh response missing subscriptions")
+			}
+			if attempt == 0 && GetLeaser().manualQuotaNeedsConfirmation(cfg.Subscriptions, result) {
+				continue
 			}
 		}
-		return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
-	}
-
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("heartbeat parse error: %w", err)
+		break
 	}
 
 	// Feed subscription entitlements (product union + has-active-sub) into the
@@ -830,7 +844,13 @@ func (a *App) heartbeatCheck(refreshUsage bool) (map[string]interface{}, error) 
 	if changed {
 		if saveErr := SaveConfig(cfg); saveErr != nil {
 			Log("[auth] Failed to persist heartbeat subscription update: %v", saveErr)
+			if refreshUsage {
+				return nil, saveErr
+			}
 		}
+	}
+	if refreshUsage {
+		GetLeaser().applyManualQuotaSnapshot(result)
 	}
 	return result, nil
 }

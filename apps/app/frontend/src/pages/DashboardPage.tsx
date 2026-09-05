@@ -128,11 +128,6 @@ export function DashboardPage() {
     setRefreshingQuota(true)
     try {
       try {
-        await api.refreshQuota()
-      } catch (err) {
-        console.error('refresh upstream quota failed:', err)
-      }
-      try {
         await heartbeat(true)
       } catch (err) {
         console.error('refresh subscription quota failed:', err)
