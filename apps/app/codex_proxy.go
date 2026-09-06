@@ -54,9 +54,9 @@ var codexDebugUsage = false
 // Codex 官方客户端身份头(值对照 cockpit DEFAULT_CODEX_*)。chatgpt.com 的
 // /backend-api/codex 用它们校验请求来自合法 Codex 客户端,缺则 401。
 const (
-	codexDefaultUserAgent       = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
-	codexDefaultOriginator      = "codex-tui"
-	codexRelayDefaultUserAgent  = "bingcha-codex-relay/1.0"
+	codexDefaultUserAgent      = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexDefaultOriginator     = "codex-tui"
+	codexRelayDefaultUserAgent = "bingcha-codex-relay/1.0"
 )
 
 // codexAttestationFailureEnvelope 是「app-server 尝试取设备证明但失败」的信封
@@ -553,17 +553,18 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
 		tr := &ttftReader{r: streamBody, start: reqStart}
-		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
+		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id")}
+		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr, &streamDiagnostic)
+		audit.note = streamDiagnostic.summary(copyErr)
 		// 计费归属以**上游响应实际使用的模型**为准(权威),覆盖请求/config 的猜测:
 		// 客户端漏发 model 时尤其重要 —— 否则会记到默认/猜的模型上,金额与用量都算错。
 		if actualModel != "" {
 			modelKey = actualModel
 			audit.model = actualModel
 		}
-		// 计费护栏:2xx 生成却一个 token 都没解析到 = 用量丢失(历史上因流式漏判 / 未解压 / 字段
-		// 路径变更多次踩到,静默丢计费)。留一条告警,回归时立刻可见。开 codexDebugUsage
-		// 可进一步打出未匹配的原始 usage 行定位。
-		if copyErr == nil && input == 0 && output == 0 {
+		// 仅对明确完成却无用量的响应保留计费告警；流内失败和缺少结束事件
+		// 已由 streamDiagnostic 记录，不能仅凭 HTTP 200 判断生成成功。
+		if copyErr == nil && streamDiagnostic.Result == "completed" && input == 0 && output == 0 {
 			Log("[codex-proxy] ⚠ 2xx 生成但 usage 解析为 0(model=%s),可能计费丢失", modelKey)
 		}
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
@@ -578,7 +579,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
-			audit.note = "流中断(已上报已解析用量):" + copyErr.Error()
+			audit.note += " 流中断(已上报已解析用量)"
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 			return
 		}
@@ -1304,7 +1305,7 @@ func isCodexStreamingResponse(resp *http.Response) bool {
 // copyStreamingCodexResponse 边转发 SSE 边解析最终的 usage(input/output/total)。
 // codex 流式响应的用量在 response.completed/response.done 事件的 response.usage 里,
 // 之前只逐字节转发、不解析,导致流式用量上报为 0(完全不计费)。
-func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (model string, input, output, cached, total int64, err error) {
+func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader, diagnostics ...*codexStreamDiagnostic) (model string, input, output, cached, total int64, err error) {
 	flusher, _ := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
 	var pending []byte
@@ -1312,6 +1313,11 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (model st
 	// 边扫边抽:usage(计费数)+ model(上游实际使用的模型,归属权威源)。都在同一趟里取,
 	// 不额外缓冲整包(auditTee 刻意不缓存 body)。model 取第一条带到的即可(各 response.* 事件都带)。
 	handle := func(line []byte) {
+		for _, diagnostic := range diagnostics {
+			if diagnostic != nil {
+				diagnostic.observe(line)
+			}
+		}
 		if i, o, c, t, ok := codexUsageFromSSELine(line); ok {
 			input, output, cached, total = i, o, c, t
 		} else if codexDebugUsage && bytes.Contains(line, []byte("usage")) {

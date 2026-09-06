@@ -116,11 +116,23 @@ type diagnosticSafeConfig struct {
 
 func redactDiagnosticText(value string) string {
 	redacted := value
+	// Explicit request IDs are correlation metadata, not account credentials.
+	var requestIDs []string
+	redacted = diagnosticRequestID.ReplaceAllStringFunc(redacted, func(id string) string {
+		requestIDs = append(requestIDs, id)
+		return fmt.Sprintf("GFAREQUESTIDPLACEHOLDER%dEND", len(requestIDs)-1)
+	})
 	for _, rule := range diagnosticRedactors {
 		redacted = rule.re.ReplaceAllString(redacted, rule.replacement)
 	}
-	return redactDiagnosticAbsolutePaths(redacted)
+	redacted = redactDiagnosticAbsolutePaths(redacted)
+	for i, id := range requestIDs {
+		redacted = strings.ReplaceAll(redacted, fmt.Sprintf("GFAREQUESTIDPLACEHOLDER%dEND", i), id)
+	}
+	return redacted
 }
+
+var diagnosticRequestID = regexp.MustCompile(`\brequest_id=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 
 func makeDiagnosticSafeConfig(cfg Config) diagnosticSafeConfig {
 	mode := strings.ToLower(strings.TrimSpace(cfg.CodexMode))
