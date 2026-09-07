@@ -3,6 +3,17 @@ import { describe, expect, it } from "vitest";
 import { apiValueUsdForEvent } from "../api-usd-quota";
 
 describe("apiValueUsdForEvent", () => {
+  it.each([ ["standard", 1.375], ["priority", 2.75], ["fast", 2.75] ] as const)("prices Astra gross-input subsets in %s mode", (serviceTier, expected) => {
+    const event = {
+      product: "codex", modelKey: "gpt-6-astra", serviceTier,
+      inputTokens: 100_000, cachedInputTokens: 50_000, cacheWrite5mTokens: 10_000,
+      cacheWrite1hTokens: 20_000, outputTokens: 15_000, contextTokens: 100_000,
+      occurredAt: Date.parse("2026-09-07T00:00:00Z"),
+    };
+    // 20k fresh + 50k cached + 30k cache write + 15k output.
+    expect(apiValueUsdForEvent(event)).toBeCloseTo(Number(expected));
+    expect(apiValueUsdForEvent({ ...event, apiValueUsd: 0.123 })).toBe(0.123);
+  });
   it("prices Claude 5m and 1h cache creation separately", () => {
     expect(apiValueUsdForEvent({
       product: "anthropic", modelKey: "claude-opus-4-8",

@@ -20,6 +20,28 @@ function usage(fields: Partial<ApiValueUsage> = {}): ApiValueUsage {
 }
 
 describe("API-equivalent pricing", () => {
+  // https://developers.openai.com/api/docs/pricing (verified 2026-09-07).
+  it.each([
+    ["standard", 272_000, [10, 1, 12.5, 12.5, 50]],
+    ["standard", 272_001, [20, 2, 25, 25, 75]],
+    ["priority", 272_000, [20, 2, 25, 25, 100]],
+    ["priority", 272_001, [40, 4, 50, 50, 150]],
+  ] as const)("prices Astra %s at context %i", (pricingMode, contextTokens, rates) => {
+    const fields = ["inputTokens", "cachedInputTokens", "cacheWrite5mTokens", "cacheWrite1hTokens", "outputTokens"] as const;
+    fields.forEach((field, index) => {
+      expect(calculateApiValue(usage({
+        modelId: "gpt-6-astra", occurredAt: Date.parse("2026-09-07T00:00:00Z"),
+        pricingMode, contextTokens, [field]: 1_000_000,
+      }))).toMatchObject({ usd: rates[index], canonicalModelId: "gpt-6-astra", quality: "exact" });
+    });
+  });
+
+  it("recognizes Astra dated snapshots without matching unpriced variants", () => {
+    const base = usage({ occurredAt: Date.parse("2026-09-07T00:00:00Z"), inputTokens: 1_000_000 });
+    expect(calculateApiValue({ ...base, modelId: "gpt-6-astra-2026-09-03" })).toMatchObject({ usd: 10, quality: "exact" });
+    expect(calculateApiValue({ ...base, modelId: "gpt-6-astra-pro" }).quality).toBe("conservative-fallback");
+    expect(calculateApiValue({ ...base, modelId: "gpt-6-astra", occurredAt: AT }).quality).toBe("conservative-fallback");
+  });
   it("reproduces the Sol dashboard golden value using the actual model", () => {
     const value = calculateApiValue(usage({
       inputTokens: 593_410,

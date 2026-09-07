@@ -93,7 +93,7 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 	if row.EstimatedCostUSD < 18.27885-1e-9 || row.EstimatedCostUSD > 18.27885+1e-9 {
 		t.Fatalf("recalculated cost = %v", row.EstimatedCostUSD)
 	}
-	if row.PricingVersion != "api-pricing-2026-07-14" || row.PricingQuality != "recalculated-aggregate" {
+	if row.PricingVersion != "api-pricing-2026-09-07" || row.PricingQuality != "recalculated-aggregate" {
 		t.Fatalf("migration metadata = %+v", row)
 	}
 	if repriceModelUsage(row, mustUsageDate("2026-07-11")) {

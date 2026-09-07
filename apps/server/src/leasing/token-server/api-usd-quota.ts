@@ -103,7 +103,7 @@ export function apiValueUsdForEvent(event: any): number {
   return calculateApiValue({
       provider,
       modelId: String(event?.modelKey || ""),
-      pricingMode: String(event?.serviceTier || "") === "priority" ? "priority" : "standard",
+      pricingMode: ["priority", "fast"].includes(String(event?.serviceTier || "")) ? "priority" : "standard",
       inputTokens,
       cachedInputTokens,
       cacheWrite5mTokens,
