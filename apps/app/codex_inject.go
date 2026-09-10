@@ -51,8 +51,8 @@ const (
 	// 投影写在 auth.json，因此必须显式选 file；否则 Desktop 可能忽略有效
 	// 的 auth.json 并停在登录页。
 	codexAuthCredentialsStore = "cli_auth_credentials_store"
-	codexActorHeader           = "x-openai-actor-authorization"
-	codexActorValue            = "bingchaai"
+	codexActorHeader          = "x-openai-actor-authorization"
+	codexActorValue           = "bingchaai"
 )
 
 func codexHomeDir() string {
@@ -658,27 +658,11 @@ func restartCodexWithHistoryMigration(sourceProvider, targetProvider string, ali
 		}
 	}()
 	QuitCodexApp()
-	var (
-		summary HistoryVisibilitySummary
-		err     error
-	)
-	if alignAll {
-		summary, err = AlignCodexHistoryVisibility(codexHomeDir(), targetProvider)
-	} else {
-		summary, err = MigrateCodexHistoryProvider(codexHomeDir(), sourceProvider, targetProvider)
-	}
-	if err != nil {
+	if err := alignCodexHistoryForSwitch(codexHomeDir(), sourceProvider, targetProvider, alignAll); err != nil {
 		// 即使修复失败也把 Codex 拉起,但把失败返回给接管 UI,绝不再显示
 		// 假的“已接管”。用户重试时全量对齐/定向迁移都是幂等的。
 		LaunchCodexApp()
-		return fmt.Errorf("对齐 Codex 旧会话失败: %w", err)
-	} else {
-		mode := "定向迁移"
-		if alignAll {
-			mode = "全量对齐"
-		}
-		Log("[codex] 历史 provider 已%s: %s → %s, rollout=%d sqlite=%d skipped=%v",
-			mode, sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
+		return err
 	}
 	LaunchCodexApp()
 	return nil

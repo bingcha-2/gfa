@@ -357,10 +357,12 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	} else if cleared {
 		Log("[codex] 接管已清除遗留的中转(relay)配置,切回租号模式")
 	}
-	// 纯 CLI 安装:config 已写入并即时生效(CLI 每次运行现读),没有常驻 GUI 需要重启、
-	// 也没有 state_5.sqlite 历史需要 retag。直接返回,提示重开终端。
+	// CLI 也保存历史；GUI 探测失败更不能作为跳过历史对齐的依据。
 	if !guiInstalled {
-		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
+		if err := alignCodexHistoryForSwitch(codexHomeDir(), historySourceProvider, codexProviderID, true); err != nil {
+			return "", err
+		}
+		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI", nil
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
@@ -390,9 +392,12 @@ func (codexTarget) Restore() (string, error) {
 	if err := RestoreFakeCodexAuth(); err != nil {
 		Log("[codex] 还原 auth.json 失败(不致命): %v", err)
 	}
-	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
+	// 无 GUI 时仍需迁回历史，只省略自动重启。
 	if !guiInstalled {
-		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
+		if err := alignCodexHistoryForSwitch(codexHomeDir(), historySourceProvider, restoredProvider, configWasManaged); err != nil {
+			return "", err
+		}
+		return "Codex: ✓ 已恢复并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI", nil
 	}
 	// GUI:正常接管态全量对齐回原 provider；若用户已自行切换 provider，只迁移
 	// GFA 的 bingchaai 分桶，避免覆盖新 provider 自己的聊天标签。

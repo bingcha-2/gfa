@@ -46,6 +46,25 @@ type HistoryVisibilitySummary struct {
 	SkippedSQLite      bool   `json:"skippedSqlite"`
 }
 
+// 与 GUI 探测和启动解耦：CLI、未识别的桌面安装也必须执行同样的历史迁移。
+func alignCodexHistoryForSwitch(home, sourceProvider, targetProvider string, alignAll bool) error {
+	var summary HistoryVisibilitySummary
+	var err error
+	mode := "定向迁移"
+	if alignAll {
+		mode = "全量对齐"
+		summary, err = AlignCodexHistoryVisibility(home, targetProvider)
+	} else {
+		summary, err = MigrateCodexHistoryProvider(home, sourceProvider, targetProvider)
+	}
+	if err != nil {
+		return fmt.Errorf("对齐 Codex 旧会话失败: %w", err)
+	}
+	Log("[codex] 历史 provider 已%s: %s → %s, rollout=%d sqlite=%d skipped=%v",
+		mode, sourceProvider, targetProvider, summary.ChangedRolloutFile, summary.UpdatedSQLiteRows, summary.SkippedSQLite)
+	return nil
+}
+
 func MigrateCodexHistoryProvider(home, sourceProvider, targetProvider string) (HistoryVisibilitySummary, error) {
 	source := strings.TrimSpace(sourceProvider)
 	target := strings.TrimSpace(targetProvider)
@@ -68,7 +87,7 @@ func MigrateCodexHistoryProvider(home, sourceProvider, targetProvider string) (H
 	if sqlErr != nil {
 		Log("[codex] state_5.sqlite provider 迁移失败: %v", sqlErr)
 	}
-	return summary, nil
+	return summary, errors.Join(err, sqlErr)
 }
 
 // AlignCodexHistoryVisibility 把指定 codex home 下的历史会话 provider 元数据对齐到
