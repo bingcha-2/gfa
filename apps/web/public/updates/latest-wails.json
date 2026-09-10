@@ -1,30 +1,30 @@
 {
-  "version": "13.7.14",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.14/BingchaAI-13.7.14.exe",
-  "sha256": "70977D3C96E93F2F0470F92F882CA9C044A8A6999BD386B4E2B6C6222C610026",
-  "size": 56525312,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.14/BingchaAI-13.7.14-setup.exe",
-  "installerSha256": "F8ACE465860D2AF2DC7841623B7EE56AA7941DBBBA91B9DCD2AB2580838018EE",
-  "installerSize": 21665559,
-  "changelog": "修复 Windows 本地账号接管时反复弹窗和退出状态误判，提升 Codex 账号切换稳定性。",
+  "version": "13.7.15",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.15/BingchaAI-13.7.15.exe",
+  "sha256": "ADF82993EA3F565305EAAAD49B260F6B9BC80E8511D60F2270815EC25E20867E",
+  "size": 56599552,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.15/BingchaAI-13.7.15-setup.exe",
+  "installerSha256": "A6D1B0D4948288AC54180D1619DA425701730EAB46263D47D768CD1F112768C8",
+  "installerSize": 21809601,
+  "changelog": "修复切换账号后历史会话不显示的问题，完善历史会话修复与切换提示。",
   "minVersion": "13.7.12",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.14/BingchaAI-13.7.14-arm64.dmg",
-      "sha256": "2D9DBAC25E12E4E7A4FBF8669DA1EE2E2A179560F0985C23842F264C3E32895F",
-      "size": 21453681
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.15/BingchaAI-13.7.15-arm64.dmg",
+      "sha256": "CFF7A1A38318862638FFE7F48CF34334B14D015C5A9D929570582ADAA2230423",
+      "size": 21387238
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.14/BingchaAI-13.7.14-amd64.dmg",
-      "sha256": "B3F4D5571EA81F3227832E7C1B1DD4A5EE23D835F5EDF665B1E6F88090DDFED3",
-      "size": 23649517
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.15/BingchaAI-13.7.15-amd64.dmg",
+      "sha256": "8015A965501C1B52A8AE348C20AECDFBAFBA93647D4E2B0A35B518108497D567",
+      "size": 23587532
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.14/BingchaAI-13.7.14-linux-amd64.tar.gz",
-      "sha256": "548DFD7F85EA6DD96973485E341ACB6CF048066138E6BDC87CEA6368CFAE635A",
-      "size": 19082366
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.15/BingchaAI-13.7.15-linux-amd64.tar.gz",
+      "sha256": "D52CFA365DB9AE0DFCDAC767948CEC3626C98C38C5510EB29E12285CC2858D62",
+      "size": 19082506
     }
   }
 }
