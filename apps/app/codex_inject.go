@@ -456,6 +456,17 @@ func codexGUIMainPattern() string {
 // codexWindowsImageName 返回 Windows GUI 进程映像名(tasklist/taskkill 用),随品牌改名。
 func codexWindowsImageName() string { return codexDesktopBrand() + ".exe" }
 
+func isCodexWindowsProcessRunning() bool {
+	imageName := codexWindowsImageName()
+	out, err := hideCmd("tasklist", "/FI", "IMAGENAME eq "+imageName, "/NH", "/FO", "CSV").Output()
+	if err != nil {
+		// A failed inspection cannot establish that credential/history changes are safe.
+		Log("[codex] 无法检查 Windows 进程: %v", err)
+		return true
+	}
+	return tasklistContainsImage(string(out), imageName)
+}
+
 // IsCodexRunning 检测 Codex GUI 主程序是否在运行(不含 bundle 内的 CLI 子进程)。
 func IsCodexRunning() bool {
 	switch runtime.GOOS {
@@ -472,11 +483,7 @@ func IsCodexRunning() bool {
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+codexWindowsImageName(), "/NH").Output()
-		if err != nil {
-			return false
-		}
-		return !strings.Contains(string(out), "No tasks")
+		return isCodexWindowsProcessRunning()
 	default:
 		return false
 	}
@@ -494,11 +501,7 @@ func isCodexProcessTreeRunning() bool {
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+codexWindowsImageName(), "/NH").Output()
-		if err != nil {
-			return false
-		}
-		return !strings.Contains(string(out), "No tasks")
+		return isCodexWindowsProcessRunning()
 	default:
 		return false
 	}
@@ -531,7 +534,7 @@ func QuitCodexApp() {
 			Log("[codex] 警告:Codex 仍在运行,可能影响配置重载")
 		}
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", codexWindowsImageName(), "/T", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", codexWindowsImageName(), "/T", "/F").Run()
 		waitForProcessExit(isCodexProcessTreeRunning, 3*time.Second)
 	}
 }
