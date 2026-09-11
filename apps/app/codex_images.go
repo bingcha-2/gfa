@@ -374,9 +374,9 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		// Native image streaming responses already use the OpenAI image SSE
 		// protocol. Preserve partial-image events instead of buffering the whole
 		// generated image before returning it to the client.
+		streamBody := decodeCodexResponseStream(resp)
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		streamBody := decodeCodexResponseStream(resp)
 		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id")}
 		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(w, streamBody, &streamDiagnostic)
 		if actualModel != "" {
@@ -400,7 +400,18 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		return
 	}
 
-	data, _ := io.ReadAll(resp.Body)
+	var responseBody io.Reader = resp.Body
+	if directImage {
+		responseBody = decodeCodexResponseStream(resp)
+	}
+	data, readErr := io.ReadAll(responseBody)
+	if directImage && readErr != nil {
+		atomic.AddInt64(&p.totalErrors, 1)
+		audit.status = http.StatusBadGateway
+		audit.note = "failed to read image response: " + readErr.Error()
+		p.sendJSONError(w, http.StatusBadGateway, "failed to read upstream image response")
+		return
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.respBody = data

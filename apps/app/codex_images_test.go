@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"io"
 	"mime/multipart"
@@ -81,6 +82,60 @@ func TestCodexServeImagesTranslatesToResponses(t *testing.T) {
 	}
 	if rp := gjson.GetBytes(out, "data.0.revised_prompt").String(); rp != "a cute cat fishing" {
 		t.Fatalf("revised_prompt = %q", rp)
+	}
+}
+
+func TestCodexServeImagesNativeCompressedResponse(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		name := "json"
+		if stream {
+			name = "sse"
+		}
+		t.Run(name, func(t *testing.T) {
+			payload := `{"data":[{"b64_json":"image"}],"usage":{"input_tokens":4,"output_tokens":6,"total_tokens":10}}`
+			if stream {
+				payload = "data: " + payload + "\n\n"
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Content-Type", "application/json")
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+				}
+				z := gzip.NewWriter(w)
+				_, _ = io.WriteString(z, payload)
+				_ = z.Close()
+			}))
+			defer upstream.Close()
+			var reported int64
+			proxy := &CodexProxy{
+				upstreamBase: upstream.URL,
+				leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+					return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("compressed"), AccountId: 11}, nil
+				},
+				reportResult: func(_ string, _ string, d ReportDetails, _ string, _ *CodexTokenLease) { reported = d.RawTotalTokens },
+			}
+			body := `{"model":"gpt-image-2","prompt":"test","stream":false}`
+			if stream {
+				body = `{"model":"gpt-image-2","prompt":"test","stream":true}`
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+			req.Header.Set("Accept-Encoding", "gzip")
+			rec := httptest.NewRecorder()
+			proxy.ServeImages(rec, req, "test", "device", "direct")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d", rec.Code)
+			}
+			if enc := rec.Result().Header.Get("Content-Encoding"); enc != "" {
+				t.Errorf("unexpected encoding: %s", enc)
+			}
+			if rec.Body.String() != payload {
+				t.Error("response body was not decoded correctly")
+			}
+			if reported != 10 {
+				t.Errorf("reported tokens=%d, want 10", reported)
+			}
+		})
 	}
 }
 
