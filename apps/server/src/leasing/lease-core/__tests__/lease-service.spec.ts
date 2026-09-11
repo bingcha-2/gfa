@@ -83,6 +83,26 @@ describe("LeaseService (generic core)", () => {
 
   const REQ = sessionReqFor("card-1");
 
+  it("dashboard restores lifetime totals by email without modifying runtime or quota counters", async () => {
+    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
+      accessKeysFilePath,
+      tokenUsageTracker: {
+        record: vi.fn(),
+        getAccountUsageTotals: vi.fn().mockResolvedValue(new Map([
+          ["one@example.com", { totalTokensUsed: 1234, totalInputTokens: 9000, totalOutputTokens: 12 }],
+          ["removed@example.com", { totalTokensUsed: 9999, totalInputTokens: 9999, totalOutputTokens: 0 }],
+        ])),
+      },
+    });
+    const before = service.getStatus();
+    const restored = await service.getStatusWithUsage();
+    expect(restored.scheduler.accountStats["1"].totalTokensUsed).toBe(1234);
+    expect(restored.scheduler.accountStats["2"].totalTokensUsed).toBe(0);
+    expect(restored.quota).toEqual(before.quota);
+    expect(service.getStatus().scheduler.accountStats).toEqual(before.scheduler.accountStats);
+    service.onModuleDestroy();
+  });
+
   it("restores quota state, reconciles current membership, then checkpoints before startup completes", async () => {
     const order: string[] = [];
     const fairShareTracker = {

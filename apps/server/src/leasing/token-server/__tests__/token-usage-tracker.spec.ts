@@ -9,6 +9,33 @@ function makePrisma() {
 }
 
 describe("TokenUsageTracker — customerId 透传", () => {
+  it("reads persisted account totals after restart, scopes products, and coalesces polling", async () => {
+    const groupBy = vi.fn().mockResolvedValue([
+      { accountEmail: "one@example.com", bucket: "codex-gpt", _sum: { totalTokens: 100, inputTokens: 900, outputTokens: 10 } },
+      { accountEmail: "one@example.com", bucket: "codex", _sum: { totalTokens: 20, inputTokens: 20, outputTokens: 0 } },
+      { accountEmail: "one@example.com", bucket: "anthropic-claude", _sum: { totalTokens: 500, inputTokens: 500, outputTokens: 0 } },
+      { accountEmail: "", bucket: "codex-gpt", _sum: { totalTokens: 999 } },
+    ]);
+    const prisma = { cardUsageHourly: { groupBy } };
+    const tracker = new TokenUsageTracker(prisma, { autoStart: false });
+    const [codex, anthropic] = await Promise.all([
+      tracker.getAccountUsageTotals("codex"), tracker.getAccountUsageTotals("anthropic"),
+    ]);
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect(codex.get("one@example.com")).toEqual({ totalTokensUsed: 120, totalInputTokens: 920, totalOutputTokens: 10 });
+    expect(anthropic.get("one@example.com")?.totalTokensUsed).toBe(500);
+    expect(codex.has("")).toBe(false);
+    const restarted = new TokenUsageTracker(prisma, { autoStart: false });
+    expect(await restarted.getAccountUsageTotals("codex")).toEqual(codex);
+  });
+
+  it("does not cache a failed totals query as zero usage", async () => {
+    const groupBy = vi.fn().mockRejectedValueOnce(new Error("db unavailable")).mockResolvedValue([]);
+    const tracker = new TokenUsageTracker({ cardUsageHourly: { groupBy } }, { autoStart: false });
+    await expect(tracker.getAccountUsageTotals("codex")).rejects.toThrow("db unavailable");
+    expect(await tracker.getAccountUsageTotals("codex")).toEqual(new Map());
+    expect(groupBy).toHaveBeenCalledTimes(2);
+  });
   it("record 带 customerId → 进入队列", () => {
     const tracker = new TokenUsageTracker(makePrisma());
     tracker.record({

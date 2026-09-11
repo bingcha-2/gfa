@@ -40,11 +40,54 @@ interface TokenUsageEvent {
 
 const FLUSH_INTERVAL_MS = 10_000; // 10 seconds
 
+export type AccountUsageTotals = {
+  totalTokensUsed: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+};
+
 export class TokenUsageTracker {
+  private accountTotalsCache?: { at: number; totals: Map<string, Map<string, AccountUsageTotals>> };
+  private accountTotalsPending?: Promise<Map<string, Map<string, AccountUsageTotals>>>;
   private queue: TokenUsageEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private flushPromise: Promise<void> | null = null;
   private readonly writeQueue: ApiWriteQueue;
+
+  /** Persisted lifetime totals, keyed by stable account identity, not pool position.
+   * Read the hourly table directly: durable accounting also writes it without
+   * passing through this tracker's buffer. Coalesce dashboard polling for 30s.
+   */
+  async getAccountUsageTotals(product: string): Promise<Map<string, AccountUsageTotals>> {
+    if (!this.accountTotalsCache || Date.now() - this.accountTotalsCache.at >= 30_000) {
+      if (!this.accountTotalsPending) {
+        this.accountTotalsPending = (async () => {
+          const rows = await this.prisma.cardUsageHourly.groupBy({
+            by: ["accountEmail", "bucket"],
+            _sum: { totalTokens: true, inputTokens: true, outputTokens: true },
+          });
+          const totals = new Map<string, Map<string, AccountUsageTotals>>();
+          for (const row of rows) {
+            if (!row.accountEmail) continue;
+            const bucket = String(row.bucket || "");
+            const provider = bucket.includes("-") ? bucket.split("-")[0]
+              : bucket === "codex" ? "codex" : "antigravity";
+            let accounts = totals.get(provider);
+            if (!accounts) totals.set(provider, accounts = new Map());
+            const sum = accounts.get(row.accountEmail) || { totalTokensUsed: 0, totalInputTokens: 0, totalOutputTokens: 0 };
+            sum.totalTokensUsed += Number(row._sum.totalTokens || 0);
+            sum.totalInputTokens += Number(row._sum.inputTokens || 0);
+            sum.totalOutputTokens += Number(row._sum.outputTokens || 0);
+            accounts.set(row.accountEmail, sum);
+          }
+          this.accountTotalsCache = { at: Date.now(), totals };
+          return totals;
+        })().finally(() => { this.accountTotalsPending = undefined; });
+      }
+      await this.accountTotalsPending;
+    }
+    return new Map(this.accountTotalsCache!.totals.get(product) || []);
+  }
 
   constructor(
     private readonly prisma: any,

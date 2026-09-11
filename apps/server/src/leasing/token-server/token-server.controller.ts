@@ -13,14 +13,14 @@ export class TokenServerController {
   constructor(private readonly tokenServer: TokenServerService) {}
 
   @Get()
-  root(@Res() response: any) {
-    return response.status(200).json(this.tokenServer.getStatus());
+  async root(@Res() response: any) {
+    return response.status(200).json(await this.tokenServer.getStatusWithUsage());
   }
 
   @Get(":path")
-  get(@Param("path") path: string, @Res() response: any) {
+  async get(@Param("path") path: string, @Res() response: any) {
     if (path === "status" || path === "health") {
-      return response.status(200).json(this.tokenServer.getStatus());
+      return response.status(200).json(await this.tokenServer.getStatusWithUsage());
     }
     if (path === "announcement") {
       response.setHeader("content-type", "text/plain; charset=utf-8");
@@ -42,7 +42,7 @@ export class TokenServerController {
         case "reload-access-keys":
           return response.status(200).json(await this.tokenServer.reloadAccessKeys());
         case "reload-accounts":
-          return response.status(200).json({ ok: true, status: this.tokenServer.getStatus() });
+          return response.status(200).json({ ok: true, status: await this.tokenServer.getStatusWithUsage() });
         case "announcement":
           writeAnnouncementText(String(body?.text || ""));
           return response.status(200).json({ success: true, text: String(body?.text || "").trim() });

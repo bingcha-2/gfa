@@ -42,6 +42,9 @@ import type { Provider, ProviderQuotaSnapshotInput } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
 
 export type TokenUsageTracker = {
+  getAccountUsageTotals?: (product: string) => Promise<Map<string, {
+    totalTokensUsed: number; totalInputTokens: number; totalOutputTokens: number;
+  }>>;
   record: (event: {
     accessKeyId: string;
     customerId?: string;
@@ -491,6 +494,27 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       this.perAccountStats.set(accountId, s);
     }
     return s;
+  }
+
+  /** Dashboard totals must survive restarts; never feed historical totals back
+   * into live scheduler counters or quota accounting. */
+  async getStatusWithUsage() {
+    const totals = await this.tokenUsageTracker?.getAccountUsageTotals?.(this.provider.id);
+    const status = this.getStatus();
+    if (!totals) return status;
+    for (const account of this.readAccounts()) {
+      const id = String(account.id);
+      const current = status.scheduler.accountStats[id] || {
+        totalLeases: 0, successCount: 0, errorCount: 0,
+        totalTokensUsed: 0, totalInputTokens: 0, totalOutputTokens: 0,
+        lastStatus: "", lastUsedAt: 0,
+      };
+      const usage = totals.get(String(account.email || "")) || {
+        totalTokensUsed: 0, totalInputTokens: 0, totalOutputTokens: 0,
+      };
+      status.scheduler.accountStats[id] = { ...current, ...usage };
+    }
+    return status;
   }
 
   getStatus() {

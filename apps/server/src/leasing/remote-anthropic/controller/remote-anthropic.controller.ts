@@ -9,14 +9,14 @@ export class RemoteAnthropicController {
   constructor(@Inject(RemoteAnthropicService) private readonly remoteAnthropic: RemoteAnthropicService) {}
 
   @Get()
-  root(@Res() response: any) {
-    return response.status(200).json(this.remoteAnthropic.getStatus());
+  async root(@Res() response: any) {
+    return response.status(200).json(await this.remoteAnthropic.getStatusWithUsage());
   }
 
   @Get(":path")
-  get(@Param("path") pathName: string, @Res() response: any) {
+  async get(@Param("path") pathName: string, @Res() response: any) {
     if (pathName === "status" || pathName === "health") {
-      return response.status(200).json(this.remoteAnthropic.getStatus());
+      return response.status(200).json(await this.remoteAnthropic.getStatusWithUsage());
     }
     return response.status(404).json({ ok: false, error: "Not found" });
   }
@@ -32,7 +32,7 @@ export class RemoteAnthropicController {
         case "reload-access-keys":
           return response.status(200).json(await this.remoteAnthropic.reloadAccessKeys());
         case "reload-accounts":
-          return response.status(200).json({ ok: true, status: this.remoteAnthropic.getStatus() });
+          return response.status(200).json({ ok: true, status: await this.remoteAnthropic.getStatusWithUsage() });
         default:
           return response.status(404).json({ ok: false, error: "Not found" });
       }
