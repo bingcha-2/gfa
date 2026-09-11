@@ -84,6 +84,47 @@ func TestCodexServeImagesTranslatesToResponses(t *testing.T) {
 	}
 }
 
+func TestCodexServeImagesUsesNativeEndpointForExplicitImageModel(t *testing.T) {
+	var gotPath string
+	var gotAccept string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAccept = r.Header.Get("Accept")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"created":1713833628,"data":[{"b64_json":"native-image"}],"usage":{"input_tokens":4,"output_tokens":6,"total_tokens":10}}`)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-native"), AccountId: 11}, nil
+		},
+		reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"codex/gpt-image-2","prompt":"a lighthouse"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeImages(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/backend-api/codex/images/generations" {
+		t.Fatalf("native path = %q", gotPath)
+	}
+	if gotAccept != "application/json" {
+		t.Fatalf("native Accept = %q", gotAccept)
+	}
+	if got := gjson.GetBytes(gotBody, "model").String(); got != "gpt-image-2" {
+		t.Fatalf("native model = %q; body=%s", got, gotBody)
+	}
+	if got := gjson.GetBytes(rec.Body.Bytes(), "data.0.b64_json").String(); got != "native-image" {
+		t.Fatalf("native image = %q; body=%s", got, rec.Body.String())
+	}
+}
+
 // /v1/images/edits 的 multipart 参考图应被转换成 Responses input_image，工具动作改为 edit。
 func TestCodexServeImagesEditTranslatesMultipartImage(t *testing.T) {
 	var gotBody string

@@ -148,6 +148,27 @@ func codexJSONImageURLs(rawJSON []byte) []string {
 	return images
 }
 
+// codexDirectImageModelName returns the canonical model name accepted by the
+// native Codex image endpoint. Provider-qualified names such as
+// "codex/gpt-image-2" are accepted from clients but must be unqualified
+// upstream.
+func codexDirectImageModelName(rawJSON []byte) string {
+	model := strings.ToLower(strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String()))
+	if idx := strings.LastIndex(model, "/"); idx >= 0 && idx < len(model)-1 {
+		model = strings.TrimSpace(model[idx+1:])
+	}
+	switch model {
+	case "gpt-image-1.5", "gpt-image-2":
+		return model
+	default:
+		return ""
+	}
+}
+
+func codexDirectImageModel(rawJSON []byte) bool {
+	return codexDirectImageModelName(rawJSON) != ""
+}
+
 func codexMultipartImageDataURL(fileHeader *multipart.FileHeader) (string, error) {
 	if fileHeader == nil {
 		return "", fmt.Errorf("image upload is nil")
@@ -199,6 +220,8 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		return
 	}
 	var respBody []byte
+	var rawGenerationBody []byte
+	var directImage bool
 	var imageModel string
 	path := strings.ToLower(r.URL.Path)
 	switch path {
@@ -209,8 +232,18 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 			p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
 			return
 		}
-		respBody = buildCodexImagesResponsesBody(rawReq)
-		imageModel = codexResolveImageModel(rawReq)
+		rawGenerationBody = rawReq
+		// Recent CLIProxyAPI releases use Codex's native REST image endpoint for
+		// the built-in image models. Keep the older hosted-tool translation for
+		// custom models and requests without an explicit model for compatibility.
+		directImage = codexDirectImageModel(rawReq) && p.currentRelay() == nil
+		if directImage {
+			imageModel = codexDirectImageModelName(rawReq)
+			respBody = rewriteCodexModel(rawReq, imageModel)
+		} else {
+			respBody = buildCodexImagesResponsesBody(rawReq)
+			imageModel = codexResolveImageModel(rawReq)
+		}
 	case "/v1/images/edits":
 		var err error
 		respBody, imageModel, err = buildCodexImageEditRequest(w, r)
@@ -237,7 +270,11 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	if leaseFunc == nil {
 		leaseFunc = GetCodexLeaser().LeaseToken
 	}
-	lease, err := leaseFunc(card, deviceId, false, map[string]interface{}{"modelKey": codexImagesMainModel, "bodyBytes": len(respBody)}, upstreamProxy)
+	leaseModel := codexImagesMainModel
+	if directImage {
+		leaseModel = imageModel
+	}
+	lease, err := leaseFunc(card, deviceId, false, map[string]interface{}{"modelKey": leaseModel, "bodyBytes": len(respBody)}, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "lease 失败:" + err.Error()
@@ -248,6 +285,13 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		return
 	}
 	relayLease := lease.IsRelay()
+	if directImage && relayLease {
+		// A relay lease can be selected during a hot config transition even when
+		// the earlier relay snapshot was empty. Relay providers speak Responses,
+		// so rebuild the hosted-tool payload before applying relay model mapping.
+		directImage = false
+		respBody = buildCodexImagesResponsesBody(rawGenerationBody)
+	}
 	if relayLease {
 		// 套餐开启中转时没有母号 token。生图与普通 /responses 必须使用同一份
 		// 服务端下发的中转 URL/API Key；日志仍保持官方 Codex 的展示口径。
@@ -267,6 +311,13 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	if relayLease {
 		targetURL = strings.TrimRight(strings.TrimSpace(lease.Relay.BaseURL), "/") + "/responses"
 		audit.target = DefaultCodexEndpoint + "/backend-api/codex/responses"
+	} else if directImage {
+		base := p.upstreamBase
+		if base == "" {
+			base = DefaultCodexEndpoint
+		}
+		targetURL = strings.TrimRight(base, "/") + "/backend-api/codex/images/generations"
+		audit.target = targetURL
 	} else {
 		base := p.upstreamBase
 		if base == "" {
@@ -286,7 +337,11 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		credential = lease.Relay.APIKey
 	}
 	req.Header.Set("Authorization", "Bearer "+credential)
-	req.Header.Set("Accept", "text/event-stream")
+	if directImage && !gjson.GetBytes(respBody, "stream").Bool() {
+		req.Header.Set("Accept", "application/json")
+	} else {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if relayLease {
 		applyCodexRelayHeaders(req.Header, r.Header)
@@ -315,6 +370,35 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	}
 	defer resp.Body.Close()
 	audit.status = resp.StatusCode
+	if directImage && resp.StatusCode >= 200 && resp.StatusCode < 300 && isCodexStreamingResponse(resp) {
+		// Native image streaming responses already use the OpenAI image SSE
+		// protocol. Preserve partial-image events instead of buffering the whole
+		// generated image before returning it to the client.
+		p.writeResponseHeaders(w, resp)
+		w.WriteHeader(resp.StatusCode)
+		streamBody := decodeCodexResponseStream(resp)
+		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id")}
+		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(w, streamBody, &streamDiagnostic)
+		if actualModel != "" {
+			imageModel = actualModel
+		}
+		audit.inTokens, audit.outTokens = input, output
+		details := codexDetailsFrom(resp.StatusCode, imageModel, input, output, cached, total)
+		if copyErr != nil {
+			audit.note = streamDiagnostic.summary(copyErr)
+			details.StatusCode = http.StatusBadGateway
+			details.Reason = "stream_copy_error"
+			details.ErrorText = copyErr.Error()
+			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
+		} else if details.RawTotalTokens > 0 {
+			if p.reportResult != nil {
+				p.reportResult(card, deviceId, details, upstreamProxy, lease)
+			} else {
+				GetCodexLeaser().ReportUsage(card, deviceId, details, upstreamProxy, lease)
+			}
+		}
+		return
+	}
 
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -323,6 +407,26 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		// 原样把上游错误回给客户端(JSON)。
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(data)
+		return
+	}
+	if directImage {
+		// Native image endpoints already return the OpenAI response shape (JSON
+		// for non-streaming calls, SSE for streaming calls). Do not run the
+		// hosted-tool extractor against that response or it will look like a
+		// successful request with no image and incorrectly return 502.
+		details := codexReportDetails(resp.StatusCode, imageModel, data)
+		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
+		if details.RawTotalTokens > 0 {
+			if p.reportResult != nil {
+				p.reportResult(card, deviceId, details, upstreamProxy, lease)
+			} else {
+				GetCodexLeaser().ReportUsage(card, deviceId, details, upstreamProxy, lease)
+			}
+		}
+		p.writeResponseHeaders(w, resp)
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 		return
 	}
