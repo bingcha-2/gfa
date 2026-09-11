@@ -106,6 +106,11 @@ describe("fetchCodexResetCredits — GET rate-limit-reset-credits through the ac
     egressFetch.mockResolvedValue(new Response("nope", { status: 403 }));
     await expect(fetchCodexResetCredits("t", undefined)).rejects.toThrow(/403/);
   });
+
+  it.each([{}, { available_count: -1 }, { available_count: "unknown" }])("rejects missing or malformed counts instead of showing zero: %j", async (payload) => {
+    egressFetch.mockResolvedValueOnce(ok(payload));
+    await expect(fetchCodexResetCredits("t")).rejects.toThrow("未返回有效的重置卡次数");
+  });
 });
 
 describe("consumeCodexResetCredit — POST .../consume through the account proxy", () => {

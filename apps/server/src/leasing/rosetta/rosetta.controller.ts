@@ -247,6 +247,11 @@ export class RosettaController {
     return this.rosetta.queryCodexResetCredits(body);
   }
 
+  @Post("codex-account-benefits")
+  queryCodexAccountBenefits(@Body() body: any) {
+    return this.rosetta.queryCodexAccountBenefits(body);
+  }
+
   // 「主动重置」= 消耗一次 reset credit,提前重置 5h 窗口。
   @Post("codex-consume-reset-credit")
   consumeCodexResetCredit(@Body() body: any) {

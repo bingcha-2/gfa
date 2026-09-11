@@ -130,10 +130,18 @@ export async function fetchCodexResetCredits(
   const resp = await proxyAwareFetch(proxyUrl, RESET_CREDITS_URL, {
     method: "GET",
     headers: buildHeaders(accessToken),
+    signal: AbortSignal.timeout(20_000),
   });
   const body = await resp.text();
   if (!resp.ok) throw new Error(`重置次数查询失败: ${resp.status} ${body.slice(0, 200)}`);
-  return parseResetCreditsSnapshot(JSON.parse(body));
+  const payload = JSON.parse(body);
+  const count = payload?.available_count ?? payload?.availableCount
+    ?? payload?.data?.available_count ?? payload?.data?.availableCount;
+  if (count != null ? !Number.isSafeInteger(count) || count < 0
+    : !Array.isArray(payload?.credits) && !Array.isArray(payload?.data?.credits)) {
+    throw new Error("上游未返回有效的重置卡次数");
+  }
+  return parseResetCreditsSnapshot(payload);
 }
 
 /** Spend one reset credit (proactively resets the 5h window). Throws on failure. */

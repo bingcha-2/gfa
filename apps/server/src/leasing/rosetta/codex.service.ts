@@ -8,6 +8,7 @@ import * as crypto from "crypto";
 import * as path from "path";
 
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
+import { fetchCodexSubscription, subscriptionExpiryIso } from "../remote-codex/auth/codex-subscription";
 import { codexBindingWindow, fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
 import {
   consumeCodexResetCredit as consumeResetCreditUpstream,
@@ -34,6 +35,9 @@ const CODEX_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
 const CODEX_OAUTH_SCOPES = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const CODEX_OAUTH_ORIGINATOR = "codex_vscode";
 const CODEX_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const CODEX_SUBSCRIPTION_CACHE_MS = 6 * 60 * 60 * 1000;
+const CODEX_RESET_CREDITS_CACHE_MS = 60 * 60 * 1000;
+const CODEX_BENEFITS_RETRY_MS = 5 * 60 * 1000;
 
 type CodexCredentialMode = "refresh" | "access-session" | "access" | "session" | "none";
 
@@ -209,6 +213,9 @@ export class CodexService {
         poolEnabled: account.poolEnabled !== false,
         alias: String(account.alias || ""),
         planType: String(account.planType || ""),
+        subscriptionExpiresAt: subscriptionExpiryIso(account.subscriptionExpiresAt),
+        subscriptionCheckedAt: Number(account.subscriptionCheckedAt || 0),
+        subscriptionError: String(account.subscriptionError || ""),
         proxyUrl: String(account.proxyUrl || ""),
         autoLoginStatus: account.autoLoginStatus ? String(account.autoLoginStatus) : undefined,
         autoLoginStep: account.autoLoginStep ? String(account.autoLoginStep) : undefined,
@@ -571,11 +578,108 @@ export class CodexService {
     }
   }
 
-  /**
-   * 后台「重置次数查询」(codex 单账号)= 刷 token 后拉上游 rate-limit-reset-credits,
-   * 回带可用主动重置次数 + 最近到期时间(供前端决定要不要重置)。抄 cockpit 的口径:
-   * 只统计未兑换/未过期的 credit 为可用。
-   */
+  /** A detail panel refresh reads subscription expiry and reset credits with one token. */
+  private readonly benefitsInFlight = new Map<number, Promise<any>>();
+
+  queryCodexAccountBenefits(payload: any): Promise<any> {
+    const accountId = Number(payload?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      return Promise.resolve({ ok: false, error: "无效的母号 ID" });
+    }
+    const pending = this.benefitsInFlight.get(accountId);
+    if (pending) return pending;
+    const request = this.refreshCodexAccountBenefits(accountId, payload?.force === true)
+      .finally(() => this.benefitsInFlight.delete(accountId));
+    this.benefitsInFlight.set(accountId, request);
+    return request;
+  }
+
+  private async refreshCodexAccountBenefits(accountId: number, force: boolean) {
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const acc = data.accounts?.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    const now = Date.now();
+    const recent = (time: unknown, ttl: number) => Number(time) > 0
+      && now >= Number(time) && now - Number(time) < ttl;
+    const needsRefresh = (error: unknown, attemptedAt: unknown, checkedAt: unknown, ttl: number, expiresAt: number) => {
+      if (force) return true;
+      if (error) return !recent(attemptedAt, CODEX_BENEFITS_RETRY_MS);
+      return !recent(checkedAt, ttl) || (expiresAt > Number(checkedAt) && expiresAt <= now);
+    };
+    const refreshSubscription = needsRefresh(acc.subscriptionError, acc.subscriptionAttemptedAt,
+      acc.subscriptionCheckedAt, CODEX_SUBSCRIPTION_CACHE_MS, Date.parse(acc.subscriptionExpiresAt || ""));
+    const refreshCredits = needsRefresh(acc.resetCreditsError, acc.resetCreditsAttemptedAt,
+      acc.resetCreditsCheckedAt, CODEX_RESET_CREDITS_CACHE_MS, Number(acc.resetCreditsNextExpiresAt || 0) * 1000);
+    const resultFrom = (account: any, updated: boolean) => ({
+      ok: true,
+      updated,
+      subscriptionExpiresAt: subscriptionExpiryIso(account.subscriptionExpiresAt),
+      subscriptionCheckedAt: Number(account.subscriptionCheckedAt || 0),
+      subscriptionError: String(account.subscriptionError || ""),
+      resetCredits: {
+        availableCount: account.resetCreditsError ? null : account.resetCreditsAvailableCount ?? null,
+        nextExpiresAt: account.resetCreditsError ? null : account.resetCreditsNextExpiresAt ?? null,
+        checkedAt: Number(account.resetCreditsCheckedAt || 0),
+        error: String(account.resetCreditsError || ""),
+      },
+    });
+    if (!refreshSubscription && !refreshCredits) return resultFrom(acc, false);
+    // Re-read immediately before each write: upstream requests must not overwrite
+    // quota updates, edits, or removals made while they were in flight.
+    const persist = (patch: Record<string, unknown>) => {
+      const current = readJson(filePath, { accounts: [] });
+      const account = current.accounts?.find((a: any) => Number(a.id) === accountId);
+      if (!account) throw new Error("账号已删除");
+      Object.assign(account, patch);
+      writeJson(filePath, { ...current, updatedAt: nowIso() });
+      return account;
+    };
+    let token: string;
+    try {
+      const probe = { ...acc };
+      token = await refreshCodexAccessToken(probe);
+      persist({
+        accessToken: token,
+        accessTokenExpiresAt: probe.accessTokenExpiresAt,
+        ...(probe.refreshToken ? { refreshToken: probe.refreshToken } : {}),
+      });
+    } catch {
+      return { ok: false, error: "母号凭据不可用，请先刷新凭据或重新登录" };
+    }
+    const creditsInvalidatedAt = Number(acc.resetCreditsInvalidatedAt || 0);
+    const [subscription, credits] = await Promise.allSettled([
+      refreshSubscription ? fetchCodexSubscription(token, acc.proxyUrl) : Promise.resolve(null),
+      refreshCredits ? fetchCodexResetCredits(token, acc.proxyUrl) : Promise.resolve(null),
+    ]);
+    const patch: Record<string, unknown> = {};
+    if (refreshSubscription) Object.assign(patch, {
+      subscriptionAttemptedAt: Date.now(),
+      ...(subscription.status === "fulfilled" && subscription.value ? {
+        subscriptionExpiresAt: subscription.value.expiresAt,
+        subscriptionCheckedAt: Date.now(),
+        subscriptionError: "",
+      } : { subscriptionError: "订阅查询失败，请稍后重试" }),
+    });
+    if (refreshCredits) {
+      const latest = readJson(filePath, { accounts: [] }).accounts?.find((a: any) => Number(a.id) === accountId);
+      // A consume that finished while this query was running invalidates its result.
+      if (Number(latest?.resetCreditsInvalidatedAt || 0) !== creditsInvalidatedAt) {
+        Object.assign(patch, { resetCreditsCheckedAt: 0, resetCreditsAvailableCount: null, resetCreditsNextExpiresAt: null, resetCreditsError: "" });
+      } else Object.assign(patch, {
+        resetCreditsAttemptedAt: Date.now(),
+        ...(credits.status === "fulfilled" && credits.value ? {
+          resetCreditsAvailableCount: credits.value.availableCount,
+          resetCreditsNextExpiresAt: credits.value.nextExpiresAt ?? null,
+          resetCreditsCheckedAt: Date.now(),
+          resetCreditsError: "",
+        } : { resetCreditsError: "重置卡查询失败，请稍后重试" }),
+      });
+    }
+    return resultFrom(persist(patch), true);
+  }
+
+  /** Query spendable reset credits for the existing manual-reset dialog. */
   async queryCodexResetCredits(payload: any) {
     const accountId = Number(payload?.accountId);
     const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
@@ -593,6 +697,15 @@ export class CodexService {
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
 
       const snap = await fetchCodexResetCredits(token, acc.proxyUrl);
+      const current = readJson(filePath, { accounts: [] });
+      const queriedAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
+      if (queriedAccount && Number(queriedAccount.resetCreditsInvalidatedAt || 0) === Number(acc.resetCreditsInvalidatedAt || 0)) {
+        Object.assign(queriedAccount, {
+          resetCreditsAvailableCount: snap.availableCount, resetCreditsNextExpiresAt: snap.nextExpiresAt ?? null,
+          resetCreditsCheckedAt: Date.now(), resetCreditsAttemptedAt: Date.now(), resetCreditsError: "",
+        });
+        writeJson(filePath, { ...current, updatedAt: nowIso() });
+      }
       return {
         ok: true,
         email: acc.email,
@@ -626,6 +739,16 @@ export class CodexService {
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
 
       await consumeResetCreditUpstream(token, acc.proxyUrl);
+      const current = readJson(filePath, { accounts: [] });
+      const resetAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
+      if (resetAccount) {
+        Object.assign(resetAccount, {
+          resetCreditsCheckedAt: 0, resetCreditsAttemptedAt: 0, resetCreditsAvailableCount: null,
+          resetCreditsNextExpiresAt: null, resetCreditsError: "",
+          resetCreditsInvalidatedAt: Math.max(Date.now(), Number(resetAccount.resetCreditsInvalidatedAt || 0) + 1),
+        });
+        writeJson(filePath, { ...current, updatedAt: nowIso() });
+      }
       // 重置后额度已变,拉一次落盘(失败不影响重置本身已成功)。
       const refreshed = (await this.refreshCodexAccountQuota({ accountId }).catch(() => null)) as
         | { hourlyPercent?: number; weeklyPercent?: number; quotaError?: string }

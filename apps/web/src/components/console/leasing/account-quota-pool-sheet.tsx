@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { apiRequest, consoleApiPath, getErrorMessage } from "@/lib/console/client-api";
 import { formatDateTime } from "@/lib/format";
+import { CodexAccountBenefitsPanel } from "./codex-account-benefits";
 import {
   confidenceLabel,
   formatCoverage,
@@ -83,6 +84,7 @@ export function AccountQuotaPoolSheet({
   const [error, setError] = useState("");
   const [quotaEdit, setQuotaEdit] = useState<QuotaEditState | null>(null);
   const [savingQuota, setSavingQuota] = useState(false);
+  const [benefitsRefreshVersion, setBenefitsRefreshVersion] = useState(0);
 
   const load = useCallback(async () => {
     if (!target) return;
@@ -168,7 +170,10 @@ export function AccountQuotaPoolSheet({
               <SheetTitle>额度池 · {target?.provider === "codex" ? "Codex" : "Anthropic"} #{target?.id}</SheetTitle>
               <SheetDescription className="truncate">{target?.email}</SheetDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => {
+              setBenefitsRefreshVersion((value) => value + 1);
+              void load();
+            }} disabled={loading}>
               {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
               刷新数据
             </Button>
@@ -176,6 +181,10 @@ export function AccountQuotaPoolSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-5 px-4 pb-6">
+          {target?.provider === "codex" ? (
+            <CodexAccountBenefitsPanel key={target.id} accountId={target.id}
+              refreshVersion={benefitsRefreshVersion} onUpdated={onChanged} />
+          ) : null}
           {loading && !pool ? <QuotaPoolSkeleton /> : null}
 
           {error && !pool ? (

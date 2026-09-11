@@ -564,6 +564,7 @@ export class RosettaService {
     return result;
   }
   queryCodexResetCredits(payload: any) { return this.codexSvc.queryCodexResetCredits(payload); }
+  queryCodexAccountBenefits(payload: any) { return this.codexSvc.queryCodexAccountBenefits(payload); }
   async consumeCodexResetCredit(payload: any) {
     const result = await this.codexSvc.consumeCodexResetCredit(payload);
     if (result?.ok) {

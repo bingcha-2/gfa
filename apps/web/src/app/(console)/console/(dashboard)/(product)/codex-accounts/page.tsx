@@ -7,6 +7,7 @@ import { AccountStatusCell } from "@/components/console/leasing/account-status-c
 import { AccountBoundSubscriptionActions } from "@/components/console/leasing/account-bound-subscription-actions";
 import { CodexPrechargePool } from "@/components/console/leasing/codex-precharge-pool";
 import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
+import { CodexSubscriptionExpiry, refreshCodexAccountBenefits } from "@/components/console/leasing/codex-account-benefits";
 import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
 import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
 import { QuotaPoolCoverageBadge, QuotaPoolScopeCell } from "@/components/console/leasing/quota-pool-summary";
@@ -36,6 +37,9 @@ type CodexAccount = {
   poolEnabled: boolean;
   alias: string;
   planType: string;
+  subscriptionExpiresAt?: string | null;
+  subscriptionCheckedAt?: number;
+  subscriptionError?: string;
   hasToken: boolean;
   hasRefreshToken: boolean;
   hasAccessToken: boolean;
@@ -516,6 +520,14 @@ export default function CodexAccountsPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "刷新失败");
+      try {
+        const benefits = await refreshCodexAccountBenefits(account.id, true);
+        if (!benefits.ok || benefits.subscriptionError || benefits.resetCredits.error) {
+          toast.warning(benefits.error || benefits.subscriptionError || benefits.resetCredits.error);
+        }
+      } catch {
+        toast.warning("母号订阅信息刷新失败，可在额度池详情重试");
+      }
       if (data.quotaError) {
         toast.success(`#${account.id} token 已刷新(额度获取失败:${data.quotaError})`);
       } else {
@@ -868,6 +880,7 @@ export default function CodexAccountsPage() {
                   <TableHead>#</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>套餐</TableHead>
+                  <TableHead>母号订阅到期</TableHead>
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
@@ -896,6 +909,14 @@ export default function CodexAccountsPage() {
                       <BoundCustomerEmailSearchHit account={a} query={accountSearch} />
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
+                    <TableCell className="text-sm">
+                      <button type="button" className="text-left underline-offset-2 hover:underline"
+                        title="打开额度池详情，查询母号订阅到期时间"
+                        onClick={() => setQuotaPoolTarget({ provider: "codex", id: a.id, email: a.email })}>
+                        <CodexSubscriptionExpiry expiresAt={a.subscriptionExpiresAt}
+                          checkedAt={a.subscriptionCheckedAt} error={a.subscriptionError} />
+                      </button>
+                    </TableCell>
                     <TableCell className="text-sm">
                       <QuotaPoolScopeCell
                         scope={a.quotaPool?.fiveHour}
