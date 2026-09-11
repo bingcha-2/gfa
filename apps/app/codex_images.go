@@ -354,6 +354,12 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 			req.Header.Del("ChatGPT-Account-Id")
 		}
 	}
+	// applyCodexOfficialHeaders supplies SSE as the default for Responses calls.
+	// Native image generation has its own negotiation: JSON for non-streaming
+	// requests and SSE only when the caller explicitly asks for streaming.
+	if directImage && !gjson.GetBytes(respBody, "stream").Bool() {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	var resp *http.Response
 	if relayLease {
