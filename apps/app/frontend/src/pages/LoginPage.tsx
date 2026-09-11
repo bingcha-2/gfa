@@ -21,7 +21,7 @@ function BrandMark({ size = 48 }: { size?: number }) {
         style={{ background: 'radial-gradient(circle at 50% 40%, var(--glow), transparent 70%)' }}
         aria-hidden
       />
-      <img src={bcaiIcon} alt="" className="relative rounded-[9px]" style={{ width: size * 0.66, height: size * 0.66 }} />
+      <img src={bcaiIcon} alt="" className="relative rounded-[9px]" style={{ width: size * 0.8, height: size * 0.8 }} />
     </span>
   )
 }

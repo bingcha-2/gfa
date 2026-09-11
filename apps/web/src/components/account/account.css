@@ -189,8 +189,9 @@ html[data-account-theme="dark"] .account-auth {
   text-decoration: none;
 }
 .account-rail__brand img {
-  width: 36px;
-  height: 36px;
+  width: 43px;
+  height: 43px;
+  flex-shrink: 0;
   border-radius: 10px;
   box-shadow: var(--shadow-sm);
 }
@@ -281,7 +282,7 @@ html[data-account-theme="dark"] .account-auth {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.account-actionbar__brand img { width: 32px; height: 32px; border-radius: 9px; box-shadow: var(--shadow-sm); }
+.account-actionbar__brand img { width: 38px; height: 38px; flex-shrink: 0; border-radius: 9px; box-shadow: var(--shadow-sm); }
 .account-actionbar__spacer { flex: 1; }
 .account-actionbar__actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
 

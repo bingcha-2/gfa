@@ -94,7 +94,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
         className={cn('mx-3 flex shrink-0 items-center border-b border-[var(--border-light)]', collapsed ? 'justify-center' : 'gap-2.5 px-1')}
         style={{ height: BAR_H, '--wails-draggable': 'drag' } as React.CSSProperties}
       >
-        <img src={bcaiIcon} alt="冰茶AI" className="h-8 w-8 shrink-0 rounded-[10px] shadow-sm" />
+        <img src={bcaiIcon} alt="冰茶AI" className="h-[38px] w-[38px] shrink-0 rounded-[10px] shadow-sm" />
         {!collapsed && <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-[var(--text-primary)]">冰茶AI</span>}
         {!collapsed && (
           <button

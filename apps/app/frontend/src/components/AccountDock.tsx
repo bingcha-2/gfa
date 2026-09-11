@@ -171,7 +171,7 @@ export function AccountDock({
       className="relative grid place-items-center shrink-0 rounded-[10px] bg-[var(--bg-secondary)] border border-[var(--border-light)] shadow-[var(--shadow-sm)]"
       style={{ width: size, height: size }}
     >
-      <img src={bcaiIcon} alt="" className="rounded-[7px]" style={{ width: size - 10, height: size - 10 }} />
+      <img src={bcaiIcon} alt="" className="rounded-[7px]" style={{ width: size - 6, height: size - 6 }} />
       <span
         className={cn('absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 rounded-full border-2 border-[var(--sidebar-bg)]', dotClass)}
       />

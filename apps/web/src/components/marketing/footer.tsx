@@ -11,7 +11,7 @@ export function MarketingFooter() {
       <div className="mkt-footer__inner">
         <div className="mkt-footer__brand">
           <a href="/" className="mkt-brand">
-            <img className="mkt-brand__mark" src="/bcai-icon.png" alt={t.common.brandName} width={30} height={30} />
+            <img className="mkt-brand__mark" src="/bcai-icon.png" alt={t.common.brandName} width={36} height={36} />
             {t.common.brandName}
           </a>
           <p className="mkt-footer__desc">{t.footer.desc}</p>

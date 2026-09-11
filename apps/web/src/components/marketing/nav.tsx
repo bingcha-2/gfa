@@ -34,7 +34,7 @@ export function MarketingNav() {
     <header className="mkt-nav" data-scrolled={scrolled}>
       <div className="mkt-nav__inner">
         <a href="/" className="mkt-brand">
-          <img className="mkt-brand__mark" src="/bcai-icon.png" alt={t.common.brandName} width={30} height={30} />
+          <img className="mkt-brand__mark" src="/bcai-icon.png" alt={t.common.brandName} width={36} height={36} />
           {t.common.brandName}
         </a>
 

@@ -170,7 +170,7 @@ html[data-mkt="dark"] .mkt {
   min-height: 64px; flex-wrap: nowrap;
 }
 .mkt-brand { display: inline-flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; white-space: nowrap; flex-shrink: 0; }
-.mkt-brand__mark { width: 30px; height: 30px; border-radius: 8px; box-shadow: var(--shadow-sm); flex-shrink: 0; }
+.mkt-brand__mark { width: 36px; height: 36px; border-radius: 8px; box-shadow: var(--shadow-sm); flex-shrink: 0; }
 .mkt-nav__links { display: flex; align-items: center; gap: 0.25rem; margin-left: 0.5rem; }
 .mkt-nav__link {
   padding: 0.45rem 0.7rem; border-radius: 0.5rem; font-size: 0.9375rem;
