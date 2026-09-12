@@ -150,7 +150,11 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 
 	// 5. 先把首帧转给上游,再双向桥接。换号后剔除首帧 response.create 里非法的
 	//    reasoning.encrypted_content(上一个账号的签名对新账号无效,留着上游报错)。
-	if msgType == websocket.TextMessage {
+	if msgType == websocket.TextMessage || msgType == websocket.BinaryMessage {
+		if cleaned, dropped := sanitizeCodexInputMessageIDs(initial); dropped > 0 {
+			initial = cleaned
+			Log("[codex-proxy] #%d [WS][生成] 剔除 %d 条不兼容的 input message id", reqID, dropped)
+		}
 		if cleaned, dropped := sanitizeCodexReasoningEncryptedContent(initial); dropped > 0 {
 			initial = cleaned
 			Log("[codex-proxy] #%d [WS][生成] 剔除 %d 条非法 reasoning.encrypted_content(换号签名失配)", reqID, dropped)

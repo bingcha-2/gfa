@@ -294,6 +294,13 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	reportHeaders := filterReportHeaders(r.Header) // 过滤后的请求头(去凭证头、跳超大值)→ per-request 热表
 	reportUserID := extractMetadataUserID(body)    // metadata.user_id → 服务端数真实用户
 	body = normalizeCodexRequestBody(r.URL.Path, body)
+	// 旧 provider/中转生成的历史消息可能带有 item_... ID。官方
+	// /responses 对 message input 只接受 msg_...，这类 ID 不能跨 provider
+	// 复用；删除 ID 让上游按当前请求重新识别消息，正文和工具调用保持不变。
+	if cleaned, dropped := sanitizeCodexInputMessageIDs(body); dropped > 0 {
+		body = cleaned
+		Log("[codex-proxy] #%d [生成] 剔除 %d 条不兼容的 input message id", reqID, dropped)
+	}
 	// 换号池 token 转发前剔除非法 reasoning.encrypted_content:上一个账号的签名对新
 	// 账号无效,留着会让 chatgpt.com 直接报签名错误(换号场景的莫名 4xx 主因)。
 	if cleaned, dropped := sanitizeCodexReasoningEncryptedContent(body); dropped > 0 {
@@ -656,6 +663,10 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		return
 	}
 	body = normalizeCodexRequestBody(r.URL.Path, body)
+	if cleaned, dropped := sanitizeCodexInputMessageIDs(body); dropped > 0 {
+		body = cleaned
+		Log("[codex-proxy] #%d [relay][生成] 剔除 %d 条不兼容的 input message id", reqID, dropped)
+	}
 	modelKey := extractCodexModelKey(body)
 	if modelKey == "" {
 		modelKey = "gpt-5-codex"
@@ -1279,6 +1290,57 @@ func normalizeCodexRequestBody(path string, body []byte) []byte {
 		return body
 	}
 	return rewritten
+}
+
+// sanitizeCodexInputMessageIDs removes stale/non-Responses IDs from input
+// message items. Codex history written by an older provider can contain
+// item_... IDs, while the official Responses endpoint requires message IDs
+// to use the msg_... namespace. IDs are metadata only for these input items;
+// dropping an incompatible value is safer than fabricating a new ID and does
+// not alter message content or tool-call linkage (which uses call_id).
+func sanitizeCodexInputMessageIDs(body []byte) ([]byte, int) {
+	var payload map[string]interface{}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&payload); err != nil {
+		return body, 0
+	}
+	dropped := sanitizeCodexInputMessageIDsInMap(payload)
+	if response, ok := payload["response"].(map[string]interface{}); ok {
+		dropped += sanitizeCodexInputMessageIDsInMap(response)
+	}
+	if dropped == 0 {
+		return body, 0
+	}
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return body, 0
+	}
+	return rewritten, dropped
+}
+
+func sanitizeCodexInputMessageIDsInMap(payload map[string]interface{}) int {
+	input, ok := payload["input"].([]interface{})
+	if !ok {
+		return 0
+	}
+	dropped := 0
+	for _, raw := range input {
+		item, ok := raw.(map[string]interface{})
+		if !ok || toStr(item["type"]) != "message" {
+			continue
+		}
+		rawID, exists := item["id"]
+		if !exists {
+			continue
+		}
+		if id, ok := rawID.(string); ok && strings.HasPrefix(id, "msg_") {
+			continue
+		}
+		delete(item, "id")
+		dropped++
+	}
+	return dropped
 }
 
 // decodeCodexResponseStream 按 Content-Encoding 把上游响应体解成明文流,供边转边发 + usage 解析。
