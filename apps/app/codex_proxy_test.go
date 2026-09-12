@@ -107,6 +107,77 @@ func TestCodexResponsesLiteMaxPassesThroughUnchanged(t *testing.T) {
 	}
 }
 
+func TestSanitizeCodexInputMessageIDs(t *testing.T) {
+	body := []byte(`{"model":"gpt-5-codex","input":[` +
+		`{"type":"message","id":"item_stale","role":"assistant","content":[]},` +
+		`{"type":"message","id":"msg_valid","role":"user","content":[]},` +
+		`{"type":"function_call","id":"item_tool","call_id":"call_1"}]}`)
+
+	gotBody, dropped := sanitizeCodexInputMessageIDs(body)
+	if dropped != 1 {
+		t.Fatalf("dropped=%d, want 1; body=%s", dropped, gotBody)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(gotBody, &got); err != nil {
+		t.Fatalf("sanitized body is invalid JSON: %v", err)
+	}
+	items := got["input"].([]interface{})
+	first := items[0].(map[string]interface{})
+	if _, ok := first["id"]; ok {
+		t.Fatalf("stale message id was not removed: %#v", first)
+	}
+	second := items[1].(map[string]interface{})
+	if second["id"] != "msg_valid" {
+		t.Fatalf("valid message id changed: %#v", second)
+	}
+	third := items[2].(map[string]interface{})
+	if third["id"] != "item_tool" {
+		t.Fatalf("non-message item was unexpectedly changed: %#v", third)
+	}
+}
+
+func TestSanitizeCodexInputMessageIDsNoop(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","id":"msg_1","role":"user","content":[]}]}`)
+	got, dropped := sanitizeCodexInputMessageIDs(body)
+	if dropped != 0 || !bytes.Equal(got, body) {
+		t.Fatalf("valid input should pass through unchanged: dropped=%d got=%s", dropped, got)
+	}
+}
+
+func TestSanitizeCodexInputMessageIDsNestedResponse(t *testing.T) {
+	body := []byte(`{"type":"response.create","response":{"input":[{"type":"message","id":"item_nested","role":"user","content":[]}]}}`)
+	gotBody, dropped := sanitizeCodexInputMessageIDs(body)
+	if dropped != 1 {
+		t.Fatalf("dropped=%d, want 1; body=%s", dropped, gotBody)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(gotBody, &got); err != nil {
+		t.Fatalf("sanitized nested body is invalid JSON: %v", err)
+	}
+	response := got["response"].(map[string]interface{})
+	item := response["input"].([]interface{})[0].(map[string]interface{})
+	if _, ok := item["id"]; ok {
+		t.Fatalf("nested stale message id was not removed: %#v", item)
+	}
+}
+
+func TestSanitizeCodexInputMessageIDsRemovesMalformedIDs(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","id":123,"role":"user","content":[]},{"type":"message","id":"","role":"user","content":[]}]}`)
+	gotBody, dropped := sanitizeCodexInputMessageIDs(body)
+	if dropped != 2 {
+		t.Fatalf("dropped=%d, want 2; body=%s", dropped, gotBody)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(gotBody, &got); err != nil {
+		t.Fatalf("sanitized body is invalid JSON: %v", err)
+	}
+	for i, raw := range got["input"].([]interface{}) {
+		if _, ok := raw.(map[string]interface{})["id"]; ok {
+			t.Fatalf("malformed id %d was not removed: %#v", i, raw)
+		}
+	}
+}
+
 func TestCodexBuiltInProviderWebSocketFallsBackToHTTP(t *testing.T) {
 	proxy := &CodexProxy{
 		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
