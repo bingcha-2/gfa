@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -114,8 +115,8 @@ func TestSanitizeCodexInputMessageIDs(t *testing.T) {
 		`{"type":"function_call","id":"item_tool","call_id":"call_1"}]}`)
 
 	gotBody, dropped := sanitizeCodexInputMessageIDs(body)
-	if dropped != 1 {
-		t.Fatalf("dropped=%d, want 1; body=%s", dropped, gotBody)
+	if dropped != 2 {
+		t.Fatalf("dropped=%d, want 2; body=%s", dropped, gotBody)
 	}
 	var got map[string]interface{}
 	if err := json.Unmarshal(gotBody, &got); err != nil {
@@ -131,8 +132,100 @@ func TestSanitizeCodexInputMessageIDs(t *testing.T) {
 		t.Fatalf("valid message id changed: %#v", second)
 	}
 	third := items[2].(map[string]interface{})
-	if third["id"] != "item_tool" {
-		t.Fatalf("non-message item was unexpectedly changed: %#v", third)
+	if _, exists := third["id"]; exists || third["call_id"] != "call_1" {
+		t.Fatalf("stale function ID must be removed without changing call_id: %#v", third)
+	}
+}
+
+func TestSanitizeCodexFunctionCallIDsPreservesPayload(t *testing.T) {
+	for _, id := range []interface{}{"item_fcb13f67996af0521c16489d", "msg_wrong", "", nil, 123, "fc_valid"} {
+		for _, nested := range []bool{false, true} {
+			payload := map[string]interface{}{"model": "gpt-5.5", "input": []interface{}{
+				map[string]interface{}{"type": "function_call", "id": id, "call_id": "call_pair", "name": "read_file", "arguments": `{"path":"test.txt","offset":9007199254740993}`, "status": "completed"},
+				map[string]interface{}{"type": "function_call_output", "call_id": "call_pair", "output": "file contents"},
+				map[string]interface{}{"type": "function_call", "call_id": "call_missing_id", "name": "read_file", "arguments": "{}"},
+				map[string]interface{}{"type": "reasoning", "id": "rs_valid", "summary": []interface{}{}},
+				map[string]interface{}{"type": "unknown_future_type", "id": "item_untouched"},
+			}}
+			root := payload
+			if nested {
+				root = map[string]interface{}{"type": "response.create", "response": payload}
+			}
+			body, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, dropped := sanitizeCodexInputMessageIDs(body)
+			wantDropped := 1
+			if id == "fc_valid" {
+				wantDropped = 0
+			} else {
+				delete(payload["input"].([]interface{})[0].(map[string]interface{}), "id")
+			}
+			if dropped != wantDropped {
+				t.Fatalf("id=%v nested=%v: dropped=%d want=%d", id, nested, dropped, wantDropped)
+			}
+			var actual map[string]interface{}
+			if err := json.Unmarshal(got, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, root) {
+				t.Fatalf("payload changed beyond id: got=%s want=%v", got, root)
+			}
+			if wantDropped == 0 && !bytes.Equal(got, body) {
+				t.Fatal("valid payload should be byte-identical")
+			}
+		}
+	}
+}
+
+func TestCodexResponsesSanitizesFunctionCallHistory(t *testing.T) {
+	const body = `{"model":"gpt-5.5","input":[{"type":"message","id":"item_message","role":"assistant","content":[]},{"type":"function_call","id":"item_fcb13f67996af0521c16489d","call_id":"call_pair","name":"read_file","arguments":"{\"path\":\"test.txt\"}"},{"type":"function_call_output","call_id":"call_pair","output":"file contents"},{"type":"function_call","id":"fc_valid","call_id":"call_valid","name":"read_file","arguments":"{}"}]}`
+	for _, path := range []string{"/v1/responses", "/backend-api/codex/responses"} {
+		t.Run(path, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var got struct {
+					Input []map[string]interface{} `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				if len(got.Input) != 4 {
+					t.Error("input count changed")
+					w.WriteHeader(400)
+					return
+				}
+				for _, i := range []int{0, 1} {
+					if _, exists := got.Input[i]["id"]; exists {
+						t.Errorf("stale ID forwarded: %v", got.Input[i])
+						w.WriteHeader(400)
+						return
+					}
+				}
+				if got.Input[1]["call_id"] != "call_pair" || got.Input[2]["call_id"] != "call_pair" || got.Input[1]["arguments"] != `{"path":"test.txt"}` || got.Input[2]["output"] != "file contents" || got.Input[3]["id"] != "fc_valid" {
+					t.Errorf("tool history corrupted: %v", got.Input)
+					w.WriteHeader(400)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"resp_test","object":"response","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+			}))
+			defer upstream.Close()
+			proxy := &CodexProxy{
+				upstreamBase: upstream.URL,
+				leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+					return &CodexTokenLease{AccessToken: "test-token", AccountId: 7}, nil
+				},
+				reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {},
+			}
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)), "card", "device", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

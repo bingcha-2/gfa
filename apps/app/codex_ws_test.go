@@ -245,7 +245,10 @@ func TestCodexWebSocketSanitizesEveryRequest(t *testing.T) {
 		if _, exists := payload.Input[0]["id"]; exists {
 			t.Fatalf("request %d: stale ID forwarded: %s", i, got)
 		}
-		if payload.Input[1]["id"] != "msg_valid" || payload.Input[2]["id"] != "item_tool" || payload.Input[2]["call_id"] != "call_1" {
+		if _, exists := payload.Input[2]["id"]; exists {
+			t.Fatalf("request %d: stale function ID forwarded: %s", i, got)
+		}
+		if payload.Input[1]["id"] != "msg_valid" || payload.Input[2]["call_id"] != "call_1" {
 			t.Fatalf("request %d: valid IDs changed: %s", i, got)
 		}
 	}

@@ -1293,9 +1293,9 @@ func normalizeCodexRequestBody(path string, body []byte) []byte {
 }
 
 // sanitizeCodexInputMessageIDs removes stale/non-Responses IDs from input
-// message items. Codex history written by an older provider can contain
+// message and function_call items. Codex history written by an older provider can contain
 // item_... IDs, while the official Responses endpoint requires message IDs
-// to use the msg_... namespace. IDs are metadata only for these input items;
+// to use the msg_... and fc_... namespaces respectively. IDs are metadata for these input items;
 // dropping an incompatible value is safer than fabricating a new ID and does
 // not alter message content or tool-call linkage (which uses call_id).
 func sanitizeCodexInputMessageIDs(body []byte) ([]byte, int) {
@@ -1327,14 +1327,23 @@ func sanitizeCodexInputMessageIDsInMap(payload map[string]interface{}) int {
 	dropped := 0
 	for _, raw := range input {
 		item, ok := raw.(map[string]interface{})
-		if !ok || toStr(item["type"]) != "message" {
+		if !ok {
+			continue
+		}
+		var prefix string
+		switch toStr(item["type"]) {
+		case "message":
+			prefix = "msg_"
+		case "function_call":
+			prefix = "fc_"
+		default:
 			continue
 		}
 		rawID, exists := item["id"]
 		if !exists {
 			continue
 		}
-		if id, ok := rawID.(string); ok && strings.HasPrefix(id, "msg_") {
+		if id, ok := rawID.(string); ok && strings.HasPrefix(id, prefix) {
 			continue
 		}
 		delete(item, "id")
