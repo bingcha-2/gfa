@@ -148,6 +148,11 @@ jobs:
             wails build -s -ldflags "$LDFLAGS"
           fi
 
+      - name: Codex request regression tests
+        working-directory: ${{ env.WAILS_DIR }}
+        shell: bash
+        run: go test . -run 'Test(SanitizeCodex|Codex.*(WebSocket|Responses)|IsCodexWebSocket|SkipCodexWS|ParseCodexWS|AppVersion)' -count=1 -v -timeout 3m
+
       # ── Windows: 重命名 + 计算 hash（裸 exe 供自动更新，NSIS 安装包供首次下载）──
       - name: Prepare Windows artifact
         if: matrix.os_name == 'windows'
