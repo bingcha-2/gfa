@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,8 +184,74 @@ func TestCodexWebSocketBridgeEndToEnd(t *testing.T) {
 	}
 }
 
-// forgeFakeCodexJWT 造一个仅含 chatgpt_account_id 的假 JWT(三段,签名为假),
-// 用于测试 extractChatGPTAccountId。
+func TestCodexWebSocketSanitizesEveryRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			mt, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := conn.WriteMessage(mt, data); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceID string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("test-account"), AccountId: 99}, nil
+		},
+		reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r, "card", "device", "")
+	}))
+	defer server.Close()
+	conn, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/backend-api/codex/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	for i, mt := range []int{websocket.TextMessage, websocket.TextMessage, websocket.BinaryMessage} {
+		body := `{"type":"response.create","input":[{"type":"message","id":"item_stale","role":"assistant","content":[]},{"type":"message","id":"msg_valid","role":"user","content":[]},{"type":"function_call","id":"item_tool","call_id":"call_1"}]}`
+		if err := conn.WriteMessage(mt, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		gotType, got, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotType != mt {
+			t.Fatalf("request %d: frame type changed", i)
+		}
+		var payload struct {
+			Input []map[string]interface{} `json:"input"`
+		}
+		if err := json.Unmarshal(got, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Input) != 3 {
+			t.Fatalf("request %d: input changed: %s", i, got)
+		}
+		if _, exists := payload.Input[0]["id"]; exists {
+			t.Fatalf("request %d: stale ID forwarded: %s", i, got)
+		}
+		if payload.Input[1]["id"] != "msg_valid" || payload.Input[2]["id"] != "item_tool" || payload.Input[2]["call_id"] != "call_1" {
+			t.Fatalf("request %d: valid IDs changed: %s", i, got)
+		}
+	}
+}
+
+// forgeFakeCodexJWT creates a test JWT with a fake signature.
 func forgeFakeCodexJWT(accountID string) string {
 	header := base64URLNoPad(`{"alg":"RS256","typ":"JWT"}`)
 	claims := base64URLNoPad(`{"https://api.openai.com/auth":{"chatgpt_account_id":"` + accountID + `"}}`)

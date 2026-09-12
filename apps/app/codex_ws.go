@@ -308,6 +308,10 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 				return
 			}
 			if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
+				if cleaned, dropped := sanitizeCodexInputMessageIDs(data); dropped > 0 {
+					data = cleaned
+					Log("[codex-proxy] #%d [WS] removed %d incompatible input message IDs", reqID, dropped)
+				}
 				scan(data)
 			}
 			if err := up.WriteMessage(mt, data); err != nil {
