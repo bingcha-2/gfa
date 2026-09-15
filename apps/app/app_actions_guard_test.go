@@ -18,6 +18,9 @@ func TestAppActions_SuppressedUnderTest(t *testing.T) {
 	if err := (localPlatform{}).CodexRestartApp(); err != nil {
 		t.Fatalf("测试下 CodexRestartApp 应 no-op,got %v", err)
 	}
+	if err := (localPlatform{}).CodexStopApp(); err != nil {
+		t.Fatalf("测试下 CodexStopApp 应 no-op,got %v", err)
+	}
 	if err := (localPlatform{}).AntigravityAppStart("standalone"); err != nil {
 		t.Fatalf("测试下 AntigravityAppStart 应 no-op,got %v", err)
 	}

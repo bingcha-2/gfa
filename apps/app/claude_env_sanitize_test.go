@@ -123,6 +123,7 @@ func TestDetectCompetingClaudeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
 
 	got := detectCompetingClaudeConfig(port)
@@ -182,6 +183,38 @@ func TestScanShellRCConflicts(t *testing.T) {
 }
 
 // backupFileTo 把源文件复制进备份目录（源不存在则静默）。
+func TestBackupFileToDistinctPaths(t *testing.T) {
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup")
+	for _, rel := range []string{"a/b_c", "a_b/c"} {
+		src := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(src), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(src, []byte(rel), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := backupFileTo(backup, src); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := map[string]bool{}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(backup, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[string(data)] = true
+	}
+	if len(entries) != 2 || !contents["a/b_c"] || !contents["a_b/c"] {
+		t.Fatalf("backups collided: %v", contents)
+	}
+}
+
 func TestBackupFileTo(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "settings.json")
@@ -322,6 +355,10 @@ func TestSanitizeShellRCFile(t *testing.T) {
 		if err := os.WriteFile(rc, []byte("export ANTHROPIC_BASE_URL=https://api.other-relay.com\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		before, err := os.Stat(rc)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := sanitizeShellRCFile(rc, port, filepath.Join(dir, "bk")); err != nil {
 			t.Fatal(err)
 		}
@@ -329,8 +366,8 @@ func TestSanitizeShellRCFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
-			t.Errorf("rc file mode should stay 0600, got %o", info.Mode().Perm())
+		if info.Mode().Perm() != before.Mode().Perm() {
+			t.Errorf("rc file mode changed from %o to %o", before.Mode().Perm(), info.Mode().Perm())
 		}
 	})
 }
@@ -381,6 +418,7 @@ func TestSanitizeCompetingClaudeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
 
 	rep, err := sanitizeCompetingClaudeConfig(nil, port) // nil = 清理全部检出
@@ -408,6 +446,7 @@ func TestAppDetectAndSanitizeCompetingClaudeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
 
 	app := &App{}
@@ -490,6 +529,7 @@ func TestDetectCompetingClaudeConfigScansShellRC(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")) // 无 settings.json，隔离干扰
 
 	got := detectCompetingClaudeConfig(port)
@@ -517,6 +557,7 @@ func TestDetectCompetingClaudeConfigIgnoresOwnInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
 
 	if got := detectCompetingClaudeConfig(port); len(got) != 0 {

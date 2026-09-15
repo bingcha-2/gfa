@@ -54,8 +54,10 @@ func (a *autoRefresher) runOnce(nowMs int64) {
 }
 
 // start 启动后台循环:每分钟检查一次,到点就刷一轮。
-func (a *autoRefresher) start(ctx context.Context) {
+func (a *autoRefresher) start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
 		for {
@@ -70,4 +72,5 @@ func (a *autoRefresher) start(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }

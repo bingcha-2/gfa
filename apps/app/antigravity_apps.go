@@ -155,6 +155,9 @@ func isAntigravityAppRunning(kind antigravityAppKind) bool {
 
 // launchAntigravityApp 拉起某变体(未检测到安装路径则报错)。
 func launchAntigravityApp(kind antigravityAppKind) error {
+	if appActionsSuppressed() {
+		return nil
+	}
 	spec := antigravitySpec(kind)
 	appPath := detectAntigravityAppPath(kind)
 	if appPath == "" {

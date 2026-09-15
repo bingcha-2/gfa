@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"bcai-wails/internal/local/account"
@@ -132,6 +133,11 @@ type providerCtx struct {
 }
 
 type Hub struct {
+	background  context.Context
+	cancel      context.CancelFunc
+	workers     []<-chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
 	dir         string
 	acc         *account.Store
 	gw          *gateway.Gateway // 反代网关:只喂 codex 自有号(antigravity 接管走 IDE 注入)
@@ -163,7 +169,10 @@ func New(dir string, platform Platform) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
+		background: ctx,
+		cancel:     cancel,
 		dir:        dir,
 		acc:        acc,
 		gw:         gateway.NewShared(acc, filepath.Join(dir, "gateway"), routingcfg.NewStore(dir).Load()),
@@ -191,8 +200,22 @@ func New(dir string, platform Platform) (*Hub, error) {
 	h.providers[account.ProviderAntigravity] = h.mkProvider(account.ProviderAntigravity, antigravityauth.Login, antigravityauth.LoginWithPrompt, quota.NewAntigravityRefresher(quota.AntigravityEndpoints{}))
 	// 配额自动刷新:后台 ticker 按「配额自动刷新」间隔遍历各 provider 刷额度。
 	h.autoRefresh = newAutoRefresher(h, h.refreshCfg.Load())
-	h.autoRefresh.start(context.Background())
+	h.workers = append(h.workers, h.autoRefresh.start(h.background))
 	return h, nil
+}
+
+// Close stops background work and the gateway before releasing the account DB.
+// Callers must stop admitting new operations before closing the hub.
+func (h *Hub) Close() error {
+	h.closeOnce.Do(func() {
+		h.cancel()
+		gatewayErr := h.gw.Stop()
+		for _, done := range h.workers {
+			<-done
+		}
+		h.closeErr = errors.Join(gatewayErr, h.acc.Close())
+	})
+	return h.closeErr
 }
 
 func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, loginPrompt manager.LoginPromptFunc, refresher manager.Refresher) *providerCtx {
@@ -230,7 +253,7 @@ func (h *Hub) mkProvider(p account.Provider, login manager.LoginFunc, loginPromp
 	wk := wakeup.New(keepAlive, accountsFn)
 	wkCfg := wakeup.NewConfigStore(h.dir, string(p))
 	wk.SetConfig(wkCfg.Load())
-	wk.Start(context.Background(), time.Minute)
+	h.workers = append(h.workers, wk.Start(h.background, time.Minute))
 	// 保活验证 + 单号测试:复用同一 keepAlive(真 token 续约 + 轻探额度),
 	// 按 id 解析账号 = acc.Get。历史/状态各 provider 独立落盘。
 	wkVerify := wakeup.NewVerification(h.dir, string(p), keepAlive, func(id string) (*account.Account, error) {

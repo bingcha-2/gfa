@@ -266,6 +266,9 @@ func (localPlatform) CodexRestartApp() error {
 func (localPlatform) CodexAppRunning() bool { return IsCodexRunning() }
 
 func (localPlatform) CodexStopApp() error {
+	if appActionsSuppressed() {
+		return nil
+	}
 	QuitCodexApp()
 	if isCodexProcessTreeRunning() {
 		return fmt.Errorf("Codex 后台进程未完全退出")

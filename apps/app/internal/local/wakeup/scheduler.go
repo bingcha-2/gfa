@@ -114,11 +114,13 @@ func (s *Scheduler) RunOnce(ctx context.Context, nowMs int64) []RunEntry {
 
 // Start 启动后台循环:每 checkEvery 检查一次,到点(DueAt)就跑一轮。
 // 由调用方持有 ctx 控制停止。
-func (s *Scheduler) Start(ctx context.Context, checkEvery time.Duration) {
+func (s *Scheduler) Start(ctx context.Context, checkEvery time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	if checkEvery <= 0 {
 		checkEvery = time.Minute
 	}
 	go func() {
+		defer close(done)
 		t := time.NewTicker(checkEvery)
 		defer t.Stop()
 		for {
@@ -133,6 +135,7 @@ func (s *Scheduler) Start(ctx context.Context, checkEvery time.Duration) {
 			}
 		}
 	}()
+	return done
 }
 
 // History 返回最近的唤醒历史(新→旧)。

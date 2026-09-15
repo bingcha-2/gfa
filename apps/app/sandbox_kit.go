@@ -165,11 +165,11 @@ type SandboxMount struct {
 // isDangerousMount 判断挂载目录是否越界(家目录本身 / 根 / 常见系统盘),供 UI 告警。
 func isDangerousMount(path, home string) bool {
 	clean := filepath.Clean(path)
-	if clean == "/" || clean == filepath.Clean(home) {
+	if clean == filepath.Clean("/") || clean == filepath.Clean(home) {
 		return true
 	}
 	for _, sys := range []string{"/System", "/Library", "/etc", "/usr", "/bin", "C:\\Windows", "C:\\Program Files"} {
-		if clean == sys {
+		if clean == filepath.Clean(sys) {
 			return true
 		}
 	}

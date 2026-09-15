@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +40,13 @@ func backupFileTo(backupDir, srcPath string) error {
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return err
 	}
-	flat := strings.ReplaceAll(strings.TrimPrefix(srcPath, string(os.PathSeparator)), string(os.PathSeparator), "_")
+	// A digest avoids invalid Windows drive colons, long paths and collisions
+	// between flattened paths such as a/b_c and a_b/c.
+	abs, err := filepath.Abs(srcPath)
+	if err != nil {
+		return err
+	}
+	flat := fmt.Sprintf("%x.bak", sha256.Sum256([]byte(abs)))
 	return writeFileAtomic(filepath.Join(backupDir, flat), data, 0o600)
 }
 

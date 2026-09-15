@@ -16,6 +16,7 @@ func openTestDB(t *testing.T) (string, *sql.DB) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(`CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)`); err != nil {
 		t.Fatalf("create: %v", err)
 	}

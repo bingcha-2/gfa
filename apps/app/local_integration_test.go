@@ -26,6 +26,9 @@ import (
 // resetLocalSingleton 把 local_bindings.go 的懒初始化单例清零,
 // 使下一次 ensureLocal() 在当前(临时)HOME 下重建 hub。
 func resetLocalSingleton() {
+	if localHub != nil {
+		_ = localHub.Close()
+	}
 	localOnce = sync.Once{}
 	localHub = nil
 	localErr = nil
@@ -34,7 +37,10 @@ func resetLocalSingleton() {
 // localTestEnv 隔离 HOME + CODEX_HOME 并重置单例,返回 codex home 目录。
 func localTestEnv(t *testing.T) (codexHome string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	codexHome = filepath.Join(t.TempDir(), "codex")
 	t.Setenv("CODEX_HOME", codexHome)
 	resetLocalSingleton()

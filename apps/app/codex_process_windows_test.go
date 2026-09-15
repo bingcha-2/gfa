@@ -2,7 +2,10 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestCodexProcessCommandsHideWindow(t *testing.T) {
 	for _, name := range []string{"tasklist", "taskkill"} {
@@ -14,6 +17,9 @@ func TestCodexProcessCommandsHideWindow(t *testing.T) {
 }
 
 func TestTasklistMissingImageOnWindows(t *testing.T) {
+	if os.Getenv("BCAI_RUN_PROCESS_INTEGRATION") != "1" {
+		t.Skip("host tasklist integration requires BCAI_RUN_PROCESS_INTEGRATION=1; localized output is covered by TestTasklistContainsImage")
+	}
 	const missing = "bcai-process-test-not-running.exe"
 	out, err := hideCmd("tasklist", "/FI", "IMAGENAME eq "+missing, "/NH", "/FO", "CSV").Output()
 	if err != nil {

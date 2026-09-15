@@ -110,7 +110,32 @@ func newHub(t *testing.T) (*Hub, *fakePlatform) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := h.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return h, fp
+}
+
+func TestHubCloseReleasesWorkersAndDatabase(t *testing.T) {
+	h, _ := newHub(t)
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	for _, done := range h.workers {
+		select {
+		case <-done:
+		default:
+			t.Fatal("background worker still running after Close")
+		}
+	}
+	if _, err := h.acc.ListPoolEnabled(account.ProviderCodex); err == nil {
+		t.Fatal("account database still open after Close")
+	}
 }
 
 func TestHub_AccountLifecycleByProvider(t *testing.T) {

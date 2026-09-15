@@ -200,6 +200,9 @@ func containsString(values []string, target string) bool {
 // processMatchesSelf 判断 pid 是否在运行与【本程序相同的可执行文件】(按文件名比对)。
 // 用于回收端口时只杀自己的残留实例,绝不误伤别人的程序。无法判定时返回 false(安全优先)。
 func processMatchesSelf(pid int) bool {
+	if pid == os.Getpid() {
+		return true
+	}
 	selfExe, err := os.Executable()
 	if err != nil {
 		return false

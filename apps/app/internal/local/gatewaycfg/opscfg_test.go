@@ -1,6 +1,9 @@
 package gatewaycfg
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestOpsStore_DefaultAndTimeoutsRoundTrip(t *testing.T) {
 	s := NewOpsStore(t.TempDir())
@@ -141,12 +144,5 @@ func TestOpsStore_UpstreamProxyRoundTripAndValidation(t *testing.T) {
 
 // dirOf 从 store 的落盘路径回推目录(测试内省用)。
 func dirOf(s *OpsStore) string {
-	// path 形如 <dir>/gateway-ops.json
-	d := s.path
-	for i := len(d) - 1; i >= 0; i-- {
-		if d[i] == '/' {
-			return d[:i]
-		}
-	}
-	return "."
+	return filepath.Dir(s.path)
 }
