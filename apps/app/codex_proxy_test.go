@@ -1424,8 +1424,8 @@ func TestCodexProxyRoutesGenerationThroughBoundEgressProxy(t *testing.T) {
 	}
 }
 
-// 集成:绑定出口代理在传输层挂掉时,codex(optional)必须降级本机直连重试并成功。
-func TestCodexProxyDegradesToLocalWhenBoundProxyFails(t *testing.T) {
+// Generation failures must not silently replay on a different network route.
+func TestCodexProxyDoesNotReplayWhenBoundProxyFails(t *testing.T) {
 	upstreamHit := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		select {
@@ -1448,14 +1448,15 @@ func TestCodexProxyDegradesToLocalWhenBoundProxyFails(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
 	rec := httptest.NewRecorder()
-	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct") // userProxy="direct" → 降级走本机直连
+	proxy.reportProblem = func(string, string, ReportDetails, string, *CodexTokenLease) {}
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("降级后应 200,got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want transport failure, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	select {
 	case <-upstreamHit:
+		t.Fatal("generation was replayed on another route")
 	default:
-		t.Fatal("降级后没有打到本机直连的上游")
 	}
 }

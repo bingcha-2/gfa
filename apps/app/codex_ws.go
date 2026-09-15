@@ -26,7 +26,7 @@ import (
 //  2. 读首帧 response.create → 从号池 lease 一个会员 token
 //  3. websocket.Dialer 拨 wss://chatgpt.com,带 Authorization=Bearer<号池token>
 //     + OpenAI-Beta: responses_websockets=... + ChatGPT-Account-Id + UA/Originator
-//  4. 双向全双工泵帧;扫描上行/下行帧里的 usage 做计量,复用 reportUsageSafe 上报
+//  4. 双向转发;只扫描上游帧的 usage 做计量。
 //
 // refresh_token 永不下发:号池 token 由服务器侧轮换,客户端只拿短期 access。
 
@@ -166,9 +166,16 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 	}
 
 	usage := p.bridgeCodexWS(reqID, down, up, time.Now())
+	Log("[codex-proxy] transport=websocket %s", usage.diagnostic.summary(nil))
 
 	// 6. 计量上报(缓存命中按 1/10 折扣,与 HTTP 路径同口径)。
 	details := codexDetailsFrom(200, modelKey, usage.input, usage.output, usage.cached, usage.total)
+	details.Reason = usage.diagnostic.summary(nil)
+	if usage.diagnostic.Result == "failed" || usage.diagnostic.Result == "incomplete" {
+		details.StatusCode = 502
+		p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
+		return
+	}
 	if usage.total > 0 {
 		Log("[codex-proxy] #%d [WS][生成] ✓ TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
 			reqID, usage.ttftMs, usage.input, usage.output, usage.total)
@@ -246,7 +253,7 @@ func (p *CodexProxy) dialCodexUpstreamWS(r *http.Request, lease *CodexTokenLease
 		Proxy:            codexWSProxyFunc(upstreamProxy),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), codexWSConnectTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), codexWSConnectTimeout)
 	defer cancel()
 	up, resp, err := dialer.DialContext(ctx, parsed.String(), hdr)
 	if err != nil {
@@ -261,7 +268,7 @@ func (p *CodexProxy) dialCodexUpstreamWS(r *http.Request, lease *CodexTokenLease
 // codexWSProxyFunc 把上游代理地址转成 dialer 的 Proxy 函数(空则直连)。
 func codexWSProxyFunc(upstreamProxy string) func(*http.Request) (*url.URL, error) {
 	p := strings.TrimSpace(upstreamProxy)
-	if p == "" {
+	if p == "" || p == "direct" {
 		return nil
 	}
 	pu, err := url.Parse(p)
@@ -272,18 +279,21 @@ func codexWSProxyFunc(upstreamProxy string) func(*http.Request) (*url.URL, error
 }
 
 type codexWSUsage struct {
-	input  int64
-	output int64
-	cached int64
-	total  int64
-	ttftMs int64 // 首个下行(上游→Codex)数据帧时延;未收到则为 -1
+	diagnostic codexStreamDiagnostic
+	input      int64
+	output     int64
+	cached     int64
+	total      int64
+	ttftMs     int64 // 首个下行(上游→Codex)数据帧时延;未收到则为 -1
 }
 
-// bridgeCodexWS 双向全双工泵帧,直到任一方关闭。扫描两个方向的帧解析 usage。
+// bridgeCodexWS 双向转发直到任一方关闭，只信任上游提供的 usage。
 func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time) codexWSUsage {
 	usage := codexWSUsage{ttftMs: -1}
 	var usageMu sync.Mutex
 	var once sync.Once
+	var pumps sync.WaitGroup
+	pumps.Add(2)
 	done := make(chan struct{})
 	closeOnce := func() { once.Do(func() { close(done) }) }
 
@@ -299,12 +309,13 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 
 	// 上行:下游 Codex → 上游 chatgpt.com
 	go func() {
+		defer pumps.Done()
 		defer closeOnce()
 		for {
 			mt, data, err := down.ReadMessage()
 			if err != nil {
-				_ = up.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				_ = up.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(100*time.Millisecond))
 				return
 			}
 			if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
@@ -312,7 +323,6 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 					data = cleaned
 					Log("[codex-proxy] #%d [WS] removed %d incompatible input message IDs", reqID, dropped)
 				}
-				scan(data)
 			}
 			if err := up.WriteMessage(mt, data); err != nil {
 				return
@@ -322,16 +332,19 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 
 	// 下行:上游 chatgpt.com → 下游 Codex
 	go func() {
+		defer pumps.Done()
 		defer closeOnce()
 		for {
 			mt, data, err := up.ReadMessage()
 			if err != nil {
-				_ = down.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				_ = down.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(100*time.Millisecond))
 				return
 			}
 			if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
 				usageMu.Lock()
+				// Only provider frames are trusted for errors and accounting.
+				usage.diagnostic.observe(data)
 				if usage.ttftMs < 0 {
 					usage.ttftMs = time.Since(start).Milliseconds()
 				}
@@ -345,6 +358,11 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 	}()
 
 	<-done
+	// Close unblocks both readers and any stalled writer before accounting is
+	// snapshotted. Close is safe concurrently with gorilla's read/write methods.
+	_ = up.Close()
+	_ = down.Close()
+	pumps.Wait()
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	return usage

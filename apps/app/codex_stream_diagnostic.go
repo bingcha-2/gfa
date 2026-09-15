@@ -56,7 +56,7 @@ func (d *codexStreamDiagnostic) observe(line []byte) {
 			event.Response.Status = response.Status
 		}
 	}
-	failed := typ == "error" || typ == "response.failed" || event.Response.Status == "failed"
+	failed := typ == "error" || typ == "response.failed" || event.Response.Status == "failed" || (typ == "" && event.Error != nil)
 	incomplete := typ == "response.incomplete" || event.Response.Status == "incomplete"
 	if failed || incomplete {
 		d.Result = "failed"
@@ -116,6 +116,7 @@ func (d *codexStreamDiagnostic) summary(copyErr error) string {
 	}
 	note := fmt.Sprintf("%sstream_result=%s request_id=%s", level, result, codexDiagnosticID(d.RequestID))
 	if d.Code != "" {
+		note += fmt.Sprintf(" source=upstream class=%s", codexFailureClass(d.Code, 0))
 		note += fmt.Sprintf(" error.code=%q", codexDiagnosticText(d.Code))
 	}
 	if d.Message != "" {

@@ -384,7 +384,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if relayLease {
 		audit.target = codexRelayAuditTarget(r)
 	}
-	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
@@ -429,18 +429,24 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// 发往 chatgpt.com 走 uTLS(Chrome 指纹)绕过 Cloudflare TLS 指纹拦截;
 	// fallback 内部对非受保护域名自动回退到标准 transport。
 	// 出口:优先走所租账号绑定的住宅代理(egress);没绑定就本地直连(用户代理→系统→直连)。
-	// codex 为 optional:绑定代理传输失败时降级本地直连重试一次,再不行才落到下面切号上报。
+	// Generation transport failures are ambiguous: do not replay them on another route.
 	reqStart := time.Now()
 	var resp *http.Response
 	if relayLease {
 		// Relay data plane must leave the user's machine directly. Passing the
 		// explicit direct sentinel bypasses both the configured upstream proxy
 		// and the detected system proxy (Clash/Mihomo, etc.).
-		resp, err = createCodexStreamingHttpClient("direct").Do(req)
+		resp, err = doCodexRequest(req, createCodexStreamingHttpClient("direct").Do)
 	} else {
-		resp, err = doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
+		resp, err = doCodexRequest(req, func(attempt *http.Request) (*http.Response, error) {
+			return doCodexSingleAttempt(lease.EgressInfo, upstreamProxy, attempt)
+		})
 	}
 	if err != nil {
+		if r.Context().Err() != nil {
+			audit.status, audit.note = 499, "source=client class=cancelled"
+			return
+		}
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502
 		if relayLease {
@@ -498,7 +504,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 				effServiceTier = codexRequestServiceTier(body)
 				audit.serviceTier = effServiceTier
 
-				req, err = http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
+				req, err = http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 				if err == nil {
 					copyCodexHeaders(req.Header, r.Header)
 					req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
@@ -513,13 +519,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 						req.Header.Del("ChatGPT-Account-Id")
 					}
 					reqStart = time.Now()
-					resp, err = doUpstreamWithFallback(
-						lease.EgressInfo,
-						upstreamProxy,
-						body,
-						req,
-						createCodexStreamingHttpClient,
-					)
+					resp, err = doCodexSingleAttempt(lease.EgressInfo, upstreamProxy, req)
 				}
 				if err != nil {
 					atomic.AddInt64(&p.totalErrors, 1)
@@ -563,6 +563,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id")}
 		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr, &streamDiagnostic)
 		audit.note = streamDiagnostic.summary(copyErr)
+		if copyErr != nil || streamDiagnostic.Result != "completed" {
+			Log("[codex-proxy] transport=sse %s", audit.note)
+		}
 		// 计费归属以**上游响应实际使用的模型**为准(权威),覆盖请求/config 的猜测:
 		// 客户端漏发 model 时尤其重要 —— 否则会记到默认/猜的模型上,金额与用量都算错。
 		if actualModel != "" {
@@ -575,6 +578,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			Log("[codex-proxy] ⚠ 2xx 生成但 usage 解析为 0(model=%s),可能计费丢失", modelKey)
 		}
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
+		details.Reason = streamDiagnostic.summary(copyErr)
 		details.RequestStartedAt = reqStart.UnixMilli()
 		details.UpstreamCompletedAt = time.Now().UnixMilli()
 		details.ServiceTier = effServiceTier
@@ -583,10 +587,25 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		details.UserId = reportUserID
 		audit.inTokens, audit.outTokens = input, output
 		if copyErr != nil {
+			if r.Context().Err() != nil {
+				audit.status, audit.note = 499, "source=client class=cancelled"
+				details.StatusCode, details.Reason = 499, audit.note
+				if total > 0 {
+					p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
+				}
+				return
+			}
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
 			audit.note += " 流中断(已上报已解析用量)"
+			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
+			return
+		}
+		if streamDiagnostic.Result == "failed" || streamDiagnostic.Result == "incomplete" {
+			// HTTP 200 only describes the stream handshake, not generation success.
+			// Preserve parsed usage while reporting the terminal failure once.
+			details.StatusCode = 502
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 			return
 		}
@@ -640,6 +659,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		}
 		details.Reason = "codex_upstream_error"
 		details.ErrorText = string(respBody)
+		var failure codexStreamDiagnostic
+		failure.observe(respBody)
+		details.Reason += " source=upstream class=" + codexFailureClass(failure.Code, resp.StatusCode)
 		p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 	}
 }
@@ -692,7 +714,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	audit.target = codexRelayAuditTarget(r)
 	audit.reqBody = body
 
-	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		audit.note = "构造中转请求失败"
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build relay request")
@@ -710,8 +732,12 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	// Local relay mode follows the same data-plane rule as a server-issued
 	// relay lease: connect directly and ignore all local/system proxy settings.
 	client := createCodexStreamingHttpClient("direct")
-	resp, err := client.Do(req)
+	resp, err := doCodexRequest(req, client.Do)
 	if err != nil {
+		if r.Context().Err() != nil {
+			audit.status, audit.note = 499, "source=client class=cancelled"
+			return
+		}
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "服务暂时不可用"
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
