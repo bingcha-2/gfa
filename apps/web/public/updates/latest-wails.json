@@ -7,7 +7,7 @@
   "installerSha256": "C451F2B3E7A6C0FC2D5F69A83EEC73F514841969BA5B65D79F00FC45DB1D6566",
   "installerSize": 21938914,
   "changelog": "优化代理连接兼容性，修复部分网络环境下的连接问题，提升客户端稳定性。",
-  "minVersion": "13.7.12",
+  "minVersion": "13.7.22",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.22/BingchaAI-13.7.22-arm64.dmg",

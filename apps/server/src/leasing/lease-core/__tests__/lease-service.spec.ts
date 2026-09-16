@@ -1524,13 +1524,18 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     }));
 
-    // Below the in-code floor (now 13.5.5) must be rejected (426 upgrade required).
+    // Below the in-code floor (now 13.7.22) must be rejected (426 upgrade required).
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.4" }),
-    ).rejects.toThrow();
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.7.21" }),
+    ).rejects.toMatchObject({ statusCode: 426, body: { code: "CLIENT_UPGRADE_REQUIRED", minClientVersion: "13.7.22" } });
+    await expect(
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({ statusCode: 401, body: { missingClientVersion: true } });
     // The floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.5.5" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.7.22" });
     expect(ok.ok).toBe(true);
+    const newer = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "13.7.23" });
+    expect(newer.ok).toBe(true);
   });
 
   it("keeps a per-model-cooled account available to a model-less probe and to other models", async () => {
