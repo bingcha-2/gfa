@@ -165,6 +165,7 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 	}
 	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
 	req.Header.Set("Accept", "application/json")
+	applyCodexFingerprintProbe(req.Header, lease)
 	if accID := extractChatGPTAccountId(lease.AccessToken); accID != "" {
 		req.Header.Set("ChatGPT-Account-Id", accID)
 	}

@@ -7,6 +7,7 @@
 // instead of waiting for a client report.
 
 import { proxyAwareFetch } from "../../lease-core/egress";
+import { codexFingerprintProbeHeaders } from "../codex-fingerprint";
 
 const CODEX_USAGE_URL =
   process.env.BCAI_CODEX_USAGE_URL || "https://chatgpt.com/backend-api/wham/usage";
@@ -142,11 +143,13 @@ export function extractChatGPTAccountId(accessToken: string): string {
 export async function fetchCodexQuotaUpstream(
   accessToken: string,
   proxyUrl?: string,
+  account?: Record<string, unknown>,
 ): Promise<CodexQuotaSnapshot | null> {
   if (!accessToken) return null;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json",
+    ...(account ? codexFingerprintProbeHeaders(account) : {}),
   };
   const accId = extractChatGPTAccountId(accessToken);
   if (accId) headers["ChatGPT-Account-Id"] = accId;

@@ -220,6 +220,11 @@ export class RosettaController {
     return this.rosetta.toggleCodexAccount(body);
   }
 
+  @Post("codex-fingerprint")
+  setCodexFingerprint(@Body() body: any) {
+    return this.rosetta.setCodexFingerprint(body);
+  }
+
   @Post("codex-toggle-account-pool")
   toggleCodexAccountPool(@Body() body: any) {
     return this.rosetta.toggleCodexAccountPool(body);

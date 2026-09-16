@@ -8,6 +8,7 @@ import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provid
 import { codexBindingWindow } from "./auth/codex-usage";
 import { CodexModelCatalog } from "./codex-model-catalog";
 import { codexPlanSupportsFast } from "./codex-service-tier";
+import { codexFingerprintLease, codexFingerprintProbeHeaders } from "./codex-fingerprint";
 
 /** Clamp a 0..100 remaining-percentage to a finite number in range. */
 function clampPercent(value: unknown): number {
@@ -115,12 +116,17 @@ export class CodexProvider implements Provider<CodexAccount> {
     return extras;
   }
 
-  /**
-   * Surface the raw 5h/weekly remaining percentages and reset times for the
-   * console load dashboard. applyQuotaSnapshot stores these on the account; the
-   * generic status only carries the binding-window fraction, so expose both
-   * windows here for per-window progress bars.
-   */
+  /** Keep transport identity separate from display-only quota fields during overflow. */
+  leaseIdentityExtras(account: CodexAccount): Record<string, unknown> {
+    const fingerprint = codexFingerprintLease(account);
+    return fingerprint ? { codexFingerprint: fingerprint } : {};
+  }
+
+  upstreamIdentityHeaders(account: CodexAccount): Record<string, string> {
+    return codexFingerprintProbeHeaders(account);
+  }
+
+  /** Surface raw upstream windows for the console load dashboard. */
   statusAccountExtras(account: CodexAccount): Record<string, unknown> {
     const a = account as Record<string, unknown>;
     return {

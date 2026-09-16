@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 import { AccountBoundSubscriptionActions } from "@/components/console/leasing/account-bound-subscription-actions";
 import { CodexPrechargePool } from "@/components/console/leasing/codex-precharge-pool";
+import { CodexFingerprintSelect } from "@/components/console/leasing/codex-fingerprint-select";
 import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
 import { CodexSubscriptionExpiry, refreshCodexAccountBenefits } from "@/components/console/leasing/codex-account-benefits";
 import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
@@ -35,6 +36,7 @@ type CodexAccount = {
   email: string;
   enabled: boolean;
   poolEnabled: boolean;
+  codexFingerprintMode?: string;
   alias: string;
   planType: string;
   subscriptionExpiresAt?: string | null;
@@ -886,6 +888,7 @@ export default function CodexAccountsPage() {
                   <TableHead>Token</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>出口代理</TableHead>
+                  <TableHead>指纹收敛</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead>入池</TableHead>
@@ -979,6 +982,9 @@ export default function CodexAccountsPage() {
                           )}
                         </button>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <CodexFingerprintSelect accountId={a.id} mode={a.codexFingerprintMode} onSaved={() => { void fetchAccounts(true); }} />
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">

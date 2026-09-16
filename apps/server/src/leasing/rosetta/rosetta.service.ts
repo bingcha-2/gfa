@@ -608,6 +608,7 @@ export class RosettaService {
   getCodexPrechargeSession(payload: any) { return this.codexSvc.getCodexPrechargeSession(payload); }
   deleteCodexPrechargeAccount(payload: any) { return this.codexSvc.deleteCodexPrechargeAccount(payload); }
   toggleCodexAccount(payload: any) { return this.codexSvc.toggleCodexAccount(payload); }
+  setCodexFingerprint(payload: any) { return this.codexSvc.setCodexFingerprint(payload); }
   toggleCodexAccountPool(payload: any) { return this.codexSvc.toggleCodexAccountPool(payload); }
   async deleteCodexAccount(payload: any) {
     const account = this.quotaPoolAccounts("codex")

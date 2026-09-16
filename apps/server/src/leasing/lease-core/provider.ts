@@ -88,6 +88,9 @@ export interface Provider<TAccount> {
 
   /** Extra fields merged into the lease-token response (antigravity: projectId). */
   leaseResponseExtras(account: TAccount): Record<string, unknown>;
+  /** Transport identity must follow the serving account, never a display-only bound account. */
+  leaseIdentityExtras?(account: TAccount): Record<string, unknown>;
+  upstreamIdentityHeaders?(account: TAccount): Record<string, string>;
 
   /**
    * Optional extra fields merged into each account entry of getStatus().quota.

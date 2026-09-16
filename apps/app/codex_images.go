@@ -361,6 +361,8 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		req.Header.Set("Accept", "application/json")
 	}
 
+	respBody = prepareCodexFingerprintRequest(req, respBody, lease, deviceId)
+	audit.reqBody = respBody
 	var resp *http.Response
 	if relayLease {
 		resp, err = createCodexStreamingHttpClient("direct").Do(req)

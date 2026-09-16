@@ -26,6 +26,7 @@ import {
 import { base64Url, codeChallenge, decodeJwtPayload } from "./lib/pkce";
 import { setAccountEnabled } from "./lib/pool";
 import { nowIso, readJson, writeJson, setAccountProxyInPool } from "./lib/store";
+import { CODEX_FINGERPRINT_MODES, codexFingerprintMode, codexFingerprintLease } from "../remote-codex/codex-fingerprint";
 import { runCodexBrowserLogin } from "./lib/codex-login-browser";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
@@ -211,6 +212,7 @@ export class CodexService {
         email: String(account.email || ""),
         enabled: account.enabled !== false,
         poolEnabled: account.poolEnabled !== false,
+        codexFingerprintMode: codexFingerprintMode(account.codexFingerprintMode),
         alias: String(account.alias || ""),
         planType: String(account.planType || ""),
         subscriptionExpiresAt: subscriptionExpiryIso(account.subscriptionExpiresAt),
@@ -500,7 +502,7 @@ export class CodexService {
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
       this.clearCodexAutoLoginFields(acc);
 
-      const snap = await fetchCodexQuotaUpstream(token, acc.proxyUrl);
+      const snap = await fetchCodexQuotaUpstream(token, acc.proxyUrl, acc);
       if (!snap) {
         // token 已刷新成功并落盘;仅额度接口失败 → 仍算成功,回带 quotaError 让前端提示。
         writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
@@ -1294,6 +1296,18 @@ export class CodexService {
     const pending = this.codexOAuthPending;
     if (!pending) return;
     if (clearCompleted) this.codexOAuthPending = null;
+  }
+
+  setCodexFingerprint(payload: any) {
+    if (!CODEX_FINGERPRINT_MODES.includes(payload?.mode)) return { ok: false, error: "无效的指纹收敛模式" };
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const account = (Array.isArray(data.accounts) ? data.accounts : []).find((item: any) => Number(item.id) === Number(payload?.accountId));
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.codexFingerprintMode = payload.mode;
+    if (payload.mode !== "off" && !codexFingerprintLease(account)) account.codexFingerprintSeed = crypto.randomUUID();
+    writeJson(filePath, { ...data, updatedAt: nowIso() });
+    return { ok: true, accountId: account.id, mode: account.codexFingerprintMode };
   }
 
   toggleCodexAccount(payload: any) {

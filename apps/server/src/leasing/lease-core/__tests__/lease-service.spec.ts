@@ -970,8 +970,10 @@ describe("LeaseService (generic core)", () => {
       ? { servingAccountId: 2, overflow: true, reason: "quota_exhausted" }
       : { servingAccountId: 1, overflow: false });
     let sequence = 0;
+    const fingerprintProvider = makeFakeProvider(accountsFilePath, refreshToken, "codex");
+    fingerprintProvider.leaseIdentityExtras = (account) => ({ codexFingerprint: { installationId: `device-${account.id}` } });
     const service = withSessionResolver(new LeaseService(
-      makeFakeProvider(accountsFilePath, refreshToken, "codex"),
+      fingerprintProvider,
       {
         accessKeysFilePath,
         now: () => Date.now(),
@@ -1003,6 +1005,7 @@ describe("LeaseService (generic core)", () => {
     expect(overflow).toMatchObject({
       accountId: 2,
       accessToken: "token-2",
+      codexFingerprint: { installationId: "device-2" },
       bound: true,
       allowBoundOverflow: true,
       serviceAccount: {

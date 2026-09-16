@@ -10,14 +10,14 @@ const SEED = CODEX_MODEL_DISPLAY_NAMES;
 // Default upstream model fetch: OpenAI/ChatGPT models endpoint with the leased
 // account access token. Best-effort; the catalog falls back to the seed on any
 // failure. (Endpoint subject to confirmation against the live ChatGPT backend.)
-async function defaultFetcher(accessToken: string, proxyUrl?: string): Promise<string[]> {
+async function defaultFetcher(accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>): Promise<string[]> {
   // Endpoint overridable via env so it can be corrected in prod without a code
   // change (the live ChatGPT backend path/shape is unverified).
   const url = process.env.BCAI_CODEX_MODELS_URL || "https://chatgpt.com/backend-api/models";
   // Route through the account's exit proxy when set (same egress IP as inference);
   // codex egress is best-effort, so a proxy-less account still goes direct.
   const res = await proxyAwareFetch(proxyUrl, url, {
-    headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
+    headers: { ...identityHeaders, authorization: `Bearer ${accessToken}`, accept: "application/json" },
   });
   if (!res.ok) throw new Error(`codex models fetch failed: ${res.status}`);
   const body: any = await res.json();
@@ -28,12 +28,12 @@ async function defaultFetcher(accessToken: string, proxyUrl?: string): Promise<s
 }
 
 export type CodexModelCatalogOptions = {
-  fetcher?: (accessToken: string, proxyUrl?: string) => Promise<string[]>;
+  fetcher?: (accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>) => Promise<string[]>;
 };
 
 export class CodexModelCatalog implements ModelCatalog {
   private models = new Map<string, ModelInfo>();
-  private readonly fetcher: (accessToken: string, proxyUrl?: string) => Promise<string[]>;
+  private readonly fetcher: NonNullable<CodexModelCatalogOptions["fetcher"]>;
 
   constructor(options: CodexModelCatalogOptions = {}) {
     this.fetcher = options.fetcher || defaultFetcher;
@@ -52,9 +52,9 @@ export class CodexModelCatalog implements ModelCatalog {
 
   async refresh(getAuth: () => Promise<CatalogAuth>): Promise<void> {
     try {
-      const { token, proxyUrl } = await getAuth();
+      const { token, proxyUrl, headers } = await getAuth();
       if (!token) return;
-      const keys = await this.fetcher(token, proxyUrl);
+      const keys = await this.fetcher(token, proxyUrl, headers);
       for (const key of keys) {
         if (!this.models.has(key)) {
           this.models.set(key, { key, displayName: SEED[key] || defaultDisplayName(key), bucket: CODEX_BUCKET });

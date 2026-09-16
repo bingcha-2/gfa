@@ -430,6 +430,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// fallback 内部对非受保护域名自动回退到标准 transport。
 	// 出口:优先走所租账号绑定的住宅代理(egress);没绑定就本地直连(用户代理→系统→直连)。
 	// codex 为 optional:绑定代理传输失败时降级本地直连重试一次,再不行才落到下面切号上报。
+	fingerprintInput := body
+	body = prepareCodexFingerprintRequest(req, body, lease, deviceId)
+	audit.reqBody = body
 	reqStart := time.Now()
 	var resp *http.Response
 	if relayLease {
@@ -492,7 +495,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 				lease = overflowLease
 				audit.accountID = lease.AccountId
 				audit.token = lease.AccessToken
-				body = rewriteMetadataUserID(body, canonicalUserID(lease.AccountId), "")
+				body = rewriteMetadataUserID(fingerprintInput, canonicalUserID(lease.AccountId), "")
 				body = applyCodexServiceTier(body, fastWanted, lease.PlanType)
 				audit.reqBody = body
 				effServiceTier = codexRequestServiceTier(body)
@@ -512,6 +515,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 						accountIDForLog = "(none)"
 						req.Header.Del("ChatGPT-Account-Id")
 					}
+					body = prepareCodexFingerprintRequest(req, body, lease, deviceId)
+					audit.reqBody = body
 					reqStart = time.Now()
 					resp, err = doUpstreamWithFallback(
 						lease.EgressInfo,
@@ -1081,6 +1086,7 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 	}
 	applyCodexOfficialHeaders(req.Header, r.Header)
 	req.Header.Set("Accept", "application/json")
+	applyCodexFingerprintProbe(req.Header, lease)
 	// 请求 gzip:目录明文 ~277KB,经 egress 代理读整包在 4s 内常超时。压到 ~40KB 后读取秒回。
 	// 自定义 uTLS 传输不做 Go 的自动透明解压,故 readCodexModelsBody 按 Content-Encoding 手动还原。
 	req.Header.Set("Accept-Encoding", "gzip")

@@ -28,13 +28,14 @@ describe("CodexModelCatalog", () => {
     const fetcher = vi.fn().mockResolvedValue(["gpt-6-codex", "gpt-5-codex"]);
     const catalog = new CodexModelCatalog({ fetcher });
 
-    await catalog.refresh(async () => ({ token: "access-token", proxyUrl: "http://p:1" }));
+    const headers = { "x-codex-installation-id": "account-device" };
+    await catalog.refresh(async () => ({ token: "access-token", proxyUrl: "http://p:1", headers }));
 
     const keys = catalog.list().map((m) => m.key);
     expect(keys).toContain("gpt-6-codex"); // new upstream model added
     expect(keys).toContain("gpt-5-codex"); // seed retained
     // fetcher receives the account's exit proxy so the catalog fetch pins egress IP
-    expect(fetcher).toHaveBeenCalledWith("access-token", "http://p:1");
+    expect(fetcher).toHaveBeenCalledWith("access-token", "http://p:1", headers);
   });
 
   it("keeps the seed list when refresh fails", async () => {

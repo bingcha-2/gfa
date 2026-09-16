@@ -135,7 +135,9 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		reqID, r.URL.Path, modelKey, lease.AccountId)
 
 	// 4. 拨上游 wss。
-	up, err := p.dialCodexUpstreamWS(r, lease, upstreamProxy)
+	identityRequest := r.Clone(r.Context())
+	initial = applyCodexFingerprint(initial, identityRequest.Header, lease, deviceId)
+	up, err := p.dialCodexUpstreamWS(identityRequest, lease, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		Log("[codex-proxy] #%d [WS] 连上游失败: %v", reqID, err)
@@ -165,7 +167,9 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	usage := p.bridgeCodexWS(reqID, down, up, time.Now())
+	usage := p.bridgeCodexWS(reqID, down, up, time.Now(), func(frame []byte) []byte {
+		return applyCodexFingerprint(frame, r.Header.Clone(), lease, deviceId)
+	})
 
 	// 6. 计量上报(缓存命中按 1/10 折扣,与 HTTP 路径同口径)。
 	details := codexDetailsFrom(200, modelKey, usage.input, usage.output, usage.cached, usage.total)
@@ -280,7 +284,7 @@ type codexWSUsage struct {
 }
 
 // bridgeCodexWS 双向全双工泵帧,直到任一方关闭。扫描两个方向的帧解析 usage。
-func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time) codexWSUsage {
+func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time, rewrite ...func([]byte) []byte) codexWSUsage {
 	usage := codexWSUsage{ttftMs: -1}
 	var usageMu sync.Mutex
 	var once sync.Once
@@ -313,6 +317,9 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 					Log("[codex-proxy] #%d [WS] removed %d incompatible input message IDs", reqID, dropped)
 				}
 				scan(data)
+				if len(rewrite) > 0 {
+					data = rewrite[0](data)
+				}
 			}
 			if err := up.WriteMessage(mt, data); err != nil {
 				return

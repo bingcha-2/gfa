@@ -13,6 +13,7 @@ import (
 var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", buildAPIBase+"/api/app/lease/codex")
 
 type CodexTokenLease struct {
+	Fingerprint *CodexFingerprint `json:"codexFingerprint,omitempty"`
 	Mode        string `json:"mode"`
 	AccessToken string `json:"accessToken"`
 	AccountId   int    `json:"accountId"`
@@ -49,6 +50,7 @@ func (l *CodexTokenLease) IsRelay() bool {
 }
 
 type codexLeaseTokenResp struct {
+	Fingerprint *CodexFingerprint `json:"codexFingerprint"`
 	Success     *bool           `json:"success"`
 	Ok          *bool           `json:"ok"`
 	Code        string          `json:"code"`
@@ -191,6 +193,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		}
 	}
 	lease := &CodexTokenLease{
+		Fingerprint: leaseResp.Fingerprint,
 		Mode:        leaseResp.Mode,
 		AccessToken: leaseResp.AccessToken,
 		AccountId:   parseAccountId(leaseResp.AccountId),

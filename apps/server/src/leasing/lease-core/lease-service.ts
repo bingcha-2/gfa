@@ -662,7 +662,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         // Carry the account's exit proxy so the catalog fetch pins the same
         // egress IP as inference (fail-closed for anthropic).
         const token = await this.provider.refreshToken(account);
-        return { token, proxyUrl: (account as any).proxyUrl };
+        return { token, proxyUrl: (account as any).proxyUrl, headers: this.provider.upstreamIdentityHeaders?.(account) };
       } catch {
         return { token: "" };
       }
@@ -1055,6 +1055,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // leased). Empty {} when the account has no quota snapshots yet.
       accountBuckets: accountBucketsData,
       ...this.provider.leaseResponseExtras(displayAccount),
+      ...this.provider.leaseIdentityExtras?.(account),
       // 通用出口代理:该号绑定的粘性住宅出口(空=未绑定)。客户端据此固定出口 IP。
       accountProxyUrl: String((account as any).proxyUrl || "").trim(),
       // 出口策略下发为布尔,客户端无需写死 provider 名:
