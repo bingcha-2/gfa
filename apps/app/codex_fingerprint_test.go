@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +98,9 @@ func TestCodexFingerprintMalformedRelayAndCustomCache(t *testing.T) {
 func TestCodexFingerprintHTTPAndCompact(t *testing.T) {
 	lease := fingerprintTestLease("session")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.URL.IsAbs() {
+			t.Error("request bypassed bound forward proxy")
+		}
 		body, _ := io.ReadAll(r.Body)
 		if r.Header.Get("X-Codex-Installation-Id") != lease.Fingerprint.InstallationID || gjson.GetBytes(body, "client_metadata.session_id").Str != lease.Fingerprint.SessionID {
 			t.Error("fingerprint did not reach upstream")
@@ -107,7 +112,8 @@ func TestCodexFingerprintHTTPAndCompact(t *testing.T) {
 		_, _ = w.Write([]byte(`{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`))
 	}))
 	defer upstream.Close()
-	proxy := &CodexProxy{upstreamBase: upstream.URL, leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+	lease.ProxyURL = upstream.URL
+	proxy := &CodexProxy{upstreamBase: "http://codex-upstream.invalid", leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
 		return lease, nil
 	}, reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {}}
 	for _, path := range []string{"/v1/responses", "/backend-api/codex/responses/compact"} {
@@ -141,6 +147,9 @@ func TestCodexFingerprintWebSocketEveryTurn(t *testing.T) {
 		if r.Header.Get("X-Codex-Installation-Id") != lease.Fingerprint.InstallationID {
 			t.Error("WS handshake identity missing")
 		}
+		if r.Header.Get("User-Agent") != codexDefaultUserAgent || r.Header.Get("Version") != "0.135.0" {
+			t.Error("WS client profile mismatch")
+		}
 		upgrader := websocket.Upgrader{}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -158,10 +167,40 @@ func TestCodexFingerprintWebSocketEveryTurn(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
+	var proxyHits atomic.Int32
+	exit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect || r.Host != strings.TrimPrefix(upstream.URL, "http://") {
+			t.Error("unexpected proxy destination")
+			http.Error(w, "bad destination", 400)
+			return
+		}
+		target, err := net.DialTimeout("tcp", r.Host, time.Second)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "dial failed", 502)
+			return
+		}
+		defer target.Close()
+		client, buffered, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		proxyHits.Add(1)
+		_, _ = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buffered.Flush()
+		go func() { _, _ = io.Copy(target, buffered); _ = target.Close() }()
+		_, _ = io.Copy(client, target)
+	}))
+	defer exit.Close()
+	lease.ProxyURL = exit.URL
 	proxy := &CodexProxy{upstreamBase: upstream.URL, leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
 		return lease, nil
 	}, reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {}}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { proxy.ServeHTTP(w, r, "card", "client-a", "") }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r, "card", "client-a", "http://127.0.0.1:1")
+	}))
 	defer server.Close()
 	conn, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/backend-api/codex/responses", nil)
 	if err != nil {
@@ -179,6 +218,9 @@ func TestCodexFingerprintWebSocketEveryTurn(t *testing.T) {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if proxyHits.Load() != 1 {
+			t.Fatal("WS bypassed account proxy")
 		}
 		if gjson.GetBytes(data, "client_metadata.session_id").Str != lease.Fingerprint.SessionID || gjson.GetBytes(data, "client_metadata.turn_id").Str != turn {
 			t.Fatal("WS identity/turn mismatch")

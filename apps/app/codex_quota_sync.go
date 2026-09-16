@@ -170,7 +170,7 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 		req.Header.Set("ChatGPT-Account-Id", accID)
 	}
 
-	resp, err := createHttpClient(upstreamProxy).Do(req)
+	resp, err := doCodexUpstream(lease, upstreamProxy, nil, req, createHttpClient)
 	if err != nil {
 		// 瞬时网络/代理抖动:别让一次失败白占 30s 窗口把血条冻住;放开短重试(≤5s 一次),
 		// 下次上报即可照常重拉+上报。不做无节流重试,避免持续抖动时刷屏上游。

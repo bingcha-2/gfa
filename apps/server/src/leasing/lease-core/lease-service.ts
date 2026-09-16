@@ -662,7 +662,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         // Carry the account's exit proxy so the catalog fetch pins the same
         // egress IP as inference (fail-closed for anthropic).
         const token = await this.provider.refreshToken(account);
-        return { token, proxyUrl: (account as any).proxyUrl, headers: this.provider.upstreamIdentityHeaders?.(account) };
+        return { token, proxyUrl: (account as any).proxyUrl, headers: this.provider.upstreamIdentityHeaders?.(account), egressRequired: this.provider.egressPolicy === "required" || this.provider.requiresEgress?.(account) === true };
       } catch {
         return { token: "" };
       }
@@ -1059,8 +1059,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // 通用出口代理:该号绑定的粘性住宅出口(空=未绑定)。客户端据此固定出口 IP。
       accountProxyUrl: String((account as any).proxyUrl || "").trim(),
       // 出口策略下发为布尔,客户端无需写死 provider 名:
-      // required(anthropic)=无代理则拒连;optional(codex/antigravity)=无代理走本地直连。
-      egressRequired: this.provider.egressPolicy === "required",
+      // required 策略或账号 requiresEgress=无代理则拒连;其余保留 optional 策略。
+      egressRequired: this.provider.egressPolicy === "required" || this.provider.requiresEgress?.(account) === true,
       expiresAt: lease.expiresAt,
       accessTokenExpiresAt: lease.expiresAt,
       probation: false,

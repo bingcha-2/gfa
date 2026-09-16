@@ -6,8 +6,7 @@
 // higher = healthier) so the console "获取额度" button can pull codex quota on demand
 // instead of waiting for a client report.
 
-import { proxyAwareFetch } from "../../lease-core/egress";
-import { codexFingerprintProbeHeaders } from "../codex-fingerprint";
+import { codexFingerprintProbeHeaders, codexUpstreamFetch } from "../codex-fingerprint";
 
 const CODEX_USAGE_URL =
   process.env.BCAI_CODEX_USAGE_URL || "https://chatgpt.com/backend-api/wham/usage";
@@ -157,9 +156,8 @@ export async function fetchCodexQuotaUpstream(
   let resp: Response;
   try {
     // Route through the account's exit proxy when set (same egress IP as
-    // inference); codex egress is best-effort, so a proxy-less account still
-    // probes direct.
-    resp = await proxyAwareFetch(proxyUrl, CODEX_USAGE_URL, { method: "GET", headers });
+    // inference). Fingerprint mode requires a bound exit and never probes direct.
+    resp = await codexUpstreamFetch(proxyUrl, CODEX_USAGE_URL, { method: "GET", headers }, account);
   } catch {
     return null;
   }

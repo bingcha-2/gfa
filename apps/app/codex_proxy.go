@@ -441,7 +441,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		// and the detected system proxy (Clash/Mihomo, etc.).
 		resp, err = createCodexStreamingHttpClient("direct").Do(req)
 	} else {
-		resp, err = doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
+		resp, err = doCodexUpstream(lease, upstreamProxy, body, req, createCodexStreamingHttpClient)
 	}
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -466,7 +466,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// exhausted. The old signed lease is sent back so the server can validate
 	// subscription/account/model attribution before selecting a fallback.
 	if !relayLease && resp.StatusCode == http.StatusTooManyRequests && lease.AllowBoundOverflow {
-		quotaEgress, _ := resolveEgress(lease.EgressInfo, upstreamProxy)
+		quotaEgress, _ := resolveCodexLeaseProxy(lease, upstreamProxy)
 		if GetCodexLeaser().ConfirmWeeklyExhausted(card, quotaEgress, lease) {
 			failedBody, _ := io.ReadAll(resp.Body)
 			overflowOptions := map[string]interface{}{
@@ -518,8 +518,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 					body = prepareCodexFingerprintRequest(req, body, lease, deviceId)
 					audit.reqBody = body
 					reqStart = time.Now()
-					resp, err = doUpstreamWithFallback(
-						lease.EgressInfo,
+					resp, err = doCodexUpstream(
+						lease,
 						upstreamProxy,
 						body,
 						req,
@@ -1087,11 +1087,12 @@ func (p *CodexProxy) fetchCodexModels(r *http.Request, card, deviceID, upstreamP
 	applyCodexOfficialHeaders(req.Header, r.Header)
 	req.Header.Set("Accept", "application/json")
 	applyCodexFingerprintProbe(req.Header, lease)
+	applyCodexFingerprintURL(req.URL, lease)
 	// 请求 gzip:目录明文 ~277KB,经 egress 代理读整包在 4s 内常超时。压到 ~40KB 后读取秒回。
 	// 自定义 uTLS 传输不做 Go 的自动透明解压,故 readCodexModelsBody 按 Content-Encoding 手动还原。
 	req.Header.Set("Accept-Encoding", "gzip")
 
-	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, nil, req, createCodexStreamingHttpClient)
+	resp, err := doCodexUpstream(lease, upstreamProxy, nil, req, createCodexStreamingHttpClient)
 	if err != nil {
 		return codexModelsResult{err: fmt.Errorf("request official models: %w", err)}
 	}

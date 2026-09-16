@@ -11,7 +11,7 @@
 
 import * as crypto from "crypto";
 
-import { proxyAwareFetch } from "../../lease-core/egress";
+import { codexUpstreamFetch } from "../codex-fingerprint";
 import { extractChatGPTAccountId } from "./codex-usage";
 
 const RESET_CREDITS_URL =
@@ -125,13 +125,14 @@ function buildHeaders(accessToken: string): Record<string, string> {
 export async function fetchCodexResetCredits(
   accessToken: string,
   proxyUrl?: string,
+  account?: Record<string, unknown>,
 ): Promise<CodexResetCreditsSnapshot> {
   if (!accessToken) throw new Error("缺少 access token");
-  const resp = await proxyAwareFetch(proxyUrl, RESET_CREDITS_URL, {
+  const resp = await codexUpstreamFetch(proxyUrl, RESET_CREDITS_URL, {
     method: "GET",
     headers: buildHeaders(accessToken),
     signal: AbortSignal.timeout(20_000),
-  });
+  }, account);
   const body = await resp.text();
   if (!resp.ok) throw new Error(`重置次数查询失败: ${resp.status} ${body.slice(0, 200)}`);
   const payload = JSON.parse(body);
@@ -145,13 +146,13 @@ export async function fetchCodexResetCredits(
 }
 
 /** Spend one reset credit (proactively resets the 5h window). Throws on failure. */
-export async function consumeCodexResetCredit(accessToken: string, proxyUrl?: string): Promise<void> {
+export async function consumeCodexResetCredit(accessToken: string, proxyUrl?: string, account?: Record<string, unknown>): Promise<void> {
   if (!accessToken) throw new Error("缺少 access token");
-  const resp = await proxyAwareFetch(proxyUrl, RESET_CREDITS_CONSUME_URL, {
+  const resp = await codexUpstreamFetch(proxyUrl, RESET_CREDITS_CONSUME_URL, {
     method: "POST",
     headers: buildHeaders(accessToken),
     body: JSON.stringify({ redeem_request_id: crypto.randomUUID() }),
-  });
+  }, account);
   if (!resp.ok) {
     const body = await resp.text();
     throw new Error(`主动重置失败: ${resp.status} ${body.slice(0, 200)}`);

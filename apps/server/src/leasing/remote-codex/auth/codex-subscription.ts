@@ -1,6 +1,6 @@
 // Subscription expiry for a mother account, separate from OAuth token expiry.
 // Uses the same accounts/check -> subscriptions fallback as the local client.
-import { proxyAwareFetch } from "../../lease-core/egress";
+import { codexUpstreamFetch } from "../codex-fingerprint";
 import { extractChatGPTAccountId } from "./codex-usage";
 
 export function subscriptionExpiryIso(value: unknown): string | null {
@@ -36,7 +36,7 @@ export function parseCodexSubscriptionAccount(payload: any, preferredId: string)
   };
 }
 
-export async function fetchCodexSubscription(accessToken: string, proxyUrl?: string) {
+export async function fetchCodexSubscription(accessToken: string, proxyUrl?: string, account?: Record<string, unknown>) {
   if (!accessToken) throw new Error("缺少 access token");
   const preferredId = extractChatGPTAccountId(accessToken) || "";
   const headers: Record<string, string> = {
@@ -48,11 +48,11 @@ export async function fetchCodexSubscription(accessToken: string, proxyUrl?: str
   };
   if (preferredId) headers["ChatGPT-Account-Id"] = preferredId;
   const query = async (url: URL) => {
-    const response = await proxyAwareFetch(proxyUrl, url.toString(), {
+    const response = await codexUpstreamFetch(proxyUrl, url.toString(), {
       method: "GET", headers: {
         ...headers, "x-openai-target-path": url.pathname, "x-openai-target-route": url.pathname,
       }, signal: AbortSignal.timeout(20_000),
-    });
+    }, account);
     if (!response.ok) throw new Error(`订阅查询失败 (HTTP ${response.status})`);
     return response.json();
   };

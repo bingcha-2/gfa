@@ -8,7 +8,7 @@ import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provid
 import { codexBindingWindow } from "./auth/codex-usage";
 import { CodexModelCatalog } from "./codex-model-catalog";
 import { codexPlanSupportsFast } from "./codex-service-tier";
-import { codexFingerprintLease, codexFingerprintProbeHeaders } from "./codex-fingerprint";
+import { codexFingerprintLease, codexFingerprintProbeHeaders, codexFingerprintRequiresEgress, assertCodexFingerprintProxy } from "./codex-fingerprint";
 
 /** Clamp a 0..100 remaining-percentage to a finite number in range. */
 function clampPercent(value: unknown): number {
@@ -54,7 +54,12 @@ export class CodexProvider implements Provider<CodexAccount> {
   }
 
   refreshToken(account: CodexAccount): Promise<string> {
+    assertCodexFingerprintProxy(account);
     return this.tokenProvider(account);
+  }
+
+  requiresEgress(account: CodexAccount): boolean {
+    return codexFingerprintRequiresEgress(account);
   }
 
   normalizeAccount(raw: any): CodexAccount {

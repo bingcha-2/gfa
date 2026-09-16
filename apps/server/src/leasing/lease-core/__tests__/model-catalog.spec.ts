@@ -29,13 +29,13 @@ describe("CodexModelCatalog", () => {
     const catalog = new CodexModelCatalog({ fetcher });
 
     const headers = { "x-codex-installation-id": "account-device" };
-    await catalog.refresh(async () => ({ token: "access-token", proxyUrl: "http://p:1", headers }));
+    await catalog.refresh(async () => ({ token: "access-token", proxyUrl: "http://p:1", headers, egressRequired: true }));
 
     const keys = catalog.list().map((m) => m.key);
     expect(keys).toContain("gpt-6-codex"); // new upstream model added
     expect(keys).toContain("gpt-5-codex"); // seed retained
     // fetcher receives the account's exit proxy so the catalog fetch pins egress IP
-    expect(fetcher).toHaveBeenCalledWith("access-token", "http://p:1", headers);
+    expect(fetcher).toHaveBeenCalledWith("access-token", "http://p:1", headers, true);
   });
 
   it("keeps the seed list when refresh fails", async () => {

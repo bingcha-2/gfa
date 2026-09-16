@@ -972,6 +972,7 @@ describe("LeaseService (generic core)", () => {
     let sequence = 0;
     const fingerprintProvider = makeFakeProvider(accountsFilePath, refreshToken, "codex");
     fingerprintProvider.leaseIdentityExtras = (account) => ({ codexFingerprint: { installationId: `device-${account.id}` } });
+    fingerprintProvider.requiresEgress = (account) => account.id === 2;
     const service = withSessionResolver(new LeaseService(
       fingerprintProvider,
       {
@@ -1006,6 +1007,7 @@ describe("LeaseService (generic core)", () => {
       accountId: 2,
       accessToken: "token-2",
       codexFingerprint: { installationId: "device-2" },
+      egressRequired: true,
       bound: true,
       allowBoundOverflow: true,
       serviceAccount: {

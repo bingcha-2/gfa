@@ -15,7 +15,7 @@ export interface ModelInfo {
 /** Auth for an upstream catalog fetch: the leased access token plus the account's
  * sticky exit proxy, so the fetch can pin its egress IP (required for anthropic,
  * best-effort for the others) instead of leaking the datacenter IP. */
-export type CatalogAuth = { token: string; proxyUrl?: string; headers?: Record<string, string> };
+export type CatalogAuth = { token: string; proxyUrl?: string; headers?: Record<string, string>; egressRequired?: boolean };
 
 export interface ModelCatalog {
   list(): ModelInfo[];

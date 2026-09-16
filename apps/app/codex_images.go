@@ -203,8 +203,8 @@ func codexMultipartImageDataURL(fileHeader *multipart.FileHeader) (string, error
 // (那个能出图),读流拿到生成的 base64 图,再翻回图像接口 JSON 返回。
 //
 // 关键安全性:此翻译【只作用于 /v1/images/*】——这些请求 100% 是画图请求,绝不碰正常
-// /v1/responses 生成请求,因此不可能打断正常聊天。出口沿用 doUpstreamWithFallback(账号住宅
-// 代理 → 本地直连回落),绝不经本地网关出口。对齐 cockpit codex_openai_images.go。
+// /v1/responses 生成请求,因此不可能打断正常聊天。出口沿用 doCodexUpstream:
+// 指纹收敛账号强制绑定代理,关闭时保留可选回退。对齐 cockpit codex_openai_images.go。
 func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string) {
 	reqID := atomic.AddInt64(&p.totalRequests, 1)
 	audit := newProxyAudit("codex", reqID, "图像", r.Method, r.URL.Path)
@@ -367,7 +367,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 	if relayLease {
 		resp, err = createCodexStreamingHttpClient("direct").Do(req)
 	} else {
-		resp, err = doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, respBody, req, createCodexStreamingHttpClient)
+		resp, err = doCodexUpstream(lease, upstreamProxy, respBody, req, createCodexStreamingHttpClient)
 	}
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)

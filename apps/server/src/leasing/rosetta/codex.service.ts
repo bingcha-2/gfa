@@ -26,7 +26,7 @@ import {
 import { base64Url, codeChallenge, decodeJwtPayload } from "./lib/pkce";
 import { setAccountEnabled } from "./lib/pool";
 import { nowIso, readJson, writeJson, setAccountProxyInPool } from "./lib/store";
-import { CODEX_FINGERPRINT_MODES, codexFingerprintMode, codexFingerprintLease } from "../remote-codex/codex-fingerprint";
+import { CODEX_FINGERPRINT_MODES, codexFingerprintMode, codexFingerprintLease, assertCodexFingerprintProxy } from "../remote-codex/codex-fingerprint";
 import { runCodexBrowserLogin } from "./lib/codex-login-browser";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
@@ -472,7 +472,9 @@ export class CodexService {
     refreshToken: string,
   ): Promise<{ valid: boolean; error?: string }> {
     try {
-      await refreshCodexAccessToken({ email, refreshToken } as any);
+      const data = readJson(path.join(this.ctx.dataDir, "codex-accounts.json"), { accounts: [] });
+      const stored = (Array.isArray(data.accounts) ? data.accounts : []).find((a: any) => String(a.email || "").toLowerCase() === email.toLowerCase());
+      await refreshCodexAccessToken({ ...stored, email, refreshToken, accessToken: undefined, accessTokenExpiresAt: undefined } as any);
       return { valid: true };
     } catch (err: any) {
       return { valid: false, error: String(err?.message || err) };
@@ -495,7 +497,7 @@ export class CodexService {
     try {
       // Carry proxyUrl so both the token refresh and the usage probe egress
       // through the account's exit proxy (same IP as inference) when one is set.
-      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
+      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
       const token = await refreshCodexAccessToken(probe);
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
@@ -651,8 +653,8 @@ export class CodexService {
     }
     const creditsInvalidatedAt = Number(acc.resetCreditsInvalidatedAt || 0);
     const [subscription, credits] = await Promise.allSettled([
-      refreshSubscription ? fetchCodexSubscription(token, acc.proxyUrl) : Promise.resolve(null),
-      refreshCredits ? fetchCodexResetCredits(token, acc.proxyUrl) : Promise.resolve(null),
+      refreshSubscription ? fetchCodexSubscription(token, acc.proxyUrl, acc) : Promise.resolve(null),
+      refreshCredits ? fetchCodexResetCredits(token, acc.proxyUrl, acc) : Promise.resolve(null),
     ]);
     const patch: Record<string, unknown> = {};
     if (refreshSubscription) Object.assign(patch, {
@@ -691,14 +693,14 @@ export class CodexService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
+      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
       const token = await refreshCodexAccessToken(probe);
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
 
-      const snap = await fetchCodexResetCredits(token, acc.proxyUrl);
+      const snap = await fetchCodexResetCredits(token, acc.proxyUrl, acc);
       const current = readJson(filePath, { accounts: [] });
       const queriedAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
       if (queriedAccount && Number(queriedAccount.resetCreditsInvalidatedAt || 0) === Number(acc.resetCreditsInvalidatedAt || 0)) {
@@ -733,14 +735,14 @@ export class CodexService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
+      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
       const token = await refreshCodexAccessToken(probe);
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
 
-      await consumeResetCreditUpstream(token, acc.proxyUrl);
+      await consumeResetCreditUpstream(token, acc.proxyUrl, acc);
       const current = readJson(filePath, { accounts: [] });
       const resetAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
       if (resetAccount) {
@@ -1304,6 +1306,11 @@ export class CodexService {
     const data = readJson(filePath, { accounts: [] });
     const account = (Array.isArray(data.accounts) ? data.accounts : []).find((item: any) => Number(item.id) === Number(payload?.accountId));
     if (!account) return { ok: false, error: "账号不存在" };
+    try {
+      assertCodexFingerprintProxy({ ...account, codexFingerprintMode: payload.mode });
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
     account.codexFingerprintMode = payload.mode;
     if (payload.mode !== "off" && !codexFingerprintLease(account)) account.codexFingerprintSeed = crypto.randomUUID();
     writeJson(filePath, { ...data, updatedAt: nowIso() });

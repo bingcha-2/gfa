@@ -36,8 +36,8 @@ describe("Codex benefits refresh", () => {
   it("persists expiry for the list and queries both sources with the account proxy", async () => {
     const result = await service.queryCodexAccountBenefits({ accountId: 1 });
     expect(result.resetCredits.availableCount).toBe(0);
-    expect(mocks.subscription).toHaveBeenCalledWith("fresh", "http://proxy:1");
-    expect(mocks.credits).toHaveBeenCalledWith("fresh", "http://proxy:1");
+    expect(mocks.subscription).toHaveBeenCalledWith("fresh", "http://proxy:1", expect.objectContaining({ id: 1, proxyUrl: "http://proxy:1" }));
+    expect(mocks.credits).toHaveBeenCalledWith("fresh", "http://proxy:1", expect.objectContaining({ id: 1, proxyUrl: "http://proxy:1" }));
     const stored = read().accounts[0];
     expect(stored.refreshToken).toBe("rotated");
     expect(stored.subscriptionExpiresAt).toBe("2100-01-01T00:00:00.000Z");

@@ -1,4 +1,4 @@
-import { proxyAwareFetch } from "../lease-core/egress";
+import { codexUpstreamFetch } from "./codex-fingerprint";
 import { CatalogAuth, defaultDisplayName, ModelCatalog, ModelInfo } from "../lease-core/model-catalog";
 import { CODEX_MODEL_DISPLAY_NAMES } from "./codex-model-defaults";
 
@@ -10,15 +10,15 @@ const SEED = CODEX_MODEL_DISPLAY_NAMES;
 // Default upstream model fetch: OpenAI/ChatGPT models endpoint with the leased
 // account access token. Best-effort; the catalog falls back to the seed on any
 // failure. (Endpoint subject to confirmation against the live ChatGPT backend.)
-async function defaultFetcher(accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>): Promise<string[]> {
+async function defaultFetcher(accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>, egressRequired?: boolean): Promise<string[]> {
   // Endpoint overridable via env so it can be corrected in prod without a code
   // change (the live ChatGPT backend path/shape is unverified).
   const url = process.env.BCAI_CODEX_MODELS_URL || "https://chatgpt.com/backend-api/models";
   // Route through the account's exit proxy when set (same egress IP as inference);
-  // codex egress is best-effort, so a proxy-less account still goes direct.
-  const res = await proxyAwareFetch(proxyUrl, url, {
+  // Fingerprint-enabled accounts require this exit; other accounts retain optional egress.
+  const res = await codexUpstreamFetch(proxyUrl, url, {
     headers: { ...identityHeaders, authorization: `Bearer ${accessToken}`, accept: "application/json" },
-  });
+  }, egressRequired ? { codexFingerprintMode: "device" } : undefined);
   if (!res.ok) throw new Error(`codex models fetch failed: ${res.status}`);
   const body: any = await res.json();
   const arr = Array.isArray(body?.models) ? body.models : Array.isArray(body?.data) ? body.data : [];
@@ -28,7 +28,7 @@ async function defaultFetcher(accessToken: string, proxyUrl?: string, identityHe
 }
 
 export type CodexModelCatalogOptions = {
-  fetcher?: (accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>) => Promise<string[]>;
+  fetcher?: (accessToken: string, proxyUrl?: string, identityHeaders?: Record<string, string>, egressRequired?: boolean) => Promise<string[]>;
 };
 
 export class CodexModelCatalog implements ModelCatalog {
@@ -52,9 +52,9 @@ export class CodexModelCatalog implements ModelCatalog {
 
   async refresh(getAuth: () => Promise<CatalogAuth>): Promise<void> {
     try {
-      const { token, proxyUrl, headers } = await getAuth();
+      const { token, proxyUrl, headers, egressRequired } = await getAuth();
       if (!token) return;
-      const keys = await this.fetcher(token, proxyUrl, headers);
+      const keys = await this.fetcher(token, proxyUrl, headers, egressRequired);
       for (const key of keys) {
         if (!this.models.has(key)) {
           this.models.set(key, { key, displayName: SEED[key] || defaultDisplayName(key), bucket: CODEX_BUCKET });

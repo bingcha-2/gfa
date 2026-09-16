@@ -31,8 +31,8 @@ type CodexTokenLease struct {
 	FastAllowed bool  `json:"fastAllowed"`
 	ExpiresAt   int64 `json:"expiresAt"`
 	LeasedAt    int64 `json:"leasedAt"`
-	// EgressInfo 是服务端下发的出口策略。codex 为 optional:绑定代理则走它,
-	// 没绑定就本地直连;绑定代理传输失败则降级本地直连再切号(见 doUpstreamWithFallback)。
+	// EgressInfo 是服务端下发的出口策略。开启指纹收敛时强制账号代理,
+	// 缺失或故障即报错;关闭时保留 optional 回退策略(见 doCodexUpstream)。
 	EgressInfo
 	Relay *CodexLeaseRelay `json:"relay,omitempty"`
 }

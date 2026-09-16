@@ -1,4 +1,4 @@
-import { proxyAwareFetch } from "../../lease-core/egress";
+import { codexUpstreamFetch, assertCodexFingerprintProxy, codexFingerprintProbeHeaders } from "../codex-fingerprint";
 
 const CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -19,6 +19,7 @@ export type CodexAccount = {
 };
 
 export async function refreshCodexAccessToken(account: CodexAccount): Promise<string> {
+  assertCodexFingerprintProxy(account);
   if (account.accessToken && Number(account.accessTokenExpiresAt || 0) > Date.now() + REFRESH_BUFFER_MS) {
     return account.accessToken;
   }
@@ -38,11 +39,11 @@ export async function refreshCodexAccessToken(account: CodexAccount): Promise<st
   // direct from the datacenter IP.
   let response: Response;
   try {
-    response = await proxyAwareFetch(account.proxyUrl, CODEX_TOKEN_ENDPOINT, {
+    response = await codexUpstreamFetch(account.proxyUrl, CODEX_TOKEN_ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: { "content-type": "application/x-www-form-urlencoded", ...codexFingerprintProbeHeaders(account) },
       body,
-    });
+    }, account);
   } catch (err) {
     throw new Error(`Codex token refresh failed for ${account.email}: ${(err as Error).message}`);
   }

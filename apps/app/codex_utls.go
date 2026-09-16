@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	stdtls "crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -264,6 +265,14 @@ func (d *codexHTTPConnectDialer) DialContext(ctx context.Context, network, addr 
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
+	}
+	if strings.EqualFold(d.proxyURL.Scheme, "https") {
+		secure := stdtls.Client(conn, &stdtls.Config{ServerName: d.proxyURL.Hostname(), MinVersion: stdtls.VersionTLS12})
+		if err := secure.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		conn = secure
 	}
 	req := &http.Request{
 		Method: http.MethodConnect,

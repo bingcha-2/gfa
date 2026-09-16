@@ -46,6 +46,8 @@ export interface Provider<TAccount> {
    *    request is failed and the account rotated.
    */
   egressPolicy: "required" | "optional";
+  /** Optional account-specific enforcement on top of the provider default. */
+  requiresEgress?(account: TAccount): boolean;
 
   /**
    * 瞬时限速 429 是否【零冷却】(不踢出轮换,下个请求立刻可再用该号)。

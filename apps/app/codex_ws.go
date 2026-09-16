@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -218,6 +219,7 @@ func (p *CodexProxy) dialCodexUpstreamWS(r *http.Request, lease *CodexTokenLease
 	default:
 		return nil, fmt.Errorf("上游 ws 不支持 %s 协议", parsed.Scheme)
 	}
+	applyCodexFingerprintURL(parsed, lease)
 
 	// 透传下游头(跳过握手/鉴权头),再覆盖鉴权与官方头。
 	hdr := http.Header{}
@@ -245,9 +247,9 @@ func (p *CodexProxy) dialCodexUpstreamWS(r *http.Request, lease *CodexTokenLease
 		hdr.Set("OpenAI-Beta", codexWSBetaHeader)
 	}
 
-	dialer := &websocket.Dialer{
-		HandshakeTimeout: codexWSConnectTimeout,
-		Proxy:            codexWSProxyFunc(upstreamProxy),
+	dialer, err := newCodexWSDialer(lease, upstreamProxy)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), codexWSConnectTimeout)
@@ -262,17 +264,30 @@ func (p *CodexProxy) dialCodexUpstreamWS(r *http.Request, lease *CodexTokenLease
 	return up, nil
 }
 
-// codexWSProxyFunc 把上游代理地址转成 dialer 的 Proxy 函数(空则直连)。
-func codexWSProxyFunc(upstreamProxy string) func(*http.Request) (*url.URL, error) {
-	p := strings.TrimSpace(upstreamProxy)
-	if p == "" {
-		return nil
-	}
-	pu, err := url.Parse(p)
+func newCodexWSDialer(lease *CodexTokenLease, userProxy string) (*websocket.Dialer, error) {
+	effective, err := resolveCodexLeaseProxy(lease, userProxy)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return http.ProxyURL(pu)
+	dialer := &websocket.Dialer{HandshakeTimeout: codexWSConnectTimeout}
+	if strings.TrimSpace(effective) == "" || isDirectProxyMode(effective) {
+		return dialer, nil
+	}
+	// Validate before the legacy proxy dialer, which otherwise accepts unknown
+	// schemes as direct. The same tunnel implementation supports HTTP(S)/SOCKS5.
+	checked, err := resolveCodexLeaseProxy(&CodexTokenLease{EgressInfo: EgressInfo{ProxyURL: effective, EgressRequired: true}}, "")
+	if err != nil {
+		return nil, err
+	}
+	tunnel := buildCodexProxyDialer(checked)
+	contextDialer, ok := tunnel.(interface {
+		DialContext(context.Context, string, string) (net.Conn, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("Codex proxy does not support bounded dialing")
+	}
+	dialer.NetDialContext = contextDialer.DialContext
+	return dialer, nil
 }
 
 type codexWSUsage struct {

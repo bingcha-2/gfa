@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,10 +16,38 @@ import (
 // Identity is issued by the account server, so all installations leasing an
 // account share it. Local database IDs and rotating access tokens are not seeds.
 type CodexFingerprint struct {
-	Mode           string `json:"mode"`
-	InstallationID string `json:"installationId"`
-	SessionID      string `json:"sessionId"`
-	Namespace      string `json:"namespace"`
+	Mode           string                  `json:"mode"`
+	InstallationID string                  `json:"installationId"`
+	SessionID      string                  `json:"sessionId"`
+	Namespace      string                  `json:"namespace"`
+	Client         *CodexFingerprintClient `json:"client,omitempty"`
+}
+
+type CodexFingerprintClient struct {
+	UserAgent  string `json:"userAgent"`
+	Originator string `json:"originator"`
+	Version    string `json:"version"`
+}
+
+// Normalize only client identity. Authorization, model/beta capabilities,
+// response continuity state, and per-turn request IDs remain untouched.
+func applyCodexFingerprintClientHeaders(h http.Header, f *CodexFingerprint) {
+	if h == nil || f == nil {
+		return
+	}
+	profile := CodexFingerprintClient{UserAgent: codexDefaultUserAgent, Originator: codexDefaultOriginator, Version: "0.135.0"}
+	if f.Client != nil && f.Client.UserAgent != "" && f.Client.Originator != "" && f.Client.Version != "" {
+		profile = *f.Client
+	}
+	for key := range h {
+		name := strings.ToLower(key)
+		if strings.HasPrefix(name, "sec-ch-ua") || strings.HasPrefix(name, "x-stainless-") || name == "forwarded" || strings.HasPrefix(name, "x-forwarded-") || name == "x-real-ip" || name == "true-client-ip" || name == "cf-connecting-ip" {
+			delete(h, key)
+		}
+	}
+	h.Set("User-Agent", profile.UserAgent)
+	h.Set("Originator", profile.Originator)
+	h.Set("Version", profile.Version)
 }
 
 func codexLeaseFingerprint(lease *CodexTokenLease) *CodexFingerprint {
@@ -41,15 +70,34 @@ func codexLeaseFingerprint(lease *CodexTokenLease) *CodexFingerprint {
 func applyCodexFingerprintProbe(h http.Header, lease *CodexTokenLease) {
 	if f := codexLeaseFingerprint(lease); f != nil {
 		h.Set("X-Codex-Installation-Id", f.InstallationID)
+		applyCodexFingerprintClientHeaders(h, f)
 	}
 }
 
 func prepareCodexFingerprintRequest(req *http.Request, body []byte, lease *CodexTokenLease, clientID string) []byte {
+	applyCodexFingerprintURL(req.URL, lease)
 	next := applyCodexFingerprint(body, req.Header, lease, clientID)
 	req.Body = io.NopCloser(bytes.NewReader(next))
 	req.ContentLength = int64(len(next))
 	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(next)), nil }
 	return next
+}
+
+// Model discovery can carry the client version in the URL as well as headers.
+// Preserve unrelated query parameters and leave absent version hints absent.
+func applyCodexFingerprintURL(target *url.URL, lease *CodexTokenLease) {
+	f := codexLeaseFingerprint(lease)
+	if target == nil || f == nil {
+		return
+	}
+	query := target.Query()
+	if !query.Has("client_version") {
+		return
+	}
+	headers := http.Header{}
+	applyCodexFingerprintClientHeaders(headers, f)
+	query.Set("client_version", headers.Get("Version"))
+	target.RawQuery = query.Encode()
 }
 
 // Adapted behavior from sub2api's fingerprint modes, implemented for GFA's
@@ -101,6 +149,7 @@ func applyCodexFingerprint(body []byte, headers http.Header, lease *CodexTokenLe
 		cm["installation_id"] = f.InstallationID
 	}
 	nextHeaders := headers.Clone()
+	applyCodexFingerprintClientHeaders(nextHeaders, f)
 	nextHeaders.Set("X-Codex-Installation-Id", f.InstallationID)
 	if f.Mode != "device" {
 		thread := derive("thread", originalThread)
