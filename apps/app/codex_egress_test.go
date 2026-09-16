@@ -18,7 +18,7 @@ func TestCodexBoundEgressRejectsMissingInvalidProxy(t *testing.T) {
 			lease.ProxyURL = raw
 			lease.Fingerprint.InstallationID = "invalid"
 			seen := map[string][]byte{}
-			_, err := doCodexUpstream(lease, "http://local:8080", nil, mustReq(t, nil), clientFactory(nil, seen))
+			_, err := doCodexUpstream(lease, "direct", nil, mustReq(t, nil), clientFactory(nil, seen))
 			if err == nil || len(seen) != 0 {
 				t.Fatal("invalid bound egress must fail before any request")
 			}
@@ -45,7 +45,7 @@ func TestCodexBoundEgressUsesVerifiedProtocol(t *testing.T) {
 		t.Fatal("bound exit did not reuse verified protocol")
 	}
 	seen := map[string][]byte{}
-	_, err = doCodexUpstream(lease, "http://local:8080", nil, mustReq(t, nil), clientFactory(map[string]bool{want: true}, seen))
+	_, err = doCodexUpstream(lease, "direct", nil, mustReq(t, nil), clientFactory(map[string]bool{want: true}, seen))
 	if err == nil || len(seen) != 1 {
 		t.Fatal("protocol selection allowed fallback")
 	}
@@ -66,7 +66,7 @@ func TestCodexBoundEgressFailureNeverFallsBack(t *testing.T) {
 		lease := fingerprintTestLease(mode)
 		lease.ProxyURL = "http://exit:8080"
 		seen := map[string][]byte{}
-		resp, err := doCodexUpstream(lease, "http://local:8080", []byte("body"), mustReq(t, []byte("body")), clientFactory(map[string]bool{lease.ProxyURL: true}, seen))
+		resp, err := doCodexUpstream(lease, "direct", []byte("body"), mustReq(t, []byte("body")), clientFactory(map[string]bool{lease.ProxyURL: true}, seen))
 		if mode == "off" {
 			if err != nil || len(seen) != 2 {
 				t.Fatal("off lost existing optional fallback")

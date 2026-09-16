@@ -47,6 +47,10 @@ func resolveCodexLeaseProxy(lease *CodexTokenLease, userProxy string) (string, e
 	// Reuse the protocol verified by takeover preflight. This only changes the
 	// scheme of the same bound endpoint; it never selects a local/direct exit.
 	raw = resolveEgressProxyURL(raw)
+	return normalizeCodexProxyURL(raw)
+}
+
+func normalizeCodexProxyURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	invalid := errors.New("Codex bound proxy is invalid or unsupported; refusing direct connection")
 	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
@@ -69,6 +73,17 @@ func resolveCodexLeaseProxy(lease *CodexTokenLease, userProxy string) (string, e
 }
 
 func doCodexUpstream(lease *CodexTokenLease, userProxy string, body []byte, req *http.Request, newClient func(string) *http.Client) (*http.Response, error) {
+	if lease != nil && strings.TrimSpace(lease.ProxyURL) != "" {
+		factory := newClient
+		bound := resolveEgressProxyURL(strings.TrimSpace(lease.ProxyURL))
+		newClient = func(endpoint string) *http.Client {
+			client := factory(endpoint)
+			if endpoint == userProxy && !codexRequiresBoundEgress(lease) {
+				return client
+			}
+			return codexClientViaLocalProxy(client, bound, userProxy)
+		}
+	}
 	if codexRequiresBoundEgress(lease) {
 		proxy, err := resolveCodexLeaseProxy(lease, userProxy)
 		if err != nil {

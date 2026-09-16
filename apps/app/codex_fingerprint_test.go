@@ -199,7 +199,7 @@ func TestCodexFingerprintWebSocketEveryTurn(t *testing.T) {
 		return lease, nil
 	}, reportResult: func(string, string, ReportDetails, string, *CodexTokenLease) {}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxy.ServeHTTP(w, r, "card", "client-a", "http://127.0.0.1:1")
+		proxy.ServeHTTP(w, r, "card", "client-a", "direct")
 	}))
 	defer server.Close()
 	conn, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/backend-api/codex/responses", nil)

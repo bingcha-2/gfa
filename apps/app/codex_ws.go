@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -273,20 +272,15 @@ func newCodexWSDialer(lease *CodexTokenLease, userProxy string) (*websocket.Dial
 	if strings.TrimSpace(effective) == "" || isDirectProxyMode(effective) {
 		return dialer, nil
 	}
-	// Validate before the legacy proxy dialer, which otherwise accepts unknown
-	// schemes as direct. The same tunnel implementation supports HTTP(S)/SOCKS5.
-	checked, err := resolveCodexLeaseProxy(&CodexTokenLease{EgressInfo: EgressInfo{ProxyURL: effective, EgressRequired: true}}, "")
+	local := "direct"
+	if strings.TrimSpace(lease.ProxyURL) != "" {
+		local = userProxy
+	}
+	tunnel, err := codexBoundProxyDialer(effective, local)
 	if err != nil {
 		return nil, err
 	}
-	tunnel := buildCodexProxyDialer(checked)
-	contextDialer, ok := tunnel.(interface {
-		DialContext(context.Context, string, string) (net.Conn, error)
-	})
-	if !ok {
-		return nil, fmt.Errorf("Codex proxy does not support bounded dialing")
-	}
-	dialer.NetDialContext = contextDialer.DialContext
+	dialer.NetDialContext = tunnel.DialContext
 	return dialer, nil
 }
 

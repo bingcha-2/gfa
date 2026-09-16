@@ -466,8 +466,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// exhausted. The old signed lease is sent back so the server can validate
 	// subscription/account/model attribution before selecting a fallback.
 	if !relayLease && resp.StatusCode == http.StatusTooManyRequests && lease.AllowBoundOverflow {
-		quotaEgress, _ := resolveCodexLeaseProxy(lease, upstreamProxy)
-		if GetCodexLeaser().ConfirmWeeklyExhausted(card, quotaEgress, lease) {
+		if GetCodexLeaser().ConfirmWeeklyExhausted(card, upstreamProxy, lease) {
 			failedBody, _ := io.ReadAll(resp.Body)
 			overflowOptions := map[string]interface{}{
 				"modelKey":               modelKey,

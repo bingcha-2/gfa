@@ -93,6 +93,10 @@ func dialProbeOnce(target, proxyURL string) error {
 // egressReachable 经账号代理对 target(官方 host:port)做裸 CONNECT 可达性探测,带重试与协议回落。
 // 返回 nil=可达(放行);errEgressBanned=被代理按来源 IP 拒(需开 TUN);其它=连不通/超时。
 func egressReachable(target, proxyURL string) error {
+	return egressReachableWithProbe(target, proxyURL, dialProbeOnce)
+}
+
+func egressReachableWithProbe(target, proxyURL string, probe func(string, string) error) error {
 	scheme, u, perr := parseEgressProxy(proxyURL)
 	if perr != nil || scheme == "" {
 		return fmt.Errorf("无效的账号出口代理地址: %v", perr)
@@ -111,7 +115,7 @@ func egressReachable(target, proxyURL string) error {
 	var lastErr error
 	for attempt := 1; attempt <= egressProbeAttempts; attempt++ {
 		for _, cand := range candidates {
-			err := dialProbeOnce(target, cand)
+			err := probe(target, cand)
 			if err == nil {
 				// 记下能用的协议,供真实出口路径(resolveEgressProxyURL)复用,省去再探。
 				if cScheme, cu, e := parseEgressProxy(cand); e == nil && cu != nil {
@@ -177,7 +181,11 @@ func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
 //
 // product=="" 只在「接管目标映射不到任何已知产品」时发生(防御性兜底,正常流程走不到)。
 func enforceEgressGate(product string, cfg Config) error {
-	return enforceEgressGateWith(product, cfg, egressInfoForTakeover, egressReachable)
+	probe := egressReachable
+	if product == "codex" {
+		probe = codexEgressReachable
+	}
+	return enforceEgressGateWith(product, cfg, egressInfoForTakeover, probe)
 }
 
 // enforceEgressGateWith 是 enforceEgressGate 的可注入实现(fetch 出口配置 + probe 出口可达性),
@@ -224,6 +232,9 @@ func enforceEgressGateWith(
 	}
 	Log("[egress-gate] %s 出口可达性探测开始 target=%s, proxy=%s", product, target, maskProxyURL(proxyURL))
 	if rerr := probe(target, proxyURL); rerr != nil {
+		if product == "codex" {
+			return fmt.Errorf("%s无法通过账号代理连接 Codex。请检查本地代理是否运行、系统代理是否开启，以及代理规则是否允许连接账号代理；仍失败请联系管理员检查账号代理。无需强制开启 TUN 模式。", egressGateMarker)
+		}
 		if errors.Is(rerr, errEgressBanned) {
 			Log("[egress-gate] %s 出口被拒(banned),拦截接管。proxy=%s", product, maskProxyURL(proxyURL))
 			return fmt.Errorf("%s接管已拦截:你的网络出口是大陆 IP、被账号代理拒绝(banned)。\n\n请先在 Clash / Mihomo 里开启【TUN 模式(建议全局)】,让流量从境外节点出去,再重新接管。\n否则你的真实 IP 会暴露给官方,有封号风险。",

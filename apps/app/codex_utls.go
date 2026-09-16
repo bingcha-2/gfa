@@ -251,7 +251,7 @@ func buildCodexProxyDialer(proxyURL string) proxy.Dialer {
 // golang.org/x/net/proxy 不支持 http 代理,故自实现(GFA 系统代理多为 Clash/Mihomo 的 http)。
 type codexHTTPConnectDialer struct {
 	proxyURL *url.URL
-	forward  *net.Dialer
+	forward  proxy.ContextDialer
 }
 
 func (d *codexHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
@@ -263,6 +263,11 @@ func (d *codexHTTPConnectDialer) DialContext(ctx context.Context, network, addr 
 	if err != nil {
 		return nil, err
 	}
+	// Cancellation must also interrupt CONNECT reads when the caller has no
+	// deadline (streaming requests commonly rely on cancellation alone).
+	rawConn := conn
+	stopCancel := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+	defer stopCancel()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
