@@ -44,6 +44,9 @@ func resolveCodexLeaseProxy(lease *CodexTokenLease, userProxy string) (string, e
 	if raw == "" {
 		return "", errEgressRequired
 	}
+	// Reuse the protocol verified by takeover preflight. This only changes the
+	// scheme of the same bound endpoint; it never selects a local/direct exit.
+	raw = resolveEgressProxyURL(raw)
 	parsed, err := url.Parse(raw)
 	invalid := errors.New("Codex bound proxy is invalid or unsupported; refusing direct connection")
 	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {

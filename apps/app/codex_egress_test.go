@@ -29,6 +29,38 @@ func TestCodexBoundEgressRejectsMissingInvalidProxy(t *testing.T) {
 	}
 }
 
+func TestCodexBoundEgressUsesVerifiedProtocol(t *testing.T) {
+	endpoint := "codex-protocol-cache.test:7778"
+	setProxySchemeCache(endpoint, "socks5")
+	defer func() {
+		proxySchemeCacheMu.Lock()
+		delete(proxySchemeCache, endpoint)
+		proxySchemeCacheMu.Unlock()
+	}()
+	lease := fingerprintTestLease("device")
+	lease.ProxyURL = "http://user:password@" + endpoint
+	want := "socks5://user:password@" + endpoint
+	got, err := resolveCodexLeaseProxy(lease, "http://local:8080")
+	if err != nil || got != want {
+		t.Fatal("bound exit did not reuse verified protocol")
+	}
+	seen := map[string][]byte{}
+	_, err = doCodexUpstream(lease, "http://local:8080", nil, mustReq(t, nil), clientFactory(map[string]bool{want: true}, seen))
+	if err == nil || len(seen) != 1 {
+		t.Fatal("protocol selection allowed fallback")
+	}
+	if _, ok := seen[want]; !ok {
+		t.Fatal("request used a different endpoint/protocol")
+	}
+	if _, err := newCodexWSDialer(lease, "http://local:8080"); err != nil {
+		t.Fatal(err)
+	}
+	setProxySchemeCache(endpoint, "direct")
+	if _, err := resolveCodexLeaseProxy(lease, "http://local:8080"); err == nil {
+		t.Fatal("invalid cached protocol permitted direct exit")
+	}
+}
+
 func TestCodexBoundEgressFailureNeverFallsBack(t *testing.T) {
 	for _, mode := range []string{"device", "session", "full", "off"} {
 		lease := fingerprintTestLease(mode)

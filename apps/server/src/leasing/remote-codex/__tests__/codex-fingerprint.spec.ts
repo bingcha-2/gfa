@@ -15,6 +15,10 @@ import { CodexProvider } from "../codex.provider";
 import { RosettaService } from "../../rosetta/rosetta.service";
 
 describe("Codex fingerprint identity lifecycle", () => {
+  it("uses the published GPT-6-capable compatibility profile consistently", () => {
+    expect(CODEX_FINGERPRINT_CLIENT_V1.version).toBe("0.154.0");
+    expect(CODEX_FINGERPRINT_CLIENT_V1.userAgent).toContain(`codex-tui/${CODEX_FINGERPRINT_CLIENT_V1.version}`);
+  });
   it("defaults off, rejects invalid seeds, and does not expose its storage seed", () => {
     expect(codexFingerprintLease({})).toBeUndefined();
     expect(codexFingerprintLease({ codexFingerprintMode: "session", codexFingerprintSeed: "1" })).toBeUndefined();

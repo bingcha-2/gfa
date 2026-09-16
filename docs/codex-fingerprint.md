@@ -19,11 +19,13 @@
 
 首次启用时服务端生成随机 UUID seed，保存在 `codex-accounts.json` 的账号记录内。租约只下发派生后的 installationId、sessionId、namespace 和 mode，不下发原始 seed。刷新 token、同账号重新导入、服务重启、关闭再开启均保留身份。备份恢复须保留账号文件；不同独立部署的相同数字账号 ID 不会产生相同身份。导入为新账号不会接受输入 seed。
 
-租约同时下发固定 client 配置（User-Agent、Originator、Version），与服务端 Codex 探针共享版本化配置。当前沿用适配器已有的 0.135.0 配置，不随每个用户或每次请求随机变化。它描述适配器兼容身份，不证明用户设备或实际客户端版本。
+租约同时下发固定 client 配置（User-Agent、Originator、Version），与服务端 Codex 探针共享版本化配置。当前沿用适配器已有的 0.154.0 配置，不随每个用户或每次请求随机变化。它描述适配器兼容身份，不证明用户设备或实际客户端版本。
 
 管理接口：`POST /api/console/rosetta/codex-fingerprint`，沿用控制台鉴权，正文为 `{"accountId":1,"mode":"device"}`。只接受 off/device/session/full；关闭通过显式 off 写入。
 
 ## 请求一致性
+
+兼容配置采用官方 [Codex CLI 0.154.0 更新日志](https://learn.chatgpt.com/docs/changelog) 中已列出 GPT-6 Astra 的版本。此字段是适配层兼容配置，不会升级用户真实的 Codex 安装，也不保证账号模型权限。客户端复用接管预检确认的 HTTP/SOCKS5 协议，始终保留同一绑定代理地址与凭据，连接失败不切换本地出口。
 
 - HTTP Responses、compact、图像请求和 WebSocket 首帧及后续 response.create 使用同一改写函数。
 - 请求头、client_metadata 及内嵌 x-codex-turn-metadata 使用一致的设备、会话、线程标识；保留其他元数据及输入正文。
