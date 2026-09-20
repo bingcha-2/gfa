@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenAI 账号申诉"
+  short_description: "核验 GFA 母号身份，提交真实申诉并确认官方人工客服受理结果"
+  default_prompt: "使用 $openai-account-appeal 为我指定的母号提交官方复核，并逐个核对受理状态。"
