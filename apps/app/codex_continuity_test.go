@@ -49,6 +49,9 @@ func TestCodexWSReportsEachResponseAndIgnoresDuplicateTerminal(t *testing.T) {
 	if len(reports) != 3 || reports[0].RawTotalTokens != 30 || reports[1].RawTotalTokens != 3 || reports[2].RawTotalTokens != 0 {
 		t.Fatalf("per response usage lost or duplicated: %+v", reports)
 	}
+	if reports[0].CodexDiagnostic.RequestSequence != 1 || reports[1].CodexDiagnostic.RequestSequence != 2 || reports[2].CodexDiagnostic.RequestSequence != 3 {
+		t.Fatal("WS sequence missing or reused")
+	}
 	if reports[1].ModelKey != "gpt-5.6-sol" || reports[0].CodexDiagnostic.ReasoningEffort != "high" || reports[2].CodexDiagnostic.ErrorCode != "invalid_prompt" || reports[2].CodexDiagnostic.Result != "failed" {
 		t.Fatalf("diagnostics not preserved: %+v %+v", reports[0].CodexDiagnostic, reports[2].CodexDiagnostic)
 	}

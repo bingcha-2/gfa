@@ -85,3 +85,11 @@ GFA 服务端发租约，客户端负责数据请求。Sub2API 的插件和进�
 ```text
 go test . -run 'Test(ConvertResponsesToChat|ConvertChatToResponses|StreamChatToResponses|CodexProxy|FilterReportHeaders|CodexTranslatedModel|CodexChatFailure|CodexChatJSONFailure|GPT6ChatState|CodexModelMismatch|CodexStreamDiagnostic)' -count=1 -timeout=120s
 ```
+
+## 低配服务器健康状态优化
+
+- `codexModelHealth` 默认改为 `{ total, byKind }` 汇总。分类计数随更新维护，状态查询不再遍历或序列化整份健康列表。
+- `GET /app/lease/codex/model-health?offset=0&limit=50&accountId=32` 按需读取详情；accountId 可省略，每页最多 100 条。返回 items、total、offset、limit、hasMore；items 仅含 accountId/model/kind/observedAt，不包含租约、会话或请求标识。使用现有状态控制器访问规则。
+- 详情在内存中遍历，不查询数据库、不复制全量数组；分页为实时视图，并发更新时不保证跨页快照一致性。
+- 内存健康记录仅保留分类及报告排序所需字段，完整诊断仍随请求日志存储。已有账号配额列表等状态字段未改变。
+- 保留 10,000 条健康记录上限；更新已有条目不再误淘汰另一条。没有增加后台轮询或 STATE 采集任务。

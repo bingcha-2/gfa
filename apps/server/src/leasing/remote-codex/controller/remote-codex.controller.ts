@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteCodexHttpError, RemoteCodexService } from "../service/remote-codex.service";
@@ -14,7 +14,10 @@ export class RemoteCodexController {
   }
 
   @Get(":path")
-  async get(@Param("path") pathName: string, @Res() response: any) {
+  async get(@Param("path") pathName: string, @Res() response: any, @Query() query: Record<string, unknown> = {}) {
+    if (pathName === "model-health") {
+      return response.status(200).json(this.remoteCodex.getCodexHealthPage(query));
+    }
     if (pathName === "status" || pathName === "health") {
       return response.status(200).json(await this.remoteCodex.getStatusWithUsage());
     }

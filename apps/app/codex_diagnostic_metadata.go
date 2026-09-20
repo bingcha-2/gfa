@@ -11,6 +11,7 @@ import (
 
 // Metadata only. Never include prompts, credentials or opaque upstream state.
 type CodexRequestDiagnostic struct {
+	RequestSequence    uint64 `json:"requestSequence,omitempty"`
 	ObservationLimited bool   `json:"observationLimited,omitempty"`
 	Result             string `json:"result"`
 	ErrorCode          string `json:"errorCode,omitempty"`

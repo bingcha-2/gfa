@@ -1,4 +1,5 @@
 export type CodexDiagnostic = {
+  requestSequence?: number;
   result: string;
   errorCode: string;
   requestedModel: string;
@@ -22,6 +23,7 @@ export function readCodexDiagnostic(raw: unknown): CodexDiagnostic | undefined {
   const text = (key: string) => typeof r[key] === "string" && /^[a-zA-Z0-9._/:\-]{1,128}$/.test(r[key] as string) ? r[key] as string : "";
   const hash = (key: string) => typeof r[key] === "string" && /^[a-f0-9]{64}$/.test(r[key] as string) ? r[key] as string : "";
   return {
+    requestSequence: Number.isSafeInteger(r.requestSequence) && Number(r.requestSequence) > 0 ? Number(r.requestSequence) : undefined,
     result: String(r.result), errorCode: text("errorCode"),
     requestedModel: text("requestedModel"), sentModel: text("sentModel"), upstreamModel: text("upstreamModel"),
     reasoningEffort: text("reasoningEffort"), requestId: text("requestId"), responseId: text("responseId"),

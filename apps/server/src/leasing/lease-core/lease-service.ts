@@ -404,7 +404,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly busyMessage: string;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
-  private readonly codexModelHealth = new Map<string, { accountId: number; model: string; kind: string; observedAt: number; requestAt: number; diagnostic: CodexDiagnostic }>();
+  private readonly codexModelHealth = new Map<string, { accountId: number; model: string; kind: string; observedAt: number; requestAt: number; leaseId: string; leaseCreatedAt: number; requestSequence?: number }>();
+  private readonly codexHealthCounts: Record<string, number> = {};
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
   private totalLeases = 0;
   private totalReports = 0;
@@ -520,6 +521,35 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return status;
   }
 
+  private adjustCodexHealthCount(kind: string, delta: number) {
+    const count = (this.codexHealthCounts[kind] || 0) + delta;
+    if (count > 0) this.codexHealthCounts[kind] = count;
+    else delete this.codexHealthCounts[kind];
+  }
+
+  // Explicit detail reads only: bounded output, no DB queries or full-array copy.
+  getCodexHealthPage(query: { offset?: unknown; limit?: unknown; accountId?: unknown } = {}) {
+    const integer = (value: unknown, fallback: number, max: number) => {
+      if (typeof value !== "string" && typeof value !== "number") return fallback;
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), max) : fallback;
+    };
+    const offset = integer(query.offset, 0, 10_000);
+    const limit = Math.max(1, integer(query.limit, 50, 100));
+    const accountId = integer(query.accountId, 0, Number.MAX_SAFE_INTEGER);
+    const items: Array<{ accountId: number; model: string; kind: string; observedAt: number }> = [];
+    let total = 0;
+    for (const entry of this.codexModelHealth.values()) {
+      if (accountId && entry.accountId !== accountId) continue;
+      if (total >= offset && items.length < limit) {
+        const { accountId, model, kind, observedAt } = entry;
+        items.push({ accountId, model, kind, observedAt });
+      }
+      total++;
+    }
+    return { items, total, offset, limit, hasMore: offset + items.length < total };
+  }
+
   getStatus() {
     this.cleanupExpiredLeases();
     const now = this.now();
@@ -547,7 +577,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       lastError: this.lastError,
       activeLeases: activeLeasesTotal,
       affinityClients: this.clientAffinity.size,
-      ...(this.provider.id === "codex" ? { codexModelHealth: [...this.codexModelHealth.values()].map(({ accountId, model, kind, observedAt }) => ({ accountId, model, kind, observedAt })) } : {}),
+      ...(this.provider.id === "codex" ? { codexModelHealth: { total: this.codexModelHealth.size, byKind: { ...this.codexHealthCounts } } } : {}),
       accounts: {
         total: accounts.length,
         enabled: accounts.filter((account) => (account as any).enabled !== false).length,
@@ -2032,7 +2062,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         lease.released = true;
       }
       if (kind === "completed") this.enterpriseProbe.reportResult(lease.email, true);
-      this.observeCodexHealth(lease, codexDiagnostic, kind, status, retryAfterMs, Number(payload?.requestStartedAt));
+      this.observeCodexHealth(lease, codexDiagnostic, kind, status, retryAfterMs, Number(payload?.requestStartedAt), String(payload?.reason || ""), String(payload?.errorText || ""));
       if (!reportId && success) lease.successfulReportSeen = true;
     } else if (success) {
       this.dailySuccesses++;
@@ -3261,18 +3291,55 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.persistQuotaStatus(accountId, state);
   }
 
-  private observeCodexHealth(lease: LeaseRecord, diagnostic: CodexDiagnostic, kind: string, status: number, retryAfterMs: number, startedAt: number) {
+  private observeCodexHealth(lease: LeaseRecord, diagnostic: CodexDiagnostic, kind: string, status: number, retryAfterMs: number, startedAt: number, reportedReason = "", errorText = "") {
     // The signed lease, not a client-supplied account/model, authorizes changes.
     const model = lease.modelKey;
-    const key = `${lease.accountId}:${normalizeModelKey(model)}`;
-    const requestAt = Number.isFinite(startedAt) && startedAt > 0 ? Math.min(this.now(), Math.max(lease.createdAt, startedAt)) : lease.createdAt;
+    // Validate model ownership before changing the ordering watermark. Off-model
+    // WS telemetry remains in the request log, never in this model's health state.
+    if (diagnostic.sentModel && normalizeModelKey(diagnostic.sentModel) !== normalizeModelKey(model)) return;
+    const key = lease.accountId + ":" + normalizeModelKey(model);
+    // Compare server-issued lease times across leases; within a WS lease use the
+    // local monotonic turn sequence. Legacy clients retain their own clock domain
+    // (no clamping to server time, which collapses turns when clocks differ).
+    const requestAt = Number.isFinite(startedAt) && startedAt > 0 ? startedAt : 0;
     const previous = this.codexModelHealth.get(key);
-    if (previous && previous.requestAt >= requestAt) return;
-    if (this.codexModelHealth.size >= 10_000) this.codexModelHealth.delete(this.codexModelHealth.keys().next().value!);
-    this.codexModelHealth.set(key, { accountId: lease.accountId, model, kind, observedAt: this.now(), requestAt, diagnostic });
-    // WS can change model within a connection. Until it obtains a lease for that
-    // model, retain telemetry but don't mutate another model's scheduling state.
-    if (diagnostic.sentModel && diagnostic.sentModel !== model) return;
+    if (previous) {
+      if (previous.leaseId === lease.leaseId) {
+        if (previous.requestSequence && diagnostic.requestSequence) {
+          if (previous.requestSequence >= diagnostic.requestSequence) return;
+        } else if (previous.requestAt > requestAt) return;
+      } else if (previous.leaseCreatedAt > lease.createdAt) return;
+      // Equal server timestamps do not establish causality. Never let an
+      // ambiguous success heal a failure from another lease in the same ms.
+      else if (previous.leaseCreatedAt === lease.createdAt && kind === "completed" && previous.kind !== "completed") return;
+    }
+    if (!previous && this.codexModelHealth.size >= 10_000) {
+      const oldestKey = this.codexModelHealth.keys().next().value!;
+      const oldest = this.codexModelHealth.get(oldestKey)!;
+      this.adjustCodexHealthCount(oldest.kind, -1);
+      this.codexModelHealth.delete(oldestKey);
+    }
+    if (previous) this.adjustCodexHealthCount(previous.kind, -1);
+    this.adjustCodexHealthCount(kind, 1);
+    this.codexModelHealth.set(key, { accountId: lease.accountId, model, kind, observedAt: this.now(), requestAt, leaseId: lease.leaseId, leaseCreatedAt: lease.createdAt, requestSequence: diagnostic.requestSequence });
+    const accountReason = isPermanentDeathReason(diagnostic.errorCode) ? diagnostic.errorCode : reportedReason;
+    if ((status === 400 || status === 403) && isPermanentDeathReason(accountReason)) {
+      this.enterpriseProbe.reportResult(lease.email, false);
+      this.clearAffinity(lease.accountId, lease.affinityClientId || lease.clientId, model);
+      this.markAccountPermanentDeath(lease.accountId, accountReason);
+      const account = this.readAccounts().find((a) => a.id === lease.accountId);
+      this.banEventRecorder?.recordBan({ provider: this.provider.id, accountId: lease.accountId,
+        accountEmail: (account as { email?: string } | undefined)?.email, reason: accountReason,
+        upstreamStatus: status, upstreamBody: errorText, modelKey: model,
+        deathStrikes: this.accountRuntime.get(lease.accountId)?.deathStrikes ?? 0 });
+      return;
+    }
+    if (status === 403 && (diagnostic.errorCode.includes("verification") || reportedReason.includes("verification"))) {
+      this.enterpriseProbe.reportResult(lease.email, false);
+      this.clearAffinity(lease.accountId, lease.affinityClientId || lease.clientId, model);
+      this.markAccountVerificationRequired(lease.accountId);
+      return;
+    }
     if (kind === "completed") {
       this.markAccountSuccess(lease.accountId, model);
       return;

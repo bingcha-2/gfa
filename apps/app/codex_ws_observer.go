@@ -8,6 +8,7 @@ import (
 )
 
 type codexWSTurn struct {
+	sequence                     uint64
 	diagnostic                   codexStreamDiagnostic
 	started                      time.Time
 	input, output, cached, total int64
@@ -19,6 +20,7 @@ type codexWSObserver struct {
 	mu           sync.Mutex
 	turns        []*codexWSTurn
 	defaultModel string
+	sequence     uint64
 	report       func(ReportDetails)
 	completed    map[string]bool
 }
@@ -41,7 +43,8 @@ func (o *codexWSObserver) request(data []byte) {
 	} else {
 		o.defaultModel = model
 	}
-	turn := &codexWSTurn{started: time.Now(), diagnostic: codexStreamDiagnostic{RequestedModel: model, SentModel: model, ReasoningEffort: codexReasoningEffort(data)}}
+	o.sequence++
+	turn := &codexWSTurn{sequence: o.sequence, started: time.Now(), diagnostic: codexStreamDiagnostic{RequestedModel: model, SentModel: model, ReasoningEffort: codexReasoningEffort(data)}}
 	// Bound memory even if a broken client sends endless requests without replies.
 	var evicted *codexWSTurn
 	if len(o.turns) >= 64 {
@@ -134,6 +137,7 @@ func (o *codexWSObserver) finish(turn *codexWSTurn) {
 	details.RequestStartedAt = turn.started.UnixMilli()
 	details.UpstreamCompletedAt = time.Now().UnixMilli()
 	details.CodexDiagnostic = turn.diagnostic.metadata(200, nil)
+	details.CodexDiagnostic.RequestSequence = turn.sequence
 	details.Reason = turn.diagnostic.reportReason(nil, turn.total)
 	if o.report != nil {
 		o.report(details)

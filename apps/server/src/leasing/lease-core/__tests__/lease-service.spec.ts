@@ -83,6 +83,79 @@ describe("LeaseService (generic core)", () => {
 
   const REQ = sessionReqFor("card-1");
 
+  it("keeps compact health counts consistent on replacement and eviction, and bounds detail pages", () => {
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), { accessKeysFilePath, minClientVersion: "" }));
+    try {
+      const internal = service as any;
+      const observe = (id: number, sequence = 1) => internal.observeCodexHealth(
+        { accountId: id, modelKey: "gpt-6-astra", leaseId: "lease-" + id, createdAt: 1 },
+        { sentModel: "gpt-6-astra", errorCode: "invalid_prompt", requestSequence: sequence, sessionHash: "private-session" },
+        sequence === 1 ? "invalid_prompt" : "context_error", 200, 0, sequence);
+      for (let i = 1; i <= 10_000; i++) observe(i);
+      observe(2, 2); // Updating an existing entry at capacity must not evict another.
+      expect(internal.codexModelHealth.size).toBe(10_000);
+      expect(service.getCodexHealthPage({ accountId: 1 }).total).toBe(1);
+      observe(10_001);
+      const summary = service.getStatus().codexModelHealth!;
+      expect(summary).toEqual({ total: 10_000, byKind: { invalid_prompt: 9999, context_error: 1 } });
+      expect(service.getCodexHealthPage({ accountId: 1 }).total).toBe(0);
+      const page = service.getCodexHealthPage({ offset: "1", limit: "2" });
+      expect(page.items.map(item => item.accountId)).toEqual([3, 4]);
+      expect(page.hasMore).toBe(true);
+      expect(service.getCodexHealthPage({ limit: "999999" }).items).toHaveLength(100);
+      expect(service.getCodexHealthPage({ offset: "Infinity", limit: -1 }).limit).toBe(50);
+      expect(service.getCodexHealthPage({ accountId: "2" }).items).toEqual([{ accountId: 2, model: "gpt-6-astra", kind: "context_error", observedAt: expect.any(Number) }]);
+      expect(service.getCodexHealthPage({ offset: 10_000 }).hasMore).toBe(false);
+      expect(JSON.stringify([...internal.codexModelHealth.values()])).not.toContain("private-session");
+    } finally { service.onModuleDestroy(); }
+  });
+
+
+  it.each(["service_disabled", "account_deactivated", "account_verification_required"])("preserves account-wide Codex handling for %s", async (code) => {
+    refreshToken.mockResolvedValue("tok");
+    const recordBan = vi.fn();
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), { accessKeysFilePath, minClientVersion: "", banEventRecorder: { recordBan, observeRequest: vi.fn() } }));
+    try {
+      const lease = await service.leaseToken(REQ, { modelKey: "gpt-6-astra" });
+      await service.reportResult(REQ, { leaseId: lease.leaseId, reportId: code, status: 403, errorText: "upstream evidence", codexDiagnostic: { result: "failed", sentModel: "gpt-6-astra", errorCode: code } });
+      const state = (service as any).accountRuntime.get(lease.accountId);
+      expect(state.blockedModels.size).toBe(0);
+      expect(state.quotaStatusReason).toBe(code.includes("verification") ? "verification_required" : code);
+      expect((service as any).isAccountBlocked(lease.accountId, "gpt-5.6-sol", Date.now())).toBe(true);
+      if (!code.includes("verification")) expect(recordBan).toHaveBeenCalledWith(expect.objectContaining({ accountId: lease.accountId, reason: code, upstreamBody: "upstream evidence" }));
+      else expect(recordBan).not.toHaveBeenCalled();
+    } finally { service.onModuleDestroy(); }
+  });
+
+  it("does not let off-model WS telemetry advance the leased model watermark", async () => {
+    refreshToken.mockResolvedValue("tok");
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), { accessKeysFilePath, minClientVersion: "" }));
+    try {
+      const lease = await service.leaseToken(REQ, { modelKey: "gpt-6-astra" });
+      await service.reportResult(REQ, { leaseId: lease.leaseId, reportId: "sol", status: 200, requestStartedAt: Date.now()+1000, codexDiagnostic: { result: "completed", sentModel: "gpt-5.6-sol", requestSequence: 2 } });
+      expect((service as any).codexModelHealth.size).toBe(0);
+      await service.reportResult(REQ, { leaseId: lease.leaseId, reportId: "astra", status: 503, requestStartedAt: Date.now(), codexDiagnostic: { result: "failed", sentModel: "gpt-6-astra", requestSequence: 1 } });
+      expect((service as any).isAccountBlocked(lease.accountId, "gpt-6-astra", Date.now())).toBe(true);
+    } finally { service.onModuleDestroy(); }
+  });
+
+  it.each([false, true])("orders skewed WS clocks with sequence support=%s and ignores stale success", async (sequenced) => {
+    refreshToken.mockResolvedValue("tok");
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), { accessKeysFilePath, minClientVersion: "" }));
+    try {
+      const lease = await service.leaseToken(REQ, { modelKey: "gpt-6-astra" });
+      const send = (id: string, seq: number, result: string, time: number) => service.reportResult(REQ, { leaseId: lease.leaseId, reportId: id, status: result === "completed" ? 200 : 503, requestStartedAt: time, codexDiagnostic: { result, sentModel: "gpt-6-astra", ...(sequenced ? { requestSequence: seq } : {}) } });
+      await send("first", 1, "completed", 1000);
+      await send("failure", 2, "failed", sequenced ? 900 : 1100);
+      expect((service as any).isAccountBlocked(lease.accountId, "gpt-6-astra", Date.now())).toBe(true);
+      await send("late-success", 1, "completed", 1000);
+      expect((service as any).isAccountBlocked(lease.accountId, "gpt-6-astra", Date.now())).toBe(true);
+      await send("recovery", 3, "completed", 1200);
+      expect((service as any).isAccountBlocked(lease.accountId, "gpt-6-astra", Date.now())).toBe(false);
+    } finally { service.onModuleDestroy(); }
+  });
+
+
   it("isolates Codex conversation affinity and keeps the account across model changes", async () => {
     let seq=0;
     refreshToken.mockResolvedValue("tok");

@@ -193,6 +193,7 @@ const PERMANENT_DEATH_REASON_MARKERS = [
   "account_restricted",
   "servicerestricted",
   "account_disabled",
+  "account_deactivated",
   "access_denied",
   "permission_denied",
   "suspended",
