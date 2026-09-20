@@ -8,6 +8,8 @@ import * as crypto from "crypto";
 import * as path from "path";
 
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
+import { withCodexAccessToken } from "../remote-codex/auth/codex-authenticated-request";
+import { assertCodexAccountMaintenanceAllowed, CodexLocalCredentialError, updateCodexStoredAccount } from "../remote-codex/auth/codex-account-store";
 import { fetchCodexSubscription, subscriptionExpiryIso } from "../remote-codex/auth/codex-subscription";
 import { codexBindingWindow, fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
 import {
@@ -236,6 +238,11 @@ export class CodexService {
         quotaStatus: String(account.quotaStatus || "ok"),
         quotaStatusReason: String(account.quotaStatusReason || ""),
         blockedUntil: Number(account.blockedUntil || 0),
+        codexAccountReviewSource: account.codexAccountReviewSource === "client_report" ? "client_report" : undefined,
+        codexAccountReviewFirstObservedAt: Number(account.codexAccountReviewFirstObservedAt || 0),
+        codexAccountReviewLastObservedAt: Number(account.codexAccountReviewLastObservedAt || 0),
+        codexAccountReviewLastCode: String(account.codexAccountReviewLastCode || "").slice(0, 80),
+        codexAccountReviewResolvedAt: Number(account.codexAccountReviewResolvedAt || 0),
       };
     });
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
@@ -254,6 +261,9 @@ export class CodexService {
     let accountId: number;
     if (existing) {
       existing.refreshToken = refreshToken;
+      existing.codexCredentialVersion = crypto.randomUUID();
+      delete existing.accessToken;
+      delete existing.accessTokenExpiresAt;
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
@@ -267,6 +277,7 @@ export class CodexService {
         id: accountId,
         email,
         refreshToken,
+        codexCredentialVersion: crypto.randomUUID(),
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
         alias: String(payload.alias || ""),
         planType: String(payload.planType || ""),
@@ -284,8 +295,8 @@ export class CodexService {
     if (!r.ok || !r.id) return r;
     const probe = await this.probeCodexToken(String(payload?.email || "").trim(), String(payload?.refreshToken || "").trim());
     if (!probe.valid) {
-      setAccountEnabled(this.ctx.dataDir, "codex-accounts.json", r.id, false);
-      return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
+      return { ...r, ...(probe.disabled ? { enabled: false } : {}), tokenValid: false,
+        warning: `token 验证失败${probe.disabled ? ",已加入但置为停用" : ",账号已变更或保存失败，请重试"}: ${probe.error}` };
     }
     return { ...r, tokenValid: true };
   }
@@ -302,7 +313,10 @@ export class CodexService {
     const existing = accounts.find(
       (account: any) => String(account.email || "").toLowerCase() === fields.email.toLowerCase(),
     );
-    const updates: Record<string, unknown> = { enabled: fields.enabled };
+    const updates: Record<string, unknown> = {
+      enabled: fields.enabled, codexCredentialVersion: crypto.randomUUID(),
+      refreshToken: "", accessToken: undefined, accessTokenExpiresAt: undefined, sessionToken: undefined,
+    };
     if (fields.alias) updates.alias = fields.alias;
     if (fields.planType) updates.planType = fields.planType;
     if (fields.refreshToken) updates.refreshToken = fields.refreshToken;
@@ -420,8 +434,8 @@ export class CodexService {
     if (!r.ok || !r.id || !r.hasRefreshToken) return r;
     const probe = await this.probeCodexToken(String(r.email || ""), String(payload?.refreshToken || "").trim() || this.codexRefreshTokenOf(r.id));
     if (!probe.valid) {
-      setAccountEnabled(this.ctx.dataDir, "codex-accounts.json", r.id, false);
-      return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
+      return { ...r, ...(probe.disabled ? { enabled: false } : {}), tokenValid: false,
+        warning: `token 验证失败${probe.disabled ? ",已加入但置为停用" : ",账号已变更或保存失败，请重试"}: ${probe.error}` };
     }
     return { ...r, tokenValid: true };
   }
@@ -447,10 +461,9 @@ export class CodexService {
         .map(async (row: any) => {
           const probe = await this.probeCodexToken(String(row.email || ""), this.codexRefreshTokenOf(row.id));
           if (!probe.valid) {
-            setAccountEnabled(this.ctx.dataDir, "codex-accounts.json", row.id, false);
             row.tokenValid = false;
             row.warning = probe.error;
-            disabled += 1;
+            if (probe.disabled) disabled += 1;
           } else {
             row.tokenValid = true;
           }
@@ -466,24 +479,34 @@ export class CodexService {
     return String(acc?.refreshToken || "");
   }
 
-  /** codex:用 refresh_token 刷一次 access_token,验证有效性(强制刷新,不吃缓存)。 */
+  /** Reuse a valid imported token; persist any required rotation immediately. */
   private async probeCodexToken(
     email: string,
     refreshToken: string,
-  ): Promise<{ valid: boolean; error?: string }> {
+  ): Promise<{ valid: boolean; error?: string; disabled?: boolean }> {
+    const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
+    let stored: any;
     try {
-      const data = readJson(path.join(this.ctx.dataDir, "codex-accounts.json"), { accounts: [] });
-      const stored = (Array.isArray(data.accounts) ? data.accounts : []).find((a: any) => String(a.email || "").toLowerCase() === email.toLowerCase());
-      await refreshCodexAccessToken({ ...stored, email, refreshToken, accessToken: undefined, accessTokenExpiresAt: undefined } as any);
+      const data = readJson(filePath, { accounts: [] });
+      stored = (Array.isArray(data.accounts) ? data.accounts : []).find((a: any) => String(a.email || "").toLowerCase() === email.toLowerCase());
+      if (!stored || String(stored.refreshToken || "") !== refreshToken) throw new CodexLocalCredentialError("账号凭据已更改，请重试");
+      await refreshCodexAccessToken(stored, { accountsFilePath: filePath });
       return { valid: true };
     } catch (err: any) {
-      return { valid: false, error: String(err?.message || err) };
+      let disabled = false;
+      if (stored && !(err instanceof CodexLocalCredentialError)) {
+        try {
+          updateCodexStoredAccount(filePath, stored, (current) => { current.enabled = false; });
+          disabled = true;
+        } catch { /* An obsolete probe must not disable a newer authorization. */ }
+      }
+      return { valid: false, disabled, error: String(err?.message || err) };
     }
   }
 
   /**
-   * 后台「刷新」(codex 单账号)= 强制刷新 token + 拉额度。先刷 token(回写 access/refresh
-   * token + 到期),再用新 token 拉上游 wham/usage 落盘 5h/周余量。token 刷新成功即算成功:
+   * 后台「刷新」复用有效 token 拉额度；过期或确定 401 时统一刷新并先落盘凭据。
+   * 再用 token 拉上游 wham/usage 落盘 5h/周余量。token 刷新成功即算成功:
    * 额度接口失败(如号被上游封)只回带 quotaError,不否定 token 已刷新这件事。
    */
   async refreshCodexAccountQuota(payload: any) {
@@ -491,80 +514,78 @@ export class CodexService {
     const filePath = path.join(this.ctx.dataDir, "codex-accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
-    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    let acc = accounts.find((a: any) => Number(a.id) === accountId);
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
       // Carry proxyUrl so both the token refresh and the usage probe egress
       // through the account's exit proxy (same IP as inference) when one is set.
-      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
-      const token = await refreshCodexAccessToken(probe);
-      acc.accessToken = token;
-      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
-      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
-      this.clearCodexAutoLoginFields(acc);
-
-      const snap = await fetchCodexQuotaUpstream(token, acc.proxyUrl, acc);
+      assertCodexAccountMaintenanceAllowed(acc);
+      const snap = await withCodexAccessToken(acc, filePath, (token) => fetchCodexQuotaUpstream(token, acc.proxyUrl, acc));
       if (!snap) {
         // token 已刷新成功并落盘;仅额度接口失败 → 仍算成功,回带 quotaError 让前端提示。
-        writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+        updateCodexStoredAccount(filePath, acc, (current) => this.clearCodexAutoLoginFields(current));
         return { ok: true, email: acc.email, tokenValid: true, quotaError: "上游额度获取失败(usage 接口无数据或被拒)" };
       }
       // 落盘:与 codex.provider.applyQuotaSnapshot 同口径 —— known/keep-prior。
       // 上游缺窗口/缺 used_percent 时 codex-usage 报 -1(未知)。绝不能把 -1 或伪造的 100 落盘覆盖
       // 真实值:未知窗口保留上次真实值,只持久化本次学到的窗口。否则控制台点一次「获取额度」就能把
       // 真实值刷成假满血,污染 fair-share 基线(见 fairshare-quota-root-cause)。
-      if (snap.planType) acc.planType = snap.planType;
-      const cq = snap.codexQuota;
-      const previousHourly = Number(acc.codexHourlyPercent ?? -1);
-      const previousWeekly = Number(acc.codexWeeklyPercent ?? -1);
-      const previousBinding = codexBindingWindow(previousHourly, previousWeekly);
-      if (typeof cq.hourlyPresent === "boolean") acc.codexHourlyPresent = cq.hourlyPresent;
-      if (typeof cq.weeklyPresent === "boolean") acc.codexWeeklyPresent = cq.weeklyPresent;
-      acc.codexQuotaObservedAt = Date.now();
-      if (cq.hourlyPresent === false) {
-        delete acc.codexHourlyPercent;
-        delete acc.codexHourlyResetTime;
-      }
-      if (cq.weeklyPresent === false) {
-        delete acc.codexWeeklyPercent;
-        delete acc.codexWeeklyResetTime;
-      }
-      const hourlyKnown = Number.isFinite(cq.hourlyPercent) && cq.hourlyPercent >= 0;
-      const weeklyKnown = Number.isFinite(cq.weeklyPercent) && cq.weeklyPercent >= 0;
-      const presenceKnown = cq.hourlyPresent !== undefined || cq.weeklyPresent !== undefined;
-      if (hourlyKnown || weeklyKnown || presenceKnown) {
-        const prevHourly = Number(acc.codexHourlyPercent ?? -1);
-        const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
-        const hourly = hourlyKnown ? cq.hourlyPercent : prevHourly;
-        const weekly = weeklyKnown ? cq.weeklyPercent : prevWeekly;
-        // binding = 更紧的 KNOWN 窗口;一侧未知(-1)则另一侧 binds。
-        let weeklyBinds: boolean;
-        if (hourly < 0) weeklyBinds = true;
-        else if (weekly < 0) weeklyBinds = false;
-        else weeklyBinds = weekly < hourly;
-        const bindingPercent = weeklyBinds ? weekly : hourly;
-        const bindingWindow = codexBindingWindow(hourly, weekly);
-        const bindingReset = weeklyBinds
-          ? (weeklyKnown ? cq.weeklyResetTime : String(acc.codexWeeklyResetTime || ""))
-          : (hourlyKnown ? cq.hourlyResetTime : String(acc.codexHourlyResetTime || ""));
-        if (bindingPercent >= 0) acc.modelQuotaFractions = { codex: bindingPercent / 100 };
-        else if (acc.modelQuotaFractions) delete acc.modelQuotaFractions.codex;
-        if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
-        else if ((bindingPercent < 0 || (presenceKnown && previousBinding !== null && bindingWindow !== null && previousBinding !== bindingWindow))
-          && acc.modelQuotaResetTimes) delete acc.modelQuotaResetTimes.codex;
-        acc.modelQuotaRefreshedAt = Date.now();
-        // 只写本次学到的窗口,未知窗口保留旧值。
-        if (hourlyKnown) {
-          acc.codexHourlyPercent = cq.hourlyPercent;
-          acc.codexHourlyResetTime = cq.hourlyResetTime || "";
+      let hourlyKnown = false;
+      let weeklyKnown = false;
+      acc = updateCodexStoredAccount(filePath, acc, (acc) => {
+        this.clearCodexAutoLoginFields(acc);
+        if (snap.planType) acc.planType = snap.planType;
+        const cq = snap.codexQuota;
+        const previousHourly = Number(acc.codexHourlyPercent ?? -1);
+        const previousWeekly = Number(acc.codexWeeklyPercent ?? -1);
+        const previousBinding = codexBindingWindow(previousHourly, previousWeekly);
+        if (typeof cq.hourlyPresent === "boolean") acc.codexHourlyPresent = cq.hourlyPresent;
+        if (typeof cq.weeklyPresent === "boolean") acc.codexWeeklyPresent = cq.weeklyPresent;
+        acc.codexQuotaObservedAt = Date.now();
+        if (cq.hourlyPresent === false) {
+          delete acc.codexHourlyPercent;
+          delete acc.codexHourlyResetTime;
         }
-        if (weeklyKnown) {
-          acc.codexWeeklyPercent = cq.weeklyPercent;
-          acc.codexWeeklyResetTime = cq.weeklyResetTime || "";
+        if (cq.weeklyPresent === false) {
+          delete acc.codexWeeklyPercent;
+          delete acc.codexWeeklyResetTime;
         }
-      }
-      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+        hourlyKnown = Number.isFinite(cq.hourlyPercent) && cq.hourlyPercent >= 0;
+        weeklyKnown = Number.isFinite(cq.weeklyPercent) && cq.weeklyPercent >= 0;
+        const presenceKnown = cq.hourlyPresent !== undefined || cq.weeklyPresent !== undefined;
+        if (hourlyKnown || weeklyKnown || presenceKnown) {
+          const prevHourly = Number(acc.codexHourlyPercent ?? -1);
+          const prevWeekly = Number(acc.codexWeeklyPercent ?? -1);
+          const hourly = hourlyKnown ? cq.hourlyPercent : prevHourly;
+          const weekly = weeklyKnown ? cq.weeklyPercent : prevWeekly;
+          // binding = 更紧的 KNOWN 窗口;一侧未知(-1)则另一侧 binds。
+          let weeklyBinds: boolean;
+          if (hourly < 0) weeklyBinds = true;
+          else if (weekly < 0) weeklyBinds = false;
+          else weeklyBinds = weekly < hourly;
+          const bindingPercent = weeklyBinds ? weekly : hourly;
+          const bindingWindow = codexBindingWindow(hourly, weekly);
+          const bindingReset = weeklyBinds
+            ? (weeklyKnown ? cq.weeklyResetTime : String(acc.codexWeeklyResetTime || ""))
+            : (hourlyKnown ? cq.hourlyResetTime : String(acc.codexHourlyResetTime || ""));
+          if (bindingPercent >= 0) acc.modelQuotaFractions = { codex: bindingPercent / 100 };
+          else if (acc.modelQuotaFractions) delete acc.modelQuotaFractions.codex;
+          if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
+          else if ((bindingPercent < 0 || (presenceKnown && previousBinding !== null && bindingWindow !== null && previousBinding !== bindingWindow))
+            && acc.modelQuotaResetTimes) delete acc.modelQuotaResetTimes.codex;
+          acc.modelQuotaRefreshedAt = Date.now();
+          // 只写本次学到的窗口,未知窗口保留旧值。
+          if (hourlyKnown) {
+            acc.codexHourlyPercent = cq.hourlyPercent;
+            acc.codexHourlyResetTime = cq.hourlyResetTime || "";
+          }
+          if (weeklyKnown) {
+            acc.codexWeeklyPercent = cq.weeklyPercent;
+            acc.codexWeeklyResetTime = cq.weeklyResetTime || "";
+          }
+        }
+      });
       return {
         ok: true,
         email: acc.email,
@@ -603,6 +624,8 @@ export class CodexService {
     const data = readJson(filePath, { accounts: [] });
     const acc = data.accounts?.find((a: any) => Number(a.id) === accountId);
     if (!acc) return { ok: false, error: "账号不存在" };
+    try { assertCodexAccountMaintenanceAllowed(acc); }
+    catch { return { ok: false, error: "母号已暂停维护，请先完成管理员复核" }; }
     const now = Date.now();
     const recent = (time: unknown, ttl: number) => Number(time) > 0
       && now >= Number(time) && now - Number(time) < ttl;
@@ -632,29 +655,18 @@ export class CodexService {
     // Re-read immediately before each write: upstream requests must not overwrite
     // quota updates, edits, or removals made while they were in flight.
     const persist = (patch: Record<string, unknown>) => {
-      const current = readJson(filePath, { accounts: [] });
-      const account = current.accounts?.find((a: any) => Number(a.id) === accountId);
-      if (!account) throw new Error("账号已删除");
-      Object.assign(account, patch);
-      writeJson(filePath, { ...current, updatedAt: nowIso() });
-      return account;
+      return updateCodexStoredAccount(filePath, acc, (account) => Object.assign(account, patch));
     };
     let token: string;
     try {
-      const probe = { ...acc };
-      token = await refreshCodexAccessToken(probe);
-      persist({
-        accessToken: token,
-        accessTokenExpiresAt: probe.accessTokenExpiresAt,
-        ...(probe.refreshToken ? { refreshToken: probe.refreshToken } : {}),
-      });
+      token = await refreshCodexAccessToken(acc, { accountsFilePath: filePath });
     } catch {
       return { ok: false, error: "母号凭据不可用，请先刷新凭据或重新登录" };
     }
     const creditsInvalidatedAt = Number(acc.resetCreditsInvalidatedAt || 0);
     const [subscription, credits] = await Promise.allSettled([
-      refreshSubscription ? fetchCodexSubscription(token, acc.proxyUrl, acc) : Promise.resolve(null),
-      refreshCredits ? fetchCodexResetCredits(token, acc.proxyUrl, acc) : Promise.resolve(null),
+      refreshSubscription ? withCodexAccessToken(acc, filePath, (fresh) => fetchCodexSubscription(fresh, acc.proxyUrl, acc), token) : Promise.resolve(null),
+      refreshCredits ? withCodexAccessToken(acc, filePath, (fresh) => fetchCodexResetCredits(fresh, acc.proxyUrl, acc), token) : Promise.resolve(null),
     ]);
     const patch: Record<string, unknown> = {};
     if (refreshSubscription) Object.assign(patch, {
@@ -680,7 +692,8 @@ export class CodexService {
         } : { resetCreditsError: "重置卡查询失败，请稍后重试" }),
       });
     }
-    return resultFrom(persist(patch), true);
+    try { return resultFrom(persist(patch), true); }
+    catch { return { ok: false, error: "账号信息已变更或保存失败，请重试" }; }
   }
 
   /** Query spendable reset credits for the existing manual-reset dialog. */
@@ -693,23 +706,16 @@ export class CodexService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
-      const token = await refreshCodexAccessToken(probe);
-      acc.accessToken = token;
-      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
-      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
-      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-
-      const snap = await fetchCodexResetCredits(token, acc.proxyUrl, acc);
-      const current = readJson(filePath, { accounts: [] });
-      const queriedAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
-      if (queriedAccount && Number(queriedAccount.resetCreditsInvalidatedAt || 0) === Number(acc.resetCreditsInvalidatedAt || 0)) {
-        Object.assign(queriedAccount, {
-          resetCreditsAvailableCount: snap.availableCount, resetCreditsNextExpiresAt: snap.nextExpiresAt ?? null,
-          resetCreditsCheckedAt: Date.now(), resetCreditsAttemptedAt: Date.now(), resetCreditsError: "",
+      assertCodexAccountMaintenanceAllowed(acc);
+      const snap = await withCodexAccessToken(acc, filePath, (token) => fetchCodexResetCredits(token, acc.proxyUrl, acc));
+      updateCodexStoredAccount(filePath, acc, (queriedAccount) => {
+        if (Number(queriedAccount.resetCreditsInvalidatedAt || 0) === Number(acc.resetCreditsInvalidatedAt || 0)) {
+          Object.assign(queriedAccount, {
+            resetCreditsAvailableCount: snap.availableCount, resetCreditsNextExpiresAt: snap.nextExpiresAt ?? null,
+            resetCreditsCheckedAt: Date.now(), resetCreditsAttemptedAt: Date.now(), resetCreditsError: "",
         });
-        writeJson(filePath, { ...current, updatedAt: nowIso() });
       }
+      });
       return {
         ok: true,
         email: acc.email,
@@ -735,23 +741,20 @@ export class CodexService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { ...acc, accessToken: undefined, accessTokenExpiresAt: undefined };
-      const token = await refreshCodexAccessToken(probe);
-      acc.accessToken = token;
-      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
-      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
-      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+      assertCodexAccountMaintenanceAllowed(acc);
+      const token = await refreshCodexAccessToken(acc, { accountsFilePath: filePath });
 
       await consumeResetCreditUpstream(token, acc.proxyUrl, acc);
-      const current = readJson(filePath, { accounts: [] });
-      const resetAccount = current.accounts?.find((a: any) => Number(a.id) === accountId);
-      if (resetAccount) {
+      try { updateCodexStoredAccount(filePath, acc, (resetAccount) => {
         Object.assign(resetAccount, {
           resetCreditsCheckedAt: 0, resetCreditsAttemptedAt: 0, resetCreditsAvailableCount: null,
           resetCreditsNextExpiresAt: null, resetCreditsError: "",
           resetCreditsInvalidatedAt: Math.max(Date.now(), Number(resetAccount.resetCreditsInvalidatedAt || 0) + 1),
         });
-        writeJson(filePath, { ...current, updatedAt: nowIso() });
+      }); } catch {
+        // The spend has already succeeded. Never invite a second spend because
+        // the account was edited or the local cache could not be invalidated.
+        return { ok: true, email: acc.email, quotaError: "重置已成功，但账号已变更或本地保存失败，请重新查询额度" };
       }
       // 重置后额度已变,拉一次落盘(失败不影响重置本身已成功)。
       const refreshed = (await this.refreshCodexAccountQuota({ accountId }).catch(() => null)) as

@@ -11,6 +11,8 @@
  * 热路径里每请求一次的纯内存 push;recordBan 是 fire-and-forget,prisma 失败也绝不抛。
  */
 
+import { redactLogText } from "./log-redaction";
+
 const DEFAULT_RING_SIZE = 200;
 const BODY_MAX = 1000;
 
@@ -101,9 +103,9 @@ export class BanEventTracker {
           provider: e.provider,
           accountId: e.accountId,
           accountEmail: e.accountEmail || "",
-          reason: e.reason || "",
+          reason: redactLogText(e.reason),
           upstreamStatus: Number(e.upstreamStatus || 0),
-          upstreamBody: String(e.upstreamBody || "").slice(0, BODY_MAX),
+          upstreamBody: redactLogText(e.upstreamBody, BODY_MAX),
           modelKey: e.modelKey || "",
           deathStrikes: Number(e.deathStrikes || 0),
           requests: {

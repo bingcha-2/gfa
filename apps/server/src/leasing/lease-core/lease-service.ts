@@ -1,5 +1,8 @@
 import * as crypto from "crypto";
 import * as fs from "fs";
+import { isDeepStrictEqual } from "node:util";
+import { CodexLocalCredentialError, codexCredentialStamp } from "../remote-codex/auth/codex-account-store";
+import { CodexAccountPatches } from "./codex-account-patches";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { sharedClientUsageSummaryCache } from "../account/portal/client-usage-summary-cache";
@@ -40,7 +43,7 @@ import { bucketKey } from "./product-bucket";
 import { fairShareDenialMessage } from "./fair-share-message";
 import type { Provider, ProviderQuotaSnapshotInput } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
-import { readCodexDiagnostic, codexHealthKind, type CodexDiagnostic } from "./codex-health";
+import { readCodexDiagnostic, codexHealthKind, codexAccountRestrictionCode, codexAccountRestrictionKind, readCodexAccountRestriction, type CodexDiagnostic } from "./codex-health";
 
 export type TokenUsageTracker = {
   getAccountUsageTotals?: (product: string) => Promise<Map<string, {
@@ -223,6 +226,7 @@ export type LeaseServiceOptions = {
 };
 
 type LeaseRecord = {
+  credentialStamp?: string;
   affinityClientId?: string;
   leaseId: string;
   accountId: number;
@@ -248,6 +252,7 @@ type LeaseRecord = {
 };
 
 type LeaseProofPayload = {
+  credentialStamp?: string;
   v: 1;
   provider: string;
   leaseId: string;
@@ -426,6 +431,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private _cachedAccounts: TAccount[] | null = null;
   private _cachedMtimeMs = 0;
   private _accountsDirty = false;
+  private readonly codexAccountPatches = new CodexAccountPatches();
   private _accountsSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private subscriptionScheduler: SubscriptionScheduler | null = null;
 
@@ -695,8 +701,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       try {
         // Carry the account's exit proxy so the catalog fetch pins the same
         // egress IP as inference (fail-closed for anthropic).
-        const token = await this.provider.refreshToken(account);
-        return { token, proxyUrl: (account as any).proxyUrl, headers: this.provider.upstreamIdentityHeaders?.(account), egressRequired: this.provider.egressPolicy === "required" || this.provider.requiresEgress?.(account) === true };
+        const fresh = await this.refreshAccountCredentials(account);
+        return { token: fresh.token, proxyUrl: (fresh.account as any).proxyUrl, headers: this.provider.upstreamIdentityHeaders?.(fresh.account), egressRequired: this.provider.egressPolicy === "required" || this.provider.requiresEgress?.(fresh.account) === true };
       } catch {
         return { token: "" };
       }
@@ -993,7 +999,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
       try {
         const refreshBefore = (account as any).refreshToken;
-        accessToken = await this.provider.refreshToken(account);
+        const refreshed = await this.refreshAccountCredentials(account);
+        account = refreshed.account;
+        accessToken = refreshed.token;
         rotated = refreshBefore !== (account as any).refreshToken;
         const runtime = this.ensureRuntime(account.id);
         runtime.consecutiveErrors = 0;
@@ -1001,6 +1009,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         lastError = null;
         break;
       } catch (error) {
+        if (error instanceof CodexLocalCredentialError) {
+          // Disk/conflict/review failures are not upstream authentication deaths
+          // and retrying other accounts cannot repair local storage.
+          throw this.fail(503, error.message);
+        }
         lastError = error instanceof Error ? error : new Error(String(error));
         this.markAccountTokenError(account.id, lastError.message);
         this.clearAffinity(account.id, affinityClientId, modelKey);
@@ -1019,10 +1032,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       throw this.fail(503, lastError?.message || this.poolUnavailableMessage(modelKey));
     }
 
-    this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
+    if (!this.coordinatedCodexCredentials) {
+      this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
     // A rotated refresh_token is the one field we can't afford to lose to the
     // debounce window — persist it now so a crash can't strand it in memory.
-    if (rotated) this.flushAccounts();
+      if (rotated) this.flushAccounts();
+    }
     // A successful lease means the account is alive again — clear any persisted
     // dead verdict so it doesn't get re-marked on the next restart.
     this.clearPersistedAccountError(account.id);
@@ -1218,6 +1233,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       return "此卡绑定的账号不可用（不存在或已禁用），请联系客服";
     }
     const runtime = this.accountRuntime.get(boundAccountId);
+    if (this.provider.id === "codex" && readCodexAccountRestriction(runtime || acct)) {
+      return runtime?.quotaStatusReason === "verification_required"
+        ? "此卡绑定的账号报告需要验证，已暂停使用，请联系管理员完成验证并复核恢复"
+        : "此卡绑定的账号报告停用异常，已暂停使用，请联系管理员复核恢复";
+    }
     // 永久死亡(项目删/禁、封号、地区不支持):首次命中时 quotaStatus 还是 "exhausted"
     // (尚未升级到 "error"),但它绝不会自愈 —— 别再显示"额度恢复中"误导用户白等首档
     // 冷却,直接给可操作的 block 文案(含"联系客服" → 客户端红 banner)。
@@ -2082,11 +2102,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       if (lease) {
         lease.released = true;
         this.enterpriseProbe.reportResult(lease.email, false);
-        this.clearAffinity(accountId, lease.affinityClientId || lease.clientId, modelKey);
+        if (this.provider.id !== "codex" || (status !== 429 && status !== 503)) {
+          this.clearAffinity(accountId, lease.affinityClientId || lease.clientId, modelKey);
+        }
       }
       if (accountId) {
         const reportedReason = String(payload?.reason || "");
-        if ((status === 403 || status === 400) && isPermanentDeathReason(reportedReason)) {
+        if (this.provider.id === "codex" && lease && codexAccountRestrictionCode(reportedReason)) {
+          this.holdCodexAccountForReview(lease, reportedReason, status, String(payload?.errorText || ""));
+        } else if (this.provider.id !== "codex" && (status === 403 || status === 400) && isPermanentDeathReason(reportedReason)) {
           // 账号/项目级永久死亡(service_disabled / 封号 / 地区不支持):reason 细分 +
           // 计数升级,别再当 60s/30s 瞬时(详见 markAccountPermanentDeath)。
           this.markAccountPermanentDeath(accountId, reportedReason);
@@ -2104,20 +2128,18 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
               deathStrikes: this.accountRuntime.get(accountId)?.deathStrikes ?? 0,
             });
           }
-        } else if (status === 403 && reportedReason.includes("verification")) {
+        } else if (this.provider.id !== "codex" && status === 403 && reportedReason.includes("verification")) {
           // 验证挑战:号被 Google 风控,【要人去验证】才能用,不是 60s 能自愈的瞬时错误。
           // 标成"需验证/不可用"状态(控制台红点 + "需验证"标签)+ 持久化,30min 后自动复检;
           // 验证通过后一次成功(markAccountSuccess,verification 不在不复活名单)即解封。
           this.markAccountVerificationRequired(accountId);
         } else if (status === 429 || status === 503) {
           const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
-          // 瞬时限速 429(账号额度未耗尽)与额度耗尽 429 必须分开处理:前者账号是健康的,
-          // 几秒即恢复 —— 一点不冷却、不踢出轮换,下个请求立刻还能用它(本次由客户端轮换到别的号)。
-          // 也不拿它当 quota-profile 样本(账号仍有额度,会污染学到的预算)。
-          // 只有真·额度耗尽 / 503 容量才进入下面的「冷却到配额窗口 + 采样」路径。
-          // 零冷却仅限 opt-in 的 provider(anthropic/codex);antigravity 不 opt-in → 其 429
-          // 一律走下面的冷却路径(this.provider.rateLimitZeroCooldown falsy)。
-          if (
+          // Codex transient rate limits use bounded backoff on both report formats.
+          // Other providers keep their existing opt-in zero-cooldown behavior.
+          if (this.provider.id === "codex" && status === 429 && this.isRateLimit429(reason, accountId, modelKey, retryAfterMs)) {
+            this.markAccountExhausted(accountId, modelKey, "codex_rate_limit", this.codexRateLimitCooldown(retryAfterMs));
+          } else if (
             status === 429
             && this.provider.rateLimitZeroCooldown
             && this.isRateLimit429(reason, accountId, modelKey, retryAfterMs)
@@ -2125,7 +2147,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             // no-op:健康号不动它(零冷却)。
           } else {
             const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
-            this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
+            this.markAccountExhausted(accountId, modelKey, this.provider.id === "codex" ? (status === 503 ? "codex_capacity" : "codex_" + reason) : reason, cooldownMs);
           }
         } else if (status === 403) {
           const reason = String(payload?.reason || "http_403");
@@ -2144,7 +2166,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           // on the dead token). If the refresh token is also dead, the next lease's
           // refresh fails → account marked "error" → clean "鉴权失效" message.
           if (status === 401) {
-            this.mutateAccount(accountId, (account) => {
+            if (this.provider.id === "codex" && lease) this.invalidateCodexLeaseToken(lease);
+            else this.mutateAccount(accountId, (account) => {
               const a = account as any;
               a.accessToken = "";
               a.accessTokenExpiresAt = 0;
@@ -2217,6 +2240,43 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return { ok: true, reloaded: true };
   }
 
+  private get coordinatedCodexCredentials(): boolean {
+    return this.provider.id === "codex" && this.provider.persistsRefreshedCredentials === true;
+  }
+
+  private async refreshAccountCredentials(account: TAccount): Promise<{ account: TAccount; token: string }> {
+    if (!this.coordinatedCodexCredentials) return { account, token: await this.provider.refreshToken(account) };
+    // The provider commits credentials before returning. Never dirty the cached
+    // pre-await account or copy its configuration over the authoritative record.
+    const refreshed = structuredClone(account);
+    const token = await this.provider.refreshToken(refreshed);
+    this._cachedAccounts = null;
+    const current = this.readAccounts().find((candidate) => candidate.id === account.id);
+    if (!current || codexCredentialStamp(current) !== codexCredentialStamp(refreshed)
+      || (current as any).accessToken !== token || (current as any).enabled === false
+      || readCodexAccountRestriction(current)) {
+      throw new CodexLocalCredentialError("Codex account changed during credential refresh; retry after review");
+    }
+    return { account: current, token };
+  }
+
+  private invalidateCodexLeaseToken(lease: LeaseRecord): void {
+    if (!this.coordinatedCodexCredentials) {
+      this.mutateAccount(lease.accountId, (account) => ({ ...account, accessToken: "", accessTokenExpiresAt: 0 }));
+      return;
+    }
+    // Older proofs cannot establish which credential was rejected. Do not clear
+    // a newer authorization based solely on an account id and a late 401.
+    if (!lease.credentialStamp) return;
+    this._cachedAccounts = null;
+    this.mutateAccount(lease.accountId, (account) => codexCredentialStamp(account) === lease.credentialStamp
+      ? { ...account, accessToken: "", accessTokenExpiresAt: 0 } : account);
+    // The refresh coordinator reloads disk, so invalidation must be visible
+    // before the next refresh. Existing retryable dirty writes handle failure.
+    try { this.flushAccounts(); }
+    catch { /* keep dirty patches for the existing persistence retry timer */ this.markAccountsDirty(); }
+  }
+
   protected readAccounts(): TAccount[] {
     try {
       const stat = fs.statSync(this.accountsFilePath);
@@ -2230,7 +2290,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     const data = readJsonFile(this.accountsFilePath);
     const accounts = Array.isArray(data) ? data : Array.isArray(data.accounts) ? data.accounts : [];
-    this._cachedAccounts = accounts.map((account: any) => this.provider.normalizeAccount(account));
+    const normalized = accounts.map((account: any) => this.provider.normalizeAccount(account));
+    this._cachedAccounts = (this.coordinatedCodexCredentials ? this.codexAccountPatches.apply(normalized) : normalized) as TAccount[];
     return this._cachedAccounts as TAccount[];
   }
 
@@ -2239,7 +2300,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!this._accountsSaveTimer) {
       this._accountsSaveTimer = setTimeout(() => {
         this._accountsSaveTimer = null;
-        this.flushAccounts();
+        try {
+          this.flushAccounts();
+        } catch (err) {
+          console.error("[lease-service] account persistence failed; retrying in 60s:", err);
+          this.markAccountsDirty();
+        }
       }, ACCOUNTS_FLUSH_MS);
     }
   }
@@ -2249,7 +2315,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const accounts = this.readAccounts();
     const idx = accounts.findIndex((a) => a.id === accountId);
     if (idx < 0) return;
-    accounts[idx] = updater({ ...accounts[idx] });
+    if (this.coordinatedCodexCredentials) {
+      const before = structuredClone(accounts[idx]);
+      const after = updater(structuredClone(before));
+      if (isDeepStrictEqual(before, after)) return;
+      this.codexAccountPatches.record(before, after);
+      accounts[idx] = after;
+    } else accounts[idx] = updater({ ...accounts[idx] });
     this._cachedAccounts = accounts;
     this.markAccountsDirty();
   }
@@ -2267,7 +2339,21 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       this._accountsSaveTimer = null;
     }
     if (!this._accountsDirty || !this._cachedAccounts) return;
-    this._accountsDirty = false;
+
+    if (this.coordinatedCodexCredentials) {
+      // Always merge from disk, even if mtime resolution misses another write.
+      // Missing/invalid storage must never recreate deleted accounts from cache.
+      const previous = JSON.parse(fs.readFileSync(this.accountsFilePath, "utf8").replace(/^\uFEFF/, ""));
+      const disk = Array.isArray(previous) ? previous : previous?.accounts;
+      if (!Array.isArray(disk)) throw new CodexLocalCredentialError("Codex account store is invalid");
+      const accounts = this.codexAccountPatches.apply(disk);
+      writeJsonFile(this.accountsFilePath, Array.isArray(previous) ? accounts : { ...previous, accounts });
+      this.codexAccountPatches.clear();
+      this._accountsDirty = false;
+      this._cachedAccounts = null;
+      this.readAccounts();
+      return;
+    }
 
     const previous = readJsonFile(this.accountsFilePath);
     let externallyChanged = false;
@@ -2285,6 +2371,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     const value = Array.isArray(previous) ? accounts : { ...previous, accounts };
     writeJsonFile(this.accountsFilePath, value);
+    this._accountsDirty = false;
 
     // Re-sync the cache from what we just wrote (normalized) and record its mtime,
     // so cache == disk and the next external-change check is accurate.
@@ -2661,6 +2748,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       leaseId: this.randomId(),
       accountId: account.id,
       accountKey: quotaEstimatorAccountKey(this.provider.id, account.email, this.leaseProofSecret),
+      credentialStamp: this.coordinatedCodexCredentials ? codexCredentialStamp(account) : undefined,
       ...(boundAccountId > 0 ? { homeAccountId: boundAccountId } : {}),
       ...(overflowReason ? { overflow: true, overflowReason } : {}),
       email: account.email,
@@ -2714,6 +2802,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       leaseId: lease.leaseId,
       accountId: lease.accountId,
       accountKey: lease.accountKey,
+      credentialStamp: lease.credentialStamp,
       homeAccountId: lease.homeAccountId,
       overflow: lease.overflow,
       overflowReason: lease.overflowReason,
@@ -2782,6 +2871,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // numeric fallback, but do not feed the estimator because a pool reload
       // may have reassigned that number to a different mother account.
       accountKey: frozenAccountKey,
+      credentialStamp: typeof proof.credentialStamp === "string" && /^[a-f0-9]{64}$/.test(proof.credentialStamp) ? proof.credentialStamp : undefined,
       homeAccountId: Number(proof.homeAccountId || 0) || undefined,
       overflow: proof.overflow === true,
       overflowReason: String(proof.overflowReason || "") || undefined,
@@ -2892,15 +2982,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 必须拦(并由 boundUnavailableMessage 给"联系客服"文案)。这不属于"冷却",不受 ignoreCooldown 影响。
     if (state.quotaStatus === "error") return true;
 
-    // 绑定卡(ignoreCooldown):只有这一个号、无号可换,429/503 这类【可恢复冷却】对它毫无意义 ——
-    // 预先拦只会让卡白白不可用。一律忽略冷却,直接放行去试真上游;真不行就由上游回错,
-    // 客户端自己重试/退避。冷却只对【池子卡】(有备用号可轮换)才有价值。
-    if (ignoreCooldown) {
-      const block = state.blockedModels.get(normalizeModelKey(modelKey));
-      // New Codex health reports carry bounded backoff even for a fixed account.
-      // Older provider cooldown behavior remains unchanged.
-      return this.provider.id === "codex" && !!block && block.reason.startsWith("codex_") && block.blockedUntil > now;
-    }
+    // Fixed Codex accounts must respect both modern and legacy backoff; otherwise
+    // a cached/older client can immediately send another request to the same account.
+    // Other providers preserve their existing fixed-account bypass.
+    if (ignoreCooldown && this.provider.id !== "codex") return false;
 
     if ((state.quotaStatus === "exhausted" || state.quotaStatus === "cooling") && state.exhaustedUntil > now) {
       // Account-wide cooldown (failure recorded without a model key) blocks everything.
@@ -2918,6 +3003,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private cleanupExpiredBlocks(accountId: number, now: number) {
     const state = this.accountRuntime.get(accountId);
     if (!state) return;
+    if (this.codexAccountNeedsReview(accountId)) return;
     for (const [key, block] of state.blockedModels) {
       if (block.blockedUntil > 0 && block.blockedUntil <= now) {
         state.blockedModels.delete(key);
@@ -2932,6 +3018,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   private markAccountTokenError(accountId: number, errorMessage: string) {
+    if (this.codexAccountNeedsReview(accountId)) return;
     const state = this.ensureRuntime(accountId);
     const wasError = state.quotaStatus === "error"; // 抓"首次升级 error"沿,避免重复落封号
     state.consecutiveErrors++;
@@ -3000,7 +3087,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * Without this, the stale quotaStatus=error on disk would re-mark the (now
    * healthy) account dead on the next restart. No-op on the common healthy path.
    */
-  private clearPersistedAccountError(accountId: number) {
+  private clearPersistedAccountError(accountId: number, reviewed = false) {
+    if (!reviewed && this.codexAccountNeedsReview(accountId)) return;
     const acct = this.readAccounts().find((a) => a.id === accountId) as any;
     if (!acct || acct.quotaStatus !== "error") return;
     const state = this.ensureRuntime(accountId);
@@ -3012,6 +3100,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       delete next.quotaStatus;
       delete next.quotaStatusReason;
       delete next.blockedUntil;
+      if (reviewed && this.provider.id === "codex") next.codexAccountReviewResolvedAt = this.now();
       return next as TAccount;
     });
     this.flushAccounts();
@@ -3035,14 +3124,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     state.deathStrikes = 0;
     state.tokenDeathStrikes = 0;
     state.blockedModels.clear();
-    this.clearPersistedAccountError(accountId);
+    this.clearPersistedAccountError(accountId, true);
     return { ok: true };
   }
 
   /**
    * After a manual token refresh proves the account's auth is alive again, clear
    * ONLY a persisted dead verdict (quotaStatus==="error": invalid_grant /
-   * consecutive_errors / verification_required) and put it back in the pool —
+   * consecutive_errors, plus non-Codex verification_required) and put it back in the pool —
    * sparing the operator a second "恢复" click after a successful "刷新".
    *
    * Also clears a PENDING invalid_grant soft strike (tokenDeathStrikes>0, still
@@ -3057,6 +3146,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    */
   reactivateIfAuthDead(accountId: number): { ok: boolean; reactivated: boolean } {
     if (!Number.isFinite(accountId) || accountId <= 0) return { ok: false, reactivated: false };
+    if (this.codexAccountNeedsReview(accountId)) return { ok: true, reactivated: false };
     const runtime = this.accountRuntime.get(accountId);
     const runtimeDead = runtime?.quotaStatus === "error";
     const strikePending = (runtime?.tokenDeathStrikes ?? 0) > 0;
@@ -3123,6 +3213,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   private markAccountExhausted(accountId: number, modelKey: string, reason: string, cooldownMs: number) {
+    if (this.codexAccountNeedsReview(accountId)) return;
     const state = this.ensureRuntime(accountId);
     const now = this.now();
     const normalized = normalizeModelKey(modelKey);
@@ -3163,6 +3254,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       return { ok: false, error: "invalid accountId" };
     }
 
+    // This bridge supplies no signed lease or credential generation. Do not
+    // invalidate a newer authorization or create a durable hold from an id alone.
+    if (this.provider.id === "codex" && codexAccountRestrictionCode(reason)) {
+      return { ok: true, action: "account_review_required" };
+    }
+    if (this.coordinatedCodexCredentials && status === 401) {
+      return { ok: true, action: "credential_review_required" };
+    }
+
     if ((status === 400 || status === 401) && reason.includes("invalid_grant")) {
       const state = this.ensureRuntime(accountId);
       state.tokenDeathStrikes = Math.max(state.tokenDeathStrikes, TOKEN_DEATH_STRIKE_THRESHOLD - 1);
@@ -3178,6 +3278,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     if (status === 429 || status === 503) {
       const classifiedReason = reason || (status === 429 ? "quota" : "capacity");
+      if (this.provider.id === "codex" && status === 429 && this.isRateLimit429(classifiedReason, accountId, modelKey, retryAfterMs)) {
+        this.markAccountExhausted(accountId, modelKey, "codex_rate_limit", this.codexRateLimitCooldown(retryAfterMs));
+        return { ok: true, action: "model_rate_limit" };
+      }
       const cooldownMs = this.cooldownForExhaustion(status, classifiedReason, retryAfterMs, accountId, modelKey);
       this.markAccountExhausted(accountId, modelKey, classifiedReason, cooldownMs);
       return { ok: true, action: status === 429 ? "model_quota" : "model_capacity" };
@@ -3198,6 +3302,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   private markAccountTransientError(accountId: number, modelKey: string, reason: string) {
+    if (this.codexAccountNeedsReview(accountId)) return;
     const state = this.ensureRuntime(accountId);
     state.transientErrors++;
     if (state.transientErrors < REMOTE_ACCOUNT_ERROR_THRESHOLD) return;
@@ -3222,6 +3327,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   private markAccountModelNotFound(accountId: number, modelKey: string) {
+    if (this.codexAccountNeedsReview(accountId)) return;
     const normalized = normalizeModelKey(modelKey);
     if (!normalized) {
       this.markAccountTransientError(accountId, modelKey, "model_not_found");
@@ -3291,12 +3397,60 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.persistQuotaStatus(accountId, state);
   }
 
+  private codexAccountNeedsReview(accountId: number): boolean {
+    if (this.provider.id !== "codex") return false;
+    const runtime = this.accountRuntime.get(accountId);
+    return !!readCodexAccountRestriction(runtime || this.readAccounts().find((a) => a.id === accountId));
+  }
+
+  private codexRateLimitCooldown(retryAfterMs: number): number {
+    return Math.min(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 10_000, RATE_LIMIT_MAX_RETRY_AFTER_MS);
+  }
+
+  /** A signed lease proves association, not the truth of client telemetry. Keep
+   * a persisted review hold without disabling credentials or declaring a ban. */
+  private holdCodexAccountForReview(lease: LeaseRecord, rawCode: string, status: number, errorText: string) {
+    const code = codexAccountRestrictionCode(rawCode);
+    if (!code) return;
+    const account = this.readAccounts().find((a) => a.id === lease.accountId) as any;
+    if (!account) return;
+    if (Number(account.codexAccountReviewResolvedAt || 0) >= lease.createdAt) return;
+    const wasHeld = this.codexAccountNeedsReview(lease.accountId);
+    const state = this.ensureRuntime(lease.accountId);
+    const now = this.now();
+    state.quotaStatus = "error";
+    if (!wasHeld) state.quotaStatusReason = codexAccountRestrictionKind(code) === "verification_required" ? "verification_required" : code;
+    state.exhaustedAt = wasHeld ? state.exhaustedAt : now;
+    state.exhaustedUntil = 0; // No automatic expiry or automatic probing.
+    for (const model of state.blockedModels.keys()) this.modelGates.clearModelGate(lease.accountId, model);
+    state.blockedModels.clear();
+    this.enterpriseProbe.reportResult(lease.email, false);
+    this.clearAffinity(lease.accountId, lease.affinityClientId || lease.clientId, lease.modelKey);
+    this.persistQuotaStatus(lease.accountId, state);
+    this.mutateAccount(lease.accountId, (a) => ({ ...a,
+      codexAccountReviewSource: "client_report",
+      codexAccountReviewFirstObservedAt: wasHeld ? Number((a as any).codexAccountReviewFirstObservedAt || now) : now,
+      codexAccountReviewLastObservedAt: now,
+      codexAccountReviewLastCode: code,
+    }));
+    this.flushAccounts();
+    if (!wasHeld && codexAccountRestrictionKind(code) === "account_disabled") {
+      this.banEventRecorder?.recordBan({ provider: this.provider.id, accountId: lease.accountId,
+        accountEmail: account.email, reason: code, upstreamStatus: status,
+        upstreamBody: errorText, modelKey: lease.modelKey, deathStrikes: 1 });
+    }
+  }
+
   private observeCodexHealth(lease: LeaseRecord, diagnostic: CodexDiagnostic, kind: string, status: number, retryAfterMs: number, startedAt: number, reportedReason = "", errorText = "") {
     // The signed lease, not a client-supplied account/model, authorizes changes.
     const model = lease.modelKey;
     // Validate model ownership before changing the ordering watermark. Off-model
     // WS telemetry remains in the request log, never in this model's health state.
     if (diagnostic.sentModel && normalizeModelKey(diagnostic.sentModel) !== normalizeModelKey(model)) return;
+    const accountCode = diagnostic.result !== "completed" || status >= 400
+      ? codexAccountRestrictionCode(diagnostic.errorCode) || codexAccountRestrictionCode(reportedReason)
+      : "";
+    if (accountCode) kind = codexAccountRestrictionKind(accountCode)!;
     const key = lease.accountId + ":" + normalizeModelKey(model);
     // Compare server-issued lease times across leases; within a WS lease use the
     // local monotonic turn sequence. Legacy clients retain their own clock domain
@@ -3322,22 +3476,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (previous) this.adjustCodexHealthCount(previous.kind, -1);
     this.adjustCodexHealthCount(kind, 1);
     this.codexModelHealth.set(key, { accountId: lease.accountId, model, kind, observedAt: this.now(), requestAt, leaseId: lease.leaseId, leaseCreatedAt: lease.createdAt, requestSequence: diagnostic.requestSequence });
-    const accountReason = isPermanentDeathReason(diagnostic.errorCode) ? diagnostic.errorCode : reportedReason;
-    if ((status === 400 || status === 403) && isPermanentDeathReason(accountReason)) {
-      this.enterpriseProbe.reportResult(lease.email, false);
-      this.clearAffinity(lease.accountId, lease.affinityClientId || lease.clientId, model);
-      this.markAccountPermanentDeath(lease.accountId, accountReason);
-      const account = this.readAccounts().find((a) => a.id === lease.accountId);
-      this.banEventRecorder?.recordBan({ provider: this.provider.id, accountId: lease.accountId,
-        accountEmail: (account as { email?: string } | undefined)?.email, reason: accountReason,
-        upstreamStatus: status, upstreamBody: errorText, modelKey: model,
-        deathStrikes: this.accountRuntime.get(lease.accountId)?.deathStrikes ?? 0 });
-      return;
-    }
-    if (status === 403 && (diagnostic.errorCode.includes("verification") || reportedReason.includes("verification"))) {
-      this.enterpriseProbe.reportResult(lease.email, false);
-      this.clearAffinity(lease.accountId, lease.affinityClientId || lease.clientId, model);
-      this.markAccountVerificationRequired(lease.accountId);
+    if (accountCode) {
+      this.holdCodexAccountForReview(lease, accountCode, status, errorText);
       return;
     }
     if (kind === "completed") {
@@ -3348,14 +3488,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // Model mismatch is observational until alias mapping is explicitly known.
     if (["invalid_prompt", "context_error", "incomplete", "model_mismatch", "observation_limited"].includes(kind)) return;
     if (status === 401) {
-      this.mutateAccount(lease.accountId, (account) => ({ ...account, accessToken: "", accessTokenExpiresAt: 0 }));
+      this.invalidateCodexLeaseToken(lease);
       return;
     }
     const hint = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 0;
     const cooldown = kind === "quota"
       ? this.cooldownForExhaustion(429, "quota_exhausted", hint, lease.accountId, model)
       : kind === "capacity" ? Math.min(hint || CAPACITY_COOLDOWN_MS || 10_000, 5 * 60_000)
-      : kind === "rate_limit" ? Math.min(hint || 10_000, RATE_LIMIT_MAX_RETRY_AFTER_MS)
+      : kind === "rate_limit" ? this.codexRateLimitCooldown(hint)
       : 5_000;
     if (model) this.markAccountExhausted(lease.accountId, model, "codex_" + (kind === "transport" || kind === "upstream_error" ? "capacity_transport" : kind), cooldown);
   }
@@ -3363,6 +3503,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private markAccountSuccess(accountId: number, modelKey: string) {
     const state = this.accountRuntime.get(accountId);
     if (!state) return;
+    if (this.codexAccountNeedsReview(accountId)) return;
 
     state.consecutiveErrors = 0;
     state.transientErrors = 0;

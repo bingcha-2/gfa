@@ -207,6 +207,29 @@ describe("LeaseService (generic core)", () => {
     } finally { service.onModuleDestroy(); }
   });
 
+  it("keeps dirty accounts after a disk failure and retries the timer without crashing", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T00:00:00Z"));
+    const service = makeService();
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const blockedTmp = `${accountsFilePath}.tmp-${process.pid}-${Date.now() + 60_000}`;
+    try {
+      service.mutateAccount(1, (account) => ({ ...account, refreshToken: "rotated-token" }));
+      // A directory at the temporary filename causes a real write failure on all platforms.
+      fs.mkdirSync(blockedTmp);
+      expect(() => vi.advanceTimersByTime(60_000)).not.toThrow();
+      expect(warn).toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts[0].refreshToken).toBe("rt-1");
+      fs.rmdirSync(blockedTmp);
+      vi.advanceTimersByTime(60_000);
+      expect(JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts[0].refreshToken).toBe("rotated-token");
+    } finally {
+      service.onModuleDestroy();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("dashboard restores lifetime totals by email without modifying runtime or quota counters", async () => {
     const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
       accessKeysFilePath,

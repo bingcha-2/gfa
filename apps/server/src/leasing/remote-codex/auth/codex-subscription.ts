@@ -2,6 +2,7 @@
 // Uses the same accounts/check -> subscriptions fallback as the local client.
 import { codexUpstreamFetch } from "../codex-fingerprint";
 import { extractChatGPTAccountId } from "./codex-usage";
+import { CodexUpstreamHttpError } from "./codex-upstream-error";
 
 export function subscriptionExpiryIso(value: unknown): string | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
@@ -53,7 +54,7 @@ export async function fetchCodexSubscription(accessToken: string, proxyUrl?: str
         ...headers, "x-openai-target-path": url.pathname, "x-openai-target-route": url.pathname,
       }, signal: AbortSignal.timeout(20_000),
     }, account);
-    if (!response.ok) throw new Error(`订阅查询失败 (HTTP ${response.status})`);
+    if (!response.ok) throw new CodexUpstreamHttpError(response.status, `订阅查询失败 (HTTP ${response.status})`);
     return response.json();
   };
   const checkUrl = new URL("https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27");

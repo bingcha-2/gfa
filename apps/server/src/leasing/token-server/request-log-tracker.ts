@@ -11,11 +11,11 @@
 
 import { ApiWriteQueue } from "./api-write-queue";
 import { msUntilNextBeijingHour } from "./beijing-daily-schedule";
+import { redactLogHeaders, redactLogText } from "./log-redaction";
 
 const FLUSH_INTERVAL_MS = 5_000;
 const PRUNE_AT_HOUR = 4;
 const PRUNE_MAX_DURATION_MS = 5_000;
-const HEADERS_MAX = 2_000;
 const QUEUE_MAX = 10_000;
 const FLUSH_BATCH = 1_000;
 const PRUNE_BATCH = 500;
@@ -28,27 +28,6 @@ export const REQUEST_LOG_RETENTION_MS = 48 * 60 * 60 * 1000;
 // 这是异常流量兜底而非容量目标。生产实测含索引约 3.3KiB/行，50 万行可接近 1.6GiB；
 // 正常情况下应先由 48h TTL 收敛，达到硬上限时允许实际保留少于 48h。
 export const REQUEST_LOG_MAX_ROWS = 500_000;
-
-const SECRET_KEY = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-access-key|x-token-server-secret|access[-_]?token|refresh[-_]?token|password|secret)$/i;
-
-function safeHeaders(raw: unknown): string {
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(String(raw)) as unknown;
-    const redact = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(redact);
-      if (!value || typeof value !== "object") return value;
-      return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => !SECRET_KEY.test(key))
-        .map(([key, child]) => [key, redact(child)]));
-    };
-    const encoded = JSON.stringify(redact(parsed));
-    return encoded.length <= HEADERS_MAX ? encoded : JSON.stringify({ _truncated: true });
-  } catch {
-    // Invalid JSON cannot be safely inspected. Keep no attacker-controlled raw text.
-    return "";
-  }
-}
 
 export interface RequestLogEvent {
   provider: string;
@@ -129,7 +108,7 @@ export class RequestLogTracker {
       surface: e.surface || "",
       sourceIp: e.sourceIp || "",
       exitIp: e.exitIp || "",
-      headers: safeHeaders(e.headers),
+      headers: redactLogHeaders(e.headers),
       reportId: e.reportId || "",
       traceId: e.traceId || "",
       leaseId: e.leaseId || "",
@@ -137,9 +116,9 @@ export class RequestLogTracker {
       requestStartedAt: BigInt(Math.max(0, Math.trunc(Number(e.requestStartedAt || 0)))),
       upstreamCompletedAt: BigInt(Math.max(0, Math.trunc(Number(e.upstreamCompletedAt || 0)))),
       snapshotObservedAt: BigInt(Math.max(0, Math.trunc(Number(e.snapshotObservedAt || 0)))),
-      reason: String(e.reason || "").slice(0, 2_000),
-      primaryReason: String(e.primaryReason || "").slice(0, 100),
-      weeklyReason: String(e.weeklyReason || "").slice(0, 100),
+      reason: redactLogText(e.reason),
+      primaryReason: redactLogText(e.primaryReason, 100),
+      weeklyReason: redactLogText(e.weeklyReason, 100),
     });
   }
 

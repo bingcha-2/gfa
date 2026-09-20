@@ -42,15 +42,17 @@ export class CodexProvider implements Provider<CodexAccount> {
   readonly id = "codex";
   // 绑定代理则用,没绑定就本地直连(fail-open);代理传输失败先降级本地再切号。
   readonly egressPolicy = "optional" as const;
-  // codex 瞬时限速(too_many_requests)同 anthropic:账号健康、几秒恢复 → 零冷却。
-  readonly rateLimitZeroCooldown = true;
+  // 429 needs bounded backoff; repeated immediate retries amplify overload.
+  readonly rateLimitZeroCooldown = false;
   readonly accountsFilePath: string;
   readonly models = new CodexModelCatalog();
   private readonly tokenProvider: (account: CodexAccount) => Promise<string>;
+  readonly persistsRefreshedCredentials: boolean;
 
   constructor(options: CodexProviderOptions = {}) {
     this.accountsFilePath = options.accountsFilePath || path.join(defaultRemoteAccessDataDir(), "codex-accounts.json");
-    this.tokenProvider = options.tokenProvider || refreshCodexAccessToken;
+    this.persistsRefreshedCredentials = !options.tokenProvider;
+    this.tokenProvider = options.tokenProvider || ((account) => refreshCodexAccessToken(account, { accountsFilePath: this.accountsFilePath }));
   }
 
   refreshToken(account: CodexAccount): Promise<string> {

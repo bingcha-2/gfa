@@ -13,6 +13,7 @@ import * as crypto from "crypto";
 
 import { codexUpstreamFetch } from "../codex-fingerprint";
 import { extractChatGPTAccountId } from "./codex-usage";
+import { CodexUpstreamHttpError } from "./codex-upstream-error";
 
 const RESET_CREDITS_URL =
   process.env.BCAI_CODEX_RESET_CREDITS_URL ||
@@ -134,7 +135,7 @@ export async function fetchCodexResetCredits(
     signal: AbortSignal.timeout(20_000),
   }, account);
   const body = await resp.text();
-  if (!resp.ok) throw new Error(`重置次数查询失败: ${resp.status} ${body.slice(0, 200)}`);
+  if (!resp.ok) throw new CodexUpstreamHttpError(resp.status, `重置次数查询失败 (HTTP ${resp.status})`);
   const payload = JSON.parse(body);
   const count = payload?.available_count ?? payload?.availableCount
     ?? payload?.data?.available_count ?? payload?.data?.availableCount;

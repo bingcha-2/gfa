@@ -444,6 +444,28 @@ describe("getBanEvents — 封号事件流", () => {
 });
 
 describe("getRequestLogs — per-request 热表浏览", () => {
+  it("历史日志和支持包在读取时再次过滤 STATE", async () => {
+    const prisma = {
+      requestLog: { findMany: vi.fn().mockResolvedValue([{ id: "r1", headers: '{"X-Codex-Turn-State":"old-state-secret","request-id":"req-ok"}', reason: '{"errorCode":"invalid_prompt","current_turn_state":"old-state-secret"}' }]) },
+      quotaReportReceipt: { findMany: vi.fn().mockResolvedValue([]) },
+      fairShareWindowHead: { findMany: vi.fn().mockResolvedValue([]) },
+      accountQuotaSnapshot: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = makeService(prisma);
+    const logs = await service.getRequestLogs();
+    expect(JSON.stringify(logs)).not.toContain("old-state-secret");
+    expect(JSON.parse(logs.logs[0].headers)).toEqual({ "request-id": "req-ok" });
+    const exported = await service.getQuotaSupportPackage({ reportId: "r1" });
+    expect(JSON.stringify(exported)).not.toContain("old-state-secret");
+    expect(exported.logs).toHaveLength(1);
+  });
+
+  it("历史封禁事件读取也移除状态原文", async () => {
+    const service = makeService({ accountBanEvent: { findMany: vi.fn().mockResolvedValue([{ id: "e1", requests: [], reason: "account_deactivated", upstreamBody: '{"code":"account_deactivated","turnState":"old-state-secret"}' }]) } });
+    const result = await service.getBanEvents();
+    expect(JSON.stringify(result)).not.toContain("old-state-secret");
+    expect(JSON.parse(result.events[0].upstreamBody)).toEqual({ code: "account_deactivated" });
+  });
   it("应用 母号/卡/surface/反代 过滤 + 倒序 + provider 限定", async () => {
     const findMany = vi.fn().mockResolvedValue([{ id: "r1", surface: "desktop", reverseProxy: true }]);
     const res = await makeService({ requestLog: { findMany } }).getRequestLogs({

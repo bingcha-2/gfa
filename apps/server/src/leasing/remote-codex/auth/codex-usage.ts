@@ -7,6 +7,7 @@
 // instead of waiting for a client report.
 
 import { codexFingerprintProbeHeaders, codexUpstreamFetch } from "../codex-fingerprint";
+import { CodexUpstreamHttpError } from "./codex-upstream-error";
 
 const CODEX_USAGE_URL =
   process.env.BCAI_CODEX_USAGE_URL || "https://chatgpt.com/backend-api/wham/usage";
@@ -136,8 +137,8 @@ export function extractChatGPTAccountId(accessToken: string): string {
 
 /**
  * Fetch the account's codex 5h/weekly remaining quota from the upstream usage
- * endpoint. Returns null on any failure (best-effort) — caller decides how to
- * surface it. Throws nothing.
+ * endpoint. Returns null on transport/parse failure. A confirmed 401 is typed
+ * so the management caller can perform one coordinated token refresh.
  */
 export async function fetchCodexQuotaUpstream(
   accessToken: string,
@@ -161,6 +162,7 @@ export async function fetchCodexQuotaUpstream(
   } catch {
     return null;
   }
+  if (resp.status === 401) throw new CodexUpstreamHttpError(401, "Codex quota query failed (HTTP 401)");
   if (!resp.ok) return null;
 
   let usage: RawUsageResponse;

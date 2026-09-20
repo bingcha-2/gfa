@@ -78,4 +78,27 @@ describe("BanEventTracker — recordBan 落库", () => {
     const t = new BanEventTracker(prisma);
     await expect(t.recordBan({ provider: "codex", accountId: 1 })).resolves.toBeUndefined();
   });
+
+  it("封禁证据也过滤 STATE，明文含凭据时不存原文", async () => {
+    const prisma = makePrisma();
+    const t = new BanEventTracker(prisma);
+    await t.recordBan({ provider: "codex", accountId: 1,
+      reason: "account_deactivated", upstreamBody: JSON.stringify({ error: { code: "account_deactivated", current_turn_state: "state-secret" }, Authorization: "Bearer token-secret" }) });
+    expect(JSON.parse(prisma.accountBanEvent.create.mock.calls[0][0].data.upstreamBody)).toEqual({ error: { code: "account_deactivated" } });
+    await t.recordBan({ provider: "codex", accountId: 1, upstreamBody: "upstream rejected; X-Codex-Turn-State: state-secret" });
+    expect(prisma.accountBanEvent.create.mock.calls[1][0].data.upstreamBody).toBe("[redacted]");
+  });
+});
+
+it.each([
+  "https://example.test/?access_token=url-secret",
+  "grant_type=refresh_token&refresh_token=form-secret",
+  '{"sessionToken":"session-secret","code":"invalid_prompt"}',
+  '{"session_token":"session-secret","code":"invalid_prompt"}',
+])("redacts credentials in URL, form and session-token fields: %s", async (upstreamBody) => {
+  const prisma = makePrisma();
+  await new BanEventTracker(prisma).recordBan({ provider: "codex", accountId: 1, upstreamBody });
+  const stored = prisma.accountBanEvent.create.mock.calls[0][0].data.upstreamBody;
+  expect(stored).not.toMatch(/url-secret|form-secret|session-secret/);
+  if (upstreamBody.startsWith("{")) expect(JSON.parse(stored)).toEqual({ code: "invalid_prompt" });
 });

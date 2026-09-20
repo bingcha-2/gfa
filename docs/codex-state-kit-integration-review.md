@@ -2,6 +2,8 @@
 
 日期：2026-09-20。范围：代码修复与公开源码审查；未发布客户端、未改生产配置、未执行账号采集。
 
+2026-09-21 更新：后续官方源码核对和母号 32 对照已修正下文尚未实施的 STATE 管理建议。`x-codex-turn-state` 应按同一轮保持，不能默认跨轮复用；账号级状态协调器暂不实施。当前优先级与代码缺口见 [账号可靠性与模型质量优化方案](codex-account-reliability-adaptation-plan.md)，测试边界见 [母号 32 基线](codex-account32-state-baseline.md)。下文已完成的兼容性与诊断修复仍有效。
+
 ## 本次修复
 
 - Chat 转码支持 GPT-6 的 reasoning_effort，并保留 developer 消息角色。
@@ -38,7 +40,7 @@ GFA 服务端发租约，客户端负责数据请求。Sub2API 的插件和进�
 
 服务端新增账号＋模型级健康摘要，区分 invalid_prompt、capacity、429、模型不一致、上下文错误、传输失败。invalid_prompt 不触发自动换 IP 或账号反复试探；保留原始错误码用于最小请求对照。模型字符串不等先记录，再按确认的别名规则归一化。
 
-### 第二阶段：受控状态管理
+### 第二阶段：受控状态管理（历史提案，已由 2026-09-21 方案替代）
 
 建议增加服务端 `CodexStateCoordinator` 与客户端 `CodexStateObserver`，初始默认 disabled/observe。保持现有正常转发，先验证状态字段在 GFA 实际链路中的出现和关联。
 

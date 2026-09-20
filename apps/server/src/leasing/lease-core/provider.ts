@@ -51,8 +51,9 @@ export interface Provider<TAccount> {
 
   /**
    * 瞬时限速 429 是否【零冷却】(不踢出轮换,下个请求立刻可再用该号)。
-   *  - anthropic/codex: true —— rate_limit_error 是账号健康的瞬时限速,几秒即恢复,
+   *  - anthropic: true —— rate_limit_error 是账号健康的瞬时限速,几秒即恢复,
    *    冷却它会把(无备号的)绑定卡白白打死。
+   *  - codex: false —— 有界退避；与真实额度耗尽区分。
    *  - antigravity: 不设(falsy)—— 其 429 一律走冷却路径(到配额窗口 reset)。
    * 仅影响被 isRateLimit429 判定为限速的 429;真·额度耗尽 / 503 始终冷却,与此无关。
    */
@@ -60,6 +61,8 @@ export interface Provider<TAccount> {
 
   /** Refresh (or return cached) upstream access token for an account. */
   refreshToken(account: TAccount): Promise<string>;
+  /** The provider synchronously owns guarded credential persistence. */
+  persistsRefreshedCredentials?: boolean;
 
   /** Normalize a raw JSON account record into the provider's account shape. */
   normalizeAccount(raw: any): TAccount;

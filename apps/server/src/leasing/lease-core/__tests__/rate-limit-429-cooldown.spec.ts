@@ -64,7 +64,9 @@ afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function makeService(accounts: any[], rateLimitZeroCooldown = true) {
   writeJson(accountsFilePath, { accounts });
-  return withSessionResolver(new LeaseService(makeProvider("codex", accountsFilePath, rateLimitZeroCooldown), {
+  // Anthropic retains its opt-in zero-cooldown policy. Codex's bounded backoff
+  // is covered separately by codex-account-review.spec.ts.
+  return withSessionResolver(new LeaseService(makeProvider("anthropic", accountsFilePath, rateLimitZeroCooldown), {
     accessKeysFilePath,
     minClientVersion: "",
     now: () => clock,

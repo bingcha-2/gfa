@@ -72,6 +72,14 @@ describe("RosettaService — 入库探活 + 单账号刷新", () => {
     vi.mocked(refreshCodexAccessToken).mockImplementation(async (acc: any) => {
       acc.accessTokenExpiresAt = 1_900_000_000_000;
       acc.refreshToken = "rotated-rt";
+      acc.accessToken = "new-access";
+      // Production coordinator persists rotations before resolving.
+      const file = path.join(tempDir, "codex-accounts.json");
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      Object.assign(data.accounts.find((current: any) => current.id === acc.id), {
+        accessToken: acc.accessToken, accessTokenExpiresAt: acc.accessTokenExpiresAt, refreshToken: acc.refreshToken,
+      });
+      fs.writeFileSync(file, JSON.stringify(data));
       return "new-access";
     });
     vi.mocked(fetchCodexQuotaUpstream).mockResolvedValue({

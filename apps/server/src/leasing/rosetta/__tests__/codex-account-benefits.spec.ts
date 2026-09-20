@@ -24,7 +24,16 @@ describe("Codex benefits refresh", () => {
     service = new CodexService({ dataDir: dir } as any, {
       boundCardCounts: () => new Map(), boundSharesByAccount: () => new Map(),
     } as any);
-    mocks.token.mockImplementation(async (acc) => { acc.refreshToken = "rotated"; acc.accessTokenExpiresAt = 500; return "fresh"; });
+    mocks.token.mockImplementation(async (acc) => {
+      // Production coordinator persists rotations before resolving.
+      acc.refreshToken = "rotated"; acc.accessToken = "fresh"; acc.accessTokenExpiresAt = 500;
+      const data = read();
+      Object.assign(data.accounts.find((current: any) => current.id === acc.id), {
+        refreshToken: acc.refreshToken, accessToken: acc.accessToken, accessTokenExpiresAt: acc.accessTokenExpiresAt,
+      });
+      write(data);
+      return "fresh";
+    });
     mocks.subscription.mockResolvedValue({ expiresAt: "2100-01-01T00:00:00.000Z" });
     mocks.credits.mockResolvedValue({ availableCount: 0, nextExpiresAt: null });
   });

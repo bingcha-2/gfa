@@ -6,6 +6,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { beijingDayKey, beijingDayKeysSince, beijingDayStart, beijingHourOfDay } from "../../shared/common/beijing-time";
 import { productOfBucket } from "../lease-core/product-bucket";
 import { isPermanentDeathReason } from "../token-server/token-billing";
+import { redactLogHeaders, redactLogText } from "../token-server/log-redaction";
 
 /** 母号在池中的运行状态(来自 LeaseService.getStatus().quota.accounts)。 */
 export interface AccountStatusInput {
@@ -593,9 +594,9 @@ export class TokenUsageStatsService {
         provider: e.provider,
         accountId: e.accountId,
         accountEmail: e.accountEmail,
-        reason: e.reason,
+        reason: redactLogText(e.reason),
         upstreamStatus: e.upstreamStatus,
-        upstreamBody: e.upstreamBody,
+        upstreamBody: redactLogText(e.upstreamBody, 1_000),
         modelKey: e.modelKey,
         deathStrikes: e.deathStrikes,
         requestCount: (e.requests as unknown[]).length,
@@ -687,6 +688,11 @@ export class TokenUsageStatsService {
     const emailById = await this.customerEmailById([...new Set(logs.map((l: any) => String(l.customerId || "")).filter(Boolean))]);
     const enriched = logs.map((l: any) => ({
       ...l,
+      // Sanitize historical rows too; quota-support exports reuse this method.
+      headers: redactLogHeaders(l.headers),
+      reason: redactLogText(l.reason),
+      primaryReason: redactLogText(l.primaryReason, 100),
+      weeklyReason: redactLogText(l.weeklyReason, 100),
       // Prisma returns SQLite BigInt columns as JS bigint, which JSON.stringify
       // cannot serialize. Convert epoch-ms fields at the HTTP boundary.
       requestStartedAt: Number(l.requestStartedAt || 0),

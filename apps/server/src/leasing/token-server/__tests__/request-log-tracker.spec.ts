@@ -132,6 +132,30 @@ describe("RequestLogTracker", () => {
     expect(where.at.lt.getTime()).toBe(5000); // now - 保留期
   });
 
+  it("移除旧客户端嵌套 STATE 和凭据，同时保留诊断信息", async () => {
+    const prisma = makePrisma();
+    const t = new RequestLogTracker(prisma, { autoStart: false });
+    t.record({ provider: "codex", headers: JSON.stringify({
+      "X-Codex-Turn-State": "state-secret",
+      nested: [{ current_turn_state: "state-secret", turnState: "state-secret", requestId: "req-ok" }],
+      list: [["x_codex_turn_state", "state-secret"], { name: "Authorization", value: "token-secret" }],
+      encoded: JSON.stringify({ refreshToken: "token-secret", model: "gpt-6-astra" }),
+    }), reason: JSON.stringify({ error: { code: "invalid_prompt", currentTurnState: "state-secret" }, access_token: "token-secret" }) });
+    await t.flush();
+    const data = prisma.requestLog.createMany.mock.calls[0][0].data[0];
+    expect(JSON.stringify(data.headers)).not.toMatch(/state-secret|token-secret/);
+    expect(data.headers).toContain("req-ok");
+    expect(JSON.parse(data.reason)).toEqual({ error: { code: "invalid_prompt" } });
+  });
+
+  it("不可解析和过深诊断不能绕过过滤或阻塞日志写入", () => {
+    const t = new RequestLogTracker(makePrisma(), { autoStart: false });
+    t.record({ provider: "codex", headers: '{"x-codex-turn-state":"state-secret"', reason: '{"current_turn_state":"state-secret"' });
+    t.record({ provider: "codex", headers: '{"nested":'.repeat(100) + '{"turn_state":"state-secret"}' + '}'.repeat(100) });
+    expect(JSON.stringify(t.getQueueForTesting(), (_, v) => typeof v === "bigint" ? Number(v) : v)).not.toContain("state-secret");
+    expect(t.getQueueForTesting()).toHaveLength(2);
+  });
+
   it("体积兜底:行数超上限 → 按 ID 小批删除最旧行", async () => {
     const prisma = makePrisma();
     prisma.requestLog.count = vi.fn().mockResolvedValue(REQUEST_LOG_MAX_ROWS + 600);
