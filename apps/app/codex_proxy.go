@@ -104,6 +104,7 @@ type CodexRelayConfig struct {
 }
 
 type CodexProxy struct {
+	continuity     codexContinuity
 	totalRequests  int64
 	totalErrors    int64
 	swallowedCount int64
@@ -321,26 +322,30 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	}
 	audit.reqBody = body
 	audit.model = modelKey
+	requestedModel := modelKey
+	sessionHash := codexSessionHash(r.Header, body)
 
 	leaseFunc := p.leaseToken
 	if leaseFunc == nil {
 		leaseFunc = GetCodexLeaser().LeaseToken
 	}
 	lease, err := leaseFunc(card, deviceId, true, map[string]interface{}{
-		"modelKey":  modelKey,
-		"bodyBytes": len(body),
+		"modelKey":         modelKey,
+		"bodyBytes":        len(body),
+		"codexSessionHash": sessionHash,
 	}, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "lease 失败:" + err.Error()
 		// 卡额度用完 → 标准 429 + Retry-After(让 IDE 退避/停),而非 502(会被当临时故障狂试)。
-		if writeQuotaExhausted(w, err) {
+		if writeQuotaExhausted(w, err) || writeCodexSessionCooling(w, err) {
 			return
 		}
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex token lease failed: %v", err))
 		return
 	}
 	audit.accountID = lease.AccountId
+	lease = codexSessionLease(lease, sessionHash)
 	relayLease := lease.IsRelay()
 	if relayLease {
 		audit.token = codexRelayAuditToken
@@ -390,6 +395,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 	copyCodexHeaders(req.Header, r.Header)
+	accountChanged, configuredEgressChanged := p.continuity.observe(codexContinuityKey(card, deviceId, sessionHash), lease.AccountId, codexEgressFingerprint(lease, upstreamProxy))
+	if accountChanged {
+		req.Header.Del("X-Codex-Turn-State")
+	}
 	credential := lease.AccessToken
 	if relayLease {
 		credential = lease.Relay.APIKey
@@ -435,13 +444,14 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	audit.reqBody = body
 	reqStart := time.Now()
 	var resp *http.Response
+	egressTrace := codexEgressTrace{}
 	if relayLease {
 		// Relay data plane must leave the user's machine directly. Passing the
 		// explicit direct sentinel bypasses both the configured upstream proxy
 		// and the detected system proxy (Clash/Mihomo, etc.).
 		resp, err = createCodexStreamingHttpClient("direct").Do(req)
 	} else {
-		resp, err = doCodexUpstream(lease, upstreamProxy, body, req, createCodexStreamingHttpClient)
+		resp, err = doCodexUpstream(lease, upstreamProxy, body, req, createCodexStreamingHttpClient, &egressTrace)
 	}
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -452,10 +462,12 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			audit.note = "上游请求失败(Do err):" + err.Error()
 		}
 		p.reportProblemSafe(card, deviceId, ReportDetails{
-			StatusCode: 502,
-			ModelKey:   modelKey,
-			Reason:     "upstream_error",
-			ErrorText:  err.Error(),
+			StatusCode:       502,
+			ModelKey:         modelKey,
+			Reason:           "upstream_error",
+			ErrorText:        err.Error(),
+			RequestStartedAt: reqStart.UnixMilli(), UpstreamCompletedAt: time.Now().UnixMilli(),
+			CodexDiagnostic: &CodexRequestDiagnostic{Result: "interrupted", RequestedModel: requestedModel, SentModel: modelKey, SessionHash: sessionHash, ReasoningEffort: codexReasoningEffort(body), EgressFingerprint: egressTrace.Fingerprint, EgressChanged: configuredEgressChanged || egressTrace.Changed, AccountChanged: accountChanged},
 		}, upstreamProxy, lease)
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
@@ -469,6 +481,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		if GetCodexLeaser().ConfirmWeeklyExhausted(card, upstreamProxy, lease) {
 			failedBody, _ := io.ReadAll(resp.Body)
 			overflowOptions := map[string]interface{}{
+				"codexSessionHash":       sessionHash,
 				"modelKey":               modelKey,
 				"bodyBytes":              len(body),
 				"excludeAccountIds":      []int{lease.AccountId},
@@ -491,7 +504,11 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 				p.reportProblemSafe(card, deviceId, failedDetails, upstreamProxy, lease)
 				_ = resp.Body.Close()
 
-				lease = overflowLease
+				lease = codexSessionLease(overflowLease, sessionHash)
+				accountChanged = true
+				_, changed := p.continuity.observe(codexContinuityKey(card, deviceId, sessionHash), lease.AccountId, codexEgressFingerprint(lease, upstreamProxy))
+				configuredEgressChanged = configuredEgressChanged || changed
+				egressTrace = codexEgressTrace{}
 				audit.accountID = lease.AccountId
 				audit.token = lease.AccessToken
 				body = rewriteMetadataUserID(fingerprintInput, canonicalUserID(lease.AccountId), "")
@@ -503,6 +520,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 				req, err = http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 				if err == nil {
 					copyCodexHeaders(req.Header, r.Header)
+					req.Header.Del("X-Codex-Turn-State")
 					req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
 					req.Header.Set("Content-Type", "application/json")
 					req.Header.Set("Host", mustParseURL(targetURL).Host)
@@ -523,6 +541,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 						body,
 						req,
 						createCodexStreamingHttpClient,
+						&egressTrace,
 					)
 				}
 				if err != nil {
@@ -564,7 +583,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
 		tr := &ttftReader{r: streamBody, start: reqStart}
-		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id")}
+		streamDiagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id"), RequestedModel: requestedModel, SentModel: modelKey}
+		streamDiagnostic.ReasoningEffort = codexReasoningEffort(body)
 		actualModel, input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr, &streamDiagnostic)
 		audit.note = streamDiagnostic.summary(copyErr)
 		// 计费归属以**上游响应实际使用的模型**为准(权威),覆盖请求/config 的猜测:
@@ -579,6 +599,13 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			Log("[codex-proxy] ⚠ 2xx 生成但 usage 解析为 0(model=%s),可能计费丢失", modelKey)
 		}
 		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
+		details.Reason = streamDiagnostic.reportReason(copyErr, total)
+		details.RetryAfterMs = parseRetryAfterHeaderMs(resp.Header.Get("Retry-After"))
+		details.CodexDiagnostic = streamDiagnostic.metadata(resp.StatusCode, copyErr)
+		details.CodexDiagnostic.SessionHash = sessionHash
+		details.CodexDiagnostic.EgressFingerprint = egressTrace.Fingerprint
+		details.CodexDiagnostic.EgressChanged = configuredEgressChanged || egressTrace.Changed
+		details.CodexDiagnostic.AccountChanged = accountChanged
 		details.RequestStartedAt = reqStart.UnixMilli()
 		details.UpstreamCompletedAt = time.Now().UnixMilli()
 		details.ServiceTier = effServiceTier
@@ -588,7 +615,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		audit.inTokens, audit.outTokens = input, output
 		if copyErr != nil {
 			details.StatusCode = 502
-			details.Reason = "stream_copy_error"
+			details.Reason = "stream_copy_error " + details.Reason
 			details.ErrorText = copyErr.Error()
 			audit.note += " 流中断(已上报已解析用量)"
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
@@ -627,6 +654,14 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
+	details.RetryAfterMs = parseRetryAfterHeaderMs(resp.Header.Get("Retry-After"))
+	diagnostic := codexStreamDiagnostic{RequestID: resp.Header.Get("X-Request-Id"), RequestedModel: requestedModel, SentModel: modelKey, ReasoningEffort: codexReasoningEffort(body)}
+	diagnostic.observe(respBody)
+	details.CodexDiagnostic = diagnostic.metadata(resp.StatusCode, nil)
+	details.CodexDiagnostic.SessionHash = sessionHash
+	details.CodexDiagnostic.EgressFingerprint = egressTrace.Fingerprint
+	details.CodexDiagnostic.EgressChanged = configuredEgressChanged || egressTrace.Changed
+	details.CodexDiagnostic.AccountChanged = accountChanged
 	details.RequestStartedAt = reqStart.UnixMilli()
 	details.UpstreamCompletedAt = time.Now().UnixMilli()
 	details.ServiceTier = effServiceTier
@@ -676,7 +711,14 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		modelKey = "gpt-5-codex"
 	}
 	mappedModel := mapRelayModel(relay, modelKey)
+	requestedModel := modelKey
 	chatMode := strings.EqualFold(strings.TrimSpace(relay.Protocol), "chat")
+	if chatMode {
+		if reason := codexChatCompatibilityError(body, mappedModel); reason != "" {
+			p.sendJSONError(w, http.StatusBadRequest, reason)
+			return
+		}
+	}
 	stream := requestWantsStream(body)
 
 	// 请求体 + 上游路径:chat 模式把 responses 请求转码成 chat/completions,否则
@@ -726,7 +768,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 
 	// chat 模式:把上游 chat/completions 响应回译成 Codex responses 再返回 Codex。
 	if chatMode {
-		p.serveRelayChatResponse(w, resp, audit, modelKey)
+		p.serveRelayChatResponse(w, resp, audit, modelKey, requestedModel)
 		return
 	}
 
@@ -735,9 +777,9 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
-		if _, _, _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
-			audit.note = "流中断:" + copyErr.Error()
-		}
+		diagnostic := codexStreamDiagnostic{RequestedModel: requestedModel, SentModel: modelKey, RequestID: resp.Header.Get("X-Request-Id"), ReasoningEffort: codexReasoningEffort(body)}
+		_, _, _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body, &diagnostic)
+		audit.note = diagnostic.summary(copyErr)
 		audit.respBody = tee.captured()
 		return
 	}
@@ -753,6 +795,9 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	p.writeResponseHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
+	diagnostic := codexStreamDiagnostic{RequestedModel: requestedModel, SentModel: modelKey, RequestID: resp.Header.Get("X-Request-Id"), ReasoningEffort: codexReasoningEffort(body)}
+	diagnostic.observe(respBody)
+	audit.note = diagnostic.summary(nil)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "服务暂时不可用"
@@ -800,18 +845,22 @@ func relayChatTargetURL(relay *CodexRelayConfig, r *http.Request) string {
 // serveRelayChatResponse 处理 chat 协议中转的上游响应:把 chat/completions 回译为
 // Codex responses 格式后返回给 Codex。流式 → responses SSE;非流式 → responses JSON。
 // 转码逻辑见 codex_openai_relay.go。
-func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Response, audit *proxyAudit, model string) {
+func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Response, audit *proxyAudit, model string, requestedModels ...string) {
+	requested := model
+	if len(requestedModels) > 0 {
+		requested = requestedModels[0]
+	}
+	diagnostic := codexStreamDiagnostic{RequestedModel: requested, SentModel: model, RequestID: resp.Header.Get("X-Request-Id"), ReasoningEffort: codexReasoningEffort(audit.reqBody)}
 	created := relayNowUnix()
-	if isCodexStreamingResponse(resp) {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && isCodexStreamingResponse(resp) {
 		h := w.Header()
 		h.Set("Content-Type", "text/event-stream")
 		h.Set("Cache-Control", "no-cache")
 		h.Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 		tee := newAuditTee(w)
-		if _, _, _, err := streamChatToResponses(tee, resp.Body, model, created); err != nil {
-			audit.note = "chat 流中断:" + err.Error()
-		}
+		_, _, _, err := streamChatToResponses(tee, resp.Body, model, created, &diagnostic)
+		audit.note = diagnostic.summary(err)
 		audit.respBody = tee.captured()
 		return
 	}
@@ -834,6 +883,8 @@ func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Re
 		return
 	}
 	out := convertChatToResponsesJSON(chatBody, model, created)
+	diagnostic.observe(out)
+	audit.note = diagnostic.summary(nil)
 	audit.respBody = out
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1226,7 +1277,11 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 		netInput = 0
 	}
 	GetUsageStats().AddModelTokens("gpt", details.ModelKey, netInput, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens, details.ServiceTier == codexFastServiceTier)
-	GetUsageStats().AddGeneration()
+	if details.CodexDiagnostic != nil && details.CodexDiagnostic.Result != "completed" {
+		GetUsageStats().AddError()
+	} else {
+		GetUsageStats().AddGeneration()
+	}
 }
 
 // clientFacingCodexStatus 把要写回 codex 客户端的上游状态码做安全 remap:上游 401(号池 token
@@ -1385,53 +1440,32 @@ func isCodexStreamingResponse(resp *http.Response) bool {
 func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader, diagnostics ...*codexStreamDiagnostic) (model string, input, output, cached, total int64, err error) {
 	flusher, _ := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
-	var pending []byte
-
-	// 边扫边抽:usage(计费数)+ model(上游实际使用的模型,归属权威源)。都在同一趟里取,
-	// 不额外缓冲整包(auditTee 刻意不缓存 body)。model 取第一条带到的即可(各 response.* 事件都带)。
-	handle := func(line []byte) {
+	decoder := codexEventDecoder{emit: func(event string, data []byte) {
 		for _, diagnostic := range diagnostics {
 			if diagnostic != nil {
-				diagnostic.observe(line)
+				diagnostic.event = event
+				diagnostic.observe(data)
 			}
 		}
-		if i, o, c, t, ok := codexUsageFromSSELine(line); ok {
+		if i, o, c, t, ok := codexUsageFromJSON(data); ok {
 			input, output, cached, total = i, o, c, t
-		} else if codexDebugUsage && bytes.Contains(line, []byte("usage")) {
-			// 调试:解析不到但含 usage 的行,打出真实格式以便对齐字段路径。
-			dbg := line
-			if len(dbg) > 600 {
-				dbg = dbg[:600]
-			}
-			Log("[codex-proxy][usage-dbg] 含usage但未解析: %s", string(bytes.TrimSpace(dbg)))
 		}
-		if model == "" {
-			if m := codexModelFromSSELine(line); m != "" {
-				model = m
+		if m := codexModelFromJSON(data); m != "" {
+			model = m
+		}
+	}}
+	decoder.onLimit = func() {
+		for _, diagnostic := range diagnostics {
+			if diagnostic != nil {
+				diagnostic.ObservationLimited = true
 			}
 		}
 	}
-	scan := func(chunk []byte, flushTail bool) {
-		pending = append(pending, chunk...)
-		for {
-			idx := bytes.IndexByte(pending, '\n')
-			if idx < 0 {
-				break
-			}
-			handle(pending[:idx])
-			pending = pending[idx+1:]
-		}
-		if flushTail && len(pending) > 0 {
-			handle(pending)
-			pending = nil
-		}
-	}
-
 	for {
 		n, readErr := body.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
-			scan(chunk, false)
+			decoder.write(chunk)
 			if _, writeErr := w.Write(chunk); writeErr != nil {
 				return model, input, output, cached, total, writeErr
 			}
@@ -1440,7 +1474,7 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader, diagnosti
 			}
 		}
 		if readErr == io.EOF {
-			scan(nil, true)
+			decoder.finish()
 			return model, input, output, cached, total, nil
 		}
 		if readErr != nil {

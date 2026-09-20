@@ -72,7 +72,34 @@ func normalizeCodexProxyURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func doCodexUpstream(lease *CodexTokenLease, userProxy string, body []byte, req *http.Request, newClient func(string) *http.Client) (*http.Response, error) {
+type codexEgressTrace struct {
+	Fingerprint string
+	Changed     bool
+}
+
+// Keep a stateful conversation on its bound exit after transport errors.
+func codexSessionLease(lease *CodexTokenLease, sessionHash string) *CodexTokenLease {
+	if lease == nil || lease.IsRelay() || sessionHash == "" || strings.TrimSpace(lease.ProxyURL) == "" {
+		return lease
+	}
+	copy := *lease
+	copy.EgressRequired = true
+	return &copy
+}
+
+func doCodexUpstream(lease *CodexTokenLease, userProxy string, body []byte, req *http.Request, newClient func(string) *http.Client, traces ...*codexEgressTrace) (*http.Response, error) {
+	if len(traces) > 0 && traces[0] != nil {
+		factory := newClient
+		trace := traces[0]
+		newClient = func(endpoint string) *http.Client {
+			fingerprint := codexOpaqueHash("route:" + endpoint)
+			if trace.Fingerprint != "" && trace.Fingerprint != fingerprint {
+				trace.Changed = true
+			}
+			trace.Fingerprint = fingerprint
+			return factory(endpoint)
+		}
+	}
 	if lease != nil && strings.TrimSpace(lease.ProxyURL) != "" {
 		factory := newClient
 		bound := resolveEgressProxyURL(strings.TrimSpace(lease.ProxyURL))

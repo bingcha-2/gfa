@@ -15,8 +15,12 @@ func TestFilterReportHeaders_DropsSecretsKeepsRest(t *testing.T) {
 	h.Set("Authorization", "Bearer sk-ant-secret")
 	h.Set("X-Api-Key", "sk-ant-key")
 	h.Set("Cookie", "sessionKey=abc")
+	h.Set("X-Codex-Turn-State", strings.Repeat("s", 292))
 
 	out := filterReportHeaders(h)
+	if strings.Contains(strings.ToLower(out), "x-codex-turn-state") || strings.Contains(out, strings.Repeat("s", 292)) {
+		t.Fatal("STATE must never enter report headers")
+	}
 	var m map[string]string
 	if err := json.Unmarshal([]byte(out), &m); err != nil {
 		t.Fatalf("not json: %v (%s)", err, out)

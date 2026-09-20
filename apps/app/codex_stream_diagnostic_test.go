@@ -94,3 +94,41 @@ func TestCodexStreamDiagnosticTransportFailure(t *testing.T) {
 		t.Fatalf("transport error changed: %v, %s", err, d.summary(err))
 	}
 }
+
+func TestCodexStreamUsageEvidence(t *testing.T) {
+	cases := []struct {
+		name, body, state string
+		malformed         int
+	}{
+		{"missing", `data: {"type":"response.completed","response":{}}`, "missing", 0},
+		{"null", `data: {"type":"response.completed","response":{"usage":null}}`, "missing", 0},
+		{"empty", `data: {"type":"response.completed","response":{"usage":{}}}`, "unrecognized", 0},
+		{"explicit zero", `data: {"type":"response.completed","response":{"usage":{"input_tokens":0,"output_tokens":0}}}`, "explicit_zero", 0},
+		{"null counts", `data: {"type":"response.completed","response":{"usage":{"input_tokens":null,"output_tokens":null}}}`, "unrecognized", 0},
+		{"wrong count type", `data: {"type":"response.completed","response":{"usage":{"input_tokens":"0","output_tokens":"0"}}}`, "unrecognized", 0},
+		{"unexpected shape", `data: {"type":"response.completed","response":{"usage":[0,0]}}`, "unrecognized", 0},
+		{"malformed", "data: {broken}\n\ndata: [DONE]\n\n", "missing", 1},
+		{"parsed", `data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":2}}}`, "parsed", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &codexStreamDiagnostic{RequestID: "req_evidence"}
+			w := httptest.NewRecorder()
+			_, _, _, _, total, err := copyStreamingCodexResponse(w, &diagnosticChunkReader{data: []byte(tc.body)}, d)
+			if err != nil || w.Body.String() != tc.body {
+				t.Fatalf("forwarding changed: %v", err)
+			}
+			if !strings.Contains(d.summary(err), "usage_state="+tc.state) || d.MalformedEvents != tc.malformed {
+				t.Fatalf("wrong evidence: %s", d.summary(err))
+			}
+			reason := d.reportReason(err, total)
+			if tc.state == "parsed" {
+				if reason != "" {
+					t.Fatalf("normal success reported as anomaly: %s", reason)
+				}
+			} else if !strings.Contains(reason, "codex_stream_diagnostic") || !strings.Contains(reason, "req_evidence") {
+				t.Fatalf("missing server evidence: %s", reason)
+			}
+		})
+	}
+}

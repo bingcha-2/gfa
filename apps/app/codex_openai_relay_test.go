@@ -133,7 +133,7 @@ func TestConvertResponsesToChatRequestNonStream(t *testing.T) {
 	}
 }
 
-// input[] 里的 developer role → user(对齐 cockpit;注意 instructions 才走 system)。
+// Preserve the priority of developer instructions during translation.
 func TestConvertResponsesToChatRequestRoleMapping(t *testing.T) {
 	body := []byte(`{
 		"input": [
@@ -148,8 +148,8 @@ func TestConvertResponsesToChatRequestRoleMapping(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("messages 应有 2 条, got %v", msgs)
 	}
-	if msgs[0].(map[string]interface{})["role"] != "user" {
-		t.Fatalf("developer 应映射为 user(对齐 cockpit), got %v", msgs[0])
+	if msgs[0].(map[string]interface{})["role"] != "developer" {
+		t.Fatalf("developer role must be preserved, got %v", msgs[0])
 	}
 	if msgs[1].(map[string]interface{})["role"] != "user" {
 		t.Fatalf("user 应保持, got %v", msgs[1])
@@ -191,7 +191,7 @@ func TestConvertResponsesToChatRequestReasoningByModel(t *testing.T) {
 	body := []byte(`{"reasoning":{"effort":"high"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
 
 	// 推理系列(gpt-5/o3 等,含 provider/ 前缀)→ 应发 reasoning_effort。
-	for _, model := range []string{"gpt-5-codex", "o3-mini", "openai/o1", "gpt-5"} {
+	for _, model := range []string{"gpt-5-codex", "o3-mini", "openai/o1", "gpt-5", "gpt-6-astra", "openai/gpt-6-astra"} {
 		var got map[string]interface{}
 		_ = json.Unmarshal(convertResponsesToChatRequest(body, model, false), &got)
 		if got["reasoning_effort"] != "high" {

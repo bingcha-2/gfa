@@ -40,6 +40,7 @@ import { bucketKey } from "./product-bucket";
 import { fairShareDenialMessage } from "./fair-share-message";
 import type { Provider, ProviderQuotaSnapshotInput } from "./provider";
 import { SubscriptionScheduler } from "./subscription-scheduler";
+import { readCodexDiagnostic, codexHealthKind, type CodexDiagnostic } from "./codex-health";
 
 export type TokenUsageTracker = {
   getAccountUsageTotals?: (product: string) => Promise<Map<string, {
@@ -222,6 +223,7 @@ export type LeaseServiceOptions = {
 };
 
 type LeaseRecord = {
+  affinityClientId?: string;
   leaseId: string;
   accountId: number;
   /** Privacy-safe stable mother identity, frozen when the lease is issued. */
@@ -402,6 +404,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly busyMessage: string;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
+  private readonly codexModelHealth = new Map<string, { accountId: number; model: string; kind: string; observedAt: number; requestAt: number; diagnostic: CodexDiagnostic }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
   private totalLeases = 0;
   private totalReports = 0;
@@ -544,6 +547,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       lastError: this.lastError,
       activeLeases: activeLeasesTotal,
       affinityClients: this.clientAffinity.size,
+      ...(this.provider.id === "codex" ? { codexModelHealth: [...this.codexModelHealth.values()].map(({ accountId, model, kind, observedAt }) => ({ accountId, model, kind, observedAt })) } : {}),
       accounts: {
         total: accounts.length,
         enabled: accounts.filter((account) => (account as any).enabled !== false).length,
@@ -768,6 +772,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
     }
     const clientId = String(payload?.clientId || payload?.client || "").trim();
+    // Device IDs remain unchanged for authentication/proofs. Routing affinity is
+    // scoped to subscription + device + conversation, including across model changes.
+    const conversation = String(payload?.codexSessionHash || "");
+    const affinityClientId = this.provider.id === "codex" && /^[a-f0-9]{64}$/.test(conversation)
+      ? `codex-session:${crypto.createHash("sha256").update(JSON.stringify([auth.record.id, clientId, conversation])).digest("hex")}`
+      : clientId;
     const accessKeySessionId = `sess:${clientId || "session"}`;
 
     // Accountless relay plans use the exact same subscription quota precheck
@@ -912,10 +922,19 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let accessToken = "";
     let rotated = false;
 
+    if (affinityClientId.startsWith("codex-session:")) {
+      const previousId = this.preferredAccountId(affinityClientId, modelKey);
+      const block = this.accountRuntime.get(previousId)?.blockedModels.get(normalizeModelKey(modelKey));
+      const explicitlyExcluded = Array.isArray(payload?.excludeAccountIds) && payload.excludeAccountIds.includes(previousId);
+      if (!explicitlyExcluded && block && block.blockedUntil > this.now() && /^codex_(capacity|rate_limit)/.test(block.reason)) {
+        throw this.fail(503, "当前会话的上游模型暂时繁忙，请稍后重试", { ok: false, code: "codex_session_cooling", retryAfterMs: block.blockedUntil - this.now() });
+      }
+    }
+
     const candidatePool = isPreferredDynamic
-      ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
+      ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, affinityClientId)
       : isDisplayBoundPool
-        ? this.displayBoundPoolAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
+        ? this.displayBoundPoolAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, affinityClientId)
         : this.availableAccounts(payload, modelKey, servingPinnedAccountId);
     // A bound card has at most one candidate (its account), so there is nothing to
     // scan past — one attempt, then the busy error. No fallback to other accounts.
@@ -932,11 +951,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         extendedPayload.excludeAccountIds = [...existing, ...tokenFailedIds];
       }
       account = isPreferredDynamic
-        ? this.preferredDynamicAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
+        ? this.preferredDynamicAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, affinityClientId)[0] || null
         : isDisplayBoundPool
-          ? this.displayBoundPoolAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
-          : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, servingPinnedAccountId);
+          ? this.displayBoundPoolAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, affinityClientId)[0] || null
+          : this.selectAccount(modelKey, affinityClientId, extendedPayload, leaseIndex, servingPinnedAccountId);
       if (!account) break;
+
+      // Reserve synchronously before refreshToken yields so concurrent turns in
+      // the same conversation do not rebalance onto separate healthy accounts.
+      if (affinityClientId.startsWith("codex-session:")) this.rememberAffinity(affinityClientId, modelKey, account.id);
 
       try {
         const refreshBefore = (account as any).refreshToken;
@@ -950,6 +973,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.markAccountTokenError(account.id, lastError.message);
+        this.clearAffinity(account.id, affinityClientId, modelKey);
         tokenFailedIds.push(account.id);
         account = null;
       }
@@ -992,7 +1016,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       isOverflowLease ? overflowDecision?.reason : undefined,
     );
     this.leases.set(lease.leaseId, lease);
-    this.rememberAffinity(clientId, modelKey, account.id);
+    lease.affinityClientId = affinityClientId;
+    this.rememberAffinity(affinityClientId, modelKey, account.id);
     this.totalLeases++;
     this.ensureDaily();
     this.dailyLeases++;
@@ -1555,6 +1580,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     const status = Number(payload?.status || 0);
+    const codexDiagnostic = this.provider.id === "codex" ? readCodexDiagnostic(payload?.codexDiagnostic) : undefined;
     const success = status >= 200 && status < 400;
     const reportId = String(payload?.reportId || "").trim();
     // Stable idempotency key. Modern clients send a unique reportId; legacy
@@ -1975,7 +2001,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         requestStartedAt: Number(payload?.requestStartedAt || 0),
         upstreamCompletedAt: Number(payload?.upstreamCompletedAt || 0),
         snapshotObservedAt: Number(payload?.accountQuota?.observedAt ?? payload?.accountQuota?.fetchedAt ?? 0),
-        reason: quotaDiagnostic
+        reason: codexDiagnostic ? JSON.stringify({ message: String(payload?.reason || ""), codex: codexDiagnostic, ...(quotaDiagnostic ? { quota: quotaDiagnostic } : {}) }) : quotaDiagnostic
           ? JSON.stringify({ message: String(payload?.reason || ""), quota: quotaDiagnostic })
           : String(payload?.reason || ""),
         primaryReason: quotaReasons?.primary || "",
@@ -1989,7 +2015,26 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accStats.lastUsedAt = this.now();
     }
 
-    if (success) {
+    if (codexDiagnostic && lease && accountId && status > 0) {
+      const kind = codexHealthKind(status, codexDiagnostic);
+      // Usage accounting above is independent of generation health. A failed
+      // stream may still report real usage, but must not heal the account.
+      if (success) {
+        this.dailyTokensUsed += tokens;
+        if (accStats) { accStats.totalTokensUsed += tokens; accStats.totalInputTokens += inputTokens; accStats.totalOutputTokens += outputTokens; }
+      }
+      if (kind === "completed" || kind === "model_mismatch") {
+        this.dailySuccesses++;
+        if (accStats) accStats.successCount++;
+      } else {
+        this.dailyErrors++;
+        if (accStats) accStats.errorCount++;
+        lease.released = true;
+      }
+      if (kind === "completed") this.enterpriseProbe.reportResult(lease.email, true);
+      this.observeCodexHealth(lease, codexDiagnostic, kind, status, retryAfterMs, Number(payload?.requestStartedAt));
+      if (!reportId && success) lease.successfulReportSeen = true;
+    } else if (success) {
       this.dailySuccesses++;
       this.dailyTokensUsed += tokens;
       if (accStats) {
@@ -2007,7 +2052,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       if (lease) {
         lease.released = true;
         this.enterpriseProbe.reportResult(lease.email, false);
-        this.clearAffinity(accountId, lease.clientId, modelKey);
+        this.clearAffinity(accountId, lease.affinityClientId || lease.clientId, modelKey);
       }
       if (accountId) {
         const reportedReason = String(payload?.reason || "");
@@ -2420,6 +2465,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const preferredAccountId = this.preferredAccountId(clientId, modelKey);
     const now = this.now();
 
+    if (clientId.startsWith("codex-session:")) {
+      const preferred = candidates.find((candidate) => candidate.id === preferredAccountId);
+      if (preferred) return [preferred, ...candidates.filter((candidate) => candidate.id !== preferredAccountId)];
+    }
+
     const ranked = candidates
       .filter((account) => account.id !== displayBoundAccountId)
       .map((account) => ({
@@ -2531,6 +2581,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const candidates = this.availableAccounts(payload, modelKey, boundAccountId);
     if (!candidates.length) return null;
     const preferredAccountId = this.preferredAccountId(clientId, modelKey);
+    if (clientId.startsWith("codex-session:")) {
+      const preferred = candidates.find((candidate) => candidate.id === preferredAccountId);
+      if (preferred) return preferred;
+    }
     const now = this.now();
     const index = leaseIndex ?? this.buildActiveLeaseIndex();
     return candidates
@@ -2762,22 +2816,23 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   private preferredAccountId(clientId: string, modelKey: string) {
     if (!clientId) return 0;
-    const affinity = this.clientAffinity.get(affinityKey(clientId, modelKey));
+    const affinity = this.clientAffinity.get(affinityKey(clientId, clientId.startsWith("codex-session:") ? "" : modelKey));
     if (!affinity || affinity.expiresAt <= this.now()) return 0;
     return affinity.accountId;
   }
 
   private rememberAffinity(clientId: string, modelKey: string, accountId: number) {
     if (!clientId) return;
-    this.clientAffinity.set(affinityKey(clientId, modelKey), {
+    if (this.clientAffinity.size >= 20_000) this.clientAffinity.delete(this.clientAffinity.keys().next().value!);
+    this.clientAffinity.set(affinityKey(clientId, clientId.startsWith("codex-session:") ? "" : modelKey), {
       accountId,
-      expiresAt: this.now() + Math.max(60_000, this.affinityTtlMs),
+      expiresAt: this.now() + Math.max(clientId.startsWith("codex-session:") ? 6 * 60 * 60_000 : 60_000, this.affinityTtlMs),
     });
   }
 
   private clearAffinity(accountId: number, clientId: string, modelKey: string) {
     if (!clientId) return;
-    const key = affinityKey(clientId, modelKey);
+    const key = affinityKey(clientId, clientId.startsWith("codex-session:") ? "" : modelKey);
     if (this.clientAffinity.get(key)?.accountId === accountId) this.clientAffinity.delete(key);
   }
 
@@ -2810,7 +2865,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 绑定卡(ignoreCooldown):只有这一个号、无号可换,429/503 这类【可恢复冷却】对它毫无意义 ——
     // 预先拦只会让卡白白不可用。一律忽略冷却,直接放行去试真上游;真不行就由上游回错,
     // 客户端自己重试/退避。冷却只对【池子卡】(有备用号可轮换)才有价值。
-    if (ignoreCooldown) return false;
+    if (ignoreCooldown) {
+      const block = state.blockedModels.get(normalizeModelKey(modelKey));
+      // New Codex health reports carry bounded backoff even for a fixed account.
+      // Older provider cooldown behavior remains unchanged.
+      return this.provider.id === "codex" && !!block && block.reason.startsWith("codex_") && block.blockedUntil > now;
+    }
 
     if ((state.quotaStatus === "exhausted" || state.quotaStatus === "cooling") && state.exhaustedUntil > now) {
       // Account-wide cooldown (failure recorded without a model key) blocks everything.
@@ -3199,6 +3259,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     state.exhaustedAt = now;
     state.exhaustedUntil = now + VERIFICATION_RECHECK_COOLDOWN_MS; // 300min 自动复检
     this.persistQuotaStatus(accountId, state);
+  }
+
+  private observeCodexHealth(lease: LeaseRecord, diagnostic: CodexDiagnostic, kind: string, status: number, retryAfterMs: number, startedAt: number) {
+    // The signed lease, not a client-supplied account/model, authorizes changes.
+    const model = lease.modelKey;
+    const key = `${lease.accountId}:${normalizeModelKey(model)}`;
+    const requestAt = Number.isFinite(startedAt) && startedAt > 0 ? Math.min(this.now(), Math.max(lease.createdAt, startedAt)) : lease.createdAt;
+    const previous = this.codexModelHealth.get(key);
+    if (previous && previous.requestAt >= requestAt) return;
+    if (this.codexModelHealth.size >= 10_000) this.codexModelHealth.delete(this.codexModelHealth.keys().next().value!);
+    this.codexModelHealth.set(key, { accountId: lease.accountId, model, kind, observedAt: this.now(), requestAt, diagnostic });
+    // WS can change model within a connection. Until it obtains a lease for that
+    // model, retain telemetry but don't mutate another model's scheduling state.
+    if (diagnostic.sentModel && diagnostic.sentModel !== model) return;
+    if (kind === "completed") {
+      this.markAccountSuccess(lease.accountId, model);
+      return;
+    }
+    // Prompt/context rejection and output limits are not account health failures.
+    // Model mismatch is observational until alias mapping is explicitly known.
+    if (["invalid_prompt", "context_error", "incomplete", "model_mismatch", "observation_limited"].includes(kind)) return;
+    if (status === 401) {
+      this.mutateAccount(lease.accountId, (account) => ({ ...account, accessToken: "", accessTokenExpiresAt: 0 }));
+      return;
+    }
+    const hint = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 0;
+    const cooldown = kind === "quota"
+      ? this.cooldownForExhaustion(429, "quota_exhausted", hint, lease.accountId, model)
+      : kind === "capacity" ? Math.min(hint || CAPACITY_COOLDOWN_MS || 10_000, 5 * 60_000)
+      : kind === "rate_limit" ? Math.min(hint || 10_000, RATE_LIMIT_MAX_RETRY_AFTER_MS)
+      : 5_000;
+    if (model) this.markAccountExhausted(lease.accountId, model, "codex_" + (kind === "transport" || kind === "upstream_error" ? "capacity_transport" : kind), cooldown);
   }
 
   private markAccountSuccess(accountId: number, modelKey: string) {

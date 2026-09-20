@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -166,7 +167,7 @@ func convertResponsesToChatRequest(body []byte, model string, stream bool) []byt
 	//
 	// reasoning.effort → reasoning_effort:cockpit 在 translator 里总是发,但管线
 	// 上游用 StripThinkingConfig 按模型注册表把不支持推理的模型的 reasoning_effort
-	// 砍掉。我们没有完整注册表,用模型名前缀近似(o1/o3/o4/gpt-5/codex 才发),
+	// 砍掉。我们没有完整注册表,用模型名前缀近似(o1/o3/o4/gpt-5/gpt-6/codex 才发),
 	// 端到端行为等价。
 	if modelSupportsReasoning(model) {
 		if r, ok := root["reasoning"].(map[string]interface{}); ok {
@@ -192,7 +193,7 @@ func modelSupportsReasoning(model string) bool {
 	if i := strings.LastIndex(m, "/"); i >= 0 {
 		m = m[i+1:]
 	}
-	for _, p := range []string{"o1", "o3", "o4", "gpt-5", "codex"} {
+	for _, p := range []string{"o1", "o3", "o4", "gpt-5", "gpt-6", "codex"} {
 		if strings.HasPrefix(m, p) {
 			return true
 		}
@@ -200,14 +201,48 @@ func modelSupportsReasoning(model string) bool {
 	return false
 }
 
+// GPT-6 agent requests require Responses; Chat cannot preserve these items.
+func codexChatCompatibilityError(body []byte, model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	if !strings.HasPrefix(m, "gpt-6") {
+		return ""
+	}
+	var request struct {
+		Tools              []json.RawMessage `json:"tools"`
+		Input              json.RawMessage   `json:"input"`
+		PreviousResponseID string            `json:"previous_response_id"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return ""
+	}
+	unsupported := len(request.Tools) > 0 || request.PreviousResponseID != ""
+	var items []struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(request.Input, &items)
+	for _, item := range items {
+		switch item.Type {
+		case "reasoning", "compaction", "configuration_update", "function_call", "function_call_output":
+			unsupported = true
+		}
+	}
+	if unsupported {
+		return "GPT-6 tools and conversation state require Responses. Change the relay protocol from Chat Completions to Responses."
+	}
+	return ""
+}
+
 // chatRoleFromResponses 把 input[] 消息项的 role 映射到 chat/completions 合法 role。
-// 对齐 cockpit:developer→user(注意不是 system —— instructions 才走 system),
+// Preserve developer instruction priority instead of demoting it to user content.
 // system/user/assistant/tool 原样;其余未知 role 兜底 user(cockpit 原样透传,我们
 // 更保守以防非法 role 触发上游 400)。
 func chatRoleFromResponses(role string) string {
 	switch role {
 	case "developer":
-		return "user"
+		return "developer"
 	case "system", "user", "assistant", "tool":
 		return role
 	default:
@@ -218,7 +253,18 @@ func chatRoleFromResponses(role string) string {
 // convertChatToResponsesJSON 把非流式 chat/completions 响应转成 responses 对象。
 func convertChatToResponsesJSON(chatBody []byte, model string, created int64) []byte {
 	var chat map[string]interface{}
-	_ = json.Unmarshal(chatBody, &chat)
+	decodeErr := json.Unmarshal(chatBody, &chat)
+	// Never label an upstream response with the requested model. Empty means unknown.
+	model = strings.TrimSpace(toStr(chat["model"]))
+	choices, _ := chat["choices"].([]interface{})
+	if decodeErr != nil || len(choices) == 0 || chat["error"] != nil {
+		failure := chat["error"]
+		if failure == nil {
+			failure = map[string]string{"code": "invalid_upstream_response", "message": "Upstream Chat Completions response has no valid choices"}
+		}
+		b, _ := json.Marshal(map[string]interface{}{"id": newRespID(), "object": "response", "model": model, "status": "failed", "error": failure, "output": []interface{}{}})
+		return b
+	}
 
 	output := make([]interface{}, 0, 2)
 	if choices, ok := chat["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -279,7 +325,8 @@ func convertChatToResponsesJSON(chatBody []byte, model string, created int64) []
 //	[每个工具调用] output_item.added → function_call_arguments.delta →
 //	          function_call_arguments.done → output_item.done
 //	response.completed (携带 usage)
-func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64) (int64, int64, int64, error) {
+func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64, diagnostics ...*codexStreamDiagnostic) (int64, int64, int64, error) {
+	model = "" // Only upstream metadata can establish the response model.
 	flusher, _ := w.(http.Flusher)
 	respID := newRespID()
 	itemBase := "msg_" + strconv.FormatUint(atomic.AddUint64(&respItemSeq, 1), 10)
@@ -297,6 +344,11 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 
 	write := func(event string, payload map[string]interface{}) {
 		b, _ := json.Marshal(payload)
+		for _, diagnostic := range diagnostics {
+			if diagnostic != nil {
+				diagnostic.observe(b)
+			}
+		}
 		_, _ = io.WriteString(w, "event: "+event+"\ndata: ")
 		_, _ = w.Write(b)
 		_, _ = io.WriteString(w, "\n\n")
@@ -305,14 +357,20 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 		}
 	}
 
-	// response.created
-	write(eventRespCreated, map[string]interface{}{
-		"type": eventRespCreated,
-		"response": map[string]interface{}{
-			"id": respID, "object": "response", "created_at": created,
-			"model": model, "status": "in_progress", "output": []interface{}{},
-		},
-	})
+	createdSent := false
+	emitCreated := func() {
+		if createdSent {
+			return
+		}
+		createdSent = true
+		write(eventRespCreated, map[string]interface{}{
+			"type": eventRespCreated,
+			"response": map[string]interface{}{
+				"id": respID, "object": "response", "created_at": created,
+				"model": model, "status": "in_progress", "output": []interface{}{},
+			},
+		})
+	}
 
 	var textBuf strings.Builder
 	var textItemID string
@@ -376,6 +434,7 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 	}
 
 	scanner := bufio.NewScanner(r)
+	finished := false
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -383,12 +442,26 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
+		if data == "[DONE]" {
+			finished = true
+			break
+		}
+		if data == "" {
 			continue
 		}
 		var chunk map[string]interface{}
 		if json.Unmarshal([]byte(data), &chunk) != nil {
 			continue
+		}
+		if actual := strings.TrimSpace(toStr(chunk["model"])); actual != "" {
+			model = actual
+		}
+		emitCreated()
+		if upstreamError, ok := chunk["error"]; ok && upstreamError != nil {
+			write("response.failed", map[string]interface{}{"type": "response.failed", "response": map[string]interface{}{
+				"id": respID, "model": model, "status": "failed", "error": upstreamError,
+			}})
+			return inTok, outTok, totTok, errors.New("upstream Chat Completions stream failed")
 		}
 		if u := mapChatUsage(chunk["usage"]); u != nil {
 			inTok = toInt64(u["input_tokens"])
@@ -400,6 +473,9 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 			continue
 		}
 		ch, _ := choices[0].(map[string]interface{})
+		if toStr(ch["finish_reason"]) != "" {
+			finished = true
+		}
 		delta, _ := ch["delta"].(map[string]interface{})
 		if delta == nil {
 			continue
@@ -433,6 +509,13 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return inTok, outTok, totTok, err
+	}
+	if !finished {
+		return inTok, outTok, totTok, io.ErrUnexpectedEOF
+	}
+	emitCreated()
 	closeText()
 
 	// 工具调用四件套 + 收集到 completed.output。
@@ -488,9 +571,6 @@ func streamChatToResponses(w io.Writer, r io.Reader, model string, created int64
 	}
 	write(eventRespCompleted, map[string]interface{}{"type": eventRespCompleted, "response": resp})
 
-	if err := scanner.Err(); err != nil {
-		return inTok, outTok, totTok, err
-	}
 	return inTok, outTok, totTok, nil
 }
 

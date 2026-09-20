@@ -441,6 +441,7 @@ func remoteRetryDelayForStatus(attempt int, statusCode int) time.Duration {
 // ReportDetails contains enriched information for report-result, matching
 // the fields sent by the extension's reportRemoteResult (token-proxy.js L1448-1477).
 type ReportDetails struct {
+	CodexDiagnostic     *CodexRequestDiagnostic
 	StatusCode          int
 	ModelKey            string
 	Reason              string

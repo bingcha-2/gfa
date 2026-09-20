@@ -83,6 +83,57 @@ describe("LeaseService (generic core)", () => {
 
   const REQ = sessionReqFor("card-1");
 
+  it("isolates Codex conversation affinity and keeps the account across model changes", async () => {
+    let seq=0;
+    refreshToken.mockResolvedValue("tok");
+    const service=withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath,refreshToken,"codex"),{accessKeysFilePath,randomId:()=>`affinity-${++seq}`,minClientVersion:""}));
+    try {
+      const options={clientId:"same-device",modelKey:"gpt-6-astra",codexSessionHash:"a".repeat(64)};
+      const first=await service.leaseToken(REQ,options);
+      const other=await service.leaseToken(REQ,{...options,codexSessionHash:"b".repeat(64),excludeAccountIds:[first.accountId]});
+      expect(other.accountId).not.toBe(first.accountId);
+      const resumed=await service.leaseToken(REQ,{...options,modelKey:"gpt-5.6-sol"});
+      expect(resumed.accountId).toBe(first.accountId);
+    } finally { service.onModuleDestroy(); }
+  });
+
+  it("treats a Codex 200 failed stream as model capacity and ignores older success for recovery", async () => {
+    let now=Date.now(), seq=0;
+    refreshToken.mockResolvedValue("tok");
+    const service=withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath,refreshToken,"codex"),{accessKeysFilePath,randomId:()=>`health-${++seq}`,now:()=>now,minClientVersion:""}));
+    try {
+      const options={clientId:"device",modelKey:"gpt-6-astra",codexSessionHash:"a".repeat(64)};
+      const old=await service.leaseToken(REQ,options);
+      now+=10;
+      const fresh=await service.leaseToken(REQ,options);
+      now+=10;
+      await service.reportResult(REQ,{leaseId:fresh.leaseId,reportId:"failure",status:200,modelKey:"gpt-6-astra",requestStartedAt:now,codexDiagnostic:{result:"failed",sentModel:"gpt-6-astra",errorCode:"server_is_overloaded"}});
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now)).toBe(true);
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now,true)).toBe(true);
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-5.6-sol",now)).toBe(false);
+      await expect(service.leaseToken(REQ,options)).rejects.toThrow("当前会话的上游模型暂时繁忙");
+      await service.reportResult(REQ,{leaseId:old.leaseId,reportId:"old-success",status:200,modelKey:"gpt-6-astra",requestStartedAt:now-20,totalTokens:2,inputTokens:1,outputTokens:1,codexDiagnostic:{result:"completed",sentModel:"gpt-6-astra",upstreamModel:"gpt-6-astra"}});
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now)).toBe(true);
+      now+=10*60_000;
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now)).toBe(false);
+    } finally { service.onModuleDestroy(); }
+  });
+
+  it("does not rotate or cool a Codex account for invalid_prompt, or trust an unleased diagnostic", async () => {
+    let seq=0;
+    refreshToken.mockResolvedValue("tok");
+    const service=withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath,refreshToken,"codex"),{accessKeysFilePath,randomId:()=>`prompt-${++seq}`,minClientVersion:""}));
+    try {
+      const options={clientId:"device",modelKey:"gpt-6-astra",codexSessionHash:"c".repeat(64)};
+      const lease=await service.leaseToken(REQ,options);
+      await service.reportResult(REQ,{leaseId:lease.leaseId,reportId:"invalid",status:200,modelKey:"gpt-6-astra",codexDiagnostic:{result:"failed",sentModel:"gpt-6-astra",errorCode:"invalid_prompt"}});
+      expect((service as any).isAccountBlocked(lease.accountId,"gpt-6-astra",Date.now())).toBe(false);
+      expect((await service.leaseToken(REQ,options)).accountId).toBe(lease.accountId);
+      await service.reportResult(REQ,{reportId:"untrusted",status:200,accountId:lease.accountId,modelKey:"gpt-6-astra",codexDiagnostic:{result:"failed",sentModel:"gpt-6-astra",errorCode:"server_is_overloaded"}});
+      expect((service as any).isAccountBlocked(lease.accountId,"gpt-6-astra",Date.now())).toBe(false);
+    } finally { service.onModuleDestroy(); }
+  });
+
   it("dashboard restores lifetime totals by email without modifying runtime or quota counters", async () => {
     const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), {
       accessKeysFilePath,

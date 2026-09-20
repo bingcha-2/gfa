@@ -13,6 +13,7 @@ var reportHeaderDenylist = map[string]bool{
 	"cookie":              true,
 	"set-cookie":          true,
 	"proxy-authorization": true,
+	"x-codex-turn-state":  true,
 }
 
 // 单个头值超过这个长度就跳过("特别大的不存")。

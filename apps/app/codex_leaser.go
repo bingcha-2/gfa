@@ -14,17 +14,17 @@ var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", buildAPIBase+"/api/a
 
 type CodexTokenLease struct {
 	Fingerprint *CodexFingerprint `json:"codexFingerprint,omitempty"`
-	Mode        string `json:"mode"`
-	AccessToken string `json:"accessToken"`
-	AccountId   int    `json:"accountId"`
-	LeaseId     string `json:"leaseId"`
-	LeaseProof  string `json:"leaseProof"`
+	Mode        string            `json:"mode"`
+	AccessToken string            `json:"accessToken"`
+	AccountId   int               `json:"accountId"`
+	LeaseId     string            `json:"leaseId"`
+	LeaseProof  string            `json:"leaseProof"`
 	// AllowBoundOverflow permits one hidden re-lease only after a confirmed
 	// upstream quota-exhausted 429. It never enables rotation for auth,
 	// verification, capacity or transport errors.
-	AllowBoundOverflow bool `json:"allowBoundOverflow"`
-	EmailHint   string `json:"emailHint"`
-	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
+	AllowBoundOverflow bool   `json:"allowBoundOverflow"`
+	EmailHint          string `json:"emailHint"`
+	PlanType           string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
 	// FastAllowed 是服务端下发的「快速档授权闸」:该租约是否被允许吃快速(priority)服务档。
 	// 默认 false(号池共享,不能谁租到都白嫖 fast);由服务端策略/能力决定。与本地能力闸
 	// (codexPlanSupportsFast)叠加才注入 service_tier=priority。
@@ -50,21 +50,21 @@ func (l *CodexTokenLease) IsRelay() bool {
 }
 
 type codexLeaseTokenResp struct {
-	Fingerprint *CodexFingerprint `json:"codexFingerprint"`
-	Success     *bool           `json:"success"`
-	Ok          *bool           `json:"ok"`
-	Code        string          `json:"code"`
-	Message     string          `json:"message"`
-	Error       string          `json:"error"`
-	AccessToken string          `json:"accessToken"`
-	AccountId   json.RawMessage `json:"accountId"`
-	LeaseId     string          `json:"leaseId"`
-	LeaseProof  string          `json:"leaseProof"`
-	AllowBoundOverflow bool     `json:"allowBoundOverflow"`
-	EmailHint   string          `json:"emailHint"`
-	PlanType    string          `json:"planType"`
-	FastAllowed bool            `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
-	ExpiresAt   string          `json:"expiresAt"`
+	Fingerprint        *CodexFingerprint `json:"codexFingerprint"`
+	Success            *bool             `json:"success"`
+	Ok                 *bool             `json:"ok"`
+	Code               string            `json:"code"`
+	Message            string            `json:"message"`
+	Error              string            `json:"error"`
+	AccessToken        string            `json:"accessToken"`
+	AccountId          json.RawMessage   `json:"accountId"`
+	LeaseId            string            `json:"leaseId"`
+	LeaseProof         string            `json:"leaseProof"`
+	AllowBoundOverflow bool              `json:"allowBoundOverflow"`
+	EmailHint          string            `json:"emailHint"`
+	PlanType           string            `json:"planType"`
+	FastAllowed        bool              `json:"codexFastAllowed"` // 服务端快速档授权闸(见 CodexTokenLease.FastAllowed)
+	ExpiresAt          string            `json:"expiresAt"`
 	// 服务端把被租 codex 号的上游窗口带回，仅用于后续上报同步重置时机；
 	// 客户端订阅血条始终读取 heartbeat 的个人美元额度。
 	CodexWindows *CodexQuotaWindow `json:"codexWindows"`
@@ -149,6 +149,10 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 
 	body, status, err := postCodexBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
+		if cooling := parseCodexSessionCooling(status, body); cooling != nil {
+			l.setLastError(cooling.Error())
+			return nil, cooling
+		}
 		recordFairShareQuota(body)
 		// 不熔断、不重试:额度超限如实返回。硬额度(token limit exceeded)→ 结构化
 		// QuotaExhaustedError,让 proxy 转 429 + Retry-After 给 IDE(而非 502 让它狂试)。
@@ -193,20 +197,20 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		}
 	}
 	lease := &CodexTokenLease{
-		Fingerprint: leaseResp.Fingerprint,
-		Mode:        leaseResp.Mode,
-		AccessToken: leaseResp.AccessToken,
-		AccountId:   parseAccountId(leaseResp.AccountId),
-		LeaseId:     leaseResp.LeaseId,
-		LeaseProof:  leaseResp.LeaseProof,
+		Fingerprint:        leaseResp.Fingerprint,
+		Mode:               leaseResp.Mode,
+		AccessToken:        leaseResp.AccessToken,
+		AccountId:          parseAccountId(leaseResp.AccountId),
+		LeaseId:            leaseResp.LeaseId,
+		LeaseProof:         leaseResp.LeaseProof,
 		AllowBoundOverflow: leaseResp.AllowBoundOverflow,
-		EmailHint:   leaseResp.EmailHint,
-		PlanType:    leaseResp.PlanType,
-		FastAllowed: leaseResp.FastAllowed,
-		ExpiresAt:   expiresAt,
-		LeasedAt:    time.Now().UnixMilli(),
-		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
-		Relay:       leaseResp.Relay,
+		EmailHint:          leaseResp.EmailHint,
+		PlanType:           leaseResp.PlanType,
+		FastAllowed:        leaseResp.FastAllowed,
+		ExpiresAt:          expiresAt,
+		LeasedAt:           time.Now().UnixMilli(),
+		EgressInfo:         EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
+		Relay:              leaseResp.Relay,
 	}
 	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
 	syncAccessKeyStatusFromBody(GetLeaser(), body)
@@ -293,6 +297,9 @@ func (l *CodexLeaser) reportResult(card string, details ReportDetails, upstreamP
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
 	addCausalReportFields(payload, lease.LeaseId, details)
+	if details.CodexDiagnostic != nil {
+		payload["codexDiagnostic"] = details.CodexDiagnostic
+	}
 	// 快速档:仅在本次生效 priority 时带上,供服务端 fair-share 按 fast 乘数扣份额。
 	if details.ServiceTier != "" {
 		payload["serviceTier"] = details.ServiceTier

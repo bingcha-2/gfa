@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -109,7 +110,7 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 	}
 	down.SetReadDeadline(time.Time{}) // 清除截止时间,后续靠桥接的 idle 控制
 
-	modelKey := extractCodexModelKey(initial)
+	modelKey := codexFrameModel(initial)
 	if modelKey == "" {
 		modelKey = "gpt-5-codex"
 	}
@@ -120,13 +121,20 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		leaseFunc = GetCodexLeaser().LeaseToken
 	}
 	lease, err := leaseFunc(card, deviceId, true, map[string]interface{}{
-		"modelKey":  modelKey,
-		"bodyBytes": len(initial),
-		"transport": "websocket",
+		"modelKey":         modelKey,
+		"bodyBytes":        len(initial),
+		"transport":        "websocket",
+		"codexSessionHash": codexSessionHash(r.Header, initial),
 	}, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		Log("[codex-proxy] #%d [WS] 租号失败: %v", reqID, err)
+		var cooling *codexSessionCoolingError
+		if errors.As(err, &cooling) {
+			_ = down.WriteJSON(map[string]any{"type": "error", "code": "codex_session_cooling", "message": cooling.Error(), "retry_after_ms": cooling.RetryAfterMs})
+			_ = down.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "session model cooling"))
+			return
+		}
 		_ = down.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "token lease failed"))
 		return
@@ -135,7 +143,13 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		reqID, r.URL.Path, modelKey, lease.AccountId)
 
 	// 4. 拨上游 wss。
+	sessionHash := codexSessionHash(r.Header, initial)
+	egressFingerprint := codexEgressFingerprint(lease, upstreamProxy)
+	accountChanged, egressChanged := p.continuity.observe(codexContinuityKey(card, deviceId, sessionHash), lease.AccountId, egressFingerprint)
 	identityRequest := r.Clone(r.Context())
+	if accountChanged {
+		identityRequest.Header.Del("X-Codex-Turn-State")
+	}
 	initial = applyCodexFingerprint(initial, identityRequest.Header, lease, deviceId)
 	up, err := p.dialCodexUpstreamWS(identityRequest, lease, upstreamProxy)
 	if err != nil {
@@ -143,6 +157,7 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		Log("[codex-proxy] #%d [WS] 连上游失败: %v", reqID, err)
 		p.reportProblemSafe(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "ws_upstream_connect_error", ErrorText: err.Error(),
+			CodexDiagnostic: &CodexRequestDiagnostic{Result: "interrupted", RequestedModel: modelKey, SentModel: modelKey, SessionHash: sessionHash, EgressFingerprint: egressFingerprint, EgressChanged: egressChanged, AccountChanged: accountChanged},
 		}, upstreamProxy, lease)
 		_ = down.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "upstream connect failed"))
@@ -167,19 +182,20 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	usage := p.bridgeCodexWS(reqID, down, up, time.Now(), func(frame []byte) []byte {
+	observer := &codexWSObserver{defaultModel: modelKey, report: func(details ReportDetails) {
+		details.CodexDiagnostic.SessionHash = sessionHash
+		details.CodexDiagnostic.EgressFingerprint = egressFingerprint
+		details.CodexDiagnostic.EgressChanged = egressChanged
+		details.CodexDiagnostic.AccountChanged = accountChanged
+		details.Surface = "cli"
+		Log("[codex-proxy] #%d [WS] result=%s model=%s code=%s", reqID, details.CodexDiagnostic.Result, details.ModelKey, details.CodexDiagnostic.ErrorCode)
+		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
+	}}
+	observer.request(initial)
+	p.bridgeCodexWS(reqID, down, up, time.Now(), observer, func(frame []byte) []byte {
 		return applyCodexFingerprint(frame, r.Header.Clone(), lease, deviceId)
 	})
-
-	// 6. 计量上报(缓存命中按 1/10 折扣,与 HTTP 路径同口径)。
-	details := codexDetailsFrom(200, modelKey, usage.input, usage.output, usage.cached, usage.total)
-	if usage.total > 0 {
-		Log("[codex-proxy] #%d [WS][生成] ✓ TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
-			reqID, usage.ttftMs, usage.input, usage.output, usage.total)
-		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
-	} else {
-		Log("[codex-proxy] #%d [WS][生成] 连接结束,未解析到 usage(可能被中断或上游未返回用量)", reqID)
-	}
+	observer.close()
 }
 
 // readFirstCodexWSFrame 读下游第一条数据帧(text/binary),期间自动回应 ping。
@@ -293,10 +309,12 @@ type codexWSUsage struct {
 }
 
 // bridgeCodexWS 双向全双工泵帧,直到任一方关闭。扫描两个方向的帧解析 usage。
-func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time, rewrite ...func([]byte) []byte) codexWSUsage {
+func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time, observer *codexWSObserver, rewrite ...func([]byte) []byte) codexWSUsage {
 	usage := codexWSUsage{ttftMs: -1}
 	var usageMu sync.Mutex
 	var once sync.Once
+	var pumps sync.WaitGroup
+	pumps.Add(2)
 	done := make(chan struct{})
 	closeOnce := func() { once.Do(func() { close(done) }) }
 
@@ -312,6 +330,7 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 
 	// 上行:下游 Codex → 上游 chatgpt.com
 	go func() {
+		defer pumps.Done()
 		defer closeOnce()
 		for {
 			mt, data, err := down.ReadMessage()
@@ -325,7 +344,9 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 					data = cleaned
 					Log("[codex-proxy] #%d [WS] removed %d incompatible input message IDs", reqID, dropped)
 				}
-				scan(data)
+				if observer != nil {
+					observer.request(data)
+				}
 				if len(rewrite) > 0 {
 					data = rewrite[0](data)
 				}
@@ -338,6 +359,7 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 
 	// 下行:上游 chatgpt.com → 下游 Codex
 	go func() {
+		defer pumps.Done()
 		defer closeOnce()
 		for {
 			mt, data, err := up.ReadMessage()
@@ -353,6 +375,9 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 				}
 				usageMu.Unlock()
 				scan(data)
+				if observer != nil {
+					observer.response(data)
+				}
 			}
 			if err := down.WriteMessage(mt, data); err != nil {
 				return
@@ -361,6 +386,9 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 	}()
 
 	<-done
+	_ = up.Close()
+	_ = down.Close()
+	pumps.Wait()
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	return usage
