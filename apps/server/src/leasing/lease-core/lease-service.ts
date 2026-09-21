@@ -958,16 +958,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let accessToken = "";
     let rotated = false;
 
-    if (affinityClientId.startsWith("codex-session:")) {
-      const previousId = this.preferredAccountId(affinityClientId, modelKey);
-      const block = this.accountRuntime.get(previousId)?.blockedModels.get(normalizeModelKey(modelKey));
-      const explicitlyExcluded = Array.isArray(payload?.excludeAccountIds) && payload.excludeAccountIds.includes(previousId);
-      if (!explicitlyExcluded && block && block.blockedUntil > this.now() && /^codex_(capacity|rate_limit)/.test(block.reason)) {
-        const transport = block.reason === "codex_capacity_transport";
-        throw this.fail(503, transport ? "当前会话的代理或网络连接失败，请检查连接后重试" : "当前会话的上游模型暂时繁忙，请稍后重试", { ok: false, code: "codex_session_cooling", reason: transport ? "transport" : "capacity", retryAfterMs: block.blockedUntil - this.now() });
-      }
-    }
-
     const candidatePool = isPreferredDynamic
       ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, affinityClientId)
       : isDisplayBoundPool
@@ -2983,10 +2973,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 必须拦(并由 boundUnavailableMessage 给"联系客服"文案)。这不属于"冷却",不受 ignoreCooldown 影响。
     if (state.quotaStatus === "error") return true;
 
-    // Fixed Codex accounts must respect both modern and legacy backoff; otherwise
-    // a cached/older client can immediately send another request to the same account.
+    // Preserve quota and account restrictions for fixed Codex accounts.
     // Other providers preserve their existing fixed-account bypass.
     if (ignoreCooldown && this.provider.id !== "codex") return false;
+    // Fixed Codex accounts can retry transient failures, but not exhausted quota.
+    if (ignoreCooldown && this.provider.id === "codex") {
+      const reason = state.blockedModels.get(normalizeModelKey(modelKey))?.reason || state.quotaStatusReason;
+      if (/^codex_(capacity|rate_limit)/.test(reason)) return false;
+    }
 
     if ((state.quotaStatus === "exhausted" || state.quotaStatus === "cooling") && state.exhaustedUntil > now) {
       // Account-wide cooldown (failure recorded without a model key) blocks everything.

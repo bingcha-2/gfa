@@ -170,7 +170,25 @@ describe("LeaseService (generic core)", () => {
     } finally { service.onModuleDestroy(); }
   });
 
-  it("reports transport cooldown separately from model capacity", async () => {
+  it.each(["capacity", "transport", "rate_limit"])("retries the same fixed Codex account after %s without blocking other sessions", async (kind) => {
+    let seq = 0;
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, { keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 3600000, bindings: { codex: 1 } }] });
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken, "codex"), { accessKeysFilePath, randomId: () => `fixed-${++seq}`, minClientVersion: "" }));
+    try {
+      const options = { clientId: "device", modelKey: "gpt-6-astra", codexSessionHash: "c".repeat(64) };
+      const lease = await service.leaseToken(REQ, options);
+      const status = kind === "capacity" ? 200 : kind === "transport" ? 502 : 429;
+      await service.reportResult(REQ, { leaseId: lease.leaseId, reportId: "failure", status, modelKey: options.modelKey, codexDiagnostic: { result: "failed", sentModel: options.modelKey, errorCode: kind === "capacity" ? "server_is_overloaded" : kind === "rate_limit" ? "rate_limit_exceeded" : "" } });
+      expect((await service.leaseToken(REQ, options)).accountId).toBe(1);
+      expect((await service.leaseToken(REQ, { ...options, codexSessionHash: "d".repeat(64) })).accountId).toBe(1);
+      (service as any).markAccountExhausted(1, options.modelKey, "codex_quota", 60000);
+      expect((service as any).isAccountBlocked(1, options.modelKey, Date.now(), true)).toBe(true);
+      (service as any).ensureRuntime(1).quotaStatus = "error";
+      expect((service as any).isAccountBlocked(1, options.modelKey, Date.now(), true)).toBe(true);
+    } finally { service.onModuleDestroy(); }
+  });
+  it("rotates a Codex session after transport failure without rejecting it for cooldown", async () => {
     let now=Date.now(), seq=0;
     refreshToken.mockResolvedValue("tok");
     const service=withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath,refreshToken,"codex"),{accessKeysFilePath,randomId:()=>`network-${++seq}`,now:()=>now,minClientVersion:""}));
@@ -178,10 +196,9 @@ describe("LeaseService (generic core)", () => {
       const options={clientId:"device",modelKey:"gpt-6-astra",codexSessionHash:"d".repeat(64)};
       const lease=await service.leaseToken(REQ,options);
       await service.reportResult(REQ,{leaseId:lease.leaseId,reportId:"network-error",status:502,modelKey:"gpt-6-astra",codexDiagnostic:{result:"interrupted",sentModel:"gpt-6-astra"}});
-      try { await service.leaseToken(REQ,options); throw new Error("expected cooldown"); }
-      catch (e: any) { expect(e.message).toContain("代理或网络连接失败"); expect(e.body).toMatchObject({code:"codex_session_cooling",reason:"transport"}); }
+      expect((await service.leaseToken(REQ,options)).accountId).not.toBe(lease.accountId);
       now+=5001;
-      expect((await service.leaseToken(REQ,options)).accountId).toBe(lease.accountId);
+      await expect(service.leaseToken(REQ,options)).resolves.toHaveProperty("accountId");
     } finally { service.onModuleDestroy(); }
   });
 
@@ -197,9 +214,9 @@ describe("LeaseService (generic core)", () => {
       now+=10;
       await service.reportResult(REQ,{leaseId:fresh.leaseId,reportId:"failure",status:200,modelKey:"gpt-6-astra",requestStartedAt:now,codexDiagnostic:{result:"failed",sentModel:"gpt-6-astra",errorCode:"server_is_overloaded"}});
       expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now)).toBe(true);
-      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now,true)).toBe(true);
+      expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now,true)).toBe(false);
       expect((service as any).isAccountBlocked(fresh.accountId,"gpt-5.6-sol",now)).toBe(false);
-      await expect(service.leaseToken(REQ,options)).rejects.toThrow("当前会话的上游模型暂时繁忙");
+      expect((await service.leaseToken(REQ,options)).accountId).not.toBe(fresh.accountId);
       await service.reportResult(REQ,{leaseId:old.leaseId,reportId:"old-success",status:200,modelKey:"gpt-6-astra",requestStartedAt:now-20,totalTokens:2,inputTokens:1,outputTokens:1,codexDiagnostic:{result:"completed",sentModel:"gpt-6-astra",upstreamModel:"gpt-6-astra"}});
       expect((service as any).isAccountBlocked(fresh.accountId,"gpt-6-astra",now)).toBe(true);
       now+=10*60_000;

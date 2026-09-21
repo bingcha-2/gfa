@@ -125,12 +125,17 @@ describe("Codex account review holds", () => {
     expect((svc as any).isAccountBlocked(1, MODEL, now)).toBe(false);
   });
 
-  it.each([0, 30_000, 999_999])("backs off legacy 429 for fixed accounts with retryAfter=%s", async (retryAfterMs) => {
+  it.each([0, 30_000, 999_999])("allows fixed-account retries during legacy 429 cooldown with retryAfter=%s", async (retryAfterMs) => {
+    const keys = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
+    keys.keys[0].bindings = { codex: 1 };
+    fs.writeFileSync(accessKeysFilePath, JSON.stringify(keys));
     const svc = service(); const issued = await lease(svc);
     await svc.reportResult(REQ, { leaseId: issued.leaseId, reportId: "limited", status: 429,
       reason: "http_429_too_many_requests", retryAfterMs });
     const duration = Math.min(retryAfterMs || 10_000, 300_000);
-    expect((svc as any).isAccountBlocked(1, MODEL, now, true)).toBe(true);
+    expect((svc as any).isAccountBlocked(1, MODEL, now, true)).toBe(false);
+    expect((svc as any).isAccountBlocked(1, MODEL, now, false)).toBe(true);
+    expect((await lease(svc)).accountId).toBe(1);
     expect((svc as any).accountRuntime.get(1).exhaustedUntil).toBe(now + duration);
     now += duration + 1;
     expect((svc as any).isAccountBlocked(1, MODEL, now, true)).toBe(false);
