@@ -8,7 +8,7 @@ import { AccountBoundSubscriptionActions } from "@/components/console/leasing/ac
 import { CodexPrechargePool } from "@/components/console/leasing/codex-precharge-pool";
 import { CodexFingerprintSelect } from "@/components/console/leasing/codex-fingerprint-select";
 import { AccountQuotaPoolSheet } from "@/components/console/leasing/account-quota-pool-sheet";
-import { CodexSubscriptionExpiry, refreshCodexAccountBenefits } from "@/components/console/leasing/codex-account-benefits";
+import { refreshCodexAccountBenefits } from "@/components/console/leasing/codex-account-benefits";
 import { filterAccountPools } from "@/components/console/leasing/account-pool-search";
 import { AccountPoolSearchField, BoundCustomerEmailSearchHit } from "@/components/console/leasing/account-pool-search-field";
 import { QuotaPoolCoverageBadge, QuotaPoolScopeCell } from "@/components/console/leasing/quota-pool-summary";
@@ -882,7 +882,6 @@ export default function CodexAccountsPage() {
                   <TableHead>#</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>套餐</TableHead>
-                  <TableHead>母号订阅到期</TableHead>
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
@@ -912,14 +911,6 @@ export default function CodexAccountsPage() {
                       <BoundCustomerEmailSearchHit account={a} query={accountSearch} />
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
-                    <TableCell className="text-sm">
-                      <button type="button" className="text-left underline-offset-2 hover:underline"
-                        title="打开额度池详情，查询母号订阅到期时间"
-                        onClick={() => setQuotaPoolTarget({ provider: "codex", id: a.id, email: a.email })}>
-                        <CodexSubscriptionExpiry expiresAt={a.subscriptionExpiresAt}
-                          checkedAt={a.subscriptionCheckedAt} error={a.subscriptionError} />
-                      </button>
-                    </TableCell>
                     <TableCell className="text-sm">
                       <QuotaPoolScopeCell
                         scope={a.quotaPool?.fiveHour}
