@@ -71,7 +71,7 @@ func TestCodexResolveImageModel(t *testing.T) {
 		t.Fatalf("应用请求里的 model, got %q", got)
 	}
 	if codexResolveImageModel(nil) == codexImagesMainModel {
-		t.Fatal("图像模型不应是主持人模型 gpt-5.4-mini")
+		t.Fatal("图像模型不应是主控模型")
 	}
 }
 

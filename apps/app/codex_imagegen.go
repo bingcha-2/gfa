@@ -18,14 +18,16 @@ import (
 // 调用,拿到图再翻回图像接口 JSON。此翻译只作用于 /v1/images/*,绝不碰正常 /v1/responses。
 
 const (
-	// 生图 responses 请求用的主模型(对齐 cockpit codexOpenAIImagesMainModel)。
-	codexImagesMainModel = "gpt-5.4-mini"
+	// ChatGPT 登录下的 gpt-5.4-mini 已退役，图片编辑使用其替代主控模型。
+	codexImagesMainModel = "gpt-5.6-luna"
+	// API Key 中转不受 Codex 退役影响，保留既有模型映射的入口。
+	codexImagesRelayMainModel = "gpt-5.4-mini"
 	// 生图工具默认 model(对齐 cockpit codexDefaultImageToolModel)。
 	codexImageToolModel = "gpt-image-2"
 )
 
 // codexResolveImageModel 返回真正画图的模型:请求里带的 model,否则默认 gpt-image-2。
-// 这才是生图归属/展示该用的模型(responses 的 gpt-5.4-mini 只是触发工具的"主持人")。
+// 这才是生图归属/展示该用的模型，Responses 主控只负责触发工具。
 func codexResolveImageModel(rawJSON []byte) string {
 	if m := strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String()); m != "" {
 		return m

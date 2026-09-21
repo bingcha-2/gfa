@@ -183,7 +183,11 @@ func TestCodexServeImagesUsesNativeEndpointForExplicitImageModel(t *testing.T) {
 // /v1/images/edits 的 multipart 参考图应被转换成 Responses input_image，工具动作改为 edit。
 func TestCodexServeImagesEditTranslatesMultipartImage(t *testing.T) {
 	var gotBody string
+	var leasedModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/backend-api/codex/responses" {
+			t.Errorf("edit upstream path = %q", r.URL.Path)
+		}
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -193,7 +197,8 @@ func TestCodexServeImagesEditTranslatesMultipartImage(t *testing.T) {
 
 	proxy := &CodexProxy{
 		upstreamBase: upstream.URL,
-		leaseToken: func(string, string, bool, map[string]interface{}, string) (*CodexTokenLease, error) {
+		leaseToken: func(_ string, _ string, _ bool, request map[string]interface{}, _ string) (*CodexTokenLease, error) {
+			leasedModel, _ = request["modelKey"].(string)
 			return &CodexTokenLease{AccessToken: forgeFakeCodexJWT("acct-edit"), AccountId: 9}, nil
 		},
 	}
@@ -219,6 +224,12 @@ func TestCodexServeImagesEditTranslatesMultipartImage(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if leasedModel != "gpt-5.6-luna" || gjson.Get(gotBody, "model").String() != leasedModel {
+		t.Fatalf("edit must lease and call a supported host model: lease=%q body=%s", leasedModel, gotBody)
+	}
+	if got := gjson.Get(gotBody, "tools.0.model").String(); got != "gpt-image-2" {
+		t.Fatalf("image model must remain gpt-image-2, got %q", got)
 	}
 	if got := gjson.Get(gotBody, "tools.0.action").String(); got != "edit" {
 		t.Fatalf("tool action = %q; body=%s", got, gotBody)
@@ -280,7 +291,7 @@ func TestCodexServeImagesUsesServerRelayAndKeepsLastPartial(t *testing.T) {
 					BaseURL: upstream.URL,
 					APIKey:  "server-relay-key",
 					ModelMap: map[string]string{
-						codexImagesMainModel: "gpt-5.6-sol",
+						codexImagesRelayMainModel: "gpt-5.6-sol",
 					},
 				},
 			}, nil

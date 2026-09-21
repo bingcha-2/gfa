@@ -263,7 +263,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 
 	// 翻译:/v1/images/generations|edits → codex responses body(内联生图工具 + tool_choice)。
 	// edit body 内含参考图 base64，不放进审计对象，避免无意义地长期持有大块副本。
-	// 日志/计量按【真正画图的模型】(gpt-image-2),而非触发工具的主持人模型 gpt-5.4-mini。
+	// 日志/计量按【真正画图的模型】(gpt-image-2),而非触发工具的主控模型。
 	audit.model = imageModel
 
 	leaseFunc := p.leaseToken
@@ -298,10 +298,8 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		audit.accountID = 900000001
 		audit.token = codexRelayAuditToken
 		audit.hideErrorBody = true
-		mappedHostModel := mapRelayModel(&CodexRelayConfig{ModelMap: lease.Relay.ModelMap}, codexImagesMainModel)
-		if mappedHostModel != codexImagesMainModel {
-			respBody = rewriteCodexModel(respBody, mappedHostModel)
-		}
+		mappedHostModel := mapRelayModel(&CodexRelayConfig{ModelMap: lease.Relay.ModelMap}, codexImagesRelayMainModel)
+		respBody = rewriteCodexModel(respBody, mappedHostModel)
 	} else {
 		audit.accountID = lease.AccountId
 		audit.token = lease.AccessToken
