@@ -91,7 +91,7 @@ func (t *codexUtlsRoundTripper) getOrCreateConnection(ctx context.Context, host,
 func (t *codexUtlsRoundTripper) createConnection(ctx context.Context, host, addr string) (*http2.ClientConn, error) {
 	conn, err := dialCodexContext(ctx, t.dialer, "tcp", addr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codex proxy tunnel: %w", err)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
@@ -99,14 +99,14 @@ func (t *codexUtlsRoundTripper) createConnection(ctx context.Context, host, addr
 	tlsConn := tls.UClient(conn, &tls.Config{ServerName: host}, tls.HelloChrome_Auto)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("codex upstream TLS handshake: %w", err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	tr := &http2.Transport{}
 	h2Conn, err := tr.NewClientConn(tlsConn)
 	if err != nil {
 		tlsConn.Close()
-		return nil, err
+		return nil, fmt.Errorf("codex HTTP/2 connection setup: %w", err)
 	}
 	return h2Conn, nil
 }
@@ -158,7 +158,7 @@ func (t *codexUtlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 			delete(t.connections, hostname)
 		}
 		t.mu.Unlock()
-		return nil, err
+		return nil, fmt.Errorf("codex HTTP/2 response exchange: %w", err)
 	}
 	return resp, nil
 }
