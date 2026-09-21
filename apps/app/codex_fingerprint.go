@@ -35,7 +35,7 @@ func applyCodexFingerprintClientHeaders(h http.Header, f *CodexFingerprint) {
 	if h == nil || f == nil {
 		return
 	}
-	profile := CodexFingerprintClient{UserAgent: codexDefaultUserAgent, Originator: codexDefaultOriginator, Version: "0.154.0"}
+	profile := CodexFingerprintClient{UserAgent: codexDefaultUserAgent, Originator: codexDefaultOriginator, Version: "0.155.0"}
 	if f.Client != nil && f.Client.UserAgent != "" && f.Client.Originator != "" && f.Client.Version != "" {
 		profile = *f.Client
 	}

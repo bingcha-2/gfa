@@ -54,7 +54,7 @@ var codexDebugUsage = false
 // Codex 官方客户端身份头(值对照 cockpit DEFAULT_CODEX_*)。chatgpt.com 的
 // /backend-api/codex 用它们校验请求来自合法 Codex 客户端,缺则 401。
 const (
-	codexDefaultUserAgent      = "codex-tui/0.154.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.154.0)"
+	codexDefaultUserAgent      = "codex-tui/0.155.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.155.0)"
 	codexDefaultOriginator     = "codex-tui"
 	codexRelayDefaultUserAgent = "bingcha-codex-relay/1.0"
 )

@@ -4,9 +4,9 @@ import { proxyAwareFetch, proxyRequiredFetch } from "../lease-core/egress";
 // Versioned profile shared by leases and server-side Codex probes. Keep this
 // profile stable across desktop upgrades; it matches our existing Codex adapter.
 export const CODEX_FINGERPRINT_CLIENT_V1 = Object.freeze({
-  userAgent: "codex-tui/0.154.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.154.0)",
+  userAgent: "codex-tui/0.155.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.155.0)",
   originator: "codex-tui",
-  version: "0.154.0",
+  version: "0.155.0",
 });
 
 export const CODEX_FINGERPRINT_MODES = ["off", "device", "session", "full"] as const;
