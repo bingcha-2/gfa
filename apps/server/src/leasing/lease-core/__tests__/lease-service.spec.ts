@@ -170,6 +170,21 @@ describe("LeaseService (generic core)", () => {
     } finally { service.onModuleDestroy(); }
   });
 
+  it("reports transport cooldown separately from model capacity", async () => {
+    let now=Date.now(), seq=0;
+    refreshToken.mockResolvedValue("tok");
+    const service=withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath,refreshToken,"codex"),{accessKeysFilePath,randomId:()=>`network-${++seq}`,now:()=>now,minClientVersion:""}));
+    try {
+      const options={clientId:"device",modelKey:"gpt-6-astra",codexSessionHash:"d".repeat(64)};
+      const lease=await service.leaseToken(REQ,options);
+      await service.reportResult(REQ,{leaseId:lease.leaseId,reportId:"network-error",status:502,modelKey:"gpt-6-astra",codexDiagnostic:{result:"interrupted",sentModel:"gpt-6-astra"}});
+      try { await service.leaseToken(REQ,options); throw new Error("expected cooldown"); }
+      catch (e: any) { expect(e.message).toContain("代理或网络连接失败"); expect(e.body).toMatchObject({code:"codex_session_cooling",reason:"transport"}); }
+      now+=5001;
+      expect((await service.leaseToken(REQ,options)).accountId).toBe(lease.accountId);
+    } finally { service.onModuleDestroy(); }
+  });
+
   it("treats a Codex 200 failed stream as model capacity and ignores older success for recovery", async () => {
     let now=Date.now(), seq=0;
     refreshToken.mockResolvedValue("tok");

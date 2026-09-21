@@ -7,15 +7,22 @@ import (
 	"strconv"
 )
 
-type codexSessionCoolingError struct{ RetryAfterMs int64 }
+type codexSessionCoolingError struct {
+	RetryAfterMs int64
+	Reason       string
+}
 
 func (e *codexSessionCoolingError) Error() string {
-	return "当前会话的上游模型暂时繁忙，请稍后重试"
+	if e.Reason == "transport" {
+		return "当前会话的代理或网络连接失败，请检查连接后重试"
+	}
+	return "当前会话暂时冷却，请稍后重试"
 }
 
 func parseCodexSessionCooling(status int, body []byte) error {
 	var response struct {
 		Code         string `json:"code"`
+		Reason       string `json:"reason"`
 		RetryAfterMs int64  `json:"retryAfterMs"`
 	}
 	if status != 503 || json.Unmarshal(body, &response) != nil || response.Code != "codex_session_cooling" {
@@ -27,7 +34,7 @@ func parseCodexSessionCooling(status int, body []byte) error {
 	if response.RetryAfterMs > 300000 {
 		response.RetryAfterMs = 300000
 	}
-	return &codexSessionCoolingError{RetryAfterMs: response.RetryAfterMs}
+	return &codexSessionCoolingError{RetryAfterMs: response.RetryAfterMs, Reason: response.Reason}
 }
 
 func writeCodexSessionCooling(w http.ResponseWriter, err error) bool {

@@ -963,7 +963,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const block = this.accountRuntime.get(previousId)?.blockedModels.get(normalizeModelKey(modelKey));
       const explicitlyExcluded = Array.isArray(payload?.excludeAccountIds) && payload.excludeAccountIds.includes(previousId);
       if (!explicitlyExcluded && block && block.blockedUntil > this.now() && /^codex_(capacity|rate_limit)/.test(block.reason)) {
-        throw this.fail(503, "当前会话的上游模型暂时繁忙，请稍后重试", { ok: false, code: "codex_session_cooling", retryAfterMs: block.blockedUntil - this.now() });
+        const transport = block.reason === "codex_capacity_transport";
+        throw this.fail(503, transport ? "当前会话的代理或网络连接失败，请检查连接后重试" : "当前会话的上游模型暂时繁忙，请稍后重试", { ok: false, code: "codex_session_cooling", reason: transport ? "transport" : "capacity", retryAfterMs: block.blockedUntil - this.now() });
       }
     }
 

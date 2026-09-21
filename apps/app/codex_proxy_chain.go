@@ -71,7 +71,7 @@ func codexBoundProxyDialer(bound, userProxy string) (codexContextDialer, error) 
 	if err != nil {
 		return nil, err
 	}
-	return codexProxyOver(bound, hop)
+	return newCodexProtocolDialer(bound, resolveCodexEffectiveProxy(userProxy), hop)
 }
 
 type codexProxyErrorTransport struct{ err error }
@@ -82,10 +82,14 @@ func codexClientViaLocalProxy(client *http.Client, bound, userProxy string) *htt
 	copyClient := *client
 	hop, chained, err := codexLocalHop(bound, userProxy)
 	if err == nil && !chained {
-		return client
+		switch client.Transport.(type) {
+		case *http.Transport, *codexFallbackRoundTripper:
+		default:
+			return client // Preserve custom transports when no local hop is needed.
+		}
 	}
 	if err == nil {
-		copyClient.Transport, err = codexTransportViaLocalProxy(client.Transport, bound, hop)
+		copyClient.Transport, err = codexTransportViaLocalProxy(client.Transport, bound, hop, resolveCodexEffectiveProxy(userProxy))
 	}
 	if err != nil {
 		copyClient.Transport = codexProxyErrorTransport{err}
@@ -93,20 +97,31 @@ func codexClientViaLocalProxy(client *http.Client, bound, userProxy string) *htt
 	return &copyClient
 }
 
-func codexTransportViaLocalProxy(rt http.RoundTripper, bound string, hop codexContextDialer) (http.RoundTripper, error) {
+func codexTransportViaLocalProxy(rt http.RoundTripper, bound string, hop codexContextDialer, routes ...string) (http.RoundTripper, error) {
+	route := ""
+	if len(routes) > 0 {
+		route = routes[0]
+	}
 	switch t := rt.(type) {
 	case *http.Transport:
+		forward := t.Clone()
+		forward.DialContext = hop.DialContext
 		copyTransport := t.Clone()
-		copyTransport.DialContext = hop.DialContext
-		return copyTransport, nil
+		dialer, err := newCodexProtocolDialer(bound, route, hop)
+		if err != nil {
+			return nil, err
+		}
+		copyTransport.Proxy = nil
+		copyTransport.DialContext = dialer.DialContext
+		return &codexProtocolTransport{plain: forward, secure: copyTransport}, nil
 	case *codexFallbackRoundTripper:
-		dialer, err := codexProxyOver(bound, hop)
+		dialer, err := newCodexProtocolDialer(bound, route, hop)
 		if err != nil {
 			return nil, err
 		}
 		utls := newCodexUtlsRoundTripper(bound)
 		utls.dialer = dialer
-		fallback, err := codexTransportViaLocalProxy(t.fallback, bound, hop)
+		fallback, err := codexTransportViaLocalProxy(t.fallback, bound, hop, route)
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +141,11 @@ func codexEgressReachable(target, bound string) error {
 	return egressReachableWithProbe(target, bound, func(target, candidate string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		dialer, err := codexBoundProxyDialer(candidate, local)
+		hop, _, err := codexLocalHop(candidate, local)
+		if err != nil {
+			return err
+		}
+		dialer, err := codexProxyOver(candidate, hop)
 		if err != nil {
 			return err
 		}
@@ -136,4 +155,14 @@ func codexEgressReachable(target, bound string) error {
 		}
 		return err
 	})
+}
+
+// HTTP forward-proxy semantics stay intact; protocol recovery is for HTTPS tunnels.
+type codexProtocolTransport struct{ plain, secure http.RoundTripper }
+
+func (t *codexProtocolTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Scheme == "https" {
+		return t.secure.RoundTrip(r)
+	}
+	return t.plain.RoundTrip(r)
 }
