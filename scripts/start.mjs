@@ -427,8 +427,10 @@ function getServices(env) {
   const childEnv = { ...process.env, ...env, NODE_ENV: "production" };
 
   const services = getServices(env);
-  const procs = [];
-  const logWriters = [];
+  const procs = new Set();
+  const restartTimers = new Set();
+  let stopping = false;
+  const logWriters = new Set();
   let allReadyPrinted = false;
   const readySet = new Set();
   const OPTIONAL_TIMEOUT_MS = 20_000;
@@ -446,18 +448,19 @@ function getServices(env) {
     }
   }
 
-  for (const svc of services) {
+  function startService(svc, failures = 0) {
     const logger = new DailyLogWriter(svc.name);
-    logWriters.push(logger);
+    logWriters.add(logger);
 
-    const proc = spawn(svc.command, svc.args, {
+    const startedAt = Date.now();
+    const proc = spawn(process.execPath, svc.args, {
       cwd: svc.cwd,
-      shell: process.platform === "win32",
+      shell: false,
       windowsHide: true,
       env: childEnv,
     });
 
-    procs.push(proc);
+    procs.add(proc);
 
     const prefix = `${c.gray}[${svc.label}]${c.reset} `;
     let isReady = false;
@@ -487,18 +490,30 @@ function getServices(env) {
     proc.stdout.on("data", onData);
     proc.stderr.on("data", onData);
 
-    proc.on("exit", (code) => {
+    proc.on("error", (err) => {
+      console.error(`[${svc.name}] spawn error:`, err);
+    });
+    proc.on("close", (code, signal) => {
       logger.close();
-      if (code !== 0 && code !== null) {
-        console.error(
-          `${c.red}[${svc.label.trim()}] exited with code ${code}${c.reset}`
-        );
-      }
+      logWriters.delete(logger);
+      procs.delete(proc);
+      readySet.delete(svc.name);
+      if (optionalTimer) clearTimeout(optionalTimer);
+      if (stopping) return;
+      const nextFailures = Date.now() - startedAt > 60_000 ? 0 : Math.min(failures + 1, 5);
+      const delay = Math.min(30_000, 1000 * 2 ** nextFailures);
+      console.error(`[${timestamp()}] ${svc.name} exited code=${code} signal=${signal}; restarting in ${delay}ms`);
+      const timer = setTimeout(() => {
+        restartTimers.delete(timer);
+        if (!stopping) startService(svc, nextFailures);
+      }, delay);
+      restartTimers.add(timer);
     });
 
     // Auto-mark optional services as ready after timeout
+    let optionalTimer;
     if (svc.optional) {
-      setTimeout(() => {
+      optionalTimer = setTimeout(() => {
         if (!readySet.has(svc.name)) {
           readySet.add(svc.name);
           checkAllReady();
@@ -506,9 +521,13 @@ function getServices(env) {
       }, OPTIONAL_TIMEOUT_MS);
     }
   }
+  for (const svc of services) startService(svc);
 
   // Graceful shutdown on Ctrl+C
   const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
+    for (const timer of restartTimers) clearTimeout(timer);
     console.log(`\n${c.yellow}[start] Shutting down all services...${c.reset}`);
     for (const proc of procs) {
       try {
