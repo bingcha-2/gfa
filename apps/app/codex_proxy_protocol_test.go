@@ -88,8 +88,8 @@ func TestCodexProtocolColdStartRecovery(t *testing.T) {
 	}
 
 	var outerCalls atomic.Int32
-	outer := codexTestConnectProxy(t, "account.invalid:1080", l.Addr().String(), &outerCalls)
-	chained := &CodexTokenLease{EgressInfo: EgressInfo{ProxyURL: "http://account.invalid:1080", EgressRequired: true}}
+	outer := codexTestConnectProxy(t, "cold-protocol.invalid:1080", l.Addr().String(), &outerCalls)
+	chained := &CodexTokenLease{EgressInfo: EgressInfo{ProxyURL: "http://cold-protocol.invalid:1080", EgressRequired: true}}
 	req, _ := http.NewRequest("POST", up.URL, strings.NewReader("one chained generation"))
 	req.Close = true
 	resp, err := doCodexUpstream(chained, outer.URL, nil, req, func(string) *http.Client { return up.Client() })
