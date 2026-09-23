@@ -29,6 +29,10 @@ func InjectCodexProvider(spec codexProviderSpec) error {
 	if err := ensureCodexBackup(had); err != nil {
 		return err
 	}
+	content, err = restoreCodexModelCatalog(content)
+	if err != nil {
+		return err
+	}
 
 	// 清旧接管残留:legacy base_url、bingchaai 表、以及顶层 openai_base_url(那是内置 openai
 	// provider 的;自定义 provider 走表内 base_url,留着顶层键会误导)。

@@ -1,6 +1,44 @@
 {
-  "version": "api-pricing-2026-09-07",
+  "version": "api-pricing-2026-09-23",
   "models": [
+    {
+      "provider": "codex",
+      "canonicalModelId": "gpt-6-sol",
+      "aliases": [
+        "gpt-6-sol"
+      ],
+      "effectiveFrom": "2026-09-22T00:00:00.000Z",
+      "contextThreshold": 272000,
+      "modes": {
+        "standard": {
+          "short": { "input": 2, "cacheRead": 0.2, "cacheWrite5m": 2.5, "cacheWrite1h": 2.5, "output": 10 },
+          "long": { "input": 4, "cacheRead": 0.4, "cacheWrite5m": 5, "cacheWrite1h": 5, "output": 15 }
+        },
+        "priority": {
+          "short": { "input": 4, "cacheRead": 0.4, "cacheWrite5m": 5, "cacheWrite1h": 5, "output": 20 },
+          "long": { "input": 8, "cacheRead": 0.8, "cacheWrite5m": 10, "cacheWrite1h": 10, "output": 30 }
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "canonicalModelId": "gpt-6-luna",
+      "aliases": [
+        "gpt-6-luna"
+      ],
+      "effectiveFrom": "2026-09-22T00:00:00.000Z",
+      "contextThreshold": 272000,
+      "modes": {
+        "standard": {
+          "short": { "input": 0.1, "cacheRead": 0.01, "cacheWrite5m": 0.125, "cacheWrite1h": 0.125, "output": 0.5 },
+          "long": { "input": 0.2, "cacheRead": 0.02, "cacheWrite5m": 0.25, "cacheWrite1h": 0.25, "output": 0.75 }
+        },
+        "priority": {
+          "short": { "input": 0.2, "cacheRead": 0.02, "cacheWrite5m": 0.25, "cacheWrite1h": 0.25, "output": 1 },
+          "long": { "input": 0.4, "cacheRead": 0.04, "cacheWrite5m": 0.5, "cacheWrite1h": 0.5, "output": 1.5 }
+        }
+      }
+    },
     {
       "provider": "codex",
       "canonicalModelId": "gpt-6-astra",

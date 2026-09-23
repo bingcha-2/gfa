@@ -357,19 +357,25 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	} else if cleared {
 		Log("[codex] 接管已清除遗留的中转(relay)配置,切回租号模式")
 	}
+	// API-key 模式不会主动刷新模型目录，必须在启动 Codex 前同步。
+	catalogWarning := ""
+	if err := syncCodexModelCatalog(proxyPort); err != nil {
+		Log("[codex-models] 接管时目录同步失败，保留现有目录: %v", err)
+		catalogWarning = "；模型目录同步失败，新模型可能暂不可见，请稍后重新接管"
+	}
 	// CLI 也保存历史；GUI 探测失败更不能作为跳过历史对齐的依据。
 	if !guiInstalled {
 		if err := alignCodexHistoryForSwitch(codexHomeDir(), historySourceProvider, codexProviderID, true); err != nil {
 			return "", err
 		}
-		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI", nil
+		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI" + catalogWarning, nil
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
 	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
 		return "", err
 	}
-	return "Codex: ✓ 已接管并重启,新旧会话均已切换", nil
+	return "Codex: ✓ 已接管并重启,新旧会话均已切换" + catalogWarning, nil
 }
 
 func (codexTarget) Restore() (string, error) {

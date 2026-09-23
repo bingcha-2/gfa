@@ -312,6 +312,10 @@ func restoreCodexSettingsManaged() (bool, error) {
 	}
 
 	currentProvider := currentCodexModelProvider()
+	content, err = restoreCodexModelCatalog(content)
+	if err != nil {
+		return false, err
+	}
 	wasManaged := isCodexManagedProvider(currentProvider)
 	content = removeProviderTable(content, codexProviderID)
 	content = removeProviderTable(content, codexLocalProviderID) // 自定义厂商接管的表
@@ -348,6 +352,7 @@ func restoreCodexSettingsManaged() (bool, error) {
 		return false, err
 	}
 	_ = os.Remove(codexBackupPath())
+	_ = os.Remove(codexCatalogBackupPath())
 	return wasManaged, nil
 }
 
