@@ -199,9 +199,16 @@ func detectCodexCLIInAppBundle(appPath string) string {
 	if appPath == "" {
 		return ""
 	}
-	cli := filepath.Join(appPath, "Contents", "Resources", "codex")
-	if info, err := os.Stat(cli); err == nil && !info.IsDir() {
-		return cli
+	resources := filepath.Join(appPath, "Contents", "Resources")
+	// 新版 ChatGPT 将 CLI 放进独立的 CodexCLI.app；同时兼容旧版平铺布局。
+	for _, cli := range []string{
+		filepath.Join(resources, "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
+		filepath.Join(resources, "codex-cli", "CodexCLI.app", "Contents", "MacOs", "codex"),
+		filepath.Join(resources, "codex"),
+	} {
+		if info, err := os.Stat(cli); err == nil && !info.IsDir() {
+			return cli
+		}
 	}
 	return ""
 }
@@ -226,7 +233,7 @@ func canonicalCaseApp(p string) string {
 }
 
 // validatedCodexGUIBundle 收口 Codex 桌面端的判定不变式:只有"真实内含 Codex CLI"
-// (Contents/Resources/codex)的 .app 才算,并返回磁盘真实大小写。config override 与品牌
+// (旧版平铺 CLI 或新版内嵌 CodexCLI.app)的 .app 才算,并返回磁盘真实大小写。config override 与品牌
 // 兜底都经它过滤,避免把两类东西误认成 Codex 桌面端:
 //   - 与 Codex 无关的独立 ChatGPT 聊天 app(改名后同为 ChatGPT.app,但无 Resources/codex)
 //   - 已挪走 / 大小写错误的陈旧路径

@@ -69,3 +69,40 @@ func TestValidatedCodexGUIBundle(t *testing.T) {
 		t.Fatalf("非 .app 应返回空, got %q", got)
 	}
 }
+
+func TestNestedCodexCLIAppBundle(t *testing.T) {
+	for _, executableDir := range []string{"MacOS", "MacOs"} {
+		t.Run(executableDir, func(t *testing.T) {
+			app := filepath.Join(t.TempDir(), "ChatGPT.app")
+			cli := filepath.Join(app, "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", executableDir, "codex")
+			if err := os.MkdirAll(filepath.Dir(cli), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// 空 bundle 不应仅因存在嵌套目录而被识别为桌面端。
+			if got := validatedCodexGUIBundle(app); got != "" {
+				t.Fatalf("empty nested bundle detected: %q", got)
+			}
+			writeFile(t, cli, "codex")
+			got := detectCodexCLIInAppBundle(app)
+			// Windows/macOS 默认文件系统可能忽略 MacOS 与 MacOs 的大小写。
+			wantInfo, err := os.Stat(cli)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotInfo, err := os.Stat(got)
+			if err != nil || !os.SameFile(wantInfo, gotInfo) {
+				t.Fatalf("CLI = %q, want file %q (err: %v)", got, cli, err)
+			}
+			if got := validatedCodexGUIBundle(app); got != app {
+				t.Fatalf("GUI = %q, want outer bundle %q", got, app)
+			}
+		})
+	}
+}
+
+func TestCodexAppBundlePathNestedCLI(t *testing.T) {
+	const cli = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOs/codex"
+	if got := codexAppBundlePath(cli); got != "/Applications/ChatGPT.app" {
+		t.Fatalf("GUI launch bundle = %q, want outer ChatGPT.app", got)
+	}
+}
