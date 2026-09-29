@@ -1,30 +1,30 @@
 {
-  "version": "13.7.27",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.27/BingchaAI-13.7.27.exe",
-  "sha256": "0868352B24A79648A72258C1B5C5CFD39F1F5FC7E7D93A8614630B01B56F0AD4",
+  "version": "13.7.28",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.28/BingchaAI-13.7.28.exe",
+  "sha256": "0E36BB1C4F574F9EA0E9E8CD402BD37BCDF9BD2FD9010A81AECC8565EFD51DE4",
   "size": 56786432,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.27/BingchaAI-13.7.27-setup.exe",
-  "installerSha256": "2A05BDA4C5B509CAF3695CBBE7D3F47CE6D5AD5872C717ED4D6E23DD001FD345",
-  "installerSize": 21981660,
-  "changelog": "修复 Codex 新模型列表未及时更新的问题，完善 GPT-6 Sol 和 Luna 用量计价。升级后请重新接管一次 Codex。",
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.28/BingchaAI-13.7.28-setup.exe",
+  "installerSha256": "BAEB5664C47E5302678759624C43C4859CA67595E4AF9BC3F5630DDF2C13C6B6",
+  "installerSize": 21981619,
+  "changelog": "修复 macOS 新版 ChatGPT 安装目录识别问题，改善桌面端连接与启动兼容性。",
   "minVersion": "13.7.22",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.27/BingchaAI-13.7.27-arm64.dmg",
-      "sha256": "B0000F93725F8888B49CF6B5E3C9486DACDA3C52892B8FE0B968096B9259FD7A",
-      "size": 21626113
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.28/BingchaAI-13.7.28-arm64.dmg",
+      "sha256": "C5C0814093B6F647C7F303C2C14B8BF65A9568BFA014041EFA29BF27E79A49C1",
+      "size": 21625757
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.27/BingchaAI-13.7.27-amd64.dmg",
-      "sha256": "267BC0B37A1186DBEDF03A1E74D4B5597E5E7FA17E31402A942997DC2D28C606",
-      "size": 23803981
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.28/BingchaAI-13.7.28-amd64.dmg",
+      "sha256": "D9873CED7AB2E2CA2C796EA55EC1BB0D4A9A827F764CF82A757CD8BCEF107FFB",
+      "size": 23827209
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.27/BingchaAI-13.7.27-linux-amd64.tar.gz",
-      "sha256": "BC3C8E9A1AA22FE7D8AA45DB67B2C68D8D177114834913B4269B86937228C7AB",
-      "size": 19130594
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v13.7.28/BingchaAI-13.7.28-linux-amd64.tar.gz",
+      "sha256": "248B9BA8F3BF1418FE587CFBA53DCA7AE030DB6963B424CEF89890775F6CE175",
+      "size": 19130636
     }
   }
 }
