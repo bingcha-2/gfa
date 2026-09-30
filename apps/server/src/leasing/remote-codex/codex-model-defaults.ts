@@ -5,6 +5,10 @@
  * 上游未提供某个模型时，应由上游明确返回不支持。
  */
 export const CODEX_MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6-astra": "GPT-6 Astra",
+  "gpt-6-sol": "GPT-6 Sol",
+  "gpt-6-luna": "GPT-6 Luna",
   "gpt-5-codex": "GPT-5 Codex",
   "gpt-5-codex-mini": "GPT-5 Codex Mini",
   "gpt-5.1-codex-max": "GPT-5.1 Codex Max",

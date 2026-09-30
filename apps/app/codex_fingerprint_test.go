@@ -147,7 +147,7 @@ func TestCodexFingerprintWebSocketEveryTurn(t *testing.T) {
 		if r.Header.Get("X-Codex-Installation-Id") != lease.Fingerprint.InstallationID {
 			t.Error("WS handshake identity missing")
 		}
-		if r.Header.Get("User-Agent") != codexDefaultUserAgent || r.Header.Get("Version") != "0.155.0" {
+		if r.Header.Get("User-Agent") != codexDefaultUserAgent || r.Header.Get("Version") != "0.159.2" {
 			t.Error("WS client profile mismatch")
 		}
 		upgrader := websocket.Upgrader{}

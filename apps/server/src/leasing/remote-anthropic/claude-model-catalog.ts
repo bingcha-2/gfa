@@ -8,6 +8,12 @@ const CLAUDE_BUCKET = "opus";
 // Seed list + display names. Account-level quota is one shared window per
 // account, so the exact model set only affects display/validation, not scoring.
 const SEED: Record<string, string> = {
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
+  "claude-opus-5-5": "Claude Opus 5.5",
+  "claude-fable-5-1": "Claude Fable 5.1",
+  "claude-opus-5": "Claude Opus 5",
+  "claude-sonnet-5": "Claude Sonnet 5",
+  "claude-fable-5": "Claude Fable 5",
   "claude-opus-4-20250514": "Claude Opus 4",
   "claude-opus-4-1-20250805": "Claude Opus 4.1",
   "claude-sonnet-4-20250514": "Claude Sonnet 4",

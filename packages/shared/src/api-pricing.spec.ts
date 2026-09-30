@@ -146,7 +146,7 @@ describe("API-equivalent pricing", () => {
     }))).toMatchObject({ usd: 3, canonicalModelId: "claude-sonnet-4", quality: "exact" });
   });
 
-  it("uses the current Sonnet 5 introductory price without rewriting the post-promotion price", () => {
+  it("keeps Sonnet 5 launch pricing after it became the permanent price", () => {
     expect(calculateApiValue(usage({
       provider: "anthropic",
       modelId: "claude-sonnet-5",
@@ -157,7 +157,7 @@ describe("API-equivalent pricing", () => {
       modelId: "claude-sonnet-5",
       inputTokens: 1_000_000,
       occurredAt: Date.parse("2026-09-01T00:00:00Z"),
-    }))).toMatchObject({ usd: 3, quality: "exact" });
+    }))).toMatchObject({ usd: 2, quality: "exact" });
   });
 
   it("keeps expensive historical Opus models separate from current Opus", () => {

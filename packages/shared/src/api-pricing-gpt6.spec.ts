@@ -27,7 +27,7 @@ describe("GPT-6 Sol and Luna billing", () => {
     fields.forEach((field, index) => {
       expect(calculateApiValue(usage({ modelId, pricingMode, contextTokens, [field]: 1_000_000 })))
         .toMatchObject({ usd: rates[index], canonicalModelId: modelId, quality: "exact",
-          contextTier: contextTokens > 272_000 ? "long" : "short", pricingVersion: "api-pricing-2026-09-23" });
+          contextTier: contextTokens > 272_000 ? "long" : "short", pricingVersion: "api-pricing-2026-09-30" });
     });
   });
 
