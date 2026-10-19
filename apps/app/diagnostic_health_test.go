@@ -22,6 +22,7 @@ func findDiagnosticCheck(t *testing.T, report diagnosticHealthReport, id string)
 }
 
 func TestCollectDiagnosticHealthCoversPermissionsPathsAndProxy(t *testing.T) {
+	isolateCodexHome(t)
 	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
 	appData := t.TempDir()
 	destination := filepath.Join(t.TempDir(), "中文 export folder")
@@ -67,6 +68,7 @@ func TestCollectDiagnosticHealthCoversPermissionsPathsAndProxy(t *testing.T) {
 }
 
 func TestDiagnosticHealthReportsInvalidConfigAndPortMismatch(t *testing.T) {
+	isolateCodexHome(t)
 	now := time.Now()
 	appData := t.TempDir()
 	if err := os.WriteFile(filepath.Join(appData, "config.json"), []byte(`{"proxyPort":`), 0o600); err != nil {
@@ -92,6 +94,7 @@ func TestDiagnosticHealthReportsInvalidConfigAndPortMismatch(t *testing.T) {
 }
 
 func TestHealthReportDoesNotContainConfiguredPaths(t *testing.T) {
+	isolateCodexHome(t)
 	secretPath := filepath.Join(t.TempDir(), "private-user", "Claude Secret.app")
 	report := collectDiagnosticHealth(
 		time.Now(), Config{ClaudeDesktopPath: secretPath}, HTTPProxyStatus{}, nil, false, os.ErrNotExist,
@@ -103,6 +106,66 @@ func TestHealthReportDoesNotContainConfiguredPaths(t *testing.T) {
 	}
 	if bytes.Contains(data, []byte(secretPath)) || bytes.Contains(data, []byte("private-user")) {
 		t.Fatalf("health report leaked configured path: %s", data)
+	}
+}
+
+func TestDiagnosticHealthSeparatesBingchaLoginFromChatGPT(t *testing.T) {
+	isolateCodexHome(t)
+	if err := InjectCodexAPIKeyAuth(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	appData := t.TempDir()
+	if err := os.WriteFile(filepath.Join(appData, "config.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(appData, "logs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appData, "logs", "desktop.log"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := collectDiagnosticHealth(now, Config{UserToken: "bingcha-session-secret", UserTokenExpiry: now.Add(time.Hour).Format(time.RFC3339), Subscriptions: []SubscriptionSnapshot{{Id: "subscription"}}, ProxyPort: 48800}, HTTPProxyStatus{Running: true, ListenPort: 48800}, nil, false, nil, appData, t.TempDir())
+	if got := findDiagnosticCheck(t, report, "account.login"); got.Status != "pass" || !strings.Contains(got.Summary, "BingchaAI") {
+		t.Fatalf("Bingcha login: %+v", got)
+	}
+	if got := findDiagnosticCheck(t, report, "codex.oauth_identity"); got.ErrorKind != "oauth_missing" {
+		t.Fatalf("ChatGPT login: %+v", got)
+	}
+	if got := findDiagnosticCheck(t, report, "codex.work_account"); got.Status != "warn" || got.ErrorKind != "oauth_required" {
+		t.Fatalf("Work check: %+v", got)
+	}
+	if report.OverallStatus != "warn" {
+		t.Fatalf("不能把缺少 ChatGPT 登录的报告标为全通过: %s", report.OverallStatus)
+	}
+}
+
+func TestDiagnosticCodexAccountChecksReportRenewalAndUnknownAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		raw       []byte
+		readErr   error
+		wantOAuth string
+		wantKind  string
+	}{
+		{name: "complete", raw: []byte(`{"tokens":{"id_token":"private-id","access_token":"private-access","refresh_token":"private-refresh"}}`), wantOAuth: "pass", wantKind: "not_verified"},
+		{name: "expired", raw: []byte(`{"tokens":{"id_token":"private-id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Hour).Unix()) + `","refresh_token":"private-refresh"}}`), wantOAuth: "warn", wantKind: "oauth_renewal_required"},
+		{name: "unreadable", readErr: os.ErrPermission, wantOAuth: "warn", wantKind: "credential_unreadable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			identity, ok := parseCodexOAuthIdentity(tc.raw)
+			report := diagnosticHealthReport{Checks: diagnosticCodexAccountChecksForIdentity(identity, ok, tc.readErr)}
+			if got := findDiagnosticCheck(t, report, "codex.oauth_identity"); got.Status != tc.wantOAuth {
+				t.Fatalf("OAuth: %+v", got)
+			}
+			if got := findDiagnosticCheck(t, report, "codex.work_account"); got.Status != "warn" || got.ErrorKind != tc.wantKind {
+				t.Fatalf("Work: %+v", got)
+			}
+			encoded, _ := json.Marshal(report)
+			if bytes.Contains(encoded, []byte("private-")) {
+				t.Fatal("诊断泄露了凭证")
+			}
+		})
 	}
 }
 

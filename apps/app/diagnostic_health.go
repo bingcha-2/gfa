@@ -33,7 +33,6 @@ type diagnosticHealthReport struct {
 	Checks        []diagnosticHealthCheck `json:"checks"`
 }
 
-
 func diagnosticImageChecks(cfg Config, proxy HTTPProxyStatus, logData []byte) []diagnosticHealthCheck {
 	checks := make([]diagnosticHealthCheck, 0, 2)
 	provider, hadConfig, configErr := loadCodexConfig()
@@ -72,7 +71,6 @@ func diagnosticImageChecks(cfg Config, proxy HTTPProxyStatus, logData []byte) []
 	}
 	return checks
 }
-
 
 func diagnosticErrorKind(err error) string {
 	switch {
@@ -168,7 +166,34 @@ func diagnosticLoginCheck(now time.Time, cfg Config) diagnosticHealthCheck {
 	if !expiresAt.After(now) {
 		return diagnosticHealthCheck{ID: "account.login", Status: "fail", Summary: "sign-in token has expired"}
 	}
-	return diagnosticHealthCheck{ID: "account.login", Status: "pass", Summary: "user is signed in and token is not expired"}
+	return diagnosticHealthCheck{ID: "account.login", Status: "pass", Summary: "BingchaAI session token is present and its stored expiry is in the future; ChatGPT login and server validity are not checked here"}
+}
+
+// This checks local prerequisites only. It does not send credentials, refresh
+// tokens, or start a Work task to claim that account permissions are verified.
+func diagnosticCodexAccountChecks() []diagnosticHealthCheck {
+	identity, ok, err := currentCodexOAuthIdentity()
+	return diagnosticCodexAccountChecksForIdentity(identity, ok, err)
+}
+
+func diagnosticCodexAccountChecksForIdentity(identity codexOAuthIdentity, hasOAuth bool, readErr error) []diagnosticHealthCheck {
+	oauth := diagnosticHealthCheck{ID: "codex.oauth_identity", Status: "pass", Summary: "Complete local ChatGPT OAuth credentials are present; server validity was not tested"}
+	work := diagnosticHealthCheck{ID: "codex.work_account", Status: "warn", ErrorKind: "not_verified", Summary: "Local ChatGPT credentials are present, but Work browser account access was not tested; if authentication fails, sign in again in the official client"}
+	switch {
+	case readErr != nil:
+		oauth.Status, oauth.ErrorKind = "warn", "credential_unreadable"
+		oauth.Summary = "ChatGPT credentials could not be read or parsed; takeover must not replace an unknown login state"
+		work.ErrorKind, work.Summary = "credential_unreadable", "Work browser account access cannot be assessed until ChatGPT credentials are readable"
+	case !hasOAuth:
+		oauth.Status, oauth.ErrorKind = "warn", "oauth_missing"
+		oauth.Summary = "No complete ChatGPT OAuth login was found; a BingchaAI login or API Key is not a ChatGPT account login"
+		work.ErrorKind, work.Summary = "oauth_required", "Work browser requires an authenticated ChatGPT account; stop takeover, sign in to ChatGPT in the official client, then enable takeover again"
+	case codexAuthOAuthExpiryReason(identity.Raw) != "":
+		oauth.Status, oauth.ErrorKind = "warn", "oauth_renewal_required"
+		oauth.Summary = "ChatGPT access token is expired or nearing expiry; credentials are preserved for the official client to renew; sign in again if renewal fails"
+		work.ErrorKind, work.Summary = "oauth_renewal_required", "Work browser account access is unverified and ChatGPT token renewal is required"
+	}
+	return []diagnosticHealthCheck{oauth, work}
 }
 
 func diagnosticProxyChecks(cfg Config, proxy HTTPProxyStatus) []diagnosticHealthCheck {
@@ -264,6 +289,7 @@ func collectDiagnosticHealth(now time.Time, cfg Config, proxy HTTPProxyStatus, l
 		diagnosticConfiguredPathCheck("path.claude_desktop", cfg.ClaudeDesktopPath),
 	)
 	checks = append(checks, diagnosticImageChecks(cfg, proxy, logData)...)
+	checks = append(checks, diagnosticCodexAccountChecks()...)
 
 	overall := "pass"
 	for _, check := range checks {

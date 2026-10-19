@@ -195,6 +195,8 @@ export const zhTW: DeepPartialDict = {
     // 檔案屬主/權限位問題,與系統隱私權限無關:內文直接用後端診斷出的可執行指引。
     filePermTitle: '需要修復檔案權限',
     opFailed: '操作失敗',
+    codexAccountTitle: '已接管，Work 需要登入 ChatGPT',
+    codexAccountBody: 'Codex 已接管，但未偵測到完整的 ChatGPT 登入狀態，Work 瀏覽器等帳號功能暫時無法使用。\n\n如需使用，請先取消 Codex 接管，在官方用戶端登入 ChatGPT，再回到冰茶重新接管。\n\n登入冰茶帳號不能代替 ChatGPT 登入。',
     egressBlockedTitle: '⚠ 接管已攔截 · 出口未通過',
     needCardTitle: '需要登入帳號',
     needCardBody: '{product} 接管需要登入帳號,請先在登入頁登入後再開啟。',

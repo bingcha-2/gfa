@@ -319,8 +319,15 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		}
 		return "", fmt.Errorf("清理旧版 Codex 登录投影失败: %w", err)
 	}
-	preserveOAuthCapabilities, oauthReason := detectCodexOAuthCapabilityBridge()
+	preserveOAuthCapabilities, oauthReason, oauthErr := detectCodexOAuthCapabilityBridge()
+	if oauthErr != nil {
+		if guiInstalled {
+			LaunchCodexApp()
+		}
+		return "", fmt.Errorf("未继续接管，以保护现有 Codex 登录信息：%w", oauthErr)
+	}
 	Log("[codex] OAuth 账号能力桥接=%v (%s)", preserveOAuthCapabilities, oauthReason)
+	accountNotice := codexTakeoverAccountNotice(preserveOAuthCapabilities)
 	if !preserveOAuthCapabilities {
 		// 对齐 Cockpit 无账号 API 服务：用正规的 apikey auth.json 让 Desktop
 		// 稳定进入主界面；它不是伪 OAuth，不会触发官方 wham/refresh 401。
@@ -368,14 +375,21 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		if err := alignCodexHistoryForSwitch(codexHomeDir(), historySourceProvider, codexProviderID, true); err != nil {
 			return "", err
 		}
-		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI" + catalogWarning, nil
+		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI" + catalogWarning + accountNotice, nil
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
 	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
 		return "", err
 	}
-	return "Codex: ✓ 已接管并重启,新旧会话均已切换" + catalogWarning, nil
+	return "Codex: ✓ 已接管并重启,新旧会话均已切换" + catalogWarning + accountNotice, nil
+}
+
+func codexTakeoverAccountNotice(hasOAuth bool) string {
+	if hasOAuth {
+		return ""
+	}
+	return "\nCODEX_ACCOUNT_REQUIRED:未检测到完整的 ChatGPT 登录态，Work 浏览器等账号功能不可用。如需使用，请先取消接管，在官方客户端登录 ChatGPT 后重新接管；登录冰茶账号不能代替 ChatGPT 登录"
 }
 
 func (codexTarget) Restore() (string, error) {

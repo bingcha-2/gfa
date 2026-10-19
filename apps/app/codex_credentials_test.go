@@ -362,18 +362,18 @@ func TestCodexAuthHasOAuthIdentity(t *testing.T) {
 	}
 }
 
-func TestCodexAuthHasOAuthIdentityRejectsExpiredAccessToken(t *testing.T) {
+func TestCodexAuthHasOAuthIdentityPreservesRenewableAccessToken(t *testing.T) {
 	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
-	if codexAuthHasOAuthIdentity(expired) {
-		t.Fatal("过期 access token 不应继续桥接 OAuth，应回落 API-Key/file")
+	if !codexAuthHasOAuthIdentity(expired) {
+		t.Fatal("过期 access token 仍有完整 OAuth，应保留并由官方续期")
 	}
 	nearExpiry := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(2*time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
-	if codexAuthHasOAuthIdentity(nearExpiry) {
-		t.Fatal("临近过期 access token 不应继续桥接 OAuth")
+	if !codexAuthHasOAuthIdentity(nearExpiry) {
+		t.Fatal("临近过期 access token 不应触发 API Key 覆盖")
 	}
 }
 
-func TestCodexOAuthExpiryReasonExplainsFallback(t *testing.T) {
+func TestCodexOAuthExpiryReasonExplainsRenewal(t *testing.T) {
 	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
 	if got := codexAuthOAuthExpiryReason(expired); got != "检测到 OAuth access token 已过期" {
 		t.Fatalf("过期 OAuth 原因不明确: %q", got)
@@ -415,8 +415,8 @@ func TestCodexHasOAuthIdentityReadsAuthFile(t *testing.T) {
 	if err := os.WriteFile(codexAuthPath(), oauth, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, ok := currentCodexOAuthIdentity()
-	if !ok {
+	identity, ok, err := currentCodexOAuthIdentity()
+	if err != nil || !ok {
 		t.Fatal("auth.json 中的真实 OAuth 应被识别")
 	}
 	if identity.AccessToken != "access" || identity.AccountID != "account-1" {
@@ -430,7 +430,7 @@ func TestDetectCodexOAuthCapabilityBridgePreservesCompleteLoginWithoutMutation(t
 	if err := os.WriteFile(codexAuthPath(), oauth, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ok, reason := detectCodexOAuthCapabilityBridge(); !ok {
+	if ok, reason, err := detectCodexOAuthCapabilityBridge(); err != nil || !ok {
 		t.Fatalf("完整 OAuth 应直接桥接: %s", reason)
 	}
 	got, err := os.ReadFile(codexAuthPath())
@@ -447,7 +447,7 @@ func TestDetectCodexOAuthCapabilityBridgeRejectsOnlyNonOAuthShape(t *testing.T) 
 	if err := os.WriteFile(codexAuthPath(), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ok, reason := detectCodexOAuthCapabilityBridge(); ok || reason == "" {
+	if ok, reason, err := detectCodexOAuthCapabilityBridge(); err != nil || ok || reason == "" {
 		t.Fatalf("API Key 形态不得当成 OAuth: ok=%v reason=%q", ok, reason)
 	}
 }
@@ -458,23 +458,31 @@ func TestDetectCodexOAuthCapabilityBridgeReportsExpiredOAuth(t *testing.T) {
 	if err := os.WriteFile(codexAuthPath(), expired, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ok, reason := detectCodexOAuthCapabilityBridge(); ok || !strings.Contains(reason, "已过期") || !strings.Contains(reason, "API-Key/file") {
-		t.Fatalf("过期 OAuth 应明确回落 API-Key/file: ok=%v reason=%q", ok, reason)
+	if ok, reason, err := detectCodexOAuthCapabilityBridge(); err != nil || !ok || !strings.Contains(reason, "已过期") || !strings.Contains(reason, "官方客户端续期") {
+		t.Fatalf("过期 OAuth 应保留并提示续期: ok=%v reason=%q err=%v", ok, reason, err)
 	}
 }
 
-func TestExpiredOAuthFallbackProjectsAPIKeyFileShape(t *testing.T) {
+func TestRetakeoverRestoresExpiredOAuthWithoutReplacingCredentials(t *testing.T) {
 	isolateCodexHome(t)
 	expired := []byte(`{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"` + testCodexJWTWithExp(t, time.Now().Add(-time.Minute).Unix()) + `","refresh_token":"refresh","account_id":"account-1"}}`)
 	if err := os.WriteFile(codexAuthPath(), expired, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	preserve, _ := detectCodexOAuthCapabilityBridge()
-	if preserve {
-		t.Fatal("过期 OAuth 不应进入 OAuth 桥接路径")
-	}
+	// Reproduce an older client's API Key projection, then restore its backup
+	// before selecting credentials, as the takeover orchestration does.
 	if err := InjectCodexAPIKeyAuth(); err != nil {
 		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(8080, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreFakeCodexAuth(); err != nil {
+		t.Fatal(err)
+	}
+	preserve, _, bridgeErr := detectCodexOAuthCapabilityBridge()
+	if bridgeErr != nil || !preserve {
+		t.Fatalf("旧版备份恢复后应保留完整 OAuth: %v", bridgeErr)
 	}
 	if err := InjectCodexSettings(8080, preserve); err != nil {
 		t.Fatal(err)
@@ -483,20 +491,74 @@ func TestExpiredOAuthFallbackProjectsAPIKeyFileShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var auth map[string]interface{}
-	if err := json.Unmarshal(projected, &auth); err != nil {
-		t.Fatal(err)
-	}
-	if auth["auth_mode"] != "apikey" || auth["OPENAI_API_KEY"] != codexTakeoverAPIKey {
-		t.Fatalf("过期 OAuth 未切换到 API-Key auth.json: %#v", auth)
+	if !bytes.Equal(projected, expired) {
+		t.Fatal("重新接管不得修改或替换用户 OAuth")
 	}
 	config, err := os.ReadFile(codexConfigPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`cli_auth_credentials_store = "file"`, "requires_openai_auth = false"} {
-		if !strings.Contains(string(config), want) {
-			t.Fatalf("过期 OAuth 回落后缺少 %q:\n%s", want, config)
+	if !strings.Contains(string(config), "requires_openai_auth = true") || strings.Contains(string(config), `cli_auth_credentials_store = "file"`) {
+		t.Fatalf("重新接管应恢复 OAuth provider 与原存储策略:\n%s", config)
+	}
+}
+
+func TestReadCodexOAuthIdentityDistinguishesMissingFromUnreadable(t *testing.T) {
+	oauth := `{"auth_mode":"chatgpt","tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh","account_id":"account-1"}}`
+	for _, tc := range []struct {
+		name           string
+		file           []byte
+		fileErr        error
+		keychain       string
+		keychainExists bool
+		keychainErr    error
+		mac            bool
+		wantIdentity   bool
+		wantErr        bool
+	}{
+		{name: "missing file", fileErr: os.ErrNotExist},
+		{name: "unreadable file", fileErr: os.ErrPermission, wantErr: true},
+		{name: "malformed file", file: []byte(`{broken`), wantErr: true},
+		{name: "empty file", file: []byte{}, wantErr: true},
+		{name: "keychain read denied", file: []byte(oauth), mac: true, keychainErr: os.ErrPermission, wantErr: true},
+		{name: "malformed keychain", fileErr: os.ErrNotExist, mac: true, keychain: `{broken`, keychainExists: true, wantErr: true},
+		{name: "signed out mac does not borrow file", file: []byte(oauth), mac: true},
+		{name: "keychain login", fileErr: os.ErrNotExist, mac: true, keychain: oauth, keychainExists: true, wantIdentity: true},
+		{name: "legacy hex projection", fileErr: os.ErrNotExist, mac: true, keychain: hex.EncodeToString([]byte(oauth)), keychainExists: true},
+		{name: "explicit api key", file: []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test"}`), mac: true, keychain: oauth, keychainExists: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok, err := readCodexOAuthIdentity(func() ([]byte, error) { return tc.file, tc.fileErr }, func() (string, bool, error) { return tc.keychain, tc.keychainExists, tc.keychainErr }, tc.mac)
+			if ok != tc.wantIdentity || (err != nil) != tc.wantErr {
+				t.Fatalf("identity=%v err=%v, want identity=%v error=%v", ok, err, tc.wantIdentity, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestDetectCodexOAuthCapabilityBridgeDoesNotMutateMalformedCredentials(t *testing.T) {
+	isolateCodexHome(t)
+	raw := []byte(`{"tokens":`)
+	if err := os.WriteFile(codexAuthPath(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := detectCodexOAuthCapabilityBridge(); ok || err == nil {
+		t.Fatal("无法读取登录态时必须返回错误，不能作为未登录继续接管")
+	}
+	got, err := os.ReadFile(codexAuthPath())
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Fatal("检测过程修改了原始凭证")
+	}
+}
+
+func TestCodexTakeoverAccountNotice(t *testing.T) {
+	if codexTakeoverAccountNotice(true) != "" {
+		t.Fatal("完整 OAuth 不应显示缺少账号提示")
+	}
+	notice := codexTakeoverAccountNotice(false)
+	for _, required := range []string{"CODEX_ACCOUNT_REQUIRED:", "取消接管", "官方客户端登录 ChatGPT", "重新接管"} {
+		if !strings.Contains(notice, required) {
+			t.Fatalf("缺少恢复指引 %q", required)
 		}
 	}
 }

@@ -296,21 +296,15 @@ func codexAuthHasOAuthIdentity(data []byte) bool {
 	if strings.HasPrefix(strings.TrimSpace(auth.Tokens.AccountID), "bcai-") {
 		return false
 	}
-	// Codex 会在 access token 过期/临近过期时尝试 refresh；如果 Keychain
-	// 中的 refresh token 已失效，桌面端会直接回到登录页。远程接管不应
-	// 把这类残留 OAuth 当成可桥接身份，改走 API-Key/file 投影更稳定。
-	if exp, ok := codexJWTExp(auth.Tokens.AccessToken); ok && exp <= time.Now().Add(5*time.Minute).Unix() {
-		return false
-	}
+	// Access token 到期不等于账号已退出或 refresh token 失效。保留完整
+	// OAuth，让官方客户端续期；这里不消费轮换型 refresh token，也不验号。
 	return strings.TrimSpace(auth.Tokens.IDToken) != "" &&
 		strings.TrimSpace(auth.Tokens.AccessToken) != "" &&
 		strings.TrimSpace(auth.Tokens.RefreshToken) != ""
 }
 
-// codexAuthOAuthExpiryReason describes an OAuth-shaped credential rejected
-// because its access token is expired or about to expire. Keep this separate
-// from codexAuthHasOAuthIdentity so support logs can explain the API-Key/file
-// fallback without changing the boolean predicate used by callers.
+// codexAuthOAuthExpiryReason reports renewal needs separately from identity
+// presence. Expiry must not cause an otherwise complete login to be replaced.
 func codexAuthOAuthExpiryReason(data []byte) string {
 	var auth struct {
 		AuthMode string `json:"auth_mode"`
@@ -446,73 +440,62 @@ func selectCodexOAuthIdentity(authJSON, keychainJSON []byte, preferKeychain bool
 // currentCodexOAuthIdentity:
 // auth.json 明确 API Key → 不桥接 OAuth；macOS Desktop 只认 Keychain 是否仍有
 // 登录事实，其他平台使用 auth.json。
-func currentCodexOAuthIdentity() (codexOAuthIdentity, bool) {
-	authJSON, _ := os.ReadFile(codexAuthPath())
-	var keychainJSON []byte
-	if runtime.GOOS == "darwin" {
-		secret, existed, err := readCodexKeychainSecret()
-		if err != nil {
-			Log("[codex] 读取 Keychain OAuth 失败，按未登录处理: %v", err)
-		} else if existed {
-			keychainJSON = codexKeychainAuthBytes(secret)
-		}
-	}
-	// 单测禁止访问真实 Keychain，故测试环境只验证 auth.json 分支；macOS 生产
-	// Desktop 必须严格以 Keychain 为准。
-	preferKeychain := runtime.GOOS == "darwin" && !appActionsSuppressed()
-	return selectCodexOAuthIdentity(authJSON, keychainJSON, preferKeychain)
+func currentCodexOAuthIdentity() (codexOAuthIdentity, bool, error) {
+	return readCodexOAuthIdentity(func() ([]byte, error) {
+		return os.ReadFile(codexAuthPath())
+	}, readCodexKeychainSecret, runtime.GOOS == "darwin" && !appActionsSuppressed())
 }
 
-// detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存且未过期的登录形态。
+// Read failures and malformed credentials are unknown states, not signed-out
+// states. Callers must stop before projecting API Key credentials on error.
+func readCodexOAuthIdentity(readAuth func() ([]byte, error), readKeychain func() (string, bool, error), preferKeychain bool) (codexOAuthIdentity, bool, error) {
+	authJSON, err := readAuth()
+	if err != nil && !os.IsNotExist(err) {
+		return codexOAuthIdentity{}, false, fmt.Errorf("无法读取 Codex auth.json，请检查文件访问权限后重试")
+	}
+	if err == nil && !json.Valid(authJSON) {
+		return codexOAuthIdentity{}, false, fmt.Errorf("Codex auth.json 格式无效，请在官方客户端检查登录状态后重试")
+	}
+	var keychainJSON []byte
+	if preferKeychain {
+		secret, existed, err := readKeychain()
+		if err != nil {
+			return codexOAuthIdentity{}, false, fmt.Errorf("无法读取 Codex macOS Keychain，请解锁钥匙串并允许访问后重试")
+		} else if existed {
+			keychainJSON = codexKeychainAuthBytes(secret)
+			if !json.Valid(keychainJSON) {
+				return codexOAuthIdentity{}, false, fmt.Errorf("Codex macOS Keychain 登录信息格式无效，请在官方客户端重新登录")
+			}
+			// Preserve the existing migration rule for legacy GFA hex projection.
+			if _, legacyManaged := normalizeCodexKeychainOAuthSecret(secret); legacyManaged {
+				return codexOAuthIdentity{}, false, nil
+			}
+		}
+	}
+	identity, ok := selectCodexOAuthIdentity(authJSON, keychainJSON, preferKeychain)
+	return identity, ok, nil
+}
+
+// detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的完整登录形态。
 // 远程接管不是账号管理器：不得主动请求 usage 验号、不得消费轮换型 refresh token，
 // 也不得因一次 401 就覆盖用户登录态。只要本地是完整 OAuth，就原样保留并让 Codex
 // 自己负责续期；只有明确没有 OAuth（未登录/API Key）时才投影受管 API Key。
-func detectCodexOAuthCapabilityBridge() (bool, string) {
-	identity, ok := currentCodexOAuthIdentity()
+func detectCodexOAuthCapabilityBridge() (bool, string, error) {
+	identity, ok, err := currentCodexOAuthIdentity()
+	if err != nil {
+		return false, "无法确认 OAuth 登录态", err
+	}
 	if !ok {
-		if reason := codexOAuthBridgeExpiryReason(); reason != "" {
-			return false, reason
-		}
-		return false, "未发现完整 OAuth 登录态"
+		return false, "未发现完整 OAuth 登录态", nil
 	}
 	store := "auth.json"
 	if identity.Store == codexOAuthStoreKeychain {
 		store = "macOS Keychain"
-		// 13.7.6 曾按 hex(JSON) 写入本地接管 OAuth。Codex 官方与 Cockpit
-		// 都只写原始 JSON，因此 hex 只能视为旧 GFA 受管残留，不能继续桥接。
-		if secret, existed, err := readCodexKeychainSecret(); err == nil && existed {
-			if _, legacyManaged := normalizeCodexKeychainOAuthSecret(secret); legacyManaged {
-				return false, "检测到旧版 GFA Keychain OAuth 残留"
-			}
-		}
 	}
-	return true, "保留现有 OAuth 登录态（" + store + "，不验号、不刷新）"
-}
-
-// codexOAuthBridgeExpiryReason checks the same source Codex Desktop uses for
-// login truth (Keychain on macOS, auth.json elsewhere). It is read-only.
-func codexOAuthBridgeExpiryReason() string {
-	if runtime.GOOS == "darwin" && !appActionsSuppressed() {
-		secret, existed, err := readCodexKeychainSecret()
-		if err != nil {
-			return ""
-		}
-		if !existed {
-			// Desktop treats a missing Keychain item as logged out; do not
-			// misdiagnose an unrelated auth.json token as the login-page cause.
-			return ""
-		}
-		if reason := codexAuthOAuthExpiryReason(codexKeychainAuthBytes(secret)); reason != "" {
-			return "macOS Keychain " + reason + "（将回落 API-Key/file）"
-		}
-		return ""
+	if reason := codexAuthOAuthExpiryReason(identity.Raw); reason != "" {
+		return true, "保留现有 OAuth 登录态（" + store + "）；" + reason + "，由官方客户端续期，续期失败请重新登录 ChatGPT", nil
 	}
-	if data, err := os.ReadFile(codexAuthPath()); err == nil {
-		if reason := codexAuthOAuthExpiryReason(data); reason != "" {
-			return reason + "（将回落 API-Key/file）"
-		}
-	}
-	return ""
+	return true, "保留现有 OAuth 登录态（" + store + "，不验号、不刷新）", nil
 }
 
 func normalizeCodexKeychainOAuthSecret(secret string) (string, bool) {

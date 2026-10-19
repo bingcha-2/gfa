@@ -143,6 +143,10 @@ export function useRemoteTakeover() {
       // 等真实状态翻转(loading 期间保持遮罩)。
       setBusyLabel(inject ? t('takeover.injectingWait', { name: targetName(target) }) : t('takeover.stoppingWait', { name: targetName(target) }))
       await waitForInjected(target, inject)
+      if (inject && target === 'codex' && msg?.includes('CODEX_ACCOUNT_REQUIRED:')) {
+        setBusy(null)
+        await showAlert(t('takeover.codexAccountTitle'), t('takeover.codexAccountBody'))
+      }
       return true
     } catch (err) {
       setBusy(null) // 先关遮罩再弹错误窗,否则被遮罩盖住

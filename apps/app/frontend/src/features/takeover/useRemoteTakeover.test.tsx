@@ -169,3 +169,36 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
     expect(screen.getByTestId('busy-label')).toBeEmptyDOMElement()
   })
 })
+
+describe('Codex account capability notice', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    store.state.fetchIDEStatus = () => []
+  })
+
+  it('接管成功后显示 ChatGPT 登录指引并清除遮罩', async () => {
+    setPlatform('MacIntel')
+    store.state.fetchIDEStatus = () => [{ id: 'codex', injected: true }]
+    apiMocks.injectSelected.mockResolvedValueOnce('Codex: ✓ 已接管\nCODEX_ACCOUNT_REQUIRED:缺少 ChatGPT 登录态')
+    render(<Harness target="codex" />)
+    fireEvent.click(screen.getByRole('button', { name: 'go' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('已接管，Work 需要登录 ChatGPT')
+    expect(dialog).toHaveTextContent('先取消 Codex 接管')
+    expect(dialog).toHaveTextContent('官方客户端登录 ChatGPT')
+    expect(dialog).not.toHaveTextContent('CODEX_ACCOUNT_REQUIRED:')
+    expect(screen.getByTestId('busy-label')).toBeEmptyDOMElement()
+    await dismissDialog()
+    expect(apiMocks.restoreSelected).not.toHaveBeenCalled()
+    expect(apiMocks.openSystemPermissionSettings).not.toHaveBeenCalled()
+  })
+
+  it('完整 OAuth 接管成功时不显示账号缺失提示', async () => {
+    store.state.fetchIDEStatus = () => [{ id: 'codex', injected: true }]
+    apiMocks.injectSelected.mockResolvedValueOnce('Codex: ✓ 已接管并重启')
+    render(<Harness target="codex" />)
+    fireEvent.click(screen.getByRole('button', { name: 'go' }))
+    await waitFor(() => expect(screen.getByTestId('busy-label')).toBeEmptyDOMElement())
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})

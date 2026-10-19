@@ -196,6 +196,8 @@ export const zhCN = {
     // 文件属主/权限位问题,与系统隐私权限无关:正文直接用后端诊断出的可执行指引。
     filePermTitle: '需要修复文件权限',
     opFailed: '操作失败',
+    codexAccountTitle: '已接管，Work 需要登录 ChatGPT',
+    codexAccountBody: 'Codex 已接管，但未检测到完整的 ChatGPT 登录态，Work 浏览器等账号功能暂不可用。\n\n如需使用，请先取消 Codex 接管，在官方客户端登录 ChatGPT，再回到冰茶重新接管。\n\n登录冰茶账号不能代替 ChatGPT 登录。',
     egressBlockedTitle: '⚠ 接管已拦截 · 出口未通过',
     needCardTitle: '需要登录账号',
     needCardBody: '{product} 接管需要登录账号,请先在登录页登录后再开启。',

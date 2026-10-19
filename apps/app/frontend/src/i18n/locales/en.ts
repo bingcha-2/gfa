@@ -196,6 +196,8 @@ export const en: DeepPartialDict = {
     // the backend's actionable diagnosis, shown verbatim.
     filePermTitle: 'File permissions need fixing',
     opFailed: 'Operation failed',
+    codexAccountTitle: 'Takeover enabled; Work needs ChatGPT sign-in',
+    codexAccountBody: 'Codex takeover is enabled, but no complete ChatGPT sign-in was found. Account features such as the Work browser are unavailable.\n\nTo use them, stop Codex takeover, sign in to ChatGPT in the official client, then enable takeover again in BingchaAI.\n\nSigning in to BingchaAI does not sign you in to ChatGPT.',
     egressBlockedTitle: '⚠ Takeover blocked · egress check failed',
     needCardTitle: 'Sign in required',
     needCardBody: 'Taking over {product} requires a signed-in account — please sign in first.',

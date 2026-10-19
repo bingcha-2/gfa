@@ -20,10 +20,11 @@ import (
 // 官方验签拒绝,最终反复 account/read + 401 并卡在白屏。
 //
 // 因此远程接管使用自定义 bingchaai provider，只把 Responses API 指向本地代理 /v1。
-// 若用户本机已有且通过官方在线校验的真实 OAuth 登录态，则像 Cockpit 的
+// 若用户本机已有完整的 OAuth 登录态，则像 Cockpit 的
 // 「API Provider + 绑定 OAuth」一样保留该身份并写 requires_openai_auth=true，
-// 让插件目录、workspace 插件、Apps/连接器等账号能力继续可用；未登录、过期或
-// 校验失败时回落 requires_openai_auth=false。真实池号 token 仍只在 CodexProxy
+// 让插件目录、workspace 插件、Apps/连接器等账号能力继续使用现有身份；
+// 缺少完整登录态时回落 requires_openai_auth=false；过期凭证交由官方续期，
+// 读取失败则停止接管。真实池号 token 仍只在 CodexProxy
 // 转发到上游的瞬间注入,不落盘到用户机器。
 //
 // 内置 provider 会先尝试 WebSocket;代理对本机 /v1/responses Upgrade 返回 426,
