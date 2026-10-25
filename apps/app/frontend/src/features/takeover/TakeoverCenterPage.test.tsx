@@ -221,6 +221,23 @@ describe('TakeoverCenterPage — 统一接管中心', () => {
   })
 
   // ── 本地模式切换(接管中心独有) ──
+  it('未配置模型供应商时后端返回 null，切到本地自有号仍可管理账号和接管', async () => {
+    setPlatform('MacIntel')
+    agLocalMocks.listModelProviders.mockResolvedValueOnce(null)
+    const onNavigate = vi.fn()
+    render(<TakeoverCenterPage onNavigate={onNavigate} />)
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    await waitFor(() => expect(codexApi.listAccounts).toHaveBeenCalled())
+
+    fireEvent.click(within(codex).getByRole('button', { name: '本地自有号' }))
+    expect(within(codex).queryByRole('combobox', { name: 'codex 本地接管号源' })).toBeNull()
+    fireEvent.click(within(codex).getByRole('button', { name: /管理账号/ }))
+    expect(onNavigate).toHaveBeenCalledWith('local_codex')
+    fireEvent.click(within(codex).getByRole('button', { name: '接管' }))
+    await waitFor(() => expect(codexApi.setSource).toHaveBeenCalledWith('local'))
+    expect(apiMocks.injectSelected).not.toHaveBeenCalled()
+  })
+
   it('Codex 卡:切到本地自有号并接管 → 调 codexLocalApi.setSource(local)', async () => {
     setPlatform('MacIntel')
     render(<TakeoverCenterPage />)

@@ -240,7 +240,8 @@ function LocalCapableCard({ name, provider, note, localDesc, api, remoteRows, re
       setProviderId(raw.startsWith('provider:') ? raw.slice('provider:'.length) : '')
       if (local) setMode('local')
       try {
-        if (isCodex) setProviders(await listModelProviders())
+        // 尚未配置供应商时，Go nil slice 经 Wails 返回 null。
+        if (isCodex) setProviders((await listModelProviders()) ?? [])
         const list = await api.listAccounts()
         setAccounts(list.length)
         await loadAgInjected()
