@@ -13,6 +13,9 @@ describe("CodexModelCatalog", () => {
     expect(keys).toContain("gpt-5.6-sol");
     expect(keys).toContain("gpt-5.6-luna");
     expect(keys).toContain("gpt-5.6-terra");
+    expect(catalog.list()).toContainEqual({
+      key: "gpt-6.1-terra", displayName: "GPT-6.1 Terra", bucket: "codex",
+    });
     const info = catalog.list().find((m) => m.key === "gpt-5-codex")!;
     expect(info.displayName).toBe("GPT-5 Codex");
     expect(info.bucket).toBe("codex");

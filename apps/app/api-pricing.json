@@ -1,6 +1,23 @@
 {
-  "version": "api-pricing-2026-09-30",
+  "version": "api-pricing-2026-10-27",
   "models": [
+    {
+      "provider": "codex",
+      "canonicalModelId": "gpt-6.1-terra",
+      "aliases": ["gpt-6.1-terra"],
+      "effectiveFrom": "2026-10-26T00:00:00.000Z",
+      "contextThreshold": 272000,
+      "modes": {
+        "standard": {
+          "short": { "input": 1, "cacheRead": 0.05, "cacheWrite5m": 1.25, "cacheWrite1h": 1.25, "output": 5 },
+          "long": { "input": 2, "cacheRead": 0.1, "cacheWrite5m": 2.5, "cacheWrite1h": 2.5, "output": 7.5 }
+        },
+        "priority": {
+          "short": { "input": 2, "cacheRead": 0.1, "cacheWrite5m": 2.5, "cacheWrite1h": 2.5, "output": 10 },
+          "long": { "input": 4, "cacheRead": 0.2, "cacheWrite5m": 5, "cacheWrite1h": 5, "output": 15 }
+        }
+      }
+    },
     {
       "provider": "codex",
       "canonicalModelId": "gpt-6.1-sol",

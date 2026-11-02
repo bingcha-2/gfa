@@ -1,0 +1,35 @@
+services:
+  bingcha-channel:
+    build:
+      context: .
+    container_name: bingcha-channel
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      BASE_PATH: ""
+      COOKIE_SECURE: "true"
+      UPSTREAM_API: "http://185.150.191.36:61100"
+      SHARED_UPSTREAM_USERNAME: "userbingcha2"
+      SESSION_TTL_SECONDS: "43200"
+      DATABASE_PATH: "/app/data/bingcha.db"
+      BACKUP_DIR: "/app/backups"
+      BACKUP_RETENTION_DAYS: "14"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      KEY_BACKUP_SECRET: "${KEY_BACKUP_SECRET}"
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - "./data:/app/data"
+      - "./backups:/app/backups"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
