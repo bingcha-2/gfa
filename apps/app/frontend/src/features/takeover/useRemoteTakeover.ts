@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { useModal } from '@/components/Modal'
-import { useCompetingRelayGate } from '@/components/CompetingRelayDialog'
 import * as api from '@/services/wails'
 import { isMacPlatform } from '@/lib/platform'
 import { useT } from '@/i18n'
@@ -10,8 +9,7 @@ import { useT } from '@/i18n'
  * useRemoteTakeover —— 远程托管接管引擎(从原 TokenSourceControl 抽出,逐字保留所有分支)。
  *
  * 接管中心的 Claude / Codex / Antigravity「远程托管」卡共用这套执行逻辑:注入/还原 +
- * macOS 权限引导、CA 降级(CA_DEGRADED)、CA 未装(CA_FAILED,mac 可重试)、Windows
- * 商店版 Claude(STORE_CLAUDE)、出口前置闸(EGRESS_BLOCKED)、操作失败兜底。
+ * macOS 权限引导、Desktop 原生 3P 配置、出口前置闸(EGRESS_BLOCKED)、操作失败兜底。
  *
  * 返回执行器 + busy 态 + 需在宿主里渲染的 modalProps;loading 遮罩由宿主据 busy 渲染。
  */
@@ -25,20 +23,18 @@ function idToTarget(id: string): string {
   return 'hub'
 }
 
-const CLAUDE_STANDALONE_WIN_DOWNLOAD_URL = 'https://claude.ai/api/desktop/win32/x64/exe/latest/redirect'
 
 // 只写家目录配置的接管目标:Claude Code → ~/.claude/settings.json,Codex → ~/.codex/config.toml。
 // 家目录下的隐藏目录不归 macOS TCC 管,它们接管失败【一定】与「App 管理」这类隐私权限无关
 // (实际成因通常是目录被 root 占了),引导用户去开权限只会让人白折腾。其余目标(Hub 打 asar 补丁、
 // IDE / Desktop 要动已安装的应用)才可能真的缺 App 管理,保留原引导。
-const HOME_CONFIG_TARGETS = new Set(['claude', 'codex'])
+const HOME_CONFIG_TARGETS = new Set(['claude', 'codex', 'claude_desktop'])
 
 export function useRemoteTakeover() {
   const t = useT()
   const config = useAppStore((s) => s.config)
   const fetchIDEStatus = useAppStore((s) => s.fetchIDEStatus)
   const { showAlert, showConfirm, modalProps } = useModal()
-  const { confirmSanitize, dialogProps: relayDialogProps } = useCompetingRelayGate()
 
   const hasCard = !!config?.userToken && config.userToken.trim() !== ''
   const isMac = isMacPlatform()
@@ -77,56 +73,18 @@ export function useRemoteTakeover() {
     try {
       let msg: string
       if (inject && target === 'claude') {
-        // 网关托管优先:用服务端为本人签发的专用 key,不走 TUN/MITM/出口闸。
-        // 未被分配额度的用户(服务端回「尚未为你开通」)回退到原有接管流程。
-        try {
-          msg = await api.hostClaudeGateway()
-        } catch (e) {
-          if (!String(e).includes('尚未为你开通')) throw e
-          msg = await api.injectSelected([target])
-        }
+        msg = await api.hostClaudeGateway()
       } else {
         msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
       }
 
-      // ── 根证书降级安装(CA_DEGRADED):接管已生效、推理正常,但证书降级到「当前用户」库,
-      //    少数机器 Chromium 不信任 → 打开可能白屏。这是「软成功」,弹完仍等状态翻转、返回 true。
-      if (msg && msg.includes('CA_DEGRADED:')) {
-        setBusy(null) // 先关遮罩,否则弹窗被盖住
-        const detail = msg.split('CA_DEGRADED:').pop()?.trim() || msg
-        await showAlert(t('takeover.caDegradedTitle'), detail)
-        await waitForInjected(target, inject)
-        return true
-      }
-      // ── 根证书没装上(CA_FAILED):推理已走号池(正常),只是证书没信任、Max 不显示。
-      //    macOS 首选让用户【重新接管】——点了会再弹一次系统密码框,输入即当场装上证书并带 Max 重启。
-      if (msg && msg.includes('CA_FAILED:')) {
+      if (msg?.startsWith('DESKTOP_CLEANUP_REQUIRED:')) {
         setBusy(null)
-        const detail = msg.split('CA_FAILED:').pop()?.trim() || msg
-        if (isMac) {
-          const retry = await showConfirm(t('takeover.caFailedTitle'), detail, {
-            confirmLabel: t('takeover.caRetakeBtn'),
-            cancelLabel: t('common.later'),
-          })
-          if (retry) {
-            return await runTakeover(target, true) // 递归重试:再弹密码框,装上则带 Max 重启
-          }
-        } else {
-          await showAlert(t('takeover.caFailedTitle'), detail)
-        }
-        await waitForInjected(target, inject)
-        return true
+        await showAlert('旧配置清理', msg.slice('DESKTOP_CLEANUP_REQUIRED:'.length))
       }
-      // ── Windows 商店版 Claude Desktop 无法接管:STORE_CLAUDE 前缀 → 弹专门引导,确认即打开官方独立版下载。
-      if (msg && msg.includes('STORE_CLAUDE:')) {
+      if (msg?.startsWith('DESKTOP_RESTART_REQUIRED:')) {
         setBusy(null)
-        await fetchIDEStatus()
-        const detail = msg.split('STORE_CLAUDE:').pop()?.replace(/\)\s*$/, '').trim() || msg
-        const go = await showConfirm(t('takeover.storeClaudeTitle'), detail, { confirmLabel: t('takeover.storeClaudeBtn'), cancelLabel: t('common.later') })
-        if (go) {
-          api.openURL(CLAUDE_STANDALONE_WIN_DOWNLOAD_URL)
-        }
-        return false
+        await showAlert('请重启 Claude Desktop', msg.slice('DESKTOP_RESTART_REQUIRED:'.length))
       }
       // ── 文件属主/权限位问题(FILE_PERM):后端已诊断出是谁占着目录、该怎么修,原样透出即可。
       //    这与系统隐私权限无关,绝不能引导去开「App 管理」——用户照着做也修不好。
@@ -177,36 +135,6 @@ export function useRemoteTakeover() {
     }
   }
 
-  // 接管前的第三方中转预检:检测 → 弹「封号免责」窗 → 按用户选择清理/跳过/取消。
-  // 返回是否继续接管(cancel=false;clean/skip=true)。检测或清理失败都不阻断接管。
-  const preflightSanitize = async (target: string): Promise<boolean> => {
-    let conflicts: api.ClaudeConfigConflict[] = []
-    try {
-      conflicts = await api.detectCompetingClaudeConfig()
-    } catch {
-      return true // 检测失败不阻断接管
-    }
-    if (!conflicts || conflicts.length === 0) return true
-
-    const decision = await confirmSanitize(conflicts)
-    if (decision === 'cancel') return false
-    if (decision === 'clean') {
-      setBusy(target)
-      setBusyLabel(t('takeover.sanitize.cleaning'))
-      try {
-        const rep = await api.sanitizeCompetingClaudeConfig([]) // [] = 清理全部检出
-        setBusy(null)
-        if ((rep.skipped?.length ?? 0) > 0) {
-          await showAlert(t('takeover.sanitize.doneTitle'), t('takeover.sanitize.skippedBody', { skipped: rep.skipped.length }))
-        }
-      } catch (e) {
-        setBusy(null)
-        await showAlert(t('takeover.opFailed'), String(e))
-      }
-    }
-    return true // clean 或 skip 都继续接管
-  }
-
   // 接管前校验账号卡;无卡则引导激活,不下发后端动作。
   const ensureCard = async (productLabel: string): Promise<boolean> => {
     if (hasCard) return true
@@ -223,6 +151,6 @@ export function useRemoteTakeover() {
     // 不忙时一律给空 label:setBusy(null) 不会清 busyLabel,而宿主的遮罩还有 hostBusy 这个
     // 独立开关 —— 直接透出 busyLabel 会让遮罩在弹窗期间挂着「正在接管 X…」的旧文案。
     busyLabel: busy !== null ? busyLabel : '',
-    hasCard, runTakeover, ensureCard, confirmDesktopTakeover, preflightSanitize, modalProps, relayDialogProps,
+    hasCard, runTakeover, ensureCard, confirmDesktopTakeover, modalProps,
   }
 }

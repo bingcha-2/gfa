@@ -93,6 +93,17 @@ func (l *Leaser) EntitledProducts() []string {
 	return append([]string(nil), l.entitledProducts...)
 }
 
+// canRefreshProduct requires an explicitly granted product before background I/O.
+// An empty legacy product list is not evidence of a subscription.
+func (l *Leaser) canRefreshProduct(product string) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.entitlementsKnown {
+		return l.subActive && productListContains(l.entitledProducts, product)
+	}
+	return productListContains(productsFromAKS(l.accessKeyStatus), product)
+}
+
 // entitlementsKnownNoSub 报告「已确知无生效订阅」—— 心跳已返回且 subscriptions 为空。
 // 区别于冷启动尚未知(entitlementsKnown=false):后者不该据此判卡密不可用。
 func (l *Leaser) entitlementsKnownNoSub() bool {

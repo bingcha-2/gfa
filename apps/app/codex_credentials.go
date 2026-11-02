@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -17,7 +18,7 @@ import (
 
 // ─── 伪 ~/.codex/auth.json 注入：让未登录的 Codex 跳过登录页 ──────────────────
 //
-// 对标 Claude 的 InjectFakeClaudeCredentials(mitm_credentials.go)。Codex 接管走自定义
+// Codex 接管走自定义
 // provider 模式(config.toml 的 base_url 指向本地代理,requires_openai_auth=false),但
 // Codex GUI 启动时仍会读 ~/.codex/auth.json 判断登录态:没有有效登录就卡在登录页,进不到
 // 能用自定义 provider 的主界面。本文件在接管时写一份"伪登录态",让它以为已登录、直接可用。
@@ -680,4 +681,20 @@ func fakeCodexJWT(claims map[string]interface{}) string {
 	header := map[string]interface{}{"alg": "RS256", "typ": "JWT", "kid": "bcai-fake"}
 	sig := base64.RawURLEncoding.EncodeToString([]byte("bcai-fake-signature-not-real"))
 	return enc(header) + "." + enc(claims) + "." + sig
+}
+
+func randToken(n int) string {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand 失败极罕见；退化为定长占位，不影响"已登录"判定。
+		for i := range b {
+			b[i] = charset[i%len(charset)]
+		}
+		return string(b)
+	}
+	for i := range b {
+		b[i] = charset[int(b[i])%len(charset)]
+	}
+	return string(b)
 }

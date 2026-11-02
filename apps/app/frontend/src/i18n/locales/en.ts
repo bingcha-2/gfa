@@ -22,7 +22,6 @@ export const en: DeepPartialDict = {
   nav: {
     home: 'Remote',
     takeover: 'Takeover',
-    faq: 'Guide',
     logs: 'Logs',
     settings: 'Settings',
     expandSidebar: 'Expand sidebar',
@@ -33,6 +32,10 @@ export const en: DeepPartialDict = {
   },
 
   theme: {
+    label: 'Appearance',
+    system: 'System',
+    light: 'Light',
+    dark: 'Dark',
     toDark: 'Switch to dark mode',
     toLight: 'Switch to light mode',
   },
@@ -118,14 +121,14 @@ export const en: DeepPartialDict = {
 
   promo: {
     storeTitle: 'Bingcha Store',
-    storeDescCard: 'Codex Plus · Cursor · Windsurf, one-click proxy',
+    storeDescCard: 'Codex · Gemini · Claude · verification codes & more',
     storeCta: 'Shop',
     apiTitle: 'Bingcha API',
     apiDescCard: 'Claude / Gemini / GPT at low prices',
     apiCta: 'Learn',
     hotTag: 'HOT',
     newTag: 'NEW',
-    storeDescFull: 'Codex Plus · Cursor Pro · Windsurf\nOne-click proxy bundle, from ¥9.9',
+    storeDescFull: 'Codex · Gemini · Claude · verification codes & more',
     storeCtaFull: 'Shop now',
     apiDescFull: 'Claude / Gemini / GPT at low prices\nEnterprise-grade stability, pay as you go',
     apiCtaFull: 'Learn more',
@@ -185,11 +188,6 @@ export const en: DeepPartialDict = {
     stopping: 'Stopping takeover of {name}...',
     injectingWait: 'Taking over {name} · waiting to take effect...',
     stoppingWait: 'Stopping takeover of {name} · waiting to take effect...',
-    caDegradedTitle: 'Takeover succeeded · certificate installed (degraded)',
-    caFailedTitle: 'Inference taken over · Max pending',
-    caRetakeBtn: 'Retake · install certificate',
-    storeClaudeTitle: '⚠ Store version can\'t be taken over',
-    storeClaudeBtn: 'Download standalone',
     permissionTitle: 'System permission required',
     permissionBody: '{message}\n\nEnable BingchaAI under "System Settings → Privacy & Security → App Management", then retry.',
     // File ownership / mode problem, unrelated to system privacy permissions: the body is
@@ -202,7 +200,7 @@ export const en: DeepPartialDict = {
     needCardTitle: 'Sign in required',
     needCardBody: 'Taking over {product} requires a signed-in account — please sign in first.',
     desktopConfirmTitle: 'Take over Claude Desktop',
-    desktopConfirmBody: '⚠ Chat and Cowork cannot be used via takeover — use the desktop Code feature!\n\nTakeover restarts Claude Desktop, which interrupts any running Cowork session. Continue?',
+    desktopConfirmBody: 'Switching restarts Claude Desktop and interrupts running sessions. 3P mode uses separate local history; existing account conversations are not migrated. Continue?',
     hubPermission1: 'Taking over the Hub modifies app files and needs the ',
     hubPermission2: 'App Management',
     hubPermission3: ' permission.',
@@ -281,23 +279,6 @@ export const en: DeepPartialDict = {
     repairAuthFailed: 'Could not repair Codex sign-in: {error}',
   },
 
-  faq: {
-    subtitle: 'Frequently asked questions to get you up to speed',
-    searchPlaceholder: 'Search questions...',
-    loadFailed: 'Could not load the FAQ — check your network connection',
-    noMatch: 'No matching questions',
-    empty: 'No FAQ entries yet',
-    noAnswer: 'Didn\'t find an answer?',
-    wechatContact: 'Add {wechat} on WeChat for support',
-    groupContact: 'Join the support group',
-    viewFull: 'View full version',
-    githubTitle: 'Feedback & help',
-    githubDesc: 'Submit issues, suggest features, or contact support in your account',
-    githubCta: 'Go to your account',
-    supportTitle: 'Online support',
-    supportDesc: 'Quota, login, subscription, or client issue? Chat with the AI assistant.',
-    supportCta: 'Chat now',
-  },
 
   settings: {
     pathsTitle: 'Install paths',

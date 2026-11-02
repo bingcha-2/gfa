@@ -27,8 +27,8 @@ func TestClaudeCodeTargetIsRegistered(t *testing.T) {
 	if byKey.ProductID() != "claude_code" || byProduct.Key() != "claude" {
 		t.Fatalf("unexpected target identity: key=%q product=%q", byProduct.Key(), byKey.ProductID())
 	}
-	if byKey.InjectionType() != "settings" {
-		t.Fatalf("claude target should inject via settings, got %q", byKey.InjectionType())
+	if byKey.InjectionType() != "gateway" {
+		t.Fatalf("claude target should use server gateway, got %q", byKey.InjectionType())
 	}
 }
 

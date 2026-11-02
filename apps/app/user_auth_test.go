@@ -86,8 +86,6 @@ func TestUserLogin_Success(t *testing.T) {
 		GetLeaser().StopAutoLease()
 		GetLeaser().ResetEntitlements()
 		GetHTTPProxy().Stop()
-		GetMitmManager().StopProxy()
-		GetMitmManager().UpdateConfig("", "", "")
 	})
 
 	app := &App{}
@@ -148,8 +146,6 @@ func TestUserLogin_SendsPreviousDeviceIDWhenMachineIDMigrates(t *testing.T) {
 		GetLeaser().StopAutoLease()
 		GetLeaser().ResetEntitlements()
 		GetHTTPProxy().Stop()
-		GetMitmManager().StopProxy()
-		GetMitmManager().UpdateConfig("", "", "")
 	})
 
 	readMachineID = func() (machineIDSource, error) {
@@ -317,14 +313,10 @@ func TestHeartbeat_SessionInvalid_FatalPath(t *testing.T) {
 	}
 }
 
-// ── TestUserLogout_ClearsMitmToken ───────────────────────────────────────────
+// ── TestUserLogout_ClearsSession ───────────────────────────────────────────
 
-// TestUserLogout_ClearsMitmToken: logout must neutralize the MITM proxy's
-// session token. The MITM keeps listening on its fixed port (an active Claude
-// Desktop takeover still routes traffic through it), but with the token cleared
-// it can no longer lease with the stale session — mirroring app.go SaveConfig's
-// GetMitmManager().UpdateConfig sync on config change.
-func TestUserLogout_ClearsMitmToken(t *testing.T) {
+// Logout must clear the persisted session before future gateway activation.
+func TestUserLogout_ClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir
 	defer func() { origConfigDir = "" }()
@@ -332,16 +324,13 @@ func TestUserLogout_ClearsMitmToken(t *testing.T) {
 	// Seed a logged-in config.
 	cfg := DefaultConfig()
 	cfg.UserToken = "tok-stale"
-	cfg.DeviceId = "dev-mitm-1"
+	cfg.DeviceId = "dev-logout-1"
 	cfg.UserEmail = "user@example.com"
 	if err := SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
 
-	// Simulate the MITM manager holding the session token, as
 	// startServicesForUser sets it on login.
-	GetMitmManager().UpdateConfig("tok-stale", "dev-mitm-1", "")
-	defer GetMitmManager().UpdateConfig("", "", "") // don't leak into other tests
 
 	// Stub the auth server so the best-effort POST /app/logout stays local.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -364,10 +353,6 @@ func TestUserLogout_ClearsMitmToken(t *testing.T) {
 		t.Fatalf("UserLogout: %v", err)
 	}
 
-	// The MITM manager must no longer hold the stale session token.
-	if got := GetMitmManager().sessionCard(); got != "" {
-		t.Errorf("MITM session token after logout = %q, want empty", got)
-	}
 	// And the config token must be cleared too.
 	if got := LoadConfig().UserToken; got != "" {
 		t.Errorf("UserToken after logout = %q, want empty", got)
@@ -425,8 +410,6 @@ func TestUserLoginClearsAntigravityFairShare(t *testing.T) {
 		GetLeaser().StopAutoLease()
 		GetLeaser().ResetEntitlements()
 		GetHTTPProxy().Stop()
-		GetMitmManager().StopProxy()
-		GetMitmManager().UpdateConfig("", "", "")
 	})
 
 	resetBoundFractions()
@@ -472,16 +455,13 @@ func seedLoggedInConfig(t *testing.T, token string) {
 }
 
 // TestHeartbeat_SessionInvalid_ClearsSession: 401 SESSION_INVALID → forced
-// local logout — services stopped, MITM token cleared, config session cleared
+// local logout — services stopped, config session cleared
 // (the UI then lands on LoginPage via GetAccountState).
 func TestHeartbeat_SessionInvalid_ClearsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir = tmpDir
 	defer func() { origConfigDir = "" }()
 	seedLoggedInConfig(t, "tok-dead")
-
-	GetMitmManager().UpdateConfig("tok-dead", "dev-hb", "")
-	defer GetMitmManager().UpdateConfig("", "", "")
 
 	srv := newHeartbeatServer(t, map[string]string{"error": "SESSION_INVALID", "message": "session revoked"}, http.StatusUnauthorized)
 	defer srv.Close()
@@ -496,9 +476,6 @@ func TestHeartbeat_SessionInvalid_ClearsSession(t *testing.T) {
 	}
 	if got := LoadConfig().UserToken; got != "" {
 		t.Errorf("UserToken after SESSION_INVALID = %q, want empty (forced logout)", got)
-	}
-	if got := GetMitmManager().sessionCard(); got != "" {
-		t.Errorf("MITM token after SESSION_INVALID = %q, want empty", got)
 	}
 }
 

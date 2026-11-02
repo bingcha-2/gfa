@@ -1,4 +1,4 @@
-import { calculateApiValue, type QuotaProvider } from "@gfa/shared";
+import { requireApiValue, type ApiPricingProvider } from "@gfa/shared";
 
 export type UsdQuotaRecord = {
   quotaAlgorithm?: string;
@@ -64,9 +64,15 @@ export function usdQuotaForProduct(
   };
 }
 
-function providerForProduct(product: unknown): QuotaProvider | null {
+export function supportsApiValuationProduct(product: unknown): boolean {
+  return supportsApiUsdProduct(product) || product === "antigravity";
+}
+export function valuationProvider(product: string, model: string): ApiPricingProvider {
+  return product === "antigravity" ? (model.startsWith("claude-") ? "anthropic" : "antigravity") : product as ApiPricingProvider;
+}
+function providerForProduct(product: unknown): ApiPricingProvider | null {
   const normalized = String(product || "").trim().toLowerCase();
-  if (supportsApiUsdProduct(normalized)) return normalized as QuotaProvider;
+  if (supportsApiUsdProduct(normalized) || normalized === "antigravity") return normalized as ApiPricingProvider;
   return null;
 }
 
@@ -81,10 +87,11 @@ function nonNegative(value: unknown): number {
  * the event timestamp, so enabling a limit mid-window preserves prior usage.
  */
 export function apiValueUsdForEvent(event: any): number {
-  const frozen = Number(event?.apiValueUsd);
+  const frozen = event?.apiValueUsd == null ? NaN : Number(event.apiValueUsd);
   if (Number.isFinite(frozen) && frozen >= 0) return frozen;
 
-  const provider = providerForProduct(event?.product);
+  let provider = providerForProduct(event?.product);
+  if (provider === "antigravity" && String(event?.modelKey || "").startsWith("claude-")) provider = "anthropic";
   if (!provider) return 0;
   const grossInput = nonNegative(event?.inputTokens);
   // AccessKeyStore first normalizes every provider to one canonical gross-input
@@ -100,7 +107,7 @@ export function apiValueUsdForEvent(event: any): number {
     nonNegative(event?.cacheWrite1hTokens),
   );
   const inputTokens = Math.max(0, grossInput - cachedInputTokens - cacheWrite5mTokens - cacheWrite1hTokens);
-  return calculateApiValue({
+  return requireApiValue({
       provider,
       modelId: String(event?.modelKey || ""),
       pricingMode: ["priority", "fast"].includes(String(event?.serviceTier || "")) ? "priority" : "standard",
@@ -109,7 +116,7 @@ export function apiValueUsdForEvent(event: any): number {
       cacheWrite5mTokens,
       cacheWrite1hTokens,
       outputTokens: nonNegative(event?.outputTokens),
-      contextTokens: nonNegative(event?.contextTokens),
+      contextTokens: nonNegative(event?.contextTokens) || grossInput,
       occurredAt: nonNegative(event?.occurredAt ?? event?.at) || Date.now(),
   }).usd;
 }
@@ -120,6 +127,7 @@ export function apiValueUsdForEvents(events: unknown): number {
 }
 
 function frozenTotal(value: unknown): number | null {
+  if (value == null) return null;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }

@@ -48,14 +48,15 @@ describe("useAccountLevels", () => {
     expect(urls.some((u) => u.includes("/api/console/account-levels?product=codex"))).toBe(true);
   });
 
-  it("某产品请求失败 → 该产品等级为空数组,不抛错", async () => {
+  it("某产品请求失败 → 保留未知状态，不误报为空库存", async () => {
     const mockFetch = vi.fn(async () => jsonResponse({ message: "boom" }, 500));
     vi.stubGlobal("fetch", mockFetch);
 
     const { result } = renderHook(() => useAccountLevels(["anthropic"]));
 
     await waitFor(() => {
-      expect(result.current.levels.anthropic).toEqual([]);
+      expect(result.current.loading).toBe(false);
+      expect(result.current.levels).not.toHaveProperty("anthropic");
     });
   });
 });

@@ -212,15 +212,6 @@ func familyDisplayName(family string) string {
 	}
 }
 
-func estimateOfficialCostUSD(family string, input, output, cacheRead, cacheWrite int64) float64 {
-	inP, outP := priceFor(family)
-	cacheReadP, cacheWriteP := cachePriceFor(family)
-	return float64(input)/1_000_000.0*inP +
-		float64(output)/1_000_000.0*outP +
-		float64(cacheRead)/1_000_000.0*cacheReadP +
-		float64(cacheWrite)/1_000_000.0*cacheWriteP
-}
-
 func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, value apiValue, fastTokens int64) {
 	key := modelUsageKey(family, modelKey)
 	row, ok := byModel[key]
@@ -291,7 +282,7 @@ func mustUsageDate(value string) time.Time {
 }
 
 func repriceModelUsage(row *ModelUsageRecord, at time.Time) bool {
-	if row == nil || row.PricingVersion == exactAPIPrices.Version {
+	if row == nil || (row.PricingVersion != "" || row.EstimatedCostUSD > 0) {
 		return false
 	}
 	provider := ""
@@ -613,7 +604,10 @@ func (s *UsageStatsStore) AddModelTokensWithCacheWrites(family, modelKey string,
 	if fast {
 		mode = "priority"
 	}
-	value := apiValue{USD: estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite), Quality: "legacy-family", PricingMode: mode}
+	if provider == "" && family == "gemini" {
+		provider = "antigravity"
+	}
+	value := apiValue{Quality: "unpriced", PricingMode: mode}
 	if provider != "" {
 		value = calculateAPIValue(provider, modelKey, mode, input+cacheRead+cacheWrite,
 			input, output, cacheRead, cacheWrite5m, cacheWrite1h, time.Now())

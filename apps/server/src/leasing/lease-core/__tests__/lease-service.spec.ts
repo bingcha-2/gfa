@@ -1,3 +1,4 @@
+import { installApiPriceSnapshots } from "@gfa/shared";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
@@ -10,6 +11,14 @@ import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { quotaEstimatorAccountKey } from "../../token-server/account-quota-estimator";
 
+
+function installGooglePriceFixture() {
+  installApiPriceSnapshots([{version:"test-google", effectiveAt:1, models:[{
+    provider:"antigravity", canonicalModelId:"gemini-2.5-pro", aliases:[], effectiveFrom:"1970-01-01T00:00:00.001Z",
+    modes:{standard:{short:{input:1,output:5,cacheRead:.1,cacheWrite5m:0,cacheWrite1h:0}}}
+  }]}]);
+}
+afterEach(()=>installApiPriceSnapshots([]));
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -1207,6 +1216,7 @@ describe("LeaseService (generic core)", () => {
   });
 
   it("display-bound-pool shows an antigravity ultra binding but leases from pro or premium pool accounts", async () => {
+    installGooglePriceFixture();
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {
       accounts: [
@@ -1245,6 +1255,7 @@ describe("LeaseService (generic core)", () => {
   });
 
   it("display-bound-pool does not fall back to the displayed ultra account when no pro or premium account exists", async () => {
+    installGooglePriceFixture();
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {
       accounts: [

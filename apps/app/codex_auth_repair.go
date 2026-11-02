@@ -42,7 +42,7 @@ func (a *App) RepairCodexAuth() (string, error) {
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
 			if localBackupErr == nil {
-				if err := (localPlatform{}).CodexRestoreAccount(); err != nil {
+				if err := restoreLegacyCodexAccount(); err != nil {
 					return "", fmt.Errorf("restore managed Codex credentials: %w", err)
 				}
 				Log("[codex-auth-repair] restored managed local credentials after auth.json was missing")
@@ -72,7 +72,7 @@ func (a *App) RepairCodexAuth() (string, error) {
 		return "restored-managed", nil
 	}
 	if localBackupErr == nil {
-		if err := (localPlatform{}).CodexRestoreAccount(); err != nil {
+		if err := restoreLegacyCodexAccount(); err != nil {
 			return "", fmt.Errorf("restore managed Codex account: %w", err)
 		}
 		Log("[codex-auth-repair] restored managed local account instead of deleting auth.json")

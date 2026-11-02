@@ -3,11 +3,8 @@ import { AppShell } from '@/components/layout/AppShell'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
-import { FaqPage } from '@/pages/FaqPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { TakeoverCenterPage } from '@/features/takeover/TakeoverCenterPage'
-import { CodexSuitePage } from '@/features/local/codex/CodexSuitePage'
-import { AntigravitySuitePage } from '@/features/local/antigravity/AntigravitySuitePage'
 import { ToastHost } from '@/components/ToastHost'
 import { PatronThanks } from '@/components/PatronThanks'
 import { useAppStore } from '@/stores/useAppStore'
@@ -77,10 +74,7 @@ export default function App() {
       case 'takeover': return <TakeoverCenterPage onNavigate={setCurrentPage} />
       case 'remote': return <DashboardPage />
       case 'logs': return <LogsPage />
-      case 'faq': return <FaqPage />
       case 'settings': return <SettingsPage />
-      case 'local_codex': return <CodexSuitePage onNavigate={setCurrentPage} />
-      case 'local_antigravity': return <AntigravitySuitePage onNavigate={setCurrentPage} />
     }
   }
 

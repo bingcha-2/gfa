@@ -42,7 +42,7 @@ func TestBuildCodexAppLaunchPlan(t *testing.T) {
 			t.Fatal("skin channel should not reserve another port")
 			return 0, nil
 		})
-		if err != nil || plan.CDPPort != codexSkinChannelPort || !plan.Branding {
+		if err != nil || plan.CDPPort != codexAppDefaultDebugPort || !plan.Branding {
 			t.Fatalf("skin+branding plan = %+v err=%v", plan, err)
 		}
 	})

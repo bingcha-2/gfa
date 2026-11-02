@@ -6,9 +6,6 @@ export function ActivateCode(arg1) {
   return window['go']['main']['App']['ActivateCode'](arg1);
 }
 
-export function ApplyHostProtection(arg1) {
-  return window['go']['main']['App']['ApplyHostProtection'](arg1);
-}
 
 export function BrowseForPath(arg1) {
   return window['go']['main']['App']['BrowseForPath'](arg1);
@@ -58,9 +55,6 @@ export function GetCodexFastMode() {
   return window['go']['main']['App']['GetCodexFastMode']();
 }
 
-export function GetCodexRelayConfig() {
-  return window['go']['main']['App']['GetCodexRelayConfig']();
-}
 
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
@@ -70,13 +64,6 @@ export function GetDetectedPaths() {
   return window['go']['main']['App']['GetDetectedPaths']();
 }
 
-export function GetFaqData() {
-  return window['go']['main']['App']['GetFaqData']();
-}
-
-export function GetHostProtectionStatus() {
-  return window['go']['main']['App']['GetHostProtectionStatus']();
-}
 
 export function GetIDEStatus() {
   return window['go']['main']['App']['GetIDEStatus']();
@@ -122,545 +109,143 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
-export function LocalActivateGatewayTimeoutPreset(arg1) {
-  return window['go']['main']['App']['LocalActivateGatewayTimeoutPreset'](arg1);
-}
-
-export function LocalAddAntigravityApiKey(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalAddAntigravityApiKey'](arg1, arg2, arg3);
-}
-
-export function LocalAddAntigravityToken(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalAddAntigravityToken'](arg1, arg2, arg3);
-}
-
-export function LocalAddCodexApiKey(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalAddCodexApiKey'](arg1, arg2, arg3);
-}
-
-export function LocalAddCodexToken(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalAddCodexToken'](arg1, arg2, arg3);
-}
-
-export function LocalAntigravityGatewayStart() {
-  return window['go']['main']['App']['LocalAntigravityGatewayStart']();
-}
-
-export function LocalAntigravityGatewayStatus() {
-  return window['go']['main']['App']['LocalAntigravityGatewayStatus']();
-}
-
-export function LocalAntigravityGatewayStop() {
-  return window['go']['main']['App']['LocalAntigravityGatewayStop']();
-}
-
-export function LocalAntigravityLocalInjected(arg1) {
-  return window['go']['main']['App']['LocalAntigravityLocalInjected'](arg1);
-}
-
-export function LocalAntigravityStats() {
-  return window['go']['main']['App']['LocalAntigravityStats']();
-}
-
-export function LocalAntigravityWakeupClearVerificationHistory(arg1) {
-  return window['go']['main']['App']['LocalAntigravityWakeupClearVerificationHistory'](arg1);
-}
-
-export function LocalAntigravityWakeupConfig() {
-  return window['go']['main']['App']['LocalAntigravityWakeupConfig']();
-}
-
-export function LocalAntigravityWakeupHistory() {
-  return window['go']['main']['App']['LocalAntigravityWakeupHistory']();
-}
-
-export function LocalAntigravityWakeupRunNow() {
-  return window['go']['main']['App']['LocalAntigravityWakeupRunNow']();
-}
-
-export function LocalAntigravityWakeupVerificationHistory() {
-  return window['go']['main']['App']['LocalAntigravityWakeupVerificationHistory']();
-}
-
-export function LocalAntigravityWakeupVerificationState() {
-  return window['go']['main']['App']['LocalAntigravityWakeupVerificationState']();
-}
-
-export function LocalAntigravityWakeupVerifyBatch(arg1) {
-  return window['go']['main']['App']['LocalAntigravityWakeupVerifyBatch'](arg1);
-}
-
-export function LocalAssignAccountsToGroup(arg1, arg2) {
-  return window['go']['main']['App']['LocalAssignAccountsToGroup'](arg1, arg2);
-}
-
-export function LocalBrowseForPath(arg1) {
-  return window['go']['main']['App']['LocalBrowseForPath'](arg1);
-}
-
-export function LocalCancelAntigravityLogin(arg1) {
-  return window['go']['main']['App']['LocalCancelAntigravityLogin'](arg1);
-}
-
-export function LocalCancelCodexLogin(arg1) {
-  return window['go']['main']['App']['LocalCancelCodexLogin'](arg1);
-}
-
-export function LocalClearGatewayStats() {
-  return window['go']['main']['App']['LocalClearGatewayStats']();
-}
-
-export function LocalCodexReferralEligibility(arg1, arg2) {
-  return window['go']['main']['App']['LocalCodexReferralEligibility'](arg1, arg2);
-}
-
-export function LocalCodexReferralRules(arg1, arg2) {
-  return window['go']['main']['App']['LocalCodexReferralRules'](arg1, arg2);
-}
-
-export function LocalCodexSessionTokenStats(arg1) {
-  return window['go']['main']['App']['LocalCodexSessionTokenStats'](arg1);
-}
-
-export function LocalCodexStats() {
-  return window['go']['main']['App']['LocalCodexStats']();
-}
-
-export function LocalCodexWakeupClearVerificationHistory(arg1) {
-  return window['go']['main']['App']['LocalCodexWakeupClearVerificationHistory'](arg1);
-}
-
-export function LocalCodexWakeupConfig() {
-  return window['go']['main']['App']['LocalCodexWakeupConfig']();
-}
-
-export function LocalCodexWakeupHistory() {
-  return window['go']['main']['App']['LocalCodexWakeupHistory']();
-}
-
-export function LocalCodexWakeupRunNow() {
-  return window['go']['main']['App']['LocalCodexWakeupRunNow']();
-}
-
-export function LocalCodexWakeupVerificationHistory() {
-  return window['go']['main']['App']['LocalCodexWakeupVerificationHistory']();
-}
-
-export function LocalCodexWakeupVerificationState() {
-  return window['go']['main']['App']['LocalCodexWakeupVerificationState']();
-}
-
-export function LocalCodexWakeupVerifyBatch(arg1) {
-  return window['go']['main']['App']['LocalCodexWakeupVerifyBatch'](arg1);
-}
-
-export function LocalConsumeCodexResetCredit(arg1, arg2) {
-  return window['go']['main']['App']['LocalConsumeCodexResetCredit'](arg1, arg2);
-}
-
-export function LocalCreateAccountGroup(arg1) {
-  return window['go']['main']['App']['LocalCreateAccountGroup'](arg1);
-}
-
-export function LocalCreateGatewayKey(arg1) {
-  return window['go']['main']['App']['LocalCreateGatewayKey'](arg1);
-}
-
-export function LocalCurrentAntigravityAccount() {
-  return window['go']['main']['App']['LocalCurrentAntigravityAccount']();
-}
-
-export function LocalCurrentCodexAccount() {
-  return window['go']['main']['App']['LocalCurrentCodexAccount']();
-}
-
-export function LocalDeleteAccount(arg1) {
-  return window['go']['main']['App']['LocalDeleteAccount'](arg1);
-}
-
-export function LocalDeleteAccountGroup(arg1) {
-  return window['go']['main']['App']['LocalDeleteAccountGroup'](arg1);
-}
-
-export function LocalDeleteAccounts(arg1) {
-  return window['go']['main']['App']['LocalDeleteAccounts'](arg1);
-}
-
-export function LocalDeleteGatewayKey(arg1) {
-  return window['go']['main']['App']['LocalDeleteGatewayKey'](arg1);
-}
-
-export function LocalDeleteModelProvider(arg1) {
-  return window['go']['main']['App']['LocalDeleteModelProvider'](arg1);
-}
-
-export function LocalDetectCodexAppPath() {
-  return window['go']['main']['App']['LocalDetectCodexAppPath']();
-}
-
-export function LocalEvaluateCodexAlert() {
-  return window['go']['main']['App']['LocalEvaluateCodexAlert']();
-}
-
-export function LocalExportAntigravityAccounts(arg1) {
-  return window['go']['main']['App']['LocalExportAntigravityAccounts'](arg1);
-}
-
-export function LocalExportAntigravityAccountsToFile(arg1) {
-  return window['go']['main']['App']['LocalExportAntigravityAccountsToFile'](arg1);
-}
-
-export function LocalExportCodexAccounts(arg1) {
-  return window['go']['main']['App']['LocalExportCodexAccounts'](arg1);
-}
-
-export function LocalExportCodexAccountsToFile(arg1) {
-  return window['go']['main']['App']['LocalExportCodexAccountsToFile'](arg1);
-}
-
-export function LocalGatewayConnTest() {
-  return window['go']['main']['App']['LocalGatewayConnTest']();
-}
-
-export function LocalGatewayStart() {
-  return window['go']['main']['App']['LocalGatewayStart']();
-}
-
-export function LocalGatewayStatus() {
-  return window['go']['main']['App']['LocalGatewayStatus']();
-}
-
-export function LocalGatewayStop() {
-  return window['go']['main']['App']['LocalGatewayStop']();
-}
-
-export function LocalGetAlertConfig() {
-  return window['go']['main']['App']['LocalGetAlertConfig']();
-}
-
-export function LocalGetAntigravitySource() {
-  return window['go']['main']['App']['LocalGetAntigravitySource']();
-}
-
-export function LocalGetCodexQuickConfig() {
-  return window['go']['main']['App']['LocalGetCodexQuickConfig']();
-}
-
-export function LocalGetCodexResetCredits(arg1) {
-  return window['go']['main']['App']['LocalGetCodexResetCredits'](arg1);
-}
-
-export function LocalGetCodexSettings() {
-  return window['go']['main']['App']['LocalGetCodexSettings']();
-}
-
-export function LocalGetCodexSkinChannel() {
-  return window['go']['main']['App']['LocalGetCodexSkinChannel']();
-}
-
-export function LocalGetCodexSource() {
-  return window['go']['main']['App']['LocalGetCodexSource']();
-}
-
-export function LocalGetGatewayAccessScope() {
-  return window['go']['main']['App']['LocalGetGatewayAccessScope']();
-}
-
-export function LocalGetGatewayOpsConfig() {
-  return window['go']['main']['App']['LocalGetGatewayOpsConfig']();
-}
-
-export function LocalGetRefreshConfig() {
-  return window['go']['main']['App']['LocalGetRefreshConfig']();
-}
-
-export function LocalGetRoutingStrategy() {
-  return window['go']['main']['App']['LocalGetRoutingStrategy']();
-}
-
-export function LocalGetSwitchConfig() {
-  return window['go']['main']['App']['LocalGetSwitchConfig']();
-}
-
-export function LocalImportAntigravityAuthFiles(arg1) {
-  return window['go']['main']['App']['LocalImportAntigravityAuthFiles'](arg1);
-}
-
-export function LocalImportAntigravityFromJSON(arg1) {
-  return window['go']['main']['App']['LocalImportAntigravityFromJSON'](arg1);
-}
-
-export function LocalImportCodexAuthFiles(arg1) {
-  return window['go']['main']['App']['LocalImportCodexAuthFiles'](arg1);
-}
-
-export function LocalImportCodexFromJSON(arg1) {
-  return window['go']['main']['App']['LocalImportCodexFromJSON'](arg1);
-}
-
-export function LocalImportCodexFromLocal() {
-  return window['go']['main']['App']['LocalImportCodexFromLocal']();
-}
-
-export function LocalListAccountGroups() {
-  return window['go']['main']['App']['LocalListAccountGroups']();
-}
-
-export function LocalListAntigravityAccounts() {
-  return window['go']['main']['App']['LocalListAntigravityAccounts']();
-}
-
-export function LocalListCodexAccounts() {
-  return window['go']['main']['App']['LocalListCodexAccounts']();
-}
-
-export function LocalListCodexSessions(arg1, arg2) {
-  return window['go']['main']['App']['LocalListCodexSessions'](arg1, arg2);
-}
-
-export function LocalListGatewayKeys() {
-  return window['go']['main']['App']['LocalListGatewayKeys']();
-}
-
-export function LocalListModelProviderModels(arg1) {
-  return window['go']['main']['App']['LocalListModelProviderModels'](arg1);
-}
-
-export function LocalListModelProviders() {
-  return window['go']['main']['App']['LocalListModelProviders']();
-}
-
-export function LocalListTrashedCodexSessions() {
-  return window['go']['main']['App']['LocalListTrashedCodexSessions']();
-}
-
-export function LocalMoveCodexSessionsToTrash(arg1) {
-  return window['go']['main']['App']['LocalMoveCodexSessionsToTrash'](arg1);
-}
-
-export function LocalOpenCodexConfigToml() {
-  return window['go']['main']['App']['LocalOpenCodexConfigToml']();
-}
-
-export function LocalOpenCodexSkinSkillFolder() {
-  return window['go']['main']['App']['LocalOpenCodexSkinSkillFolder']();
-}
-
-export function LocalQueryGatewayLogs(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalQueryGatewayLogs'](arg1, arg2, arg3);
-}
-
-export function LocalRefreshAccountQuota(arg1) {
-  return window['go']['main']['App']['LocalRefreshAccountQuota'](arg1);
-}
-
-export function LocalRefreshAllQuotas(arg1) {
-  return window['go']['main']['App']['LocalRefreshAllQuotas'](arg1);
-}
-
-export function LocalRefreshCodexSubscription(arg1) {
-  return window['go']['main']['App']['LocalRefreshCodexSubscription'](arg1);
-}
-
-export function LocalRemoveAccountsFromGroup(arg1, arg2) {
-  return window['go']['main']['App']['LocalRemoveAccountsFromGroup'](arg1, arg2);
-}
-
-export function LocalRenameAccount(arg1, arg2) {
-  return window['go']['main']['App']['LocalRenameAccount'](arg1, arg2);
-}
-
-export function LocalRenameAccountGroup(arg1, arg2) {
-  return window['go']['main']['App']['LocalRenameAccountGroup'](arg1, arg2);
-}
-
-export function LocalReorderAntigravityAccounts(arg1) {
-  return window['go']['main']['App']['LocalReorderAntigravityAccounts'](arg1);
-}
-
-export function LocalReorderCodexAccounts(arg1) {
-  return window['go']['main']['App']['LocalReorderCodexAccounts'](arg1);
-}
-
-export function LocalRepairCodexSessionVisibility() {
-  return window['go']['main']['App']['LocalRepairCodexSessionVisibility']();
-}
-
-export function LocalResolveAccountGroups() {
-  return window['go']['main']['App']['LocalResolveAccountGroups']();
-}
-
-export function LocalRestartCodexForSkinChannel() {
-  return window['go']['main']['App']['LocalRestartCodexForSkinChannel']();
-}
-
-export function LocalRestoreCodexSessionsFromTrash(arg1) {
-  return window['go']['main']['App']['LocalRestoreCodexSessionsFromTrash'](arg1);
-}
-
-export function LocalRotateGatewayKey(arg1) {
-  return window['go']['main']['App']['LocalRotateGatewayKey'](arg1);
-}
-
-export function LocalSaveCodexQuickConfig(arg1, arg2) {
-  return window['go']['main']['App']['LocalSaveCodexQuickConfig'](arg1, arg2);
-}
-
-export function LocalSaveCodexSettings(arg1) {
-  return window['go']['main']['App']['LocalSaveCodexSettings'](arg1);
-}
-
-export function LocalSaveGatewayImageGenMode(arg1) {
-  return window['go']['main']['App']['LocalSaveGatewayImageGenMode'](arg1);
-}
-
-export function LocalSaveGatewayTimeoutPresets(arg1) {
-  return window['go']['main']['App']['LocalSaveGatewayTimeoutPresets'](arg1);
-}
-
-export function LocalSaveGatewayTimeouts(arg1) {
-  return window['go']['main']['App']['LocalSaveGatewayTimeouts'](arg1);
-}
-
-export function LocalSaveGatewayUpstreamProxy(arg1) {
-  return window['go']['main']['App']['LocalSaveGatewayUpstreamProxy'](arg1);
-}
-
-export function LocalSaveModelProvider(arg1) {
-  return window['go']['main']['App']['LocalSaveModelProvider'](arg1);
-}
-
-export function LocalSendCodexReferralInvites(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LocalSendCodexReferralInvites'](arg1, arg2, arg3);
-}
-
-export function LocalSetAccountNote(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetAccountNote'](arg1, arg2);
-}
-
-export function LocalSetAccountTags(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetAccountTags'](arg1, arg2);
-}
-
-export function LocalSetAlertConfig(arg1) {
-  return window['go']['main']['App']['LocalSetAlertConfig'](arg1);
-}
-
-export function LocalSetAntigravityLocalInjected(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetAntigravityLocalInjected'](arg1, arg2);
-}
-
-export function LocalSetAntigravityPriority(arg1) {
-  return window['go']['main']['App']['LocalSetAntigravityPriority'](arg1);
-}
-
-export function LocalSetAntigravitySource(arg1) {
-  return window['go']['main']['App']['LocalSetAntigravitySource'](arg1);
-}
-
-export function LocalSetAntigravityWakeupConfig(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetAntigravityWakeupConfig'](arg1, arg2);
-}
-
-export function LocalSetCodexPriority(arg1) {
-  return window['go']['main']['App']['LocalSetCodexPriority'](arg1);
-}
-
-export function LocalSetCodexSkinChannel(arg1) {
-  return window['go']['main']['App']['LocalSetCodexSkinChannel'](arg1);
-}
-
-export function LocalSetCodexSource(arg1) {
-  return window['go']['main']['App']['LocalSetCodexSource'](arg1);
-}
-
-export function LocalSetCodexWakeupConfig(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetCodexWakeupConfig'](arg1, arg2);
-}
-
-export function LocalSetCurrentAntigravityAccount(arg1) {
-  return window['go']['main']['App']['LocalSetCurrentAntigravityAccount'](arg1);
-}
-
-export function LocalSetCurrentCodexAccount(arg1) {
-  return window['go']['main']['App']['LocalSetCurrentCodexAccount'](arg1);
-}
-
-export function LocalSetGatewayAccessScope(arg1) {
-  return window['go']['main']['App']['LocalSetGatewayAccessScope'](arg1);
-}
-
-export function LocalSetGatewayPort(arg1) {
-  return window['go']['main']['App']['LocalSetGatewayPort'](arg1);
-}
-
-export function LocalSetPoolEnabled(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetPoolEnabled'](arg1, arg2);
-}
-
-export function LocalSetRefreshConfig(arg1, arg2) {
-  return window['go']['main']['App']['LocalSetRefreshConfig'](arg1, arg2);
-}
-
-export function LocalSetRoutingStrategy(arg1) {
-  return window['go']['main']['App']['LocalSetRoutingStrategy'](arg1);
-}
-
-export function LocalSetSwitchConfig(arg1) {
-  return window['go']['main']['App']['LocalSetSwitchConfig'](arg1);
-}
-
-export function LocalStartAntigravityLogin() {
-  return window['go']['main']['App']['LocalStartAntigravityLogin']();
-}
-
-export function LocalStartCodexLogin() {
-  return window['go']['main']['App']['LocalStartCodexLogin']();
-}
-
-export function LocalSubmitAntigravityLoginCallback(arg1, arg2) {
-  return window['go']['main']['App']['LocalSubmitAntigravityLoginCallback'](arg1, arg2);
-}
-
-export function LocalSubmitCodexLoginCallback(arg1, arg2) {
-  return window['go']['main']['App']['LocalSubmitCodexLoginCallback'](arg1, arg2);
-}
-
-export function LocalSyncAntigravityFromIDE() {
-  return window['go']['main']['App']['LocalSyncAntigravityFromIDE']();
-}
-
-export function LocalTestModelProvider(arg1) {
-  return window['go']['main']['App']['LocalTestModelProvider'](arg1);
-}
-
-export function LocalUpdateAccountGroupSortOrder(arg1, arg2) {
-  return window['go']['main']['App']['LocalUpdateAccountGroupSortOrder'](arg1, arg2);
-}
-
-export function LocalWaitAntigravityLogin(arg1) {
-  return window['go']['main']['App']['LocalWaitAntigravityLogin'](arg1);
-}
-
-export function LocalWaitCodexLogin(arg1) {
-  return window['go']['main']['App']['LocalWaitCodexLogin'](arg1);
-}
-
-export function LocalWakeupTestOne(arg1) {
-  return window['go']['main']['App']['LocalWakeupTestOne'](arg1);
-}
-
-export function OpenCACertForTrust() {
-  return window['go']['main']['App']['OpenCACertForTrust']();
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 export function OpenSystemPermissionSettings() {
   return window['go']['main']['App']['OpenSystemPermissionSettings']();
 }
 
-export function ProbeHostProtectionStatus(arg1) {
-  return window['go']['main']['App']['ProbeHostProtectionStatus'](arg1);
-}
 
 export function RefreshQuota() {
   return window['go']['main']['App']['RefreshQuota']();
@@ -670,9 +255,6 @@ export function RefreshUsageSummary() {
   return window['go']['main']['App']['RefreshUsageSummary']();
 }
 
-export function ReleaseHostProtectionTarget(arg1) {
-  return window['go']['main']['App']['ReleaseHostProtectionTarget'](arg1);
-}
 
 export function RepairCodexAuth() {
   return window['go']['main']['App']['RepairCodexAuth']();
@@ -686,89 +268,35 @@ export function RestartToUpdate() {
   return window['go']['main']['App']['RestartToUpdate']();
 }
 
-export function RestoreHostProtection() {
-  return window['go']['main']['App']['RestoreHostProtection']();
-}
 
 export function RestoreSelected(arg1) {
   return window['go']['main']['App']['RestoreSelected'](arg1);
 }
 
-export function SandboxBrowseDir(arg1) {
-  return window['go']['main']['App']['SandboxBrowseDir'](arg1);
-}
 
-export function SandboxCreate(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SandboxCreate'](arg1, arg2, arg3);
-}
 
-export function SandboxEnableHypervisor() {
-  return window['go']['main']['App']['SandboxEnableHypervisor']();
-}
 
-export function SandboxEnterCommand(arg1, arg2) {
-  return window['go']['main']['App']['SandboxEnterCommand'](arg1, arg2);
-}
 
-export function SandboxGetStatus() {
-  return window['go']['main']['App']['SandboxGetStatus']();
-}
 
-export function SandboxInstall() {
-  return window['go']['main']['App']['SandboxInstall']();
-}
 
-export function SandboxInstallCommand() {
-  return window['go']['main']['App']['SandboxInstallCommand']();
-}
 
-export function SandboxList() {
-  return window['go']['main']['App']['SandboxList']();
-}
 
-export function SandboxLogin() {
-  return window['go']['main']['App']['SandboxLogin']();
-}
 
-export function SandboxRestore() {
-  return window['go']['main']['App']['SandboxRestore']();
-}
 
-export function SandboxStopOne(arg1) {
-  return window['go']['main']['App']['SandboxStopOne'](arg1);
-}
 
-export function SandboxVscodeDisable() {
-  return window['go']['main']['App']['SandboxVscodeDisable']();
-}
 
-export function SandboxVscodeEnable() {
-  return window['go']['main']['App']['SandboxVscodeEnable']();
-}
 
-export function SandboxVscodeStatus() {
-  return window['go']['main']['App']['SandboxVscodeStatus']();
-}
 
-export function SandboxWindowsPrereq() {
-  return window['go']['main']['App']['SandboxWindowsPrereq']();
-}
 
 export function SanitizeCompetingClaudeConfig(arg1) {
   return window['go']['main']['App']['SanitizeCompetingClaudeConfig'](arg1);
 }
 
-export function SaveCodexRelayConfig(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['SaveCodexRelayConfig'](arg1, arg2, arg3, arg4, arg5);
-}
 
 export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
-export function SetClaudeDesktopMockLogin(arg1) {
-  return window['go']['main']['App']['SetClaudeDesktopMockLogin'](arg1);
-}
 
 export function SetCodexFastMode(arg1) {
   return window['go']['main']['App']['SetCodexFastMode'](arg1);

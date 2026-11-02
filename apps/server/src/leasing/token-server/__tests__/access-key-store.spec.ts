@@ -783,7 +783,7 @@ describe('AccessKeyStore', () => {
       const record = store.findById('mixed-usd')! as any;
 
       store.recordUsage(
-        'mixed-usd', 200, { inputTokens: 1_000_000, outputTokens: 0 },
+        'mixed-usd', 200, { inputTokens: 500_000, outputTokens: 0 },
         'gpt-5.6-sol', 'codex-usage', 'codex',
       );
       const codexUsd = record.usdUsedWeekly;

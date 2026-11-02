@@ -176,7 +176,8 @@ export {
 } from "./quota-rates";
 
 export {
-  calculateApiValue,
+  calculateApiValue, requireApiValue, hasApiPrice, installApiPriceSnapshots, getApiPriceSnapshots, apiPriceRegistryAt,
+  type ApiPriceRegistry, type ApiPriceModel, type TokenPrice, type ApiPricingProvider,
   type ApiContextTier,
   type ApiPricingMode,
   type ApiValuationQuality,
@@ -189,3 +190,5 @@ export {
   cheapestApiUsdLevel,
   type ApiUsdQuotaDefault,
 } from "./subscription-usd-quota";
+
+export { modelsDevRegistry } from "./models-dev-pricing";

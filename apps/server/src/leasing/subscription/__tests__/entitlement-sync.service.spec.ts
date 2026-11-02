@@ -211,10 +211,11 @@ describe("EntitlementSyncService(去影子)", () => {
       ],
     });
     const startsAt = new Date("2026-07-01T00:00:00.000Z");
-    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
+    const expiresAt = new Date(Date.now() + 30 * 86400_000);
+    const windowStart = Date.now() - 3600_000;
     const windowState = JSON.stringify({
       usdUsageByProduct: {
-        codex: { usedWeekly: 100, windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z") },
+        codex: { usedWeekly: 100, windowStartedAtWeekly: windowStart },
       },
     });
     const sub = seed(makeSub({
@@ -243,7 +244,7 @@ describe("EntitlementSyncService(去影子)", () => {
     record.usdUsageByProduct = {
       codex: {
         usedWeekly: 100,
-        windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z"),
+        windowStartedAtWeekly: windowStart,
       },
     };
 
@@ -271,7 +272,7 @@ describe("EntitlementSyncService(去影子)", () => {
     });
     expect(store.findById(sub.id)?.usdUsageByProduct?.codex).toMatchObject({
       usedWeekly: 100,
-      windowStartedAtWeekly: Date.parse("2026-07-20T00:00:00.000Z"),
+      windowStartedAtWeekly: windowStart,
     });
   });
 
@@ -574,18 +575,17 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(persisted.bindings).toEqual({ antigravity: 7 });
   });
 
-  it("Codex 中转开启时新订阅不需要存在或分配 Codex 母号", async () => {
-    planCatalog.resolveCodexRelaySettings = vi.fn(async () => ({ enabled: true }));
+  it("Claude 网关订阅不占用旧 Anthropic 账号池", async () => {
     const sub = seed(makeSub({
-      id: "sub-codex-relay",
+      id: "sub-claude-gateway",
       backingKeyValue: "sub_" + "r".repeat(48),
       config: {
         line: "bind",
-        products: ["codex"],
-        levels: { codex: "pro" },
+        products: ["anthropic"],
+        levels: { anthropic: "pro" },
         weight: 1,
         quotaAlgorithm: "usd",
-        usdQuotaByProduct: { codex: { fiveHour: 10, weekly: 80 } },
+        usdQuotaByProduct: { anthropic: { fiveHour: 10, weekly: 80 } },
         deviceLimit: 1,
         windowMs: 18_000_000,
       },
@@ -596,7 +596,7 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(rosetta.poolAccountById("codex", 1)).toBeNull();
     const persisted = JSON.parse(subs.get(sub.id).config);
     expect(persisted.bindings ?? {}).toEqual({});
-    expect(store.findById(sub.id)?.usdQuotaByProduct?.codex).toBeDefined();
+    expect(store.findById(sub.id)?.usdQuotaByProduct?.anthropic).toBeDefined();
   });
 
   it("绑定线达到固定最大可售份数后，新订阅保持 UNBOUND", async () => {

@@ -1,3 +1,4 @@
+import { apiPriceRegistryAt } from "@gfa/shared";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   compactWindowForCheckpoint,
@@ -440,9 +441,11 @@ export class FairShareWindowRepository {
       // or neither does. Retrying a committed report increments nothing.
       const inserted = await tx.$executeRawUnsafe(
         `INSERT OR IGNORE INTO QuotaReportReceipt
-          (provider, reportId, accountId, bucket, revision, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+          (provider, reportId, accountId, bucket, revision, createdAt, pricingVersion, apiValueUsd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         this.provider, reportId, accountId, bucket, revision, entry.createdAt || accounting.at,
+        accounting.apiPriced ? apiPriceRegistryAt(accounting.at.getTime()).version : "unpriced",
+        Number(accounting.apiValueUsd || 0),
       );
       if (Number(inserted) === 0) continue;
       const hourStart = new Date(Math.floor(accounting.at.getTime() / 3_600_000) * 3_600_000);

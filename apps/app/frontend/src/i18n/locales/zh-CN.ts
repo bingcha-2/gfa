@@ -23,7 +23,6 @@ export const zhCN = {
   nav: {
     home: '远程',
     takeover: '接管中心',
-    faq: '使用指南',
     logs: '日志',
     settings: '设置',
     expandSidebar: '展开侧边栏',
@@ -34,6 +33,10 @@ export const zhCN = {
   },
 
   theme: {
+    label: '外观主题',
+    system: '跟随系统',
+    light: '浅色',
+    dark: '深色',
     toDark: '切换到深色',
     toLight: '切换到浅色',
   },
@@ -119,16 +122,16 @@ export const zhCN = {
 
   promo: {
     storeTitle: '冰茶商店',
-    storeDescCard: 'Codex Plus · Cursor · Windsurf 一键代理',
+    storeDescCard: 'Codex · Gemini · Claude · 验证码等',
     storeCta: '选购',
     apiTitle: '冰茶 API',
-    apiDescCard: 'Claude / Gemini / GPT 低价调用',
+    apiDescCard: '掺水老板直接剁头',
     apiCta: '了解',
     hotTag: '热卖',
     newTag: 'NEW',
-    storeDescFull: 'Codex Plus · Cursor Pro · Windsurf\n一键代理全家桶,9.9 元起',
+    storeDescFull: 'Codex · Gemini · Claude · 验证码等',
     storeCtaFull: '立即选购',
-    apiDescFull: 'Claude / Gemini / GPT 低价调用\n企业级稳定,按量计费',
+    apiDescFull: '掺水老板直接剁头',
     apiCtaFull: '了解更多',
   },
 
@@ -186,11 +189,6 @@ export const zhCN = {
     stopping: '正在停止接管 {name}...',
     injectingWait: '正在接管 {name} · 等待生效...',
     stoppingWait: '正在停止接管 {name} · 等待生效...',
-    caDegradedTitle: '接管成功 · 证书已降级安装',
-    caFailedTitle: '推理已接管 · Max 待启用',
-    caRetakeBtn: '重新接管 · 装证书',
-    storeClaudeTitle: '⚠ 商店版无法接管',
-    storeClaudeBtn: '下载独立版',
     permissionTitle: '需要系统权限',
     permissionBody: '{message}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。',
     // 文件属主/权限位问题,与系统隐私权限无关:正文直接用后端诊断出的可执行指引。
@@ -202,7 +200,7 @@ export const zhCN = {
     needCardTitle: '需要登录账号',
     needCardBody: '{product} 接管需要登录账号,请先在登录页登录后再开启。',
     desktopConfirmTitle: '接管 Claude Desktop',
-    desktopConfirmBody: '⚠ Chat 和 Cowork 无法接管使用,请使用桌面端 Code 功能!\n\n接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话。是否继续?',
+    desktopConfirmBody: '切换会重启 Claude Desktop，并中断当前会话。3P 模式使用独立的本地会话记录；原账号的历史记录不会迁移。是否继续？',
     hubPermission1: '接管 Hub 需修改应用文件,需授予 ',
     hubPermission2: 'App 管理',
     hubPermission3: ' 权限。',
@@ -282,23 +280,6 @@ export const zhCN = {
     repairAuthFailed: '修复 Codex 登录状态失败：{error}',
   },
 
-  faq: {
-    subtitle: '常见问题解答,帮你快速上手',
-    searchPlaceholder: '搜索问题...',
-    loadFailed: '无法加载常见问题,请检查网络连接',
-    noMatch: '没有找到匹配的问题',
-    empty: '暂无常见问题',
-    noAnswer: '没有找到答案?',
-    wechatContact: '加微信 {wechat} 联系客服',
-    groupContact: '加入售后群联系客服',
-    viewFull: '查看完整版',
-    githubTitle: '问题反馈与帮助',
-    githubDesc: '前往用户中心提交问题、建议或联系客服',
-    githubCta: '前往用户中心',
-    supportTitle: '在线客服',
-    supportDesc: '遇到额度、登录、订阅或客户端问题，直接和 AI 助手聊。',
-    supportCta: '立即咨询',
-  },
 
   settings: {
     pathsTitle: '安装路径',

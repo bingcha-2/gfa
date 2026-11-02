@@ -36,10 +36,6 @@ func TestEnsureCodexRentalMode_ClearsRelay(t *testing.T) {
 		t.Errorf("CodexModelMap 未清空: %v", got.CodexModelMap)
 	}
 
-	// 落地后 relayConfigFromConfig 必须判定为非中转(返回 nil)。
-	if r := relayConfigFromConfig(got); r != nil {
-		t.Errorf("清理后仍被判为中转模式: %+v", r)
-	}
 }
 
 // 已是纯租号(无任何中转残留)时为 no-op,不应重写配置。

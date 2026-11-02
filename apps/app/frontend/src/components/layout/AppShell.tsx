@@ -5,6 +5,7 @@ import { UpdateBanner } from '@/components/UpdateBanner'
 import { WhatsNewBanner } from '@/components/WhatsNewBanner'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LanguageMenu } from '@/components/LanguageMenu'
+import { PromoCard } from '@/components/PromoCard'
 import { BAR_H, topInset } from './chrome'
 import { useT } from '@/i18n'
 import type { PageId } from '@/types'
@@ -21,12 +22,9 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
 
   const pageTitles: Record<PageId, string> = {
     takeover: t('nav.takeover'),
-    remote: t('nav.home'),
-    faq: t('nav.faq'),
+    remote: '用量与额度',
     logs: t('nav.logs'),
     settings: t('nav.settings'),
-    local_codex: 'Codex 本地账号',
-    local_antigravity: 'Antigravity 本地账号',
   }
 
   return (
@@ -67,6 +65,10 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
           <UpdateBanner />
           <WhatsNewBanner />
           <AnnouncementBar />
+        </div>
+
+        <div className="shrink-0 px-6 pt-3">
+          <PromoCard />
         </div>
 
         {/* Scrollable content */}

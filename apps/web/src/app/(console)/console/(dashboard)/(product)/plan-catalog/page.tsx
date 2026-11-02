@@ -25,9 +25,6 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -55,7 +52,6 @@ import { PricingSection } from "./pricing-section";
 import { SupplyPoliciesSection } from "./usage-section";
 import { PricePreview } from "./price-preview";
 import { NumberInput } from "./form-bits";
-import { useCodexRelaySettings } from "./use-codex-relay-settings";
 
 export default function PlanCatalogPage() {
   const { publishedConfig, publishedVersion, loading, error, refresh, saveDraft, publish } =
@@ -70,43 +66,6 @@ export default function PlanCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
-  const relay = useCodexRelaySettings();
-  const [relayEnabled, setRelayEnabled] = useState(false);
-  const [relayBaseUrl, setRelayBaseUrl] = useState("");
-  const [relayApiKey, setRelayApiKey] = useState("");
-  const [relayModels, setRelayModels] = useState("");
-  const [relayModelMap, setRelayModelMap] = useState("");
-  const [relaySaving, setRelaySaving] = useState(false);
-
-  useEffect(() => {
-    if (!relay.settings) return;
-    setRelayEnabled(relay.settings.enabled);
-    setRelayBaseUrl(relay.settings.baseUrl);
-    setRelayModels(relay.settings.models.join("\n"));
-    setRelayModelMap(Object.entries(relay.settings.modelMap).map(([from, to]) => `${from}=${to}`).join("\n"));
-  }, [relay.settings]);
-
-  const saveRelay = useCallback(async () => {
-    setRelaySaving(true);
-    try {
-      const modelMap = Object.fromEntries(relayModelMap.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-        .map((line) => line.split("=", 2).map((part) => part.trim())).filter(([from, to]) => Boolean(from && to)));
-      await relay.save({
-        enabled: relayEnabled,
-        baseUrl: relayBaseUrl,
-        apiKey: relayApiKey,
-        models: relayModels.split(/[\n,]/).map((model) => model.trim()).filter(Boolean),
-        modelMap,
-      });
-      setRelayApiKey("");
-      toast.success("Codex 中转设置已保存");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "保存 Codex 中转设置失败");
-    } finally {
-      setRelaySaving(false);
-    }
-  }, [relay, relayApiKey, relayBaseUrl, relayEnabled, relayModelMap, relayModels]);
-
   // 后端加载完成后,用发布版(或占位)初始化表单一次。
   useEffect(() => {
     if (loading || form) return;
@@ -119,10 +78,9 @@ export default function PlanCatalogPage() {
     setDirty(true);
   }, []);
 
-  // 全部产品(含停用)的等级候选:从各产品账号池实际 planType 拉(绑定线等级从这里选,
-  // 账号池里没有的等级选不了)。停用产品也拉,便于重新启用时仍能选档。
+  // 母号产品读取库存等级作为提示；Claude 网关不查询旧 Anthropic 账号池。
   const allProducts = useMemo(
-    () => (form ? form.products.map((p) => p.product) : []),
+    () => (form ? form.products.filter((p) => p.product !== "anthropic").map((p) => p.product) : []),
     [form],
   );
   const { levels: availableLevels } = useAccountLevels(allProducts);
@@ -268,52 +226,9 @@ export default function PlanCatalogPage() {
         <div className="flex flex-col gap-4 lg:col-span-2">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <CardTitle>Codex 中转</CardTitle>
-                  <CardDescription>
-                    开启后 Codex 订阅不分配母号，请求使用 NewAPI Responses；金额上限仍读取订阅的 5 小时/周美元额度。
-                  </CardDescription>
-                </div>
-                <Switch checked={relayEnabled} onCheckedChange={setRelayEnabled} disabled={relay.loading || relaySaving} />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">Base URL</span>
-                <Input value={relayBaseUrl} onChange={(event) => setRelayBaseUrl(event.target.value)} placeholder="https://bcai.online/v1" disabled={relaySaving} />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">
-                  API Key {relay.settings?.apiKeyConfigured ? `(已配置 ${relay.settings.apiKeyHint})` : ""}
-                </span>
-                <Input type="password" value={relayApiKey} onChange={(event) => setRelayApiKey(event.target.value)} placeholder={relay.settings?.apiKeyConfigured ? "留空保留现有 Key" : "sk-..."} disabled={relaySaving} autoComplete="new-password" />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-xs text-muted-foreground">可用模型（每行一个）</span>
-                  <Textarea value={relayModels} onChange={(event) => setRelayModels(event.target.value)} rows={12} disabled={relaySaving} />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs text-muted-foreground">模型映射（原模型=上游模型）</span>
-                  <Textarea value={relayModelMap} onChange={(event) => setRelayModelMap(event.target.value)} rows={12} placeholder="gpt-5.6-sol=gpt-5.5" disabled={relaySaving} />
-                </label>
-              </div>
-              <div className="flex justify-end">
-                <Button type="button" size="sm" onClick={() => void saveRelay()} disabled={relay.loading || relaySaving}>
-                  {relaySaving ? <Spinner data-icon className="size-3.5" /> : <SaveIcon data-icon className="size-3.5" />}
-                  保存中转设置
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
               <CardTitle>产品与等级</CardTitle>
               <CardDescription>
-                每个产品的启用开关与绑定线等级档。等级从该产品账号池实际存在的会员等级里选
-                (账号池里没有的等级选不了,保证下单后能绑到号)。
+                套餐档位决定售价和额度。Claude 使用网关母号；Codex 与 Antigravity 分配时检查对应等级的母号库存。
               </CardDescription>
             </CardHeader>
             <CardContent>

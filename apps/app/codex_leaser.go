@@ -10,6 +10,8 @@ import (
 )
 
 // 构建时通过 ldflags 注入 buildAPIBase；运行时可用 BCAI_CODEX_API_BASE 覆盖
+var errModelPricingUnavailable = errors.New("该模型当前暂未开放，请选择其他模型")
+
 var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", buildAPIBase+"/api/app/lease/codex")
 
 type CodexTokenLease struct {
@@ -131,6 +133,12 @@ func postCodexBcai(path string, payload interface{}, secret string, upstreamProx
 		return respBody, status, err
 	}
 	if status >= 400 {
+		var problem struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(respBody, &problem) == nil && problem.Error == "MODEL_PRICING_UNAVAILABLE" {
+			return respBody, status, errModelPricingUnavailable
+		}
 		return respBody, status, fmt.Errorf("remote codex status %d: %s", status, string(respBody))
 	}
 	return respBody, status, nil
@@ -182,12 +190,11 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		l.setLastError(message)
 		return nil, errors.New(message)
 	}
-	if !strings.EqualFold(strings.TrimSpace(leaseResp.Mode), "relay") && leaseResp.AccessToken == "" {
-		return nil, errors.New("empty Codex accessToken returned from server")
+	if strings.EqualFold(strings.TrimSpace(leaseResp.Mode), "relay") {
+		return nil, errors.New("Codex 中转已停用，请使用母号订阅")
 	}
-	if strings.EqualFold(strings.TrimSpace(leaseResp.Mode), "relay") &&
-		(leaseResp.Relay == nil || strings.TrimSpace(leaseResp.Relay.BaseURL) == "" || strings.TrimSpace(leaseResp.Relay.APIKey) == "") {
-		return nil, errors.New("incomplete Codex relay configuration returned from server")
+	if leaseResp.AccessToken == "" {
+		return nil, errors.New("empty Codex accessToken returned from server")
 	}
 
 	expiresAt := time.Now().Add(5 * time.Minute).UnixMilli()

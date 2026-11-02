@@ -2,16 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
-
-	"bcai-wails/internal/local/quota"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -32,18 +28,10 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	initLogger()
-	quota.Logf = Log // 额度探测诊断日志接到 desktop.log
 
 	Log("=== 冰茶AI Desktop Startup ===")
 	initGuard()
-
-	// 只检测、不自动改动：上次若崩溃/强杀留下宿主防护快照，前端接管中心会主动提示恢复。
-	if status, err := a.GetHostProtectionStatus(); err != nil {
-		Log("[host-protection] 启动残留检测失败: %v", err)
-	} else if status.Mode == "residue" {
-		Log("[host-protection] 检测到上次未还原设置: timezone=%s original=%s error=%s",
-			status.AppliedTimezone, status.OriginalTimezone, status.LastError)
-	}
+	startPriceSync(ctx)
 
 	// Load or initialize config
 	cfg := LoadConfig()
@@ -159,9 +147,6 @@ func (a *App) SaveConfig(cfg Config) error {
 		GetHTTPProxy().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 	}
 
-	// MITM 代理端口固定,无需重启,只同步 token/出口(覆盖上面两个分支)。
-	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
-
 	return nil
 }
 
@@ -230,10 +215,13 @@ func (a *App) GetStats() map[string]interface{} {
 	// 汇成一个 notifications 列表(去重+分类),让 Claude/Codex 的租号错误也能进界面
 	// (此前它们的 LastError() 无人读)。
 	unifiedErr, _ := leaserStatus["lastError"].(string)
+	codexError := GetCodexLeaser().LastError()
+	if !GetLeaser().canRefreshProduct("codex") {
+		codexError = ""
+	}
 	notifications := buildNotifications([]errorSource{
 		{Source: "antigravity", Msg: unifiedErr},
-		{Source: "claude", Msg: GetClaudeLeaser().LastError()},
-		{Source: "codex", Msg: GetCodexLeaser().LastError()},
+		{Source: "codex", Msg: codexError},
 	})
 	notifications = append(notifications, derivedNotifications(clientHealth{
 		CardConfigured: a.GetConfig().UserToken != "",
@@ -252,6 +240,7 @@ func (a *App) GetStats() map[string]interface{} {
 
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
 	return map[string]interface{}{
+		"gateway":          gatewaySummarySnapshot(cfg.UserToken),
 		"proxyRunning":     httpProxyStatus.Running,
 		"proxyPort":        httpProxyStatus.ListenPort,
 		"stats":            proxyStats,
@@ -287,10 +276,6 @@ func (a *App) RestartProxy() error {
 	if cfg.UserToken != "" {
 		GetLeaser().StartAutoLease(cfg.UserToken, cfg.DeviceId, "")
 	}
-
-	// MITM 代理端口固定、不停监听,但 token 必须跟着重启同步(与 SaveConfig 一致),
-	// 否则代理重启后 MITM 可能仍拿旧 token 继续租号。
-	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
 	return startHTTPProxyAndAlign(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
@@ -343,58 +328,6 @@ func (a *App) RefreshQuota() error {
 		return nil
 	}
 	GetLeaser().RefreshQuotaNow(cfg.UserToken, cfg.DeviceId, "")
-	return nil
-}
-
-// SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「登录态 mock」。
-// 开(默认,对齐 reclaude)：伪造已登录 pro，让没有 Claude 账号的用户也能用号池
-// (桌面端 host-auth 下能否完全生效需实测)；关：透传 /api/hello 等，登录用户保持真实身份。
-func (a *App) SetClaudeDesktopMockLogin(on bool) bool {
-	GetMitmManager().SetMockLogin(on)
-	return on
-}
-
-// ======================== Codex 中转(API 卡密)模式 ========================
-
-// GetCodexRelayConfig 返回当前 Codex 中转配置(供前端设置面板回显)。
-func (a *App) GetCodexRelayConfig() map[string]interface{} {
-	cfg := LoadConfig()
-	mode := cfg.CodexMode
-	if mode == "" {
-		mode = "rental"
-	}
-	protocol := cfg.CodexRelayProtocol
-	if protocol == "" {
-		protocol = "responses"
-	}
-	return map[string]interface{}{
-		"mode":     mode,
-		"baseURL":  cfg.CodexRelayBase,
-		"apiKey":   cfg.CodexRelayKey,
-		"protocol": protocol,
-		"modelMap": cfg.CodexModelMap,
-	}
-}
-
-// SaveCodexRelayConfig 持久化 Codex 中转(API 卡密)模式配置并立即生效(无需重启代理,
-// 中转只改请求处理、不动监听)。mode=="relay" 启用中转;其它(含 "" / "rental")回到
-// 号池/租号模式。modelMap 可为 nil。前端设置面板调用此方法。
-func (a *App) SaveCodexRelayConfig(mode, baseURL, apiKey, protocol string, modelMap map[string]string) error {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	cfg := LoadConfig()
-	cfg.CodexMode = mode
-	cfg.CodexRelayBase = baseURL
-	cfg.CodexRelayKey = apiKey
-	cfg.CodexRelayProtocol = protocol
-	cfg.CodexModelMap = modelMap
-	if err := SaveConfig(cfg); err != nil {
-		Log("[app] 保存 Codex 中转配置失败: %v", err)
-		return err
-	}
-	GetCodexProxy().ApplyConfig(cfg)
-	Log("[app] Codex 中转配置已更新: mode=%s proto=%s base=%s", mode, protocol, baseURL)
 	return nil
 }
 
@@ -500,6 +433,15 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		if t == nil {
 			continue
 		}
+		// The server gateway authorizes the user and owns egress and billing.
+		if t.InjectionType() == "gateway" {
+			msg, err := t.Inject(0)
+			if err != nil {
+				return "", takeoverErrorForUser(err)
+			}
+			results = append(results, msg)
+			continue
+		}
 		required := targetRequiredProduct(t.ProductID())
 		if !GetLeaser().takeoverCoversProduct(required) {
 			return "", fmt.Errorf("你的订阅未开通 %s,无法接管 %s(请购买或续费已开通该产品的订阅)", productLabel(required), t.Name())
@@ -551,13 +493,6 @@ func (a *App) OpenSystemPermissionSettings() error {
 	default:
 		return nil
 	}
-}
-
-// OpenCACertForTrust 用系统证书 UI 打开根 CA(macOS:钥匙串访问;Windows:证书对话框),
-// 供用户手动设为"始终信任"。仅作自动安装(admin + 用户域)都失败后的一键兜底 —— macOS 不允许
-// 程序静默信任根 CA,但能替用户把证书直接打开,省掉找隐藏目录 ~/.bcai + 导航。前端在 CA_FAILED 时调用。
-func (a *App) OpenCACertForTrust() error {
-	return mitmOpenCACertForTrust()
 }
 
 // InstallStandaloneClaude 用 winget 从社区源(--source winget,非微软商店 msstore)静默安装官方
@@ -669,42 +604,4 @@ func (a *App) GetAnnouncement() string {
 	n, _ := resp.Body.Read(body)
 	resp.Body.Close()
 	return strings.TrimSpace(string(body[:n]))
-}
-
-// GetFaqData 从服务器获取 FAQ 数据（绕过浏览器 CORS 限制）。
-// FAQ 的公开只读端点是 /api/console/faq（服务端 FaqController 的 @Public GET;
-// M12 起裸 /api/faq 别名已移除），经机器 API 域（authBaseURL = api.bcai.lol/api,
-// NestJS 直达）获取。返回 { "items": [...], "settings": {...} }，失败返回空 map。
-func (a *App) GetFaqData() map[string]interface{} {
-	client := createHttpClient("")
-	client.Timeout = 8 * time.Second
-
-	result := map[string]interface{}{}
-	faqBase := strings.TrimRight(authBaseURL, "/") + "/console/faq"
-
-	// Fetch FAQ items
-	if resp, err := client.Get(faqBase); err == nil {
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode == 200 && readErr == nil {
-			var items []interface{}
-			if json.Unmarshal(body, &items) == nil {
-				result["items"] = items
-			}
-		}
-	}
-
-	// Fetch FAQ settings
-	if resp, err := client.Get(faqBase + "/settings"); err == nil {
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode == 200 && readErr == nil {
-			var settings map[string]interface{}
-			if json.Unmarshal(body, &settings) == nil {
-				result["settings"] = settings
-			}
-		}
-	}
-
-	return result
 }

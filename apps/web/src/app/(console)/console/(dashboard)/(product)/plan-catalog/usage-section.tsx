@@ -33,7 +33,7 @@ export function SupplyPoliciesSection({
   onChange,
   disabled,
 }: SupplyPoliciesSectionProps) {
-  const enabled = products.filter((p) => p.enabled);
+  const enabled = products.filter((p) => p.enabled && p.product !== "anthropic");
 
   function ensurePolicy(row: ProductRow): SupplyPolicyForm {
     const existing = value?.[row.product];

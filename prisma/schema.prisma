@@ -553,6 +553,8 @@ model FairShareWindowHead {
 /// Exactly-once quota acknowledgements. Kept for one day; the current
 /// window checkpoint remains fixed-size and does not retain request history.
 model QuotaReportReceipt {
+  pricingVersion String @default("legacy")
+  apiValueUsd Float @default(0)
   provider  String
   reportId  String
   accountId Int
@@ -1034,6 +1036,7 @@ model GatewayMotherAccount {
   totalShares    Int       @default(6)                         // 该母号分成多少份
   modelsJson     String?   // 该母号支持的模型 id 列表(JSON 数组)
   modelsSyncedAt DateTime?
+  upstreamResetAt5h BigInt? // last confirmed 5h boundary
   upstreamResetAt7d BigInt? // 上游 7 天窗口的 resetAt(毫秒),变化即视为上游重置
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -1052,6 +1055,7 @@ model GatewayUser {
   enabled         Boolean   @default(true)
   usedUsd         Float     @default(0) // 当前周期已用(美元,按 Anthropic 官方价)
   periodStartedAt DateTime  @default(now())
+  quotaResetAt    DateTime? // explicit operator reset; not an inferred upstream reset
   totalUsedUsd    Float     @default(0) // 历史累计
   totalRequests   Int       @default(0)
   lastUsedAt      DateTime?
@@ -1066,6 +1070,8 @@ model GatewayUser {
 
 // 每次转发的用量明细。requestId 唯一 → 幂等,崩溃重试不会重复计费。
 model GatewayUsage {
+  subscriptionId  String?
+  occurredAt      DateTime?
   id              String   @id @default(cuid())
   requestId       String   @unique
   gatewayUserId   String
@@ -1076,6 +1082,8 @@ model GatewayUsage {
   cacheReadTokens Int      @default(0)
   cacheWrite5m    Int      @default(0)
   cacheWrite1h    Int      @default(0)
+  pricingVersion  String   @default("legacy")
+  pricingMode     String   @default("standard")
   costUsd         Float    @default(0)
   status          Int      @default(200)
   createdAt       DateTime @default(now())
@@ -1083,5 +1091,6 @@ model GatewayUsage {
   user            GatewayUser @relation(fields: [gatewayUserId], references: [id], onDelete: Cascade)
 
   @@index([gatewayUserId, createdAt])
+  @@index([gatewayUserId, subscriptionId, occurredAt])
   @@index([motherAccountId, createdAt])
 }

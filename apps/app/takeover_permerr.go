@@ -126,3 +126,17 @@ func abbrevHome(path, home string) string {
 	}
 	return path
 }
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '/' || r == '.' || r == '_' || r == '-' || r == ':') {
+			// 含需要引用的字符 → 单引号包裹,内部单引号转义为 '\''
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}

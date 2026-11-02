@@ -25,9 +25,9 @@ describe("ProductsSection — 等级从账号池选", () => {
     render(
       <ProductsSection value={rows} onChange={() => {}} availableLevels={availableLevels} />,
     );
-    expect(screen.getByRole("button", { name: /pro/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /max-5x/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /max-20x/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /基础版/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /标准版/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /高配版/ })).toBeInTheDocument();
   });
 
   it("点未选中的等级 → onChange 把它加进该产品 levels", () => {
@@ -36,7 +36,7 @@ describe("ProductsSection — 等级从账号池选", () => {
       <ProductsSection value={rows} onChange={onChange} availableLevels={availableLevels} />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /max-5x/ }));
+    fireEvent.click(screen.getByRole("button", { name: /标准版/ }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     const next = onChange.mock.calls[0][0] as ProductRow[];
@@ -50,7 +50,7 @@ describe("ProductsSection — 等级从账号池选", () => {
       <ProductsSection value={rows} onChange={onChange} availableLevels={availableLevels} />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /max-20x/ }));
+    fireEvent.click(screen.getByRole("button", { name: /高配版/ }));
 
     const next = onChange.mock.calls[0][0] as ProductRow[];
     expect(next[0].levels).not.toContain("max-20x");
@@ -63,7 +63,7 @@ describe("ProductsSection — 等级从账号池选", () => {
     expect(screen.queryByPlaceholderText(/新增等级/)).toBeNull();
   });
 
-  it("账号池为空 → 提示该产品池里没有可选等级(先录号)", () => {
+  it("账号池为空仍可配置 Codex 档位，但明确提示没有母号", () => {
     render(
       <ProductsSection
         value={[{ product: "codex", enabled: true, levels: [] }]}
@@ -71,7 +71,9 @@ describe("ProductsSection — 等级从账号池选", () => {
         availableLevels={{ codex: [] }}
       />,
     );
-    expect(screen.getByText(/账号池里没有可选等级/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /plus/ })).toBeEnabled();
+    expect(screen.getAllByText("(暂无母号)")).toHaveLength(2);
+    expect(screen.queryByText(/已移除/)).toBeNull();
   });
 
   it("已选等级在池里已不存在(孤儿)→ 仍可见并可移除,带提示", () => {
@@ -90,4 +92,12 @@ describe("ProductsSection — 等级从账号池选", () => {
     const next = onChange.mock.calls[0][0] as ProductRow[];
     expect(next[0].levels).not.toContain("legacy-tier");
   });
+});
+
+it("Claude 档位不受旧账号池库存影响", () => {
+  render(<ProductsSection value={rows} onChange={() => {}} availableLevels={{ anthropic: [] }} />);
+  expect(screen.getByRole("button", { name: /高配版/ })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /ultra|max-20x/i })).toBeNull();
+  expect(screen.getAllByRole("button", { name: /高配版/ })).toHaveLength(1);
+  expect(screen.queryByText(/暂无母号|已移除/)).toBeNull();
 });

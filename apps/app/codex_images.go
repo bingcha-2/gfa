@@ -236,7 +236,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		// Recent CLIProxyAPI releases use Codex's native REST image endpoint for
 		// the built-in image models. Keep the older hosted-tool translation for
 		// custom models and requests without an explicit model for compatibility.
-		directImage = codexDirectImageModel(rawReq) && p.currentRelay() == nil
+		directImage = codexDirectImageModel(rawReq)
 		if directImage {
 			imageModel = codexDirectImageModelName(rawReq)
 			respBody = rewriteCodexModel(rawReq, imageModel)
@@ -298,7 +298,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		audit.accountID = 900000001
 		audit.token = codexRelayAuditToken
 		audit.hideErrorBody = true
-		mappedHostModel := mapRelayModel(&CodexRelayConfig{ModelMap: lease.Relay.ModelMap}, codexImagesRelayMainModel)
+		mappedHostModel := mapRelayModel(lease.Relay.ModelMap, codexImagesRelayMainModel)
 		respBody = rewriteCodexModel(respBody, mappedHostModel)
 	} else {
 		audit.accountID = lease.AccountId

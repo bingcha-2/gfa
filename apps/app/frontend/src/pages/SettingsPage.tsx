@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
-import { PromoSection } from '@/components/PromoSection'
 import { useT, useLocaleStore, SUPPORTED_LOCALES, LOCALE_NAMES } from '@/i18n'
 import { getChangelogRecord } from '@/lib/changelog'
 import { Copy, FolderOpen, Gift, Info, Languages, LogOut, MessageSquare, ScrollText, User } from 'lucide-react'
@@ -187,7 +186,7 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
-      <PromoSection /></>}
+      </>}
 
       {/* Install Paths */}
       {section === 'paths' && <Card className="mb-4">

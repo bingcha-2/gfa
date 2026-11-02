@@ -1,3 +1,5 @@
+import { hasApiPrice } from "@gfa/shared";
+import { refreshModelPricing } from "../../shared/pricing/pricing.module";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import { isDeepStrictEqual } from "node:util";
@@ -13,7 +15,7 @@ import {
   quotaEstimatorSnapshotFromInputs,
   type QuotaEstimatorProvider,
 } from "../token-server/account-quota-estimator";
-import { apiValueUsdForEvent, supportsApiUsdProduct, usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
+import { apiValueUsdForEvent, supportsApiUsdProduct, supportsApiValuationProduct, valuationProvider, usesUsdQuotaForProduct } from "../token-server/api-usd-quota";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker, fairShareCostMultiplierForServiceTier } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
@@ -151,14 +153,6 @@ export type RequestLogRecorder = {
 
 export type LeaseHttpErrorClass = new (statusCode: number, message: string, body?: unknown) => Error;
 
-export type RelayFulfillmentConfig = {
-  enabled: boolean;
-  baseUrl: string;
-  apiKey: string;
-  models?: string[];
-  modelMap?: Record<string, string>;
-};
-
 export type BoundAccountOverflowSignal = {
   accountId: number;
   leaseId: string;
@@ -212,7 +206,6 @@ export type LeaseServiceOptions = {
   /** Fair-share tracker for bound-card dynamic quota. */
   fairShareTracker?: FairShareTracker;
   /** Optional accountless fulfillment. Used by Codex NewAPI relay plans. */
-  relayConfigProvider?: (record: any) => Promise<RelayFulfillmentConfig | null>;
   /** Optional runtime-only fallback for a statically-bound account. */
   boundAccountOverflowRouter?: BoundAccountOverflowRouter<any>;
   /** Error class thrown by fail(); the controller routes on `instanceof`. */
@@ -395,7 +388,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly affinityTtlMs: number;
   private readonly maxRetainedLeaseRecords: number;
   private readonly leaseProofSecret: string;
-  private readonly relayConfigProvider: ((record: any) => Promise<RelayFulfillmentConfig | null>) | null;
   private readonly boundAccountOverflowRouter: BoundAccountOverflowRouter<TAccount> | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   private readonly banEventRecorder: BanEventRecorder | null;
@@ -463,7 +455,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       || process.env.JWT_SECRET
       || "",
     );
-    this.relayConfigProvider = options.relayConfigProvider || null;
     this.boundAccountOverflowRouter = options.boundAccountOverflowRouter || null;
     this.tokenUsageTracker = options.tokenUsageTracker || null;
     this.banEventRecorder = options.banEventRecorder || null;
@@ -742,6 +733,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
     }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
+    if (modelKey && supportsApiValuationProduct(this.provider.id)) {
+      const pricingProvider = valuationProvider(this.provider.id, modelKey);
+      const mode = ["priority", "fast"].includes(String(payload?.serviceTier || "")) ? "priority" : "standard";
+      if (!hasApiPrice(pricingProvider, modelKey, mode, Date.now(), Number.MAX_SAFE_INTEGER)) await refreshModelPricing();
+      if (!hasApiPrice(pricingProvider, modelKey, mode, Date.now(), Number.MAX_SAFE_INTEGER)) throw this.fail(400, "该模型当前暂未开放，请选择其他模型", { ok: false, error: "MODEL_PRICING_UNAVAILABLE" });
+    }
+
     // `let`: 账户级接力可能把 auth.record 换成「绑到别的号」的订阅,换后必须重算 boundAccountId,
     // 否则后续公平份额 / 取号会落在认证卡的旧号上,而非接力真正选中的那个号。
     let boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
@@ -815,54 +813,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       ? `codex-session:${crypto.createHash("sha256").update(JSON.stringify([auth.record.id, clientId, conversation])).digest("hex")}`
       : clientId;
     const accessKeySessionId = `sess:${clientId || "session"}`;
-
-    // Accountless relay plans use the exact same subscription quota precheck
-    // above, but skip mother-account selection entirely.
-    const relayConfig = this.relayConfigProvider
-      ? await this.relayConfigProvider(auth.record)
-      : null;
-    if (relayConfig?.enabled) {
-      if (!relayConfig.baseUrl || !relayConfig.apiKey) {
-        throw this.fail(503, "Codex 中转尚未配置完成");
-      }
-      const lease = this.createRelayLease(
-        accessKeySessionId, auth.record.id, clientId, modelKey, payload,
-      );
-      this.leases.set(lease.leaseId, lease);
-      this.totalLeases++;
-      this.ensureDaily();
-      this.dailyLeases++;
-      return {
-        ok: true,
-        mode: "relay",
-        leaseId: lease.leaseId,
-        leaseProof: this.createLeaseProof(lease),
-        activeSubscriptionId: auth.record.id,
-        accessKeySessionId,
-        sessionId: accessKeySessionId,
-        sessionExpiresAt: auth.record.sessionExpiresAt || "",
-        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
-        // Positive, reserved display id keeps the desktop log/UI contract stable.
-        // The authoritative lease remains accountId=0 and cannot mutate a mother account.
-        accountId: 900000001,
-        serviceAccount: { accountId: 900000001, emailHint: "", planType: "" },
-        planType: "",
-        accessToken: "",
-        relay: {
-          baseUrl: relayConfig.baseUrl,
-          apiKey: relayConfig.apiKey,
-          protocol: "responses",
-          models: relayConfig.models || [],
-          modelMap: relayConfig.modelMap || {},
-        },
-        expiresAt: lease.expiresAt,
-        accessTokenExpiresAt: lease.expiresAt,
-        probation: false,
-        candidateStats: { healthyForModel: 1 },
-        bound: true,
-        displayBound: true,
-      };
-    }
 
     // Two card modes:
     //  • Bound  (boundAccountId > 0): pinned to one account in this pool — lease
@@ -1837,7 +1787,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         cacheCreationTokens: detail.cacheCreationTokens,
         cacheWrite5mTokens: Math.max(0, Number(usage.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0)),
         cacheWrite1hTokens: Math.max(0, Number(usage.cacheWrite1hTokens ?? 0)),
-        apiValueUsd: supportsApiUsdProduct(this.provider.id) ? apiValueUsdForEvent({
+        apiValueUsd: supportsApiValuationProduct(this.provider.id) ? apiValueUsdForEvent({
           product: this.provider.id, modelKey, serviceTier: String(payload?.serviceTier || ""),
           inputTokens: detail.inputTokens, outputTokens: detail.outputTokens,
           cachedInputTokens: detail.cachedInputTokens,
@@ -1845,7 +1795,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           cacheWrite1hTokens: usage.cacheWrite1hTokens,
           contextTokens: usage.contextTokens, occurredAt,
         }) : 0,
-        apiPriced: supportsApiUsdProduct(this.provider.id),
+        apiPriced: supportsApiValuationProduct(this.provider.id),
         rawTotalTokens: detail.rawTotalTokens,
         totalTokens: detail.totalTokens,
         reverseProxy: Boolean(payload?.clientFlag),
@@ -1932,7 +1882,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           cacheCreationTokens: detail.cacheCreationTokens,
           cacheWrite5mTokens: Math.max(0, Number(usage.cacheWrite5mTokens ?? detail.cacheCreationTokens ?? 0)),
           cacheWrite1hTokens: Math.max(0, Number(usage.cacheWrite1hTokens ?? 0)),
-          apiValueUsd: supportsApiUsdProduct(this.provider.id) ? apiValueUsdForEvent({
+          apiValueUsd: supportsApiValuationProduct(this.provider.id) ? apiValueUsdForEvent({
             product: this.provider.id,
             modelKey,
             serviceTier: String(payload?.serviceTier || ""),
@@ -1944,7 +1894,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             contextTokens: usage.contextTokens,
             occurredAt,
           }) : 0,
-          apiPriced: supportsApiUsdProduct(this.provider.id),
+          apiPriced: supportsApiValuationProduct(this.provider.id),
           rawTotalTokens: detail.rawTotalTokens,
           totalTokens: detail.totalTokens,
           // 反代嫌疑(客户端 detectClaudeCodeClient 命中:非真 Claude Code 客户端)。
@@ -2755,33 +2705,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       requestBodyBytes: Math.max(0, Number(payload?.bodyBytes || payload?.requestBodyBytes || 0)),
       successfulReportSeen: false,
       fulfillmentMode: "account",
-    };
-  }
-
-  private createRelayLease(
-    accessKeySessionId: string,
-    accessKeyId: string,
-    clientId: string,
-    modelKey: string,
-    payload: any,
-  ): LeaseRecord {
-    const ttlMs = Math.max(60_000, Math.min(this.leaseTtlMs, MAX_REMOTE_LEASE_TTL_MS));
-    return {
-      leaseId: this.randomId(),
-      accountId: 0,
-      email: "",
-      projectId: "",
-      clientId,
-      modelKey,
-      accessKeyId,
-      accessKeySessionId,
-      createdAt: this.now(),
-      expiresAt: new Date(this.now() + Math.min(ttlMs, accessKeySessionTtlMs({ sessionTtlMs: ttlMs }))).toISOString(),
-      released: false,
-      isGeneration: payload?.isGeneration !== false,
-      requestBodyBytes: Math.max(0, Number(payload?.bodyBytes || payload?.requestBodyBytes || 0)),
-      successfulReportSeen: false,
-      fulfillmentMode: "relay",
     };
   }
 

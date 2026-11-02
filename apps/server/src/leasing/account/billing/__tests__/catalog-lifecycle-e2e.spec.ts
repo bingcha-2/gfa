@@ -1,3 +1,4 @@
+import "../../../../shared/__tests__/lease-pricing-fixture";
 /**
  * catalog-lifecycle-e2e.spec.ts — 套餐重设计「去影子」全链路端到端套件。
  *
@@ -412,28 +413,28 @@ describe("E2E 绑定线:下单 → 激活 → 分配座位(写 config.bindings)�
     const version = await publishCatalog();
     const { token, customer } = await seedCustomerWithDevice();
 
-    // 绑定线:anthropic max-20x,1 人独号(weight=cap=4,占用 4 个权益席位;销售容量默认 10)。
-    const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 };
+    // 绑定线:codex pro,1 人独号(weight=cap=4,占用 4 个权益席位;销售容量默认 10)。
+    const selection = { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 };
     const { sub, orderInfo } = await purchaseAndActivate(customer.id, selection);
 
-    // 价格(按席摊算):独号 = 买满整号 → max-20x 29900 × cap/cap + 满席 share 折扣 = 22900。
-    expect(orderInfo.amountCents).toBe(22900);
+    // 价格(按席摊算):独号 = 买满整号 → pro 19900 × cap/cap + 满席 share 折扣 = 12900。
+    expect(orderInfo.amountCents).toBe(12900);
 
     const c = cfg(sub);
     expect(c.line).toBe("bind");
-    expect(c.levels).toEqual({ anthropic: "max-20x" });
-    // 座位分配:钉到 fixture 号 id=1(唯一 max-20x 号)。写回 config.bindings(单一真相源)。
-    expect(c.bindings).toEqual({ anthropic: 1 });
+    expect(c.levels).toEqual({ codex: "pro" });
+    // 座位分配:钉到 fixture 号 id=1(唯一 pro 号)。写回 config.bindings(单一真相源)。
+    expect(c.bindings).toEqual({ codex: 1 });
     expect(c.weight).toBe(ACCOUNT_SHARE_CAPACITY / 1);
 
     // 内存 record:requiresBinding=true、bindings 钉到 1、access-keys.json 仍未写。
     const rec = store.findById(sub!.id)!;
     expect(rec.requiresBinding).toBe(true);
-    expect(rec.bindings).toEqual({ anthropic: 1 });
+    expect(rec.bindings).toEqual({ codex: 1 });
     expect(JSON.parse(fs.readFileSync(accessKeysPath, "utf8")).keys).toEqual([]);
 
     // 租号:绑定卡钉号 → 只从 account 1 租(boundAccountId==1)。
-    const r1 = await lease("anthropic", token, { clientId: "client-A" });
+    const r1 = await lease("codex", token, { clientId: "client-A" });
     expect(r1.ok).toBe(true);
     expect(r1.accountId).toBe(1);
     expect(r1.accessToken).toBe("upstream-token");
@@ -481,7 +482,7 @@ describe("E2E 绑定线:下单 → 激活 → 分配座位(写 config.bindings)�
     const customers = await Promise.all(Array.from({ length: 4 }, () => createTestCustomer()));
 
     // 测试容量 4、默认超卖 1.5 → 最大可售 6 份；2 席套餐最多绑定 3 张。
-    const sel = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
+    const sel = { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 2, deviceLimit: 1 };
     const sold = [];
     for (const customer of customers.slice(0, 3)) {
       sold.push(await purchaseAndActivate(customer.id, sel));
@@ -490,7 +491,7 @@ describe("E2E 绑定线:下单 → 激活 → 分配座位(写 config.bindings)�
     for (const item of sold) {
       expect(cfg(item.sub).weight).toBe(ACCOUNT_SHARE_CAPACITY / 2);
       expect(cfg(item.sub).quotaSeatCapacity).toBe(6);
-      expect(cfg(item.sub).bindings).toEqual({ anthropic: 1 });
+      expect(cfg(item.sub).bindings).toEqual({ codex: 1 });
     }
 
     await expect(billingService.createCatalogOrder(customers[3].id, sel, "ALIPAY"))
@@ -559,7 +560,7 @@ describe("E2E 美元额度:套餐 → 下单 → 扣费 → 改额 → 持久化
     expect(persistedUsage.upstreamFiveHour.resetAt).toBe(base + 6 * 60 * 60_000);
   });
 
-  it("同一订阅内 Codex/Anthropic 按产品分别乘份数、分别扣费和限流", async () => {
+  it("同一订阅保留独立产品额度，Codex 占座和扣费不影响 Claude", async () => {
     const catalog = structuredClone(CATALOG_CONFIG) as any;
     catalog.pricing.bind.usdQuotaPerSeat = {
       codex: { pro: { fiveHour: 0.1, weekly: 0.2 } },
@@ -582,30 +583,21 @@ describe("E2E 美元额度:套餐 → 下单 → 扣费 → 改额 → 持久化
       anthropic: { fiveHour: 0.3, weekly: 0.6 },
     });
 
-    const anthropicLease = await lease("anthropic", token, { clientId: "mixed-client" });
-    await leaseServices.anthropic.reportResult(
+    // Claude limits remain independent; its account is allocated separately
+    // by GatewayUserService. Only Codex occupies a legacy pool seat.
+    expect(cfg(sub).bindings).toEqual({ codex: 1 });
+    const codexLease = await lease("codex", token, { clientId: "mixed-client", modelKey: "gpt-5.6-sol" });
+    await leaseServices.codex.reportResult(
       { headers: { authorization: `Bearer ${token}` } },
-      {
-        leaseId: anthropicLease.leaseId,
-        reportId: "mixed-anthropic-1",
-        status: 200,
-        modelKey: "claude-sonnet-4-6",
-        inputTokens: 0,
-        cacheWrite5mTokens: 100_000,
-        cacheWrite1hTokens: 100_000,
-        outputTokens: 0,
-        rawTotalTokens: 200_000,
-        totalTokens: 200_000,
-      },
+      { leaseId: codexLease.leaseId, reportId: "mixed-codex-1", status: 200,
+        modelKey: "gpt-5.6-sol", inputTokens: 100_000, outputTokens: 0,
+        rawTotalTokens: 100_000, totalTokens: 100_000, contextTokens: 100_000 },
     );
-
     const status = store.publicStatus(store.findById(sub!.id)!);
     expect(status.usdQuota).toBeNull();
-    // Sonnet 4.6: 100k 5m × $3.75/M + 100k 1h × $6/M = $0.975。
-    expect(status.usdQuotaByProduct.anthropic.fiveHour.used).toBeCloseTo(0.975);
-    expect(status.usdQuotaByProduct.codex.fiveHour.used).toBe(0);
-    await expect(lease("anthropic", token, { clientId: "mixed-client" })).rejects.toMatchObject({ statusCode: 429 });
-    expect((await lease("codex", token, { clientId: "mixed-client" })).ok).toBe(true);
+    expect(status.usdQuotaByProduct.codex.fiveHour.used).toBeCloseTo(0.5);
+    expect(status.usdQuotaByProduct.anthropic.fiveHour.used).toBe(0);
+    await expect(lease("codex", token, { clientId: "mixed-client" })).rejects.toMatchObject({ statusCode: 429 });
   });
 
   it("覆盖 5h/周独立限流、保留已用金额、紧凑快照和 fair-share 隔离", async () => {
@@ -914,19 +906,19 @@ describe("E2E 号池 vs 绑定:座位/调度差异", () => {
     const cPool = await createTestCustomer();
     const cBind = await createTestCustomer();
 
-    // 号池订阅同样卖 anthropic,但绝不占座位。
-    await purchaseAndActivate(cPool.id, { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 });
+    // 号池订阅同样卖 codex,但绝不占座位。
+    await purchaseAndActivate(cPool.id, { line: "pool", products: ["codex"], usageTier: "small", deviceLimit: 1 });
 
     // 绑定线独号(weight=cap=4)仍能绑定到 account 1 并占用自己的权益席位 —— 证明号池没占座位。
     const bind = await purchaseAndActivate(cBind.id, {
-      line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1,
+      line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1,
     });
-    expect(cfg(bind.sub).bindings).toEqual({ anthropic: 1 });
+    expect(cfg(bind.sub).bindings).toEqual({ codex: 1 });
 
     // 座位真相源(occupiedShares,只数 line=bind):account 1 被绑定订阅按 weight 占用,号池不计。
     const rows = await prisma.subscription.findMany({ where: { status: "ACTIVE" }, select: { id: true, config: true } });
     const configs = rows.map((r) => ({ id: r.id, ...JSON.parse(String(r.config || "{}")) }));
-    const occupiedBind = configs.filter((x: any) => x.line === "bind" && x.bindings?.anthropic === 1)
+    const occupiedBind = configs.filter((x: any) => x.line === "bind" && x.bindings?.codex === 1)
       .reduce((s: number, x: any) => s + Math.min(ACCOUNT_SHARE_CAPACITY, Math.max(1, Math.floor(x.weight))), 0);
     expect(occupiedBind).toBe(ACCOUNT_SHARE_CAPACITY); // 独号占用 4 个权益席位
     const occupiedPool = configs.filter((x: any) => x.line === "pool").length;
@@ -1032,10 +1024,10 @@ describe("E2E 取消/退款/过期:座位释放复用、过期租号拒", () => 
     const c2 = await createTestCustomer();
 
     // c1 先占用 account 1 的 4 个基础席位。
-    const sel = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 };
+    const sel = { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 };
     const first = await purchaseAndActivate(c1.id, sel);
     expect(cfg(first.sub).quotaSeatCapacity).toBe(4); // 独享拿整号，不按超卖份数摊分。
-    expect(cfg(first.sub).bindings).toEqual({ anthropic: 1 });
+    expect(cfg(first.sub).bindings).toEqual({ codex: 1 });
 
     // c1 退款 → 取消订阅(座位会计只数 ACTIVE,CANCELLED 即释放)。
     await subscriptionService.cancelSubscription(first.sub!.id);
@@ -1044,7 +1036,7 @@ describe("E2E 取消/退款/过期:座位释放复用、过期租号拒", () => 
 
     // c2 现在能下单并拿到 account 1 —— 座位被复用。
     const second = await purchaseAndActivate(c2.id, sel);
-    expect(cfg(second.sub).bindings).toEqual({ anthropic: 1 });
+    expect(cfg(second.sub).bindings).toEqual({ codex: 1 });
   });
 
   it("expiresAt 过期 → 租号拒 SUBSCRIPTION_EXPIRED(resolver 不选过期订阅)", async () => {
@@ -1070,13 +1062,13 @@ describe("E2E 边界/异常", () => {
     await publishCatalog();
     // 先占 4 个基础席位；固定上限是 ceil(4 × 1.5) = 6。
     const cFull = await createTestCustomer();
-    await purchaseAndActivate(cFull.id, { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 });
+    await purchaseAndActivate(cFull.id, { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 });
 
     // 再买 2 席刚好达到 6，允许下单；已购订阅的美元额度不发生变化。
     const cNew = await createTestCustomer();
     const order = await billingService.createCatalogOrder(
       cNew.id,
-      { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 },
+      { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 2, deviceLimit: 1 },
       "ALIPAY",
     );
     expect(order).toBeTruthy();
@@ -1086,16 +1078,16 @@ describe("E2E 边界/异常", () => {
 
   it("等级无号(该等级 fixture 池为空)→ 激活 UNBOUND + requiresBinding → 租号 409", async () => {
     await publishCatalog();
-    // anthropic 池里没有 max-5x 号(只有 max-20x)→ 预检会拦。为测「激活后 UNBOUND」这条
+    // codex 池里没有 plus 号(只有 pro)→ 预检会拦。为测「激活后 UNBOUND」这条
     // 待硬化路径(spec §10),绕过下单预检,直接拿一条 bind 订单喂激活。
     const { customer, token } = await seedCustomerWithDevice();
     const { config } = (await import("../../../plan-catalog/pricing")).computePurchase(CATALOG_CONFIG as any, {
-      line: "bind", items: [{ product: "anthropic", level: "max-5x" }], shareUsers: 1, deviceLimit: 1,
+      line: "bind", items: [{ product: "codex", level: "plus" }], shareUsers: 1, deviceLimit: 1,
     } as any);
     const order = await prisma.planOrder.create({
       data: {
         customerId: customer.id,
-        amountCents: 15900,
+        amountCents: 13900,
         payChannel: "ALIPAY",
         outTradeNo: `gfa-unbound-${Date.now()}`,
         status: "PAID",
@@ -1115,7 +1107,7 @@ describe("E2E 边界/异常", () => {
     // 租号:requiresBinding 但无座位 → 409「服务开通中」(座位耗尽路径,line 453),
     // 区别于「此卡未开通该服务」(错产品路径,需 hasAnyBinding=true)。这里 bindings 空 +
     // requiresBinding,只能命中前者 —— 绝不掉进广播号池拿到没卖的号。
-    await expect(lease("anthropic", token, { clientId: "client-A" })).rejects.toMatchObject({
+    await expect(lease("codex", token, { clientId: "client-A" })).rejects.toMatchObject({
       statusCode: 409,
       message: expect.stringContaining("服务开通中"),
     });
@@ -1259,14 +1251,14 @@ describe("E2E 目录版手动授予:¥0 PAID GRANT 订单 → 同付费激活入
     await publishCatalog();
     const customer = await createTestCustomer();
 
-    const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 1, deviceLimit: 1 };
+    const selection = { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 };
     const order = await billingService.createGrantOrder(customer.id, selection as any);
     expect(order.payChannel).toBe("GRANT");
 
     const sub = await subscriptionService.activateForOrder(order);
     const c = cfg(sub);
     expect(c.line).toBe("bind");
-    expect(c.bindings).toEqual({ anthropic: 1 }); // 钉到唯一 max-20x fixture 号
+    expect(c.bindings).toEqual({ codex: 1 }); // 钉到唯一 pro fixture 号
     const rec = store.findById(sub.id)!;
     expect(rec.requiresBinding).toBe(true);
   });

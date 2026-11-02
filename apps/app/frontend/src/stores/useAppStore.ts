@@ -22,6 +22,7 @@ export type AppNotification = {
 
 interface AppState {
   // ===== Account =====
+  gateway: api.GatewaySummary | null
   account: AccountState | null
   // 被动登出原因码(心跳检测到 DEVICE_REVOKED / SESSION_INVALID 等致命态时落地;
   // 登录页据此给一句解释,避免「无声登出」看着像没反应)。
@@ -101,6 +102,7 @@ interface AppState {
 let heartbeatInFlight: Promise<void> | null = null
 
 export const useAppStore = create<AppState>((set, get) => ({
+  gateway: null,
   account: null,
   logoutReason: '',
   config: null,
@@ -170,6 +172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         proxyPort: data.proxyPort,
         leaserState: data.leaser?.serviceState || 'unconfigured',
         leaserError: data.leaser?.lastError || '',
+        gateway: data.gateway ?? null,
         notifications: ((data as any).notifications as AppNotification[]) || [],
         accountId: data.leaser?.accountId || 0,
         hasToken: data.leaser?.hasToken || false,
@@ -270,7 +273,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: async () => {
     await api.userLogout()
     set({
-      account: null,
+      gateway: null,
+  account: null,
       todayRequests: 0, todayErrors: 0, todayInputTokens: 0, todayOutputTokens: 0,
       todayCachedTokens: 0, todayCacheWriteTokens: 0, todayBillableTokens: 0,
       todayApiValueUSD: 0, todayByModel: {}, cumulativeSaving: 0,

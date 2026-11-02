@@ -7,9 +7,11 @@
  *
  * 客户端把 ANTHROPIC_BASE_URL 指到 {gfa}/api/gateway,用 gfa 发的专用 key 鉴权。
  * 母号 key 只在这里解密、用完即丢;上游的错误一律改写成 gfa 自己的文案,不透出母号信息。
- * 热路径(鉴权、额度检查)只读内存,每个请求结束后落库一次。
+ * 网关额度使用内存缓存；客户状态和订阅资格每次请求查库，防止停用/到期后继续调用。
  */
-import { Controller, Get, Post, Req, Res } from "@nestjs/common";
+import { hasApiPrice } from "@gfa/shared";
+import { refreshModelPricing } from "../../shared/pricing/pricing.module";
+import { Controller, Get, Post, Req, Res, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -65,6 +67,10 @@ export class GatewayForwardController {
       res.status(401).json(errorBody("authentication_error", "密钥无效或已停用"));
       return null;
     }
+    if (!(await this.users.hasActiveSubscription(s.customerId))) {
+      res.status(403).json(errorBody("permission_error", "需要有效的 Claude 订阅，请续费或购买套餐"));
+      return null;
+    }
     return s;
   }
 
@@ -73,7 +79,7 @@ export class GatewayForwardController {
     const s = await this.auth(req, res);
     if (!s) return;
     const target = await this.pool.getForwardTarget(s.motherId);
-    const ids = target?.models ?? [];
+    const ids = (target?.models ?? []).filter(id => hasApiPrice("anthropic", id));
     res.json({
       data: ids.map((id) => ({ type: "model", id, display_name: id })),
       has_more: false,
@@ -99,11 +105,28 @@ export class GatewayForwardController {
   private async forward(req: any, res: any, s: UserState, path: string, billed: boolean) {
     const body: any = req.body;
     const model = String(body?.model || "");
+    const pricingMode = body?.speed === "fast" || body?.service_tier === "priority" ? "priority" : "standard";
+    let occurredAt = Date.now();
+    let subscriptionId: string | null = null;
     if (billed) {
       if (!model) return void res.status(400).json(errorBody("invalid_request_error", "缺少 model"));
-      if (!(await this.users.hasQuota(s))) {
-        return void res.status(429).json(errorBody("rate_limit_error", "你的额度已用完,请等待重置或联系管理员"));
+      if (!hasApiPrice("anthropic", model, pricingMode, Date.now(), Number.MAX_SAFE_INTEGER)) await refreshModelPricing();
+      occurredAt = Date.now();
+      if (!hasApiPrice("anthropic", model, pricingMode, occurredAt, Number.MAX_SAFE_INTEGER)) {
+        return void res.status(400).json({ type: "error", error: { type: "invalid_request_error", code: "model_pricing_unavailable", message: "该模型当前暂未开放，请选择其他模型" } });
       }
+      const quota = await this.users.quotaStatus(s);
+      if (!quota.allowed) {
+        const exhausted = quota.reason.startsWith("quota_") && quota.reason.endsWith("_exhausted");
+        const status = quota.reason === "subscription_required" ? 403 : exhausted || quota.reason === "quota_reading_uncertain" ? 429 : 503;
+        const message = quota.reason === "subscription_required" ? "需要有效的 Claude 订阅，请续费或购买套餐" :
+          quota.reason === "quota_5h_exhausted" ? "5 小时额度已用完，请等待恢复" :
+          quota.reason === "quota_7d_exhausted" ? "本周额度已用完，请等待恢复" : "额度信息暂未确认，请稍后重试";
+        if (quota.retryAt && quota.retryAt > Date.now()) res.setHeader("retry-after", String(Math.ceil((quota.retryAt - Date.now()) / 1000)));
+        return void res.status(status).json(errorBody(status === 429 ? "rate_limit_error" : "permission_error", message));
+      }
+      subscriptionId = quota.subscriptionId;
+
     }
     if (s.inflight >= MAX_INFLIGHT_PER_USER) {
       return void res.status(429).json(errorBody("rate_limit_error", "并发请求过多,请稍后再试"));
@@ -114,6 +137,8 @@ export class GatewayForwardController {
       return void res.status(400).json(errorBody("invalid_request_error", `不支持的模型:${model}`));
     }
 
+    // A quota/target await can allow another request to occupy the last slot.
+    if (s.inflight >= MAX_INFLIGHT_PER_USER) return void res.status(429).json(errorBody("rate_limit_error", "并发请求过多,请稍后再试"));
     const requestId = randomUUID();
     const headers: Record<string, string> = { authorization: `Bearer ${target.key}`, "x-request-id": requestId };
     for (const h of PASS_HEADERS) {
@@ -139,8 +164,21 @@ export class GatewayForwardController {
       if (!up.ok) {
         // 上游错误不透出,统一改写。
         const code = up.status === 429 ? 429 : up.status === 401 || up.status === 403 ? 503 : up.status >= 500 ? 502 : 400;
-        const msg = up.status === 429 ? "服务繁忙,请稍后再试" : up.status === 400 ? "请求无效" : "服务暂不可用,请稍后再试";
-        await up.arrayBuffer().catch(() => undefined);
+        let msg = up.status === 429 ? "服务繁忙,请稍后再试" : up.status === 400 ? "请求无效" : "服务暂不可用,请稍后再试";
+        const upstreamError = await up.json().catch(() => null) as any;
+        // Keep credentials/account diagnostics private, but do not conceal a
+        // known provider admission failure behind a misleading generic message.
+        if (up.status === 429) {
+          const retryAfter = up.headers.get("retry-after");
+          if (retryAfter && /^\d{1,5}$/.test(retryAfter)) res.setHeader("retry-after", retryAfter);
+          if (upstreamError?.error?.code === "calibration_pending") {
+            msg = "上游账号额度尚未完成校准，暂时无法调用；请联系服务方处理";
+            return void res.status(429).json({
+              type: "error",
+              error: { type: "rate_limit_error", code: "upstream_calibration_pending", message: msg },
+            });
+          }
+        }
         return void res.status(code).json(errorBody(code === 429 ? "rate_limit_error" : "api_error", msg));
       }
 
@@ -199,7 +237,7 @@ export class GatewayForwardController {
       clearTimeout(timer);
       s.inflight--;
       if (billed && (tokens.input || tokens.output || tokens.cacheRead || tokens.cacheWrite5m || tokens.cacheWrite1h)) {
-        await this.users.recordUsage(s, { requestId, model, tokens, status }).catch(() => undefined);
+        await this.users.recordUsage(s, { requestId, model, tokens, status, occurredAt, pricingMode, subscriptionId }).catch(error => Logger.error(`Usage persistence failed for ${requestId}: ${error?.message}`, "GatewayBilling"));
       }
     }
   }

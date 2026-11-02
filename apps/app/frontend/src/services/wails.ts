@@ -18,14 +18,12 @@ import {
   ExportDiagnosticBundle as _ExportDiagnosticBundle,
   GetIDEStatus,
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
-  OpenCACertForTrust as _OpenCACertForTrust,
   InstallStandaloneClaude as _InstallStandaloneClaude,
   HostClaudeGateway as _HostClaudeGateway,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   DetectCompetingClaudeConfig as _DetectCompetingClaudeConfig,
   SanitizeCompetingClaudeConfig as _SanitizeCompetingClaudeConfig,
-  SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
   GetDetectedPaths,
   BrowseForPath as _BrowseForPath,
   CheckForUpdate as _CheckForUpdate,
@@ -33,14 +31,6 @@ import {
   RestartToUpdate as _RestartToUpdate,
   GetAppVersion,
   GetAnnouncement,
-  GetFaqData,
-  GetHostProtectionStatus as _GetHostProtectionStatus,
-  ProbeHostProtectionStatus as _ProbeHostProtectionStatus,
-  ApplyHostProtection as _ApplyHostProtection,
-  RestoreHostProtection as _RestoreHostProtection,
-  ReleaseHostProtectionTarget as _ReleaseHostProtectionTarget,
-  GetCodexRelayConfig as _GetCodexRelayConfig,
-  SaveCodexRelayConfig as _SaveCodexRelayConfig,
   GetCodexFastMode as _GetCodexFastMode,
   SetCodexFastMode as _SetCodexFastMode,
   UserLogin as _UserLogin,
@@ -52,21 +42,6 @@ import {
   RepairCodexAuth as _RepairCodexAuth,
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
-  SandboxGetStatus as _SandboxGetStatus,
-  SandboxInstall as _SandboxInstall,
-  SandboxInstallCommand as _SandboxInstallCommand,
-  SandboxBrowseDir as _SandboxBrowseDir,
-  SandboxList as _SandboxList,
-  SandboxCreate as _SandboxCreate,
-  SandboxEnterCommand as _SandboxEnterCommand,
-  SandboxStopOne as _SandboxStopOne,
-  SandboxWindowsPrereq as _SandboxWindowsPrereq,
-  SandboxEnableHypervisor as _SandboxEnableHypervisor,
-  SandboxLogin as _SandboxLogin,
-  SandboxVscodeStatus as _SandboxVscodeStatus,
-  SandboxVscodeEnable as _SandboxVscodeEnable,
-  SandboxVscodeDisable as _SandboxVscodeDisable,
-  SandboxRestore as _SandboxRestore,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal / Site URLs =====
@@ -87,7 +62,6 @@ export const PORTAL_URLS = {
 } as const
 
 export const SITE_URLS = {
-  faq: `${APEX_BASE}/faq`,
 } as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -177,7 +151,24 @@ export async function activateCode(code: string): Promise<ActivateCodeResult> {
 }
 
 // ===== Stats =====
+export interface GatewaySummary {
+  dailyHistory?: { date: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; requests: number; costUsd: number }[]
+  loading?: boolean
+  error?: string
+  configured?: boolean
+  subscriptionValid?: boolean
+  enabled?: boolean
+  upstreamEnabled?: boolean
+  limitUsd?: number
+  usedUsd?: number
+  remainingUsd?: number
+  totalUsedUsd?: number
+  totalRequests?: number
+  windows?: { period: string; remaining: number | null; resetAt: number | null; state?: "limited" | "unlimited" | "unknown"; exhausted?: boolean; freshness?: string; calibrationStatus?: string | null; uncertain?: boolean }[]
+  models?: { model: string; requests: number; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWrite5m: number | null; cacheWrite1h: number | null; costUsd: number | null }[]
+}
 export interface StatsResponse {
+  gateway?: GatewaySummary | null
   proxyRunning: boolean
   proxyPort: number
   stats: Record<string, number>
@@ -283,11 +274,6 @@ export async function openSystemPermissionSettings(): Promise<void> {
   return _OpenSystemPermissionSettings()
 }
 
-// 用系统证书 UI 打开根 CA(macOS:钥匙串访问;Windows:证书对话框),供用户手动设"始终信任"。
-// 仅在自动安装(CA_FAILED)失败后兜底用 —— 省掉用户找隐藏目录 ~/.bcai 的麻烦。
-export async function openCACertForTrust(): Promise<void> {
-  return _OpenCACertForTrust()
-}
 
 // 「一键安装独立版」:winget 从社区源静默装官方独立版 Claude Desktop。winget 不存在/失败
 // 会抛错,调用方据此回退到打开下载页。
@@ -308,52 +294,6 @@ export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
 }
 
-export interface HostProtectionConfig {
-  timezoneStrategy: 'follow' | 'fixed' | 'unchanged'
-  fixedTimezone: string
-  blockWebRTC: boolean
-  blockGeolocation: boolean
-  targets: string[]
-}
-
-export interface HostProtectionStatus {
-  mode: 'configure' | 'active' | 'residue' | 'restored'
-  platform: 'windows' | 'macos' | 'linux' | 'unsupported'
-  requiresAuthorization: boolean
-  originalTimezone: string
-  currentSystemTimezone?: string
-  exitTimezone: string
-  appliedTimezone: string
-  timezoneStrategy: 'follow' | 'fixed' | 'unchanged'
-  timezoneMatch?: 'aligned' | 'collapsed' | 'drift' | 'na'
-  blockWebRTC: boolean
-  blockGeolocation: boolean
-  dnsCleared: boolean
-  protectedBrowsers?: string
-  targets: string[]
-  lastError?: string
-}
-
-export async function getHostProtectionStatus(): Promise<HostProtectionStatus> {
-  return _GetHostProtectionStatus() as Promise<HostProtectionStatus>
-}
-
-export async function probeHostProtectionStatus(targets: string[]): Promise<HostProtectionStatus> {
-  return _ProbeHostProtectionStatus(targets) as Promise<HostProtectionStatus>
-}
-
-export async function applyHostProtection(config: HostProtectionConfig): Promise<HostProtectionStatus> {
-  return _ApplyHostProtection(config as unknown as main.HostProtectionConfig) as Promise<HostProtectionStatus>
-}
-
-export async function restoreHostProtection(): Promise<HostProtectionStatus> {
-  return _RestoreHostProtection() as Promise<HostProtectionStatus>
-}
-
-export async function releaseHostProtectionTarget(target: string): Promise<HostProtectionStatus> {
-  return _ReleaseHostProtectionTarget(target) as Promise<HostProtectionStatus>
-}
-
 export type ClaudeConfigConflict = main.ClaudeConfigConflict
 export type SanitizeReport = main.SanitizeReport
 
@@ -368,9 +308,6 @@ export async function sanitizeCompetingClaudeConfig(ids: string[]): Promise<Sani
   return _SanitizeCompetingClaudeConfig(ids)
 }
 
-export async function setClaudeDesktopMockLogin(on: boolean): Promise<boolean> {
-  return _SetClaudeDesktopMockLogin(on)
-}
 
 export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string; claudeDesktopPath: string }> {
   return GetDetectedPaths()
@@ -402,46 +339,7 @@ export async function getAnnouncement(): Promise<string> {
   return GetAnnouncement()
 }
 
-// ===== FAQ =====
-export interface FaqDataResponse {
-  items?: Array<{
-    id: string
-    category: string
-    question: string
-    answer: string
-    sortOrder: number
-  }>
-  settings?: Record<string, string>
-}
-
-export async function getFaqData(): Promise<FaqDataResponse> {
-  return GetFaqData() as Promise<FaqDataResponse>
-}
-
 // ===== Codex 中转(API 卡密)模式 =====
-export interface CodexRelayConfig {
-  mode: string // "rental" | "relay"
-  baseURL: string
-  apiKey: string
-  protocol: string // "responses" | "chat"
-  modelMap: Record<string, string> | null
-}
-
-export async function getCodexRelayConfig(): Promise<CodexRelayConfig> {
-  return _GetCodexRelayConfig() as Promise<CodexRelayConfig>
-}
-
-export async function saveCodexRelayConfig(
-  mode: string,
-  baseURL: string,
-  apiKey: string,
-  protocol: string,
-  modelMap: Record<string, string>,
-): Promise<void> {
-  await _SaveCodexRelayConfig(mode, baseURL, apiKey, protocol, modelMap)
-}
-
-// ===== Codex 桌面「快速档」(service_tier=priority) =====
 export async function getCodexFastMode(): Promise<boolean> {
   return _GetCodexFastMode()
 }
@@ -453,65 +351,4 @@ export async function setCodexFastMode(fast: boolean): Promise<void> {
 // ===== Browser =====
 export function openURL(url: string): void {
   BrowserOpenURL(url)
-}
-
-// ===== Sandbox mode takeover (Claude Code · sbx) =====
-export async function sandboxGetStatus(): Promise<main.SbxStatus> {
-  return _SandboxGetStatus()
-}
-
-export async function sandboxInstall(): Promise<void> {
-  await _SandboxInstall()
-}
-
-export async function sandboxInstallCommand(): Promise<string> {
-  return _SandboxInstallCommand()
-}
-
-export async function sandboxBrowseDir(title: string): Promise<string> {
-  return _SandboxBrowseDir(title)
-}
-
-export async function sandboxList(): Promise<main.SandboxInfo[]> {
-  return _SandboxList()
-}
-
-export async function sandboxStopOne(name: string): Promise<void> {
-  await _SandboxStopOne(name)
-}
-
-export async function sandboxWindowsPrereq(): Promise<main.WinPrereq> {
-  return _SandboxWindowsPrereq()
-}
-
-export async function sandboxEnableHypervisor(): Promise<void> {
-  await _SandboxEnableHypervisor()
-}
-
-export async function sandboxLogin(): Promise<void> {
-  await _SandboxLogin()
-}
-
-export async function sandboxVscodeStatus(): Promise<main.VscodeSandboxStatus> {
-  return _SandboxVscodeStatus()
-}
-
-export async function sandboxVscodeEnable(): Promise<string> {
-  return _SandboxVscodeEnable()
-}
-
-export async function sandboxVscodeDisable(): Promise<string> {
-  return _SandboxVscodeDisable()
-}
-
-export async function sandboxCreate(mounts: main.SandboxMount[], model: main.SandboxModelCfg, openNetwork: boolean): Promise<string> {
-  return _SandboxCreate(mounts, model, openNetwork)
-}
-
-export async function sandboxEnterCommand(name: string, skipPermissions: boolean): Promise<string> {
-  return _SandboxEnterCommand(name, skipPermissions)
-}
-
-export async function sandboxRestore(): Promise<string> {
-  return _SandboxRestore()
 }

@@ -56,7 +56,8 @@ describe("causal report-result integration", () => {
       PRIMARY KEY (provider, accountId, bucket, cardId))`);
     await prisma.$executeRawUnsafe(`CREATE TABLE QuotaReportReceipt (
       provider TEXT NOT NULL, reportId TEXT NOT NULL, accountId INTEGER NOT NULL, bucket TEXT NOT NULL,
-      revision INTEGER NOT NULL, createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      revision INTEGER NOT NULL, pricingVersion TEXT NOT NULL DEFAULT 'legacy',
+      apiValueUsd REAL NOT NULL DEFAULT 0, createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (provider, reportId))`);
     await prisma.$executeRawUnsafe(`CREATE TABLE CardUsageHourly (
       id TEXT NOT NULL PRIMARY KEY, hourStart DATETIME NOT NULL, accessKeyId TEXT NOT NULL,

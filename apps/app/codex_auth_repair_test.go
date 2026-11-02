@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestRepairCodexAuthMovesUserOwnedAuthToBackup(t *testing.T) {
 	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
 		t.Fatalf("auth.json still exists, stat error = %v", err)
 	}
-	if data, err := os.ReadFile(result); err != nil || string(data) != `{"auth_mode":"chatgpt"}` {
+	if data, err := os.ReadFile(strings.TrimPrefix(result, "removed-keychain-present:")); err != nil || string(data) != `{"auth_mode":"chatgpt"}` {
 		t.Fatalf("backup = %q, err = %v", data, err)
 	}
 }

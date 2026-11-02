@@ -532,14 +532,7 @@ export class EntitlementSyncService {
     const line = String(config.line || "");
 
     if (line === "bind") {
-      // Keep legacy/test constructors compatible: older callers may not yet
-      // provide PlanCatalogService. Missing relay settings must mean the normal
-      // mother-account path, never break seat assignment for existing plans.
-      const resolveRelay = (this.planCatalog as any)?.resolveCodexRelaySettings;
-      const codexRelayEnabled = typeof resolveRelay === "function"
-        ? (await resolveRelay.call(this.planCatalog)).enabled === true
-        : false;
-      await this.syncBind(sub, config, catalog, codexRelayEnabled);
+      await this.syncBind(sub, config, catalog);
     } else {
       // 号池(及任何非 bind):不占座位,直接注册限额 record。
       this.registerRecord(sub, config);
@@ -555,7 +548,6 @@ export class EntitlementSyncService {
     sub: Subscription,
     config: Record<string, any>,
     catalog: Partial<CatalogConfig> | null,
-    codexRelayEnabled = false,
   ): Promise<void> {
     const products: string[] = Array.isArray(config.products) ? config.products : [];
     const weight = seatWeight(config);
@@ -566,7 +558,7 @@ export class EntitlementSyncService {
 
     // Products that still need a seat (no real accountId bound yet).
     const unbound = products.filter((p) =>
-      !(codexRelayEnabled && p === "codex") && !(Number(existingBindings[p]) > 0));
+      p !== "anthropic" && !(Number(existingBindings[p]) > 0));
 
     if (unbound.length > 0) {
       const exclusive = isExclusive(config);

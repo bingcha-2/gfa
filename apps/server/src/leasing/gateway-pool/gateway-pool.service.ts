@@ -1,3 +1,4 @@
+import { hasApiPrice } from "@gfa/shared";
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { nanoid } from "nanoid";
@@ -5,6 +6,7 @@ import { nanoid } from "nanoid";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { decryptKey, encryptKey, keyHint } from "./key-vault";
 import { fetchAccountKeyUsage, fetchModels, provisionOneKey, UpstreamError, type UpstreamConfig } from "./upstream-client";
+import { upstreamWindowTransition } from "./upstream-window";
 
 const MANUAL_REFRESH_MIN_GAP_MS = 10_000;
 const SETTING_BASE_URL = "gateway_upstream_base_url";
@@ -39,6 +41,7 @@ function toView(r: any) {
     baseUrl: r.baseUrl,
     totalShares: r.totalShares,
     models: parseModels(r.modelsJson),
+    unpricedModels: parseModels(r.modelsJson).filter(id => !hasApiPrice("anthropic", id)),
     modelsSyncedAt: r.modelsSyncedAt,
     lastError: r.lastError,
     usage,
@@ -131,24 +134,23 @@ export class GatewayPoolService {
     this.resetListeners.push(cb);
   }
 
-  /** 修改单个母号的调用地址和份数。份数不能少于已分配数。 */
+  /** 修改单个母号的调用地址和参考总份数。允许已分配份数超过参考值。 */
   async setConfig(id: string, input: { baseUrl?: string; totalShares?: number }) {
-    await this.mustGet(id);
-    const data: Record<string, unknown> = {};
-    if (input.baseUrl !== undefined) {
-      const b = String(input.baseUrl).trim().replace(/\/+$/, "");
-      if (!/^https:\/\/[^\s]+$/i.test(b)) throw new BadRequestException("调用地址必须是 https:// 开头");
-      data.baseUrl = b;
-    }
-    if (input.totalShares !== undefined) {
-      const n = Math.floor(Number(input.totalShares));
-      if (!Number.isFinite(n) || n < 1 || n > 1000) throw new BadRequestException("份数为 1–1000 的整数");
-      const used = await this.prisma.gatewayUser.aggregate({ where: { motherAccountId: id }, _sum: { shares: true } });
-      const allocated = used._sum.shares ?? 0;
-      if (n < allocated) throw new BadRequestException(`已分配 ${allocated} 份,不能少于已分配数`);
-      data.totalShares = n;
-    }
-    await this.prisma.gatewayMotherAccount.update({ where: { id }, data });
+    await this.prisma.$transaction(async (db) => {
+      if (!(await db.gatewayMotherAccount.findUnique({ where: { id } }))) throw new NotFoundException("母号不存在");
+      const data: Record<string, unknown> = {};
+      if (input.baseUrl !== undefined) {
+        const b = String(input.baseUrl).trim().replace(/\/+$/, "");
+        if (!/^https:\/\/[^\s]+$/i.test(b)) throw new BadRequestException("调用地址必须是 https:// 开头");
+        data.baseUrl = b;
+      }
+      if (input.totalShares !== undefined) {
+        const n = Number(input.totalShares);
+        if (!Number.isSafeInteger(n) || n < 1 || n > 1000) throw new BadRequestException("份数为 1–1000 的整数");
+        data.totalShares = n;
+      }
+      await db.gatewayMotherAccount.update({ where: { id }, data });
+    });
     return (await this.list()).find((x: any) => x.id === id);
   }
 
@@ -290,31 +292,60 @@ export class GatewayPoolService {
     }
   }
 
+  private usageRefreshes = new Map<string, Promise<void>>();
+  /** Coalesce read-only usage refreshes across UI polling and request admission. */
+  async quotaSnapshot(id: string) {
+    const row = await this.mustGet(id);
+    const lastAttempt = row.lastSyncAt?.getTime() ?? 0;
+    if (row.enabled && row.keyCipher && Date.now() - lastAttempt > 30_000) {
+      let pending = this.usageRefreshes.get(id);
+      if (!pending) {
+        pending = this.syncUsage(id).finally(() => this.usageRefreshes.delete(id));
+        this.usageRefreshes.set(id, pending);
+      }
+      await pending;
+      return this.mustGet(id);
+    }
+    return row;
+  }
+
   private async syncUsage(id: string) {
     const row = await this.mustGet(id);
     const now = new Date();
     try {
       const usage = await fetchAccountKeyUsage(await this.upstreamConfig(), row.accountName);
-      // 上游 7 天窗口的 resetAt 变化 = 上游已重置,我们跟着重置该母号下所有用户的用量。
-      const resetAt = Number((usage as any)?.[0]?.share?.windows?.["7d"]?.resetAt);
-      const hasReset = Number.isFinite(resetAt) && resetAt > 0;
-      const prev = row.upstreamResetAt7d != null ? Number(row.upstreamResetAt7d) : null;
-      const changed = hasReset && prev !== null && resetAt !== prev;
-      await this.prisma.gatewayMotherAccount.update({
-        where: { id },
-        data: {
-          usageJson: JSON.stringify(usage),
-          usageSyncedAt: now,
-          lastSyncAt: now,
-          lastError: row.keyCipher ? null : row.lastError,
-          ...(hasReset ? { upstreamResetAt7d: BigInt(resetAt) } : {}),
-        },
-      });
-      if (changed) {
-        await this.prisma.gatewayUser.updateMany({
+      let invalidKey = false;
+      if (usage.length === 0 && row.keyCipher) {
+        // An empty association list is not proof of invalid credentials. Verify
+        // using read-only model discovery before marking the stored key unusable.
+        try { await fetchModels(row.baseUrl, decryptKey(row.keyCipher)); }
+        catch (err) { invalidKey = err instanceof UpstreamError && err.status === 401; }
+      }
+
+      const changed = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.gatewayMotherAccount.findUniqueOrThrow({ where: { id } });
+        const prev = current.upstreamResetAt7d != null ? Number(current.upstreamResetAt7d) : null;
+        const transition = upstreamWindowTransition(usage, row.accountName, prev, now.getTime());
+        const fiveHour = upstreamWindowTransition(usage, row.accountName, current.upstreamResetAt5h != null ? Number(current.upstreamResetAt5h) : null, now.getTime(), "5h");
+        await tx.gatewayMotherAccount.update({
+          where: { id },
+          data: {
+            usageJson: JSON.stringify(usage),
+            usageSyncedAt: now,
+            lastSyncAt: now,
+            lastError: invalidKey ? "上游拒绝当前 Key（401），请核对是否已删除或轮换" : usage.length === 0 ? "上游未返回该账号的关联 Key 用量" : row.status === "key_lost" ? row.lastError : row.keyCipher ? null : row.lastError,
+            ...(invalidKey ? { status: "key_lost" } : {}),
+            ...(fiveHour.resetAt !== null ? { upstreamResetAt5h: BigInt(fiveHour.resetAt) } : {}),
+            ...(transition.resetAt !== null ? { upstreamResetAt7d: BigInt(transition.resetAt) } : {}),
+          },
+        });
+        if (transition.reset) await tx.gatewayUser.updateMany({
           where: { motherAccountId: id },
           data: { usedUsd: 0, periodStartedAt: now },
         });
+        return transition.reset;
+      });
+      if (changed) {
         this.logger.log(`upstream 7d window reset detected for ${row.accountName}; users reset`);
         for (const cb of this.resetListeners) cb(id);
       }

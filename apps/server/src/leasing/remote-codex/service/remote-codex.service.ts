@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import { LeaseService, type TokenUsageTracker, type AccountQuotaSnapshotRecorder, type BanEventRecorder, type RequestLogRecorder, type RelayFulfillmentConfig } from "../../lease-core/lease-service";
+import { LeaseService, type TokenUsageTracker, type AccountQuotaSnapshotRecorder, type BanEventRecorder, type RequestLogRecorder } from "../../lease-core/lease-service";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { CodexAccount } from "../auth/codex-token-provider";
@@ -32,7 +32,6 @@ type ServiceOptions = {
   fairShareAlgorithm?: "segment-v1" | "window-cu-v1";
   /** Test-only timing override; omitted by production DI. */
   fairShareFlushIntervalMs?: number;
-  relayConfigProvider?: () => Promise<RelayFulfillmentConfig | null>;
   publishedCatalogProvider?: () => Promise<any>;
 };
 
@@ -100,9 +99,6 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         banEventRecorder: options.banEventRecorder,
         requestLogRecorder: options.requestLogRecorder,
         fairShareTracker,
-        relayConfigProvider: options.relayConfigProvider
-          ? async () => options.relayConfigProvider!()
-          : undefined,
         boundAccountOverflowRouter: overflowRouter || undefined,
         mode: "remote-codex-server",
         noAccountMessage: "No available Codex accounts",

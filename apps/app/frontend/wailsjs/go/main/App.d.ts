@@ -18,7 +18,6 @@ import {modelprovider} from '../models';
 
 export function ActivateCode(arg1:string):Promise<Record<string, any>>;
 
-export function ApplyHostProtection(arg1:main.HostProtectionConfig):Promise<main.HostProtectionStatus>;
 
 export function BrowseForPath(arg1:string):Promise<string>;
 
@@ -44,15 +43,11 @@ export function GetAppVersion():Promise<string>;
 
 export function GetCodexFastMode():Promise<boolean>;
 
-export function GetCodexRelayConfig():Promise<Record<string, any>>;
 
 export function GetConfig():Promise<main.Config>;
 
 export function GetDetectedPaths():Promise<main.DetectedPaths>;
 
-export function GetFaqData():Promise<Record<string, any>>;
-
-export function GetHostProtectionStatus():Promise<main.HostProtectionStatus>;
 
 export function GetIDEStatus():Promise<main.IDEStatus>;
 
@@ -76,281 +71,146 @@ export function IsHubRunningCheck():Promise<boolean>;
 
 export function IsIDERunningCheck():Promise<boolean>;
 
-export function LocalActivateGatewayTimeoutPreset(arg1:string):Promise<gatewaycfg.OpsConfig>;
 
-export function LocalAddAntigravityApiKey(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
-export function LocalAddAntigravityToken(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
-export function LocalAddCodexApiKey(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
-export function LocalAddCodexToken(arg1:string,arg2:string,arg3:string):Promise<manager.AccountView>;
 
-export function LocalAntigravityGatewayStart():Promise<hub.GatewayStatus>;
 
-export function LocalAntigravityGatewayStatus():Promise<hub.GatewayStatus>;
 
-export function LocalAntigravityGatewayStop():Promise<void>;
 
-export function LocalAntigravityLocalInjected(arg1:string):Promise<boolean>;
 
-export function LocalAntigravityStats():Promise<stats.Snapshot>;
 
-export function LocalAntigravityWakeupClearVerificationHistory(arg1:Array<string>):Promise<number>;
 
-export function LocalAntigravityWakeupConfig():Promise<wakeup.Config>;
 
-export function LocalAntigravityWakeupHistory():Promise<Array<wakeup.RunEntry>>;
 
-export function LocalAntigravityWakeupRunNow():Promise<Array<wakeup.RunEntry>>;
 
-export function LocalAntigravityWakeupVerificationHistory():Promise<Array<wakeup.VerifyBatch>>;
 
-export function LocalAntigravityWakeupVerificationState():Promise<Array<wakeup.VerifyResult>>;
 
-export function LocalAntigravityWakeupVerifyBatch(arg1:Array<string>):Promise<wakeup.VerifyBatch>;
 
-export function LocalAssignAccountsToGroup(arg1:string,arg2:Array<string>):Promise<accountgroups.Group>;
 
-export function LocalBrowseForPath(arg1:string):Promise<string>;
 
-export function LocalCancelAntigravityLogin(arg1:string):Promise<void>;
 
-export function LocalCancelCodexLogin(arg1:string):Promise<void>;
 
-export function LocalClearGatewayStats():Promise<void>;
 
-export function LocalCodexReferralEligibility(arg1:string,arg2:string):Promise<codexbiz.ReferralInviteEligibility>;
 
-export function LocalCodexReferralRules(arg1:string,arg2:string):Promise<codexbiz.ReferralEligibilityRules>;
 
-export function LocalCodexSessionTokenStats(arg1:Array<string>):Promise<Array<sessionsync.SessionTokenStats>>;
 
-export function LocalCodexStats():Promise<stats.Snapshot>;
 
-export function LocalCodexWakeupClearVerificationHistory(arg1:Array<string>):Promise<number>;
 
-export function LocalCodexWakeupConfig():Promise<wakeup.Config>;
 
-export function LocalCodexWakeupHistory():Promise<Array<wakeup.RunEntry>>;
 
-export function LocalCodexWakeupRunNow():Promise<Array<wakeup.RunEntry>>;
 
-export function LocalCodexWakeupVerificationHistory():Promise<Array<wakeup.VerifyBatch>>;
 
-export function LocalCodexWakeupVerificationState():Promise<Array<wakeup.VerifyResult>>;
 
-export function LocalCodexWakeupVerifyBatch(arg1:Array<string>):Promise<wakeup.VerifyBatch>;
 
-export function LocalConsumeCodexResetCredit(arg1:string,arg2:string):Promise<void>;
 
-export function LocalCreateAccountGroup(arg1:string):Promise<accountgroups.Group>;
 
-export function LocalCreateGatewayKey(arg1:string):Promise<gatewaykeys.Key>;
 
-export function LocalCurrentAntigravityAccount():Promise<manager.AccountView>;
 
-export function LocalCurrentCodexAccount():Promise<manager.AccountView>;
 
-export function LocalDeleteAccount(arg1:string):Promise<void>;
 
-export function LocalDeleteAccountGroup(arg1:string):Promise<void>;
 
-export function LocalDeleteAccounts(arg1:Array<string>):Promise<void>;
 
-export function LocalDeleteGatewayKey(arg1:string):Promise<void>;
 
-export function LocalDeleteModelProvider(arg1:string):Promise<void>;
 
-export function LocalDetectCodexAppPath():Promise<string>;
 
-export function LocalEvaluateCodexAlert():Promise<economy.AlertResult>;
 
-export function LocalExportAntigravityAccounts(arg1:Array<string>):Promise<string>;
 
-export function LocalExportAntigravityAccountsToFile(arg1:Array<string>):Promise<string>;
 
-export function LocalExportCodexAccounts(arg1:Array<string>):Promise<string>;
 
-export function LocalExportCodexAccountsToFile(arg1:Array<string>):Promise<string>;
 
-export function LocalGatewayConnTest():Promise<gateway.ConnTestResult>;
 
-export function LocalGatewayStart():Promise<hub.GatewayStatus>;
 
-export function LocalGatewayStatus():Promise<hub.GatewayStatus>;
 
-export function LocalGatewayStop():Promise<void>;
 
-export function LocalGetAlertConfig():Promise<economy.AlertConfig>;
 
-export function LocalGetAntigravitySource():Promise<string>;
 
-export function LocalGetCodexQuickConfig():Promise<codexsettings.QuickConfig>;
 
-export function LocalGetCodexResetCredits(arg1:string):Promise<codexbiz.ResetCreditsSnapshot>;
 
-export function LocalGetCodexSettings():Promise<codexsettings.Settings>;
 
-export function LocalGetCodexSkinChannel():Promise<main.CodexSkinChannelStatus>;
 
-export function LocalGetCodexSource():Promise<string>;
 
-export function LocalGetGatewayAccessScope():Promise<string>;
 
-export function LocalGetGatewayOpsConfig():Promise<gatewaycfg.OpsConfig>;
 
-export function LocalGetRefreshConfig():Promise<refreshcfg.Config>;
 
-export function LocalGetRoutingStrategy():Promise<string>;
 
-export function LocalGetSwitchConfig():Promise<economy.SwitchConfig>;
 
-export function LocalImportAntigravityAuthFiles(arg1:Array<string>):Promise<number>;
 
-export function LocalImportAntigravityFromJSON(arg1:string):Promise<number>;
 
-export function LocalImportCodexAuthFiles(arg1:Array<string>):Promise<number>;
 
-export function LocalImportCodexFromJSON(arg1:string):Promise<number>;
 
-export function LocalImportCodexFromLocal():Promise<number>;
 
-export function LocalListAccountGroups():Promise<Array<accountgroups.Group>>;
 
-export function LocalListAntigravityAccounts():Promise<Array<manager.AccountView>>;
 
-export function LocalListCodexAccounts():Promise<Array<manager.AccountView>>;
 
-export function LocalListCodexSessions(arg1:string,arg2:string):Promise<Array<sessionsync.SessionRecord>>;
 
-export function LocalListGatewayKeys():Promise<Array<gatewaykeys.Key>>;
 
-export function LocalListModelProviderModels(arg1:string):Promise<modelprovider.ListModelsResult>;
 
-export function LocalListModelProviders():Promise<Array<modelprovider.Provider>>;
 
-export function LocalListTrashedCodexSessions():Promise<Array<sessionsync.TrashedSessionRecord>>;
 
-export function LocalMoveCodexSessionsToTrash(arg1:Array<string>):Promise<sessionsync.TrashSummary>;
 
-export function LocalOpenCodexConfigToml():Promise<void>;
 
-export function LocalOpenCodexSkinSkillFolder():Promise<void>;
 
-export function LocalQueryGatewayLogs(arg1:number,arg2:number,arg3:string):Promise<stats.LogPage>;
 
-export function LocalRefreshAccountQuota(arg1:string):Promise<void>;
 
-export function LocalRefreshAllQuotas(arg1:string):Promise<number>;
 
-export function LocalRefreshCodexSubscription(arg1:string):Promise<codexbiz.SubscriptionSnapshot>;
 
-export function LocalRemoveAccountsFromGroup(arg1:string,arg2:Array<string>):Promise<accountgroups.Group>;
 
-export function LocalRenameAccount(arg1:string,arg2:string):Promise<void>;
 
-export function LocalRenameAccountGroup(arg1:string,arg2:string):Promise<accountgroups.Group>;
 
-export function LocalReorderAntigravityAccounts(arg1:Array<string>):Promise<void>;
 
-export function LocalReorderCodexAccounts(arg1:Array<string>):Promise<void>;
 
-export function LocalRepairCodexSessionVisibility():Promise<main.HistoryVisibilitySummary>;
 
-export function LocalResolveAccountGroups():Promise<Record<string, string>>;
 
-export function LocalRestartCodexForSkinChannel():Promise<main.CodexSkinChannelStatus>;
 
-export function LocalRestoreCodexSessionsFromTrash(arg1:Array<string>):Promise<sessionsync.RestoreSummary>;
 
-export function LocalRotateGatewayKey(arg1:string):Promise<gatewaykeys.Key>;
 
-export function LocalSaveCodexQuickConfig(arg1:any,arg2:any):Promise<codexsettings.QuickConfig>;
 
-export function LocalSaveCodexSettings(arg1:codexsettings.Settings):Promise<codexsettings.Settings>;
 
-export function LocalSaveGatewayImageGenMode(arg1:string):Promise<gatewaycfg.OpsConfig>;
 
-export function LocalSaveGatewayTimeoutPresets(arg1:Array<gatewaycfg.TimeoutPreset>):Promise<gatewaycfg.OpsConfig>;
 
-export function LocalSaveGatewayTimeouts(arg1:gatewaycfg.Timeouts):Promise<gatewaycfg.OpsConfig>;
 
-export function LocalSaveGatewayUpstreamProxy(arg1:string):Promise<gatewaycfg.OpsConfig>;
 
-export function LocalSaveModelProvider(arg1:modelprovider.Provider):Promise<modelprovider.Provider>;
 
-export function LocalSendCodexReferralInvites(arg1:string,arg2:string,arg3:Array<string>):Promise<codexbiz.ReferralInviteResponse>;
 
-export function LocalSetAccountNote(arg1:string,arg2:string):Promise<void>;
 
-export function LocalSetAccountTags(arg1:string,arg2:Array<string>):Promise<void>;
 
-export function LocalSetAlertConfig(arg1:economy.AlertConfig):Promise<economy.AlertConfig>;
 
-export function LocalSetAntigravityLocalInjected(arg1:string,arg2:boolean):Promise<void>;
 
-export function LocalSetAntigravityPriority(arg1:string):Promise<void>;
 
-export function LocalSetAntigravitySource(arg1:string):Promise<void>;
 
-export function LocalSetAntigravityWakeupConfig(arg1:boolean,arg2:number):Promise<void>;
 
-export function LocalSetCodexPriority(arg1:string):Promise<void>;
 
-export function LocalSetCodexSkinChannel(arg1:boolean):Promise<main.CodexSkinChannelStatus>;
 
-export function LocalSetCodexSource(arg1:string):Promise<void>;
 
-export function LocalSetCodexWakeupConfig(arg1:boolean,arg2:number):Promise<void>;
 
-export function LocalSetCurrentAntigravityAccount(arg1:string):Promise<void>;
 
-export function LocalSetCurrentCodexAccount(arg1:string):Promise<void>;
 
-export function LocalSetGatewayAccessScope(arg1:string):Promise<void>;
 
-export function LocalSetGatewayPort(arg1:number):Promise<hub.GatewayStatus>;
 
-export function LocalSetPoolEnabled(arg1:string,arg2:boolean):Promise<void>;
 
-export function LocalSetRefreshConfig(arg1:number,arg2:number):Promise<refreshcfg.Config>;
 
-export function LocalSetRoutingStrategy(arg1:string):Promise<void>;
 
-export function LocalSetSwitchConfig(arg1:economy.SwitchConfig):Promise<economy.SwitchConfig>;
 
-export function LocalStartAntigravityLogin():Promise<string>;
 
-export function LocalStartCodexLogin():Promise<string>;
 
-export function LocalSubmitAntigravityLoginCallback(arg1:string,arg2:string):Promise<void>;
 
-export function LocalSubmitCodexLoginCallback(arg1:string,arg2:string):Promise<void>;
 
-export function LocalSyncAntigravityFromIDE():Promise<number>;
 
-export function LocalTestModelProvider(arg1:string):Promise<modelprovider.ConnTestResult>;
 
-export function LocalUpdateAccountGroupSortOrder(arg1:string,arg2:number):Promise<accountgroups.Group>;
 
-export function LocalWaitAntigravityLogin(arg1:string):Promise<manager.AccountView>;
 
-export function LocalWaitCodexLogin(arg1:string):Promise<manager.AccountView>;
 
-export function LocalWakeupTestOne(arg1:string):Promise<wakeup.VerifyResult>;
 
-export function OpenCACertForTrust():Promise<void>;
 
 export function OpenSystemPermissionSettings():Promise<void>;
 
-export function ProbeHostProtectionStatus(arg1:Array<string>):Promise<main.HostProtectionStatus>;
 
 export function RefreshQuota():Promise<void>;
 
 export function RefreshUsageSummary():Promise<Record<string, any>>;
 
-export function ReleaseHostProtectionTarget(arg1:string):Promise<main.HostProtectionStatus>;
 
 export function RepairCodexAuth():Promise<string>;
 
@@ -358,47 +218,29 @@ export function RestartProxy():Promise<void>;
 
 export function RestartToUpdate():Promise<void>;
 
-export function RestoreHostProtection():Promise<main.HostProtectionStatus>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
 
-export function SandboxBrowseDir(arg1:string):Promise<string>;
 
-export function SandboxCreate(arg1:Array<main.SandboxMount>,arg2:main.SandboxModelCfg,arg3:boolean):Promise<string>;
 
-export function SandboxEnableHypervisor():Promise<void>;
 
-export function SandboxEnterCommand(arg1:string,arg2:boolean):Promise<string>;
 
-export function SandboxGetStatus():Promise<main.SbxStatus>;
 
-export function SandboxInstall():Promise<void>;
 
-export function SandboxInstallCommand():Promise<string>;
 
-export function SandboxList():Promise<Array<main.SandboxInfo>>;
 
-export function SandboxLogin():Promise<void>;
 
-export function SandboxRestore():Promise<string>;
 
-export function SandboxStopOne(arg1:string):Promise<void>;
 
-export function SandboxVscodeDisable():Promise<string>;
 
-export function SandboxVscodeEnable():Promise<string>;
 
-export function SandboxVscodeStatus():Promise<main.VscodeSandboxStatus>;
 
-export function SandboxWindowsPrereq():Promise<main.WinPrereq>;
 
 export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.SanitizeReport>;
 
-export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Record<string, string>):Promise<void>;
 
 export function SaveConfig(arg1:main.Config):Promise<void>;
 
-export function SetClaudeDesktopMockLogin(arg1:boolean):Promise<boolean>;
 
 export function SetCodexFastMode(arg1:boolean):Promise<void>;
 

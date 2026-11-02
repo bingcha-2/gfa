@@ -1,5 +1,7 @@
 "use client";
 
+import { catalogLevelLabel } from "@/lib/account/catalog-level-label";
+
 import { useMemo, useState } from "react";
 
 import { formatPriceCents } from "@/lib/account/format-extensions";
@@ -69,7 +71,7 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
   }
 
   const summary = effBindItems.length
-    ? `绑定 · ${effBindItems.map((i) => `${productLabel(i.product)} ${i.level}`).join(" + ")} · ${shareSeats}/${shareCapacity} 席 · ${deviceLimit} 设备`
+    ? `绑定 · ${effBindItems.map((i) => `${productLabel(i.product)} ${catalogLevelLabel(i.product, i.level)}`).join(" + ")} · ${shareSeats}/${shareCapacity} 席 · ${deviceLimit} 设备`
     : null;
   const quotaRows = configuredQuotaRows(priced, effBindItems);
 
@@ -129,7 +131,7 @@ export function PricePreview({ form }: { form: PlanCatalogForm }) {
                               onClick={() => setBindLevels((prev) => ({ ...prev, [p]: level }))}
                               className={chipCls(effLevel === level)}
                             >
-                              {level}
+                              {catalogLevelLabel(p, level)}
                             </button>
                           ))}
                         </div>

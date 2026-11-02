@@ -1,3 +1,4 @@
+import "./lease-pricing-fixture";
 /**
  * app-lease-e2e.spec.ts — Milestone 7 end-to-end session lease proof.
  *

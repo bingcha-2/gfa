@@ -1,6 +1,6 @@
 import type { AccountSubscription, SubscriptionProductUsdQuota, SubscriptionUsdQuotaWindow } from '@/types'
 import { productLabel } from '@/lib/usageBars'
-import { formatResetDuration, quotaRemainingPercent } from '@/lib/quotaDisplay'
+import { formatResetDuration, quotaRemainingPercent, quotaColor } from '@/lib/quotaDisplay'
 import { useT } from '@/i18n'
 import { ExclusiveBadge } from './ExclusiveBadge'
 
@@ -20,17 +20,18 @@ type QuotaTone = {
 
 function quotaTone(remainingPercent: number): QuotaTone {
   if (remainingPercent < 15) {
-    return { name: 'danger', label: '危险', barColor: 'var(--danger)', textColor: 'var(--danger)' }
+    return { name: 'danger', label: '危险', barColor: quotaColor(remainingPercent), textColor: 'var(--danger)' }
   }
   if (remainingPercent < 40) {
-    return { name: 'warning', label: '提醒', barColor: 'var(--warning)', textColor: 'var(--warning-deep)' }
+    return { name: 'warning', label: '提醒', barColor: quotaColor(remainingPercent), textColor: 'var(--warning-deep)' }
   }
-  return { name: 'normal', label: '正常', barColor: 'var(--success)', textColor: 'var(--success-strong)' }
+  return { name: 'normal', label: '正常', barColor: quotaColor(remainingPercent), textColor: 'var(--success-strong)' }
 }
 
 function QuotaRatioBar({ label, quota }: { label: string; quota: SubscriptionUsdQuotaWindow }) {
   const used = Math.max(0, Number(quota.used) || 0)
   const limit = Math.max(0, Number(quota.limit) || 0)
+  if (limit <= 0 || !Number.isFinite(Number(quota.used))) return <div className="py-2 text-xs text-[var(--text-muted)]">{label} · 暂未获取</div>
   const remainingPercent = quotaRemainingPercent(used, limit)
   const tone = quotaTone(remainingPercent)
   const reset = resetText(quota.resetAt)

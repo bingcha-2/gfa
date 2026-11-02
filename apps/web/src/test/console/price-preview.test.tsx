@@ -71,7 +71,7 @@ describe("PricePreview unified bind line", () => {
     expect(total()).toBe("¥12.37");
 
     const group = screen.getByRole("radiogroup", { name: /Anthropic/ });
-    fireEvent.click(within(group).getByRole("radio", { name: "max-20x" }));
+    fireEvent.click(within(group).getByRole("radio", { name: "高配版" }));
     expect(total()).toBe("¥37.37");
 
     fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));

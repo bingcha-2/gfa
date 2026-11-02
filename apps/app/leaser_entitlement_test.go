@@ -180,3 +180,22 @@ func sameStringSet(a, b []string) bool {
 	}
 	return true
 }
+
+func TestQuotaRefreshRequiresExplicitProduct(t *testing.T) {
+	l := &Leaser{}
+	if l.canRefreshProduct("codex") {
+		t.Fatal("unknown/empty legacy products must not trigger Codex lease")
+	}
+	l.SetEntitlements([]string{"anthropic"}, true)
+	if l.canRefreshProduct("codex") {
+		t.Fatal("Claude subscription must not trigger Codex lease")
+	}
+	l.SetEntitlements([]string{"codex"}, true)
+	if !l.canRefreshProduct("codex") {
+		t.Fatal("valid Codex subscription should refresh")
+	}
+	l.SetEntitlements([]string{"codex"}, false)
+	if l.canRefreshProduct("codex") {
+		t.Fatal("inactive subscription must not refresh")
+	}
+}

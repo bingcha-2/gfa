@@ -27,7 +27,7 @@ export function MarketingFooter() {
           <h4>{t.footer.help}</h4>
           <a href="/faq">{t.footer.faq}</a>
           <a href={ACCOUNT_URL}>{t.footer.account}</a>
-          <a href="https://bcai.online" target="_blank" rel="noopener noreferrer">{t.footer.api}</a>
+          <a href="https://www.tk4me.com/" target="_blank" rel="noopener noreferrer">{t.footer.api}</a>
           <a href="https://bcai.lol" target="_blank" rel="noopener noreferrer">{t.footer.terminal}</a>
         </div>
       </div>

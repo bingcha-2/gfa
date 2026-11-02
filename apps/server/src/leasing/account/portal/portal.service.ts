@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { calculateApiValue } from "@gfa/shared";
+import { calculateApiValue, getApiPriceSnapshots } from "@gfa/shared";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { rowToConfig } from "../../subscription/subscription-config";
@@ -38,26 +38,6 @@ function formatBucketLabel(start: Date, granularity: "hour" | "day"): string {
   return `${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`;
 }
 
-/**
- * 省钱折算价(美元/百万 token),与客户端 apps/app/pricing.json 同一份表。
- * USD 算法与客户端 estimateOfficialCostUSD 对齐(含缓存读/写单价):
- *   USD = 净输入·inPerM + 输出·outPerM + 缓存读·cacheReadPerM + 缓存写·cacheWritePerM(均 /1e6)。
- * CardUsageHourly 保存服务端归一化后的 gross input；缓存读写都是其子集。
- * family 取自 bucket 后缀(`<product>-<family>`,如 antigravity-claude);
- * 未知/缺失家族回退 gemini(与客户端 priceFor 一致)。
- */
-// 与客户端 apps/app/pricing.json 同一份表(含缓存读/写单价)。
-const FAMILY_PRICING: Record<string, { inPerM: number; outPerM: number; cacheReadPerM: number; cacheWritePerM: number }> = {
-  claude: { inPerM: 5, outPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
-  gemini: { inPerM: 2, outPerM: 12, cacheReadPerM: 0.5, cacheWritePerM: 2.5 },
-  gpt: { inPerM: 1.25, outPerM: 10, cacheReadPerM: 0.125, cacheWritePerM: 1.25 },
-};
-
-function familyOfBucket(bucket: string): string {
-  const i = bucket.indexOf("-");
-  return i < 0 ? "" : bucket.slice(i + 1);
-}
-
 function cacheWriteForRow(row: any): number {
   const aggregate = Math.max(0, Number(row.cacheCreationTokens) || 0);
   if (aggregate > 0) return aggregate;
@@ -71,31 +51,31 @@ function netInputForRow(row: any): number {
 }
 
 /**
- * 「官方 API 价估算」USD —— 与客户端 estimateOfficialCostUSD 同一算法(含缓存读/写)。
+ * 「官方 API 价估算」USD —— 采用统一价格快照(含缓存读/写)。
  * `input` 必须是 **净输入**(= gross − 缓存读 − 缓存写);缓存读/写从各自的列(cachedInputTokens /
  * cacheCreationTokens)取真实值。totals.savedUSD 与 per-model estimatedUSD 共用此函数,口径自洽。
  */
-function officialCostFor(
-  bucket: string, input: number, output: number, cacheRead: number, cacheWrite: number,
-): number {
-  const p = FAMILY_PRICING[familyOfBucket(bucket)] ?? FAMILY_PRICING.gemini;
-  return (
-    (input / 1_000_000) * p.inPerM +
-    (output / 1_000_000) * p.outPerM +
-    (cacheRead / 1_000_000) * p.cacheReadPerM +
-    (cacheWrite / 1_000_000) * p.cacheWritePerM
-  );
+// Historical rows without a frozen amount retain their original family estimate.
+// This compatibility table is never used for requests after automatic pricing starts.
+function legacyFamilyValue(bucket: string, input: number, output: number, read: number, write: number) {
+  const family = bucket.split("-").at(-1);
+  const p = family === "claude" ? [5,25,.5,6.25] : family === "gpt" ? [1.25,10,.125,1.25] : [2,12,.5,2.5];
+  return (input*p[0]+output*p[1]+read*p[2]+write*p[3])/1e6;
 }
-
 function modelAwareCostForRow(row: any, netInput: number, output: number, cacheRead: number, cacheWrite: number): number {
   const requests = Math.max(0, Number(row.requests || 0));
   const pricedRequests = Math.min(requests, Math.max(0, Number(row.apiPricedRequests || 0)));
   const frozen = Number(row.apiValueUsd);
   if (requests > 0 && pricedRequests === requests && Number.isFinite(frozen) && frozen >= 0) return frozen;
-  const provider = String(row.bucket || "").startsWith("codex-")
+  const stamp = row.hourStart instanceof Date ? row.hourStart.getTime() : Number(row.hourStart);
+  const automatic = getApiPriceSnapshots().some(s => (s.effectiveAt || 0) <= stamp);
+  const legacyProduct = !/^(codex|anthropic)-/.test(String(row.bucket || ""));
+  if (!automatic && legacyProduct) return legacyFamilyValue(row.bucket || "", netInput, output, cacheRead, cacheWrite);
+  const provider = String(row.modelKey || "").startsWith("claude-") ? "anthropic" : String(row.bucket || "").startsWith("codex-")
     ? "codex"
-    : String(row.bucket || "").startsWith("anthropic-") ? "anthropic" : null;
-  if (!provider || !row.modelKey) return officialCostFor(row.bucket, netInput, output, cacheRead, cacheWrite);
+    : String(row.bucket || "").startsWith("anthropic-") ? "anthropic"
+    : String(row.bucket || "").startsWith("antigravity-") ? "antigravity" : null;
+  if (!provider || !row.modelKey) return 0;
   const totalRaw = Math.max(1, netInput + output + cacheRead + cacheWrite);
   const priorityRatio = Math.min(1, Math.max(0, Number(row.priorityTokens || 0) / totalRaw));
   const fast = (value: number) => Math.round(Math.max(0, value) * priorityRatio);
@@ -448,7 +428,7 @@ export class PortalService {
       m.inputTokens += netInput;
       m.outputTokens += output;
       m.cachedTokens += cached;
-      // per-model 成本对齐客户端 estimateOfficialCostUSD(净输入 + 缓存读 + 缓存写)。
+      // per-model 折算金额优先读取已冻结账单。
       m.savedUSD += modelAwareCostForRow(r, netInput, output, cached, cacheCreation);
       byModel.set(r.modelKey, m);
 

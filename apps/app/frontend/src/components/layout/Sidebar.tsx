@@ -1,11 +1,8 @@
 import {
-  BookOpen,
   Cloud,
   Download,
   PanelLeftClose,
   PanelLeftOpen,
-  PlugZap,
-  Rocket,
   ScrollText,
   Settings,
   SlidersHorizontal,
@@ -71,14 +68,9 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
 
   const primaryItems: { id: PageId; label: string; icon: LucideIcon }[] = [
     { id: 'takeover', label: t('nav.takeover'), icon: SlidersHorizontal },
-    { id: 'remote', label: t('nav.home'), icon: Cloud },
-  ]
-  const localItems: { id: PageId; label: string; icon: LucideIcon }[] = [
-    { id: 'local_codex', label: 'Codex', icon: PlugZap },
-    { id: 'local_antigravity', label: 'Antigravity', icon: Rocket },
+    { id: 'remote', label: '用量与额度', icon: Cloud },
   ]
   const utilityItems: { id: PageId; label: string; icon: LucideIcon }[] = [
-    { id: 'faq', label: t('nav.faq'), icon: BookOpen },
     { id: 'logs', label: t('nav.logs'), icon: ScrollText },
     { id: 'settings', label: t('nav.settings'), icon: Settings },
   ]
@@ -125,10 +117,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
           <NavItem key={item.id} {...item} collapsed={collapsed} active={currentPage === item.id} onClick={() => onPageChange(item.id)} />
         ))}
 
-        {!collapsed && <div className="px-3 pb-1 pt-3 text-[9px] font-semibold text-[var(--text-muted)]">本地自有号</div>}
-        {localItems.map((item) => (
-          <NavItem key={item.id} {...item} collapsed={collapsed} active={currentPage === item.id} onClick={() => onPageChange(item.id)} />
-        ))}
+
       </div>
 
       <div className={cn('mx-3 border-t border-[var(--border-light)] py-2.5', collapsed && 'flex flex-col items-center')}>

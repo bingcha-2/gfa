@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"runtime"
+	"sync"
 )
 
 // ─── Takeover 抽象层 ────────────────────────────────────────────────────────
@@ -32,39 +32,6 @@ func takeoverProxyURL(proxyPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 }
 
-// caTakeoverHint 按【平台 + 根 CA 安装结局】生成接管后的面向用户反馈(含前端识别用的
-// CA_DEGRADED: / CA_FAILED: 前缀)。拆成纯函数 + 带 goos 入参,是因为"装证书失败/降级后该
-// 怎么办"在两平台是两套完全不同的操作:Windows 走 UAC / 右键以管理员身份运行;macOS 没有
-// "以管理员身份运行 App"这回事 —— 得用管理员账户登录、在本机物理屏幕前操作,或在钥匙串访问里
-// 手动设"始终信任"(且证书在隐藏目录 ~/.bcai,得用访达 ⌘⇧G 前往,不能直接双击)。
-func caTakeoverHint(goos string, result caInstallResult) string {
-	switch result {
-	case caInstalledUser:
-		if goos == "windows" {
-			return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
-				"但根证书因权限受限,已降级安装到「当前用户」证书库。若打开 Claude 出现【白屏】,请按任一方式处理后重新接管:\n" +
-				"1. 临时关闭安全软件(火绒 / 360 等)的「主动防御」;\n" +
-				"2. 或右键以【管理员身份】重新运行本程序。"
-		}
-		return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
-			"根证书因权限受限,已降级安装到「当前用户」信任域(免管理员),订阅等级通常仍可显示为 Max。" +
-			"若未显示或打开异常,请用【管理员账户】登录、在本机物理屏幕前(勿用远程桌面 / 屏幕共享)重新接管。"
-	case caInstallFailed:
-		// 不再自称"接管成功":推理确实 OK,但证书没装、Max 没出来,把两件事拆开讲。
-		if goos == "windows" {
-			return "CA_FAILED:✅ 推理已接管,号池可正常使用(发消息照常)。\n" +
-				"⚠️ 但根证书没装上,Max 等级标识不会显示。\n\n" +
-				"想要 Max:右键以【管理员身份】重新运行本程序、再重新接管;若被安全软件(火绒 / 360 等)拦截,先在其中放行。"
-		}
-		return "CA_FAILED:✅ 推理已接管,号池可正常使用(发消息照常)。\n" +
-			"⚠️ 但根证书没装上,Max 等级标识不会显示。\n\n" +
-			"点【重新接管 · 装证书】会再弹一次系统密码框,输入即可装上并显示 Max(会重启 Claude)。刚才若点了「取消」,再来一次输入密码即可。\n\n" +
-			"反复装不上(安全软件拦截 / 远程会话弹不出框 / 受管 Mac)可手动信任:打开「钥匙串访问」,找到「BingchaAI Local Root」→ 双击 → 展开「信任」→「使用此证书时」选『始终信任』→ 输密码。"
-	default: // caInstalledMachine:装进本机/系统域,最优,无需任何提示
-		return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)..."
-	}
-}
-
 // 注册表:新增产品在这里加一行即可。
 var takeoverTargets = []TakeoverTarget{
 	antigravityIDETarget{},
@@ -72,8 +39,6 @@ var takeoverTargets = []TakeoverTarget{
 	codexTarget{},
 	claudeCodeTarget{},
 	claudeDesktopTarget{},
-	claudeSandboxTarget{},
-	claudeVscodeSandboxTarget{},
 }
 
 // findTakeoverTarget 按调度键或产品 id 查找。
@@ -94,7 +59,7 @@ func targetRequiredProduct(productID string) string {
 		return "codex"
 	case "antigravity_ide", "antigravity_hub":
 		return "antigravity"
-	case "claude_code", "claude_desktop", "claude_sandbox", "claude_vscode_sandbox":
+	case "claude_code", "claude_desktop":
 		return "anthropic"
 	default:
 		return ""
@@ -434,22 +399,14 @@ type claudeCodeTarget struct{}
 func (claudeCodeTarget) Key() string           { return "claude" }
 func (claudeCodeTarget) ProductID() string     { return "claude_code" }
 func (claudeCodeTarget) Name() string          { return "Claude Code" }
-func (claudeCodeTarget) InjectionType() string { return "settings" }
+func (claudeCodeTarget) InjectionType() string { return "gateway" }
 func (claudeCodeTarget) DetectPath() string    { return detectClaudeCodePath() }
 
 func (claudeCodeTarget) IsInjected(proxyPort int) bool {
 	return IsClaudeInjected(proxyPort) || IsClaudeGatewayInjected()
 }
 
-func (claudeCodeTarget) Inject(proxyPort int) (string, error) {
-	if err := InjectClaudeSettings(proxyPort); err != nil {
-		return "", err
-	}
-	// Claude Code CLI 无常驻进程:注入后下次 `claude` 启动即生效,无需杀进程。
-	// VSCode 的 Claude Code 扩展需 Reload Window 才会重读 settings.json。
-	// 强调重启:接管前已在跑的会话还带着旧 env(可能指向第三方模型),其请求会被模型闸拒。
-	return "Claude Code: ✓ 已接管 —— 请【重启 CLI / Reload VSCode 窗口】使配置生效;接管前已开的旧会话请求会被拒绝(需重启)", nil
-}
+func (claudeCodeTarget) Inject(_ int) (string, error) { return (&App{}).HostClaudeGateway() }
 
 func (claudeCodeTarget) Restore() (string, error) {
 	if err := RestoreClaudeSettings(); err != nil {
@@ -458,88 +415,91 @@ func (claudeCodeTarget) Restore() (string, error) {
 	return "Claude Code: ✓ 已恢复(CLI 下次启动生效;VSCode 扩展请 Reload Window)", nil
 }
 
-// ── Claude 桌面端 Code/Cowork(MITM 接管)──────────────────────────────────────
-//
-// 桌面端 spawn 的 Code/Cowork 子进程硬覆盖 ANTHROPIC_BASE_URL，env 注入无效，
-// 故走 MITM：装根 CA + 带代理 env 重启 Claude.app(route A)，把 api.anthropic.com
-// 的 /v1/messages 拦下换号池 token。MITM 代理由 app.go 常驻启动并随卡密同步;接管激活期间
-// 由看门狗维持运行(挂掉自愈重起)。注意：本接管会重启 Claude.app，会中断正在运行的 Cowork 会话。
+// Claude Desktop uses its native third-party gateway configuration.
+var desktopTakeoverMu sync.Mutex
 
 type claudeDesktopTarget struct{}
 
 func (claudeDesktopTarget) Key() string           { return "claude_desktop" }
 func (claudeDesktopTarget) ProductID() string     { return "claude_desktop" }
-func (claudeDesktopTarget) Name() string          { return "Claude Desktop (Code/Cowork)" }
-func (claudeDesktopTarget) InjectionType() string { return "mitm" }
+func (claudeDesktopTarget) Name() string          { return "Claude Desktop" }
+func (claudeDesktopTarget) InjectionType() string { return "gateway" }
 func (claudeDesktopTarget) DetectPath() string    { return detectClaudeDesktopPath() }
-
-func (claudeDesktopTarget) IsInjected(_ int) bool { return mitmIsTakeoverActive() }
-
+func (claudeDesktopTarget) IsInjected(_ int) bool {
+	return isDesktopGatewayInjected() || legacyDesktopActive()
+}
 func (claudeDesktopTarget) Inject(_ int) (string, error) {
-	bin := detectClaudeDesktopPath()
-	if bin == "" {
-		return "Claude Desktop: 未检测到应用", nil
+	desktopTakeoverMu.Lock()
+	defer desktopTakeoverMu.Unlock()
+	if detectClaudeDesktopPath() == "" {
+		return "", fmt.Errorf("未检测到 Claude Desktop")
 	}
-	m := GetMitmManager()
-	if !m.IsProxyRunning() {
-		return "", fmt.Errorf("MITM 代理未启动")
+	act, err := activateClaudeGateway()
+	if err != nil {
+		return "", err
 	}
-
-	// 清掉用户自定义模型配置(settings.json 顶层 model 字段 + 模型 env 键),让桌面端 spawn 的
-	// Code 子进程重启后回落到自带合法默认模型 id —— 否则 -thinking 等别名 / 号池不认的 id 会经
-	// MITM 原样打到公开 api.anthropic.com → 404。原值已备份,Restore 时还原。失败不阻塞接管。
-	if err := CleanClaudeModelConfig(); err != nil {
-		Log("[takeover] 清理 Claude 模型配置失败(不阻塞接管): %v", err)
+	normal, threep, err := desktopGatewayDirs()
+	if err != nil {
+		return "", err
 	}
-
-	// ① 同步装根 CA(+伪凭证),先把证书装好再谈重启。同步执行是为了【在重启之前】拿到安装结局,
-	//    据此给前端分级提示:装进本机库=静默无提示;降级用户库=提示白屏排查;全失败=提示无 Max。
-	caResult := m.InstallTakeoverCA()
-
-	// ② Microsoft Store(MSIX)版:跑在 AppX 系统沙箱里,带代理重启从机制上做不到(CreateProcess
-	//    撞 Access denied、env/argv 进不去沙箱,详见 isMicrosoftStoreClaude)。把判定放在【装完 CA 之后】
-	//    而非接管入口 —— 满足「先尝试再说」,且【绝不进 relaunch】(否则会先杀掉用户正在跑的 Claude 再失败、
-	//    白白中断对话)。直接返回 STORE_CLAUDE: 引导换装独立安装器版。
-	if isMicrosoftStoreClaude(bin) {
-		Log("[takeover] 检测到 Microsoft Store 版 Claude Desktop,跳过重启(沙箱无法注入代理),引导换装。CA 安装结局=%d", caResult)
-		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop，无法接管 —— " +
-			"商店版跑在系统沙箱里，无法携带代理启动。两种解决方法：" +
-			"①让 Agent 执行（把 Claude Desktop 安装目录移动到 D:\\ClaudeDesktop，并在原默认路径创建 junction，确保系统仍能正常识别和启动）操作；" +
-			"②安装非应用商店独立版 ClaudeDesktop。")
+	// Release only Desktop's legacy host protection; shared CLI protection remains.
+	if err = restoreLegacyHostEnvironment(); err != nil {
+		return "", err
 	}
-
-	// ③ 非 store 版:异步带代理重启 Claude.app(会杀掉当前 Cowork 会话)。异步是为了不阻塞 UI,
-	//    且与 mac/其它 target 行为一致。重启细节见 RelaunchClaudeProcess。
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				Log("[takeover] Claude Desktop 重启 goroutine panic: %v", r)
-			}
-		}()
-		if err := m.RelaunchClaudeProcess(caResult); err != nil {
-			Log("[takeover] 带代理重启 Claude Desktop 失败: %v", err)
+	return applyDesktopConfiguration(func() error {
+		if err := RestoreFakeClaudeCredentials(); err != nil {
+			return err
 		}
-	}()
-
-	// ④ 按【平台 + CA 安装结局】给前端分级反馈(前缀供前端识别弹对应提示;接管本身已照常进行)。
-	//    平台相关文案见 caTakeoverHint:Windows 走 UAC/管理员运行,macOS 走管理员账户/钥匙串手动信任。
-	return caTakeoverHint(runtime.GOOS, caResult), nil
+		if err := RestoreClaudeModelConfig(); err != nil {
+			return err
+		}
+		return injectDesktopGatewayAt(normal, threep, gatewayClaudeBaseURL(), act.Key, act.Models)
+	}, "Claude Desktop: ✓ 已启用原生 3P 网关，使用现有母号与个人额度")
 }
 
 func (claudeDesktopTarget) Restore() (string, error) {
-	// 还原接管时清掉的用户自定义模型配置(若 Claude Code 完整接管仍在用则跳过,保持清除态)。
-	if err := RestoreClaudeModelConfig(); err != nil {
-		Log("[takeover] 还原 Claude 模型配置失败: %v", err)
+	desktopTakeoverMu.Lock()
+	defer desktopTakeoverMu.Unlock()
+	_, threep, err := desktopGatewayDirs()
+	if err != nil {
+		return "", err
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				Log("[takeover] Claude Desktop 还原 goroutine panic: %v", r)
-			}
-		}()
-		if err := GetMitmManager().RelaunchClaudePlain(); err != nil {
-			Log("[takeover] 还原重启 Claude Desktop 失败: %v", err)
+	if err = restoreLegacyHostEnvironment(); err != nil {
+		return "", err
+	}
+	return applyDesktopConfiguration(func() error {
+		if err := restoreDesktopGatewayAt(threep); err != nil {
+			return err
 		}
-	}()
-	return "Claude Desktop: ✓ 已恢复,正在重启 Claude...", nil
+		if err := RestoreFakeClaudeCredentials(); err != nil {
+			return err
+		}
+		return RestoreClaudeModelConfig()
+	}, "Claude Desktop: ✓ 已恢复原配置")
+}
+
+// Stop before editing: Desktop saves preferences on exit. Always reopen it,
+// including after a rejected/malformed configuration or a rolled-back write.
+func applyDesktopConfiguration(change func() error, success string) (string, error) {
+	stopClaudeDesktop()
+	changeErr := change()
+	startErr := startClaudeDesktop()
+	if changeErr != nil {
+		if startErr != nil {
+			return "", fmt.Errorf("配置切换失败: %v；请手动重启 Claude Desktop: %w", changeErr, startErr)
+		}
+		return "", changeErr
+	}
+	cleanupErr := cleanupLegacyDesktopMarker()
+	if startErr != nil {
+		detail := "DESKTOP_RESTART_REQUIRED:配置已保存，请完全退出并重新打开 Claude Desktop: " + startErr.Error()
+		if cleanupErr != nil {
+			detail += "；旧证书清理: " + cleanupErr.Error()
+		}
+		return detail, nil
+	}
+	if cleanupErr != nil {
+		return "DESKTOP_CLEANUP_REQUIRED:配置切换已完成。旧证书尚未清理: " + cleanupErr.Error(), nil
+	}
+	return success, nil
 }

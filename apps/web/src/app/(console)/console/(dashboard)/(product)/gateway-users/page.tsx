@@ -28,11 +28,12 @@ type GatewayUser = {
   periodStartedAt: string;
   enabled: boolean;
   keyHint: string;
+  subscriptionValid: boolean;
 };
 
 type PoolSettings = { shareUsd: number; defaultUserShares: number; defaultTotalShares: number };
 
-const usd = (v: number) => `$${v.toFixed(2)}`;
+const usd = (v: number) => `$${v.toFixed(v !== 0 && Math.abs(v) < 0.01 ? 6 : 2)}`;
 
 export default function GatewayUsersPage() {
   const [rows, setRows] = useState<GatewayUser[]>([]);
@@ -98,6 +99,8 @@ export default function GatewayUsersPage() {
     if (!email.trim()) return;
     setAssigning(true);
     try {
+      const eligibility = await apiRequest<{ eligible: boolean; message: string }>(`gateway-users/eligibility?email=${encodeURIComponent(email.trim())}`);
+      if (!eligibility.eligible) { toast.error(eligibility.message); return; }
       await apiRequest("gateway-users", {
         method: "POST",
         body: { email: email.trim(), shares: shares.trim() ? Number(shares) : undefined },
@@ -137,7 +140,7 @@ export default function GatewayUsersPage() {
         <CardHeader>
           <CardTitle>额度设置</CardTitle>
           <CardDescription>
-            每份额度、给用户分配的默认份数、新母号默认分几份。修改每份额度后,所有用户的额度上限立即按新值计算。周期固定 7 天,上游母号窗口重置时同步清零。
+            每份额度、给用户分配的默认份数、新母号默认分几份。套餐未配置额度时使用每份额度作为默认周限额；已配置套餐按其 5 小时和每周规则计算。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
@@ -162,7 +165,7 @@ export default function GatewayUsersPage() {
       <Card>
         <CardHeader>
           <CardTitle>分配用户</CardTitle>
-          <CardDescription>按注册邮箱分配。自动选剩余份数最多的可用母号,一个用户只占一个母号。份数留空用默认值。</CardDescription>
+          <CardDescription>仅限有有效 Claude 订阅的用户。按注册邮箱分配，自动优先选择剩余份数最多的可用母号，满额后仍可超配。总份数仅供参考，一个用户只占一个母号。份数留空用默认值。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">
           <Input className="w-72" placeholder="用户邮箱" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -186,6 +189,7 @@ export default function GatewayUsersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>用户</TableHead>
+                  <TableHead>Claude 订阅</TableHead>
                   <TableHead>母号</TableHead>
                   <TableHead>份数</TableHead>
                   <TableHead>本周期已用 / 总额度</TableHead>
@@ -203,6 +207,7 @@ export default function GatewayUsersPage() {
                   return (
                     <TableRow key={u.id}>
                       <TableCell className="font-medium">{u.email}</TableCell>
+                      <TableCell><Badge variant={u.subscriptionValid ? "default" : "destructive"}>{u.subscriptionValid ? "有效" : "无有效订阅"}</Badge></TableCell>
                       <TableCell className="text-xs">{u.motherAccountName}</TableCell>
                       <TableCell>
                         <button className="underline-offset-2 hover:underline" onClick={() => editShares(u)}>{u.shares}</button>
@@ -253,7 +258,7 @@ export default function GatewayUsersPage() {
                 })}
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground">暂无用户</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground">暂无用户</TableCell>
                   </TableRow>
                 ) : null}
               </TableBody>

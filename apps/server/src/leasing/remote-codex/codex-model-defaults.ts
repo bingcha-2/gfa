@@ -25,11 +25,3 @@ export const CODEX_MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gpt-5.6-luna": "GPT-5.6 Luna",
   "gpt-5.6-terra": "GPT-5.6 Terra",
 };
-
-export const DEFAULT_CODEX_RELAY_MODELS = Object.freeze(
-  Object.keys(CODEX_MODEL_DISPLAY_NAMES),
-);
-
-export const DEFAULT_CODEX_RELAY_MODEL_MAP: Readonly<Record<string, string>> = Object.freeze(
-  Object.fromEntries(DEFAULT_CODEX_RELAY_MODELS.map((model) => [model, model])),
-);

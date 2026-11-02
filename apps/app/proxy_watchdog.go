@@ -9,7 +9,6 @@ const proxyWatchdogInterval = 5 * time.Second
 // startProxyWatchdog 启动后台自愈巡检:周期性检查本地代理"该运行却没运行"的情况并重试拉起。
 // 解决两类问题:
 //   - HTTP 代理(48800)启动时被占/绑不上、或运行中 Serve 挂掉 → 永久 down、要用户手动重启;
-//   - MITM 代理(48801)在接管激活期间意外停掉 → 桌面端接管静默失效。
 //
 // 一旦重新跑起来,proxyRunning 翻 true,"本地代理未启动"横幅会在下一次 GetStats 轮询自动消失。
 // 单 goroutine 串行执行,Start/StartProxy 内部各有 startMu/锁,不会并发重入。
@@ -40,11 +39,4 @@ func runProxyWatchdogOnce() {
 		}
 	}
 
-	// ② MITM 代理:接管激活中却没在跑 → 重启(桌面端 Code/Cowork 接管要靠它)。
-	if mitmIsTakeoverActive() && !GetMitmManager().IsProxyRunning() {
-		Log("[watchdog] MITM 代理未运行(接管激活中),尝试自愈重启…")
-		if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.UserToken, cfg.DeviceId, ""); err != nil {
-			Log("[watchdog] MITM 自愈失败(下个周期再试): %v", err)
-		}
-	}
 }

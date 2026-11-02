@@ -1,12 +1,13 @@
 import pricingJson from "./api-pricing.json";
 import type { QuotaProvider } from "./quota-rates";
 
+export type ApiPricingProvider = QuotaProvider | "antigravity";
 export type ApiPricingMode = "standard" | "priority";
 export type ApiContextTier = "short" | "long" | "unknown";
 export type ApiValuationQuality = "exact" | "unsupported-context" | "conservative-fallback";
 
 export interface ApiValueUsage {
-  provider: QuotaProvider;
+  provider: ApiPricingProvider;
   modelId: string;
   pricingMode: ApiPricingMode;
   inputTokens: number;
@@ -18,7 +19,7 @@ export interface ApiValueUsage {
   occurredAt: number;
 }
 
-interface TokenPrice {
+export interface TokenPrice {
   input: number;
   cacheRead: number;
   cacheWrite5m: number;
@@ -26,8 +27,8 @@ interface TokenPrice {
   output: number;
 }
 
-interface ApiPriceModel {
-  provider: QuotaProvider;
+export interface ApiPriceModel {
+  provider: ApiPricingProvider;
   canonicalModelId: string;
   aliases: string[];
   effectiveFrom: string;
@@ -36,8 +37,16 @@ interface ApiPriceModel {
   modes: Partial<Record<ApiPricingMode, Partial<Record<"short" | "long", TokenPrice>>>>;
 }
 
-type Registry = { version: string; models: ApiPriceModel[] };
-const registry = pricingJson as Registry;
+export type ApiPriceRegistry = { version: string; models: ApiPriceModel[]; effectiveAt?: number };
+const bundledRegistry = pricingJson as ApiPriceRegistry;
+let snapshots: ApiPriceRegistry[] = [];
+export function installApiPriceSnapshots(values: ApiPriceRegistry[]) {
+  snapshots = [...values].sort((a, b) => (a.effectiveAt || 0) - (b.effectiveAt || 0));
+}
+export function getApiPriceSnapshots(): ApiPriceRegistry[] { return snapshots; }
+export function apiPriceRegistryAt(at: number): ApiPriceRegistry {
+  return [...snapshots].reverse().find(s => (s.effectiveAt || 0) <= at) || bundledRegistry;
+}
 
 const norm = (value: string) => String(value || "").trim().toLowerCase();
 const activeAt = (model: ApiPriceModel, at: number) => at >= Date.parse(model.effectiveFrom)
@@ -45,6 +54,7 @@ const activeAt = (model: ApiPriceModel, at: number) => at >= Date.parse(model.ef
 const tokens = (value: number) => Number.isFinite(value) && value > 0 ? value : 0;
 
 function findModel(usage: ApiValueUsage): ApiPriceModel | undefined {
+  const registry = apiPriceRegistryAt(usage.occurredAt);
   const id = norm(usage.modelId);
   const aliasMatchLength = (aliasValue: string) => {
     const alias = norm(aliasValue);
@@ -64,68 +74,6 @@ function findModel(usage: ApiValueUsage): ApiPriceModel | undefined {
     .sort((a, b) => matchLength(b) - matchLength(a) || Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0];
 }
 
-// Fallback pricing for an unrecognized / variant / newly-minted model id. We
-// price it as the provider's current FLAGSHIP model — NOT the max across every
-// active SKU. A soon-to-expire legacy premium (e.g. opus-4-1 $15/$75, active
-// until 2026-08-05) must not punish routine model-id churn (-thinking/-preview
-// suffixes, next-gen ids not yet in the snapshot) with a 3-5x quota burn.
-const FALLBACK_MODEL_IDS: Partial<Record<QuotaProvider, string>> = {
-  anthropic: "claude-opus-4-8",
-  codex: "gpt-5.6-sol",
-};
-
-function priceEnvelope(prices: TokenPrice[]): TokenPrice {
-  const max = (field: keyof TokenPrice) => Math.max(...prices.map((price) => price[field]));
-  return {
-    input: max("input"),
-    cacheRead: max("cacheRead"),
-    cacheWrite5m: max("cacheWrite5m"),
-    cacheWrite1h: max("cacheWrite1h"),
-    output: max("output"),
-  };
-}
-
-// The flagship model's own price for `mode`, picking its short/long tier by the
-// request's context size. Anthropic has no Priority tier, so fall back to the
-// flagship's Standard rate rather than another model's.
-function flagshipPrice(
-  provider: QuotaProvider,
-  mode: ApiPricingMode,
-  at: number,
-  contextTokens: number,
-): TokenPrice | undefined {
-  const flagshipId = FALLBACK_MODEL_IDS[provider];
-  if (!flagshipId) return undefined;
-  const model = registry.models.find((candidate) => candidate.provider === provider
-    && activeAt(candidate, at)
-    && [candidate.canonicalModelId, ...candidate.aliases].some((alias) => norm(alias) === norm(flagshipId)));
-  if (!model) return undefined;
-  const modePrices = model.modes[mode] || (mode !== "standard" ? model.modes.standard : undefined);
-  if (!modePrices) return undefined;
-  const tier = model.contextThreshold != null && contextTokens > model.contextThreshold ? "long" : "short";
-  return modePrices[tier] || modePrices.short || modePrices.long;
-}
-
-function conservativePrice(usage: ApiValueUsage): TokenPrice {
-  const { provider, pricingMode: mode, occurredAt: at } = usage;
-  const flagship = flagshipPrice(provider, mode, at, tokens(usage.contextTokens));
-  if (flagship) return flagship;
-  // Defensive: no flagship configured / active / priced for this mode. Never
-  // throw or return $0 — fall back to the highest active rate as before.
-  let prices = registry.models
-    .filter((model) => model.provider === provider && activeAt(model, at))
-    .flatMap((model) => Object.values(model.modes[mode] || {}))
-    .filter((price): price is TokenPrice => Boolean(price));
-  if (prices.length === 0 && mode !== "standard") {
-    prices = registry.models
-      .filter((model) => model.provider === provider && activeAt(model, at))
-      .flatMap((model) => Object.values(model.modes.standard || {}))
-      .filter((price): price is TokenPrice => Boolean(price));
-  }
-  if (prices.length === 0) throw new Error(`No API pricing for ${provider}/${mode}`);
-  return priceEnvelope(prices);
-}
-
 export function calculateApiValue(usage: ApiValueUsage): {
   usd: number;
   canonicalModelId: string;
@@ -134,19 +82,20 @@ export function calculateApiValue(usage: ApiValueUsage): {
   contextTier: ApiContextTier;
   quality: ApiValuationQuality;
 } {
+  const registry = apiPriceRegistryAt(usage.occurredAt);
   const model = findModel(usage);
   let quality: ApiValuationQuality = model ? "exact" : "conservative-fallback";
   let contextTier: ApiContextTier = "short";
   let price: TokenPrice;
 
   if (!model) {
-    price = conservativePrice(usage);
+    price = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
     contextTier = "unknown";
   } else {
     const requestedTier = model.contextThreshold != null && usage.contextTokens > model.contextThreshold ? "long" : "short";
     const modePrices = model.modes[usage.pricingMode];
     if (!modePrices) {
-      price = conservativePrice(usage);
+      price = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
       contextTier = "unknown";
       quality = "conservative-fallback";
     } else {
@@ -155,7 +104,7 @@ export function calculateApiValue(usage: ApiValueUsage): {
         price = exactTier;
         contextTier = requestedTier;
       } else {
-        price = conservativePrice(usage);
+        price = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
         contextTier = "unknown";
         quality = "unsupported-context";
       }
@@ -178,4 +127,15 @@ export function calculateApiValue(usage: ApiValueUsage): {
     contextTier,
     quality,
   };
+}
+
+/** Unknown prices are never a license to charge a different model's rate. */
+export function requireApiValue(usage: ApiValueUsage) {
+  const value = calculateApiValue(usage);
+  if (value.quality !== "exact") throw new Error(`MODEL_PRICING_UNAVAILABLE: ${usage.provider}/${usage.modelId}/${usage.pricingMode}`);
+  return value;
+}
+export function hasApiPrice(provider: ApiPricingProvider, modelId: string, pricingMode: ApiPricingMode = "standard", at = Date.now(), contextTokens = 0) {
+  return calculateApiValue({provider, modelId, pricingMode, occurredAt: at, contextTokens,
+    inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0}).quality === "exact";
 }
