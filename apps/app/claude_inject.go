@@ -110,6 +110,13 @@ type claudeBackup struct {
 	// DesktopActive=桌面 MITM 单清模型(CleanClaudeModelConfig)是否生效。
 	CLIActive     bool `json:"cliActive"`
 	DesktopActive bool `json:"desktopActive"`
+
+	// 网关托管(补丁模式,见 claude_gateway.go):不整份替换 settings.json,只改我们的键,
+	// 并记下被改键的原值,取消时仅还原这些键,用户其余配置(hooks/插件/权限)全程保留。
+	GatewayActive  bool         `json:"gatewayActive,omitempty"`
+	GatewayHadFile bool         `json:"gatewayHadFile,omitempty"` // 托管前 settings.json 是否存在
+	GatewayBaseURL string       `json:"gatewayBaseUrl,omitempty"` // 我们写入的网关地址(判定「仍是我们写的」用)
+	GatewayPrev    *gatewayPrev `json:"gatewayPrev,omitempty"`
 }
 
 // loadClaudeSettings 读取 settings.json 为通用 map。返回 (settings, exists)。
@@ -143,7 +150,8 @@ func writeClaudeSettings(settings map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("序列化 settings.json 失败: %w", err)
 	}
-	return writeFileAtomic(claudeSettingsPath(), data, 0o644)
+	// 文件里会有网关专用 key(以及备份里可能有用户自己的 key),仅属主可读写。
+	return writeFileAtomic(claudeSettingsPath(), data, 0o600)
 }
 
 // minimalClaudeSettings 返回「最小 GFA 注入」settings:只含把上游指向本地代理 + 中和
@@ -202,7 +210,7 @@ func captureClaudeOriginal(bk *claudeBackup) {
 		if v, _ := env[claudeBaseURLKey].(string); isGFAOwnedRelayValue(v, 0) {
 			delete(env, claudeBaseURLKey)
 		}
-		if v, _ := env[claudeAuthTokenKey].(string); v == claudeSentinelAuthToken {
+		if v, _ := env[claudeAuthTokenKey].(string); v == claudeSentinelAuthToken || isGatewayKey(v) {
 			delete(env, claudeAuthTokenKey)
 		}
 		deleteIfEmptyString(env, claudeApiKeyKey)
@@ -313,6 +321,9 @@ func RestoreClaudeSettings() error {
 	defer claudeInjectMu.Unlock()
 
 	bk := readClaudeBackup()
+	if bk != nil && bk.GatewayActive {
+		return restoreGatewayLocked(bk) // 网关补丁模式:只还原我们改过的键
+	}
 	if bk == nil || !bk.OriginalCaptured {
 		// 无备份 / 老格式:尽力移除我们注入的键,不删文件。
 		legacyRemoveClaudeInjection()
@@ -400,7 +411,7 @@ func readClaudeBackup() *claudeBackup {
 func writeClaudeBackup(bk *claudeBackup) {
 	if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
 		_ = os.MkdirAll(claudeConfigDir(), 0o755)
-		_ = writeFileAtomic(claudeBackupPath(), b, 0o644)
+		_ = writeFileAtomic(claudeBackupPath(), b, 0o600) // 备份里可能含用户原有的 key
 	}
 }
 

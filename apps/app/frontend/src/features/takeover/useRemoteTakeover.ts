@@ -75,7 +75,19 @@ export function useRemoteTakeover() {
     setBusy(target)
     setBusyLabel(inject ? t('takeover.injecting', { name: targetName(target) }) : t('takeover.stopping', { name: targetName(target) }))
     try {
-      const msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
+      let msg: string
+      if (inject && target === 'claude') {
+        // 网关托管优先:用服务端为本人签发的专用 key,不走 TUN/MITM/出口闸。
+        // 未被分配额度的用户(服务端回「尚未为你开通」)回退到原有接管流程。
+        try {
+          msg = await api.hostClaudeGateway()
+        } catch (e) {
+          if (!String(e).includes('尚未为你开通')) throw e
+          msg = await api.injectSelected([target])
+        }
+      } else {
+        msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
+      }
 
       // ── 根证书降级安装(CA_DEGRADED):接管已生效、推理正常,但证书降级到「当前用户」库,
       //    少数机器 Chromium 不信任 → 打开可能白屏。这是「软成功」,弹完仍等状态翻转、返回 true。

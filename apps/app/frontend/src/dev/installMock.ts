@@ -185,6 +185,10 @@ const appMethods: Record<string, (...args: unknown[]) => Promise<unknown>> = {
   CheckForUpdate: async () => ({}),
   DetectCompetingClaudeConfig: async () => [],
   SanitizeCompetingClaudeConfig: async () => ({ cleaned: [], skipped: [], backupTo: '' }),
+  HostClaudeGateway: async () => {
+    mockIDEProducts = mockIDEProducts.map((product) => product.id === 'claude_code' ? { ...product, injected: true } : product)
+    return 'Claude Code: ✓ 已托管(mock)'
+  },
   InjectSelected: async (targets) => {
     const ids = (targets as unknown[]).map(targetProductId)
     mockIDEProducts = mockIDEProducts.map((product) => ids.includes(product.id) ? { ...product, injected: true } : product)

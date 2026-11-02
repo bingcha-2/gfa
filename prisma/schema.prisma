@@ -1014,3 +1014,74 @@ model ReferralReward {
 
   @@index([referrerId])
 }
+
+// 第三方母号(每个母号对应上游开出的 1 个私有 key,people=1)。
+// key 只以 AES-256-GCM 密文存储,任何接口都不得返回;仅转发模块可解密。
+model GatewayMotherAccount {
+  id             String    @id @default(cuid())
+  accountName    String    @unique // 上游账号名,必须与上游 /status 完全一致
+  upstreamId     String?   // 上游稳定 accountId(可选,防误操作)
+  requestId      String    @unique // 开 key 的幂等编号,创建时生成后不再变化
+  keyCipher      String?   // base64(nonce|tag|ciphertext)
+  keyHint        String?   // 脱敏尾号,如 ****a1b2
+  enabled        Boolean   @default(true)
+  status         String    @default("pending") // pending|ready|key_lost|error
+  lastError      String?
+  usageJson      String?   // 上游用量快照(不含 key)
+  usageSyncedAt  DateTime?
+  lastSyncAt     DateTime?
+  baseUrl        String    @default("https://pool.tk4me.com") // 推理调用地址,每个母号可单独配置
+  totalShares    Int       @default(6)                         // 该母号分成多少份
+  modelsJson     String?   // 该母号支持的模型 id 列表(JSON 数组)
+  modelsSyncedAt DateTime?
+  upstreamResetAt7d BigInt? // 上游 7 天窗口的 resetAt(毫秒),变化即视为上游重置
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  users          GatewayUser[]
+}
+
+// 网关用户:一个客户占用某个母号的 K 份额度,拿专用 key 经 gfa 转发使用。
+model GatewayUser {
+  id              String    @id @default(cuid())
+  customerId      String    @unique
+  motherAccountId String
+  shares          Int       @default(1)
+  keyHash         String    @unique // sha256(明文 key),转发鉴权用
+  keyCipher       String    // AES-GCM 加密的明文 key,仅「托管」接口对本人返回
+  keyHint         String
+  enabled         Boolean   @default(true)
+  usedUsd         Float     @default(0) // 当前周期已用(美元,按 Anthropic 官方价)
+  periodStartedAt DateTime  @default(now())
+  totalUsedUsd    Float     @default(0) // 历史累计
+  totalRequests   Int       @default(0)
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  motherAccount   GatewayMotherAccount @relation(fields: [motherAccountId], references: [id])
+  usages          GatewayUsage[]
+
+  @@index([motherAccountId])
+}
+
+// 每次转发的用量明细。requestId 唯一 → 幂等,崩溃重试不会重复计费。
+model GatewayUsage {
+  id              String   @id @default(cuid())
+  requestId       String   @unique
+  gatewayUserId   String
+  motherAccountId String
+  model           String
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  cacheReadTokens Int      @default(0)
+  cacheWrite5m    Int      @default(0)
+  cacheWrite1h    Int      @default(0)
+  costUsd         Float    @default(0)
+  status          Int      @default(200)
+  createdAt       DateTime @default(now())
+
+  user            GatewayUser @relation(fields: [gatewayUserId], references: [id], onDelete: Cascade)
+
+  @@index([gatewayUserId, createdAt])
+  @@index([motherAccountId, createdAt])
+}

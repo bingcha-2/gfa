@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const { apiMocks } = vi.hoisted(() => ({
   apiMocks: {
     injectSelected: vi.fn(),
+    // 默认「未被分配网关额度」→ 回退到原有接管流程,保持既有用例语义不变。
+    hostClaudeGateway: vi.fn().mockRejectedValue(new Error('尚未为你开通,请联系管理员')),
     restoreSelected: vi.fn(),
     openSystemPermissionSettings: vi.fn(),
     openURL: vi.fn(),
@@ -13,6 +15,7 @@ const { apiMocks } = vi.hoisted(() => ({
 }))
 vi.mock('@/services/wails', () => ({
   injectSelected: apiMocks.injectSelected,
+  hostClaudeGateway: apiMocks.hostClaudeGateway,
   restoreSelected: apiMocks.restoreSelected,
   openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
   openURL: apiMocks.openURL,

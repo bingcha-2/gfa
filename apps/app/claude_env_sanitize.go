@@ -37,6 +37,10 @@ func isGFAOwnedRelayValue(val string, proxyPort int) bool {
 	if strings.HasPrefix(val, claudeProxyBaseURL(proxyPort)) {
 		return true
 	}
+	// 网关托管模式:gfa 签发的专用 key 与网关地址同样属于「自己」,不得当第三方中转清理。
+	if isGatewayKey(val) || val == gatewayClaudeBaseURL() {
+		return true
+	}
 	// 防御性兜底：任何回环地址都视为"自己/安全"，绝不误判为第三方中转。
 	return strings.Contains(val, "127.0.0.1") || strings.Contains(val, "localhost")
 }

@@ -20,6 +20,7 @@ import {
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   OpenCACertForTrust as _OpenCACertForTrust,
   InstallStandaloneClaude as _InstallStandaloneClaude,
+  HostClaudeGateway as _HostClaudeGateway,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   DetectCompetingClaudeConfig as _DetectCompetingClaudeConfig,
@@ -292,6 +293,11 @@ export async function openCACertForTrust(): Promise<void> {
 // 会抛错,调用方据此回退到打开下载页。
 export async function installStandaloneClaude(): Promise<void> {
   return _InstallStandaloneClaude()
+}
+
+// Claude Code「网关托管」:激活专用 key 并写入 settings.json,不走 TUN/MITM/出口闸。
+export async function hostClaudeGateway(): Promise<string> {
+  return _HostClaudeGateway()
 }
 
 export async function injectSelected(targets: string[]): Promise<string> {

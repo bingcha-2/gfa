@@ -102,6 +102,10 @@ export function HeartbeatCheck() {
   return window['go']['main']['App']['HeartbeatCheck']();
 }
 
+export function HostClaudeGateway() {
+  return window['go']['main']['App']['HostClaudeGateway']();
+}
+
 export function InjectSelected(arg1) {
   return window['go']['main']['App']['InjectSelected'](arg1);
 }

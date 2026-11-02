@@ -40,6 +40,7 @@ import { SubscriptionModule } from "./leasing/subscription/subscription.module";
 import { BillingAdminModule } from "./leasing/console/billing-admin/billing-admin.module";
 import { CustomerAdminModule } from "./leasing/console/customer-admin/customer-admin.module";
 import { AccountLevelsModule } from "./leasing/console/account-levels/account-levels.module";
+import { GatewayPoolModule } from "./leasing/gateway-pool/gateway-pool.module";
 import { TicketAdminModule } from "./leasing/console/ticket-admin/ticket-admin.module";
 import { ReferralAdminModule } from "./leasing/console/referral-admin/referral-admin.module";
 import { SupportKnowledgeAdminModule } from "./leasing/console/support-knowledge-admin/support-knowledge-admin.module";
@@ -107,6 +108,7 @@ import { SupportAgentModule } from "./leasing/account/support-agent/support-agen
     BillingAdminModule,
     CustomerAdminModule,
     AccountLevelsModule,
+    GatewayPoolModule,
     TicketAdminModule,
     ReferralAdminModule,
     SupportKnowledgeAdminModule,

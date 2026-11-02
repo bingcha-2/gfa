@@ -66,6 +66,8 @@ export function GetUpdateStatus():Promise<main.UpdateStatus>;
 
 export function HeartbeatCheck():Promise<Record<string, any>>;
 
+export function HostClaudeGateway():Promise<string>;
+
 export function InjectSelected(arg1:Array<string>):Promise<string>;
 
 export function InstallStandaloneClaude():Promise<void>;

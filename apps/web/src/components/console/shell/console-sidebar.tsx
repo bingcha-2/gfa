@@ -149,6 +149,8 @@ export function ConsoleSidebar({ ...props }: React.ComponentProps<typeof Sidebar
         { id: "anthropic-accounts", title: "账号池", url: `/${prefix}/anthropic-accounts`, icon: <DatabaseIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
         { id: "anthropic-web-accounts", title: "白号池", url: `/${prefix}/anthropic-web-accounts`, icon: <DatabaseIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
         { id: "anthropic-code", title: "验证码", url: `/${prefix}/anthropic-code`, icon: <KeyIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
+        { id: "gateway-accounts", title: "第三方母号", url: `/${prefix}/gateway-accounts`, icon: <KeyIcon />, permKey: "agent_service", roleGuard: () => isSuperAdmin || isAdmin },
+        { id: "gateway-users", title: "网关用户", url: `/${prefix}/gateway-users`, icon: <UsersIcon />, permKey: "agent_service", roleGuard: () => isSuperAdmin || isAdmin },
       ],
     },
     {

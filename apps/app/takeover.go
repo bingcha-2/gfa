@@ -437,7 +437,9 @@ func (claudeCodeTarget) Name() string          { return "Claude Code" }
 func (claudeCodeTarget) InjectionType() string { return "settings" }
 func (claudeCodeTarget) DetectPath() string    { return detectClaudeCodePath() }
 
-func (claudeCodeTarget) IsInjected(proxyPort int) bool { return IsClaudeInjected(proxyPort) }
+func (claudeCodeTarget) IsInjected(proxyPort int) bool {
+	return IsClaudeInjected(proxyPort) || IsClaudeGatewayInjected()
+}
 
 func (claudeCodeTarget) Inject(proxyPort int) (string, error) {
 	if err := InjectClaudeSettings(proxyPort); err != nil {
