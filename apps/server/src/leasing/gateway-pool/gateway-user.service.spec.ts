@@ -92,20 +92,19 @@ describe("gateway summary", () => {
   it("scopes billing to the caller and omits account identities and credentials", async () => {
     const prisma = {
       gatewayUser: { findUnique: vi.fn().mockResolvedValue({ id: 'own-user', shares: 1, enabled: true, usedUsd: .00005, totalUsedUsd: .00005, totalRequests: 1, motherAccount: { accountName: 'secret-account', enabled: true, status: 'ready', keyCipher: 'secret-key', usageJson: JSON.stringify([{ boundAccount: 'secret-account', pool: 'private', share: { windows: { '7d': { freshness: 'stale', remaining: 1, resetAt: Date.now() + 100000, calibration: { status: 'learning' } } } } }]) } }) },
-      gatewayUsage: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([{ createdAt: new Date(), inputTokens: 15, outputTokens: 7, cacheReadTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, costUsd: .00005 }]) },
+      gatewayUsage: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([{ createdAt: new Date(), model: 'claude-haiku-4-5', inputTokens: 15, outputTokens: 7, cacheReadTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, costUsd: .00005 }]) },
     };
     const service = new GatewayUserService(prisma as any, {} as any);
     (prisma as any).customer = { findUnique: vi.fn().mockResolvedValue({ status: 'ACTIVE' }) };
     (prisma as any).subscription = { findMany: vi.fn().mockResolvedValue([]) };
     (service as any).pool.quotaSnapshot = vi.fn().mockResolvedValue(null);
-    vi.spyOn(service, 'getPoolSettings').mockResolvedValue({ at: 0, shareUsd: 165, defaultUserShares: 1, defaultTotalShares: 6 });
     const result = await service.summary('caller');
     expect(prisma.gatewayUser.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { customerId: 'caller' } }));
     expect(prisma.gatewayUsage.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: { gatewayUserId: 'own-user' } }));
     expect(result).toMatchObject({ subscriptionValid: false, usedUsd: .00005, windows: [{ period: '5h', remaining: null }, { period: '7d', remaining: null }] });
     expect(JSON.stringify(result)).not.toMatch(/secret-account|secret-key/);
-    expect(result.dailyHistory).toHaveLength(30);
-    expect(result.dailyHistory?.[0]).toMatchObject({ requests: 1, inputTokens: 15, outputTokens: 7, costUsd: .00005 });
+    expect(result.dailyHistory).toHaveLength(35);
+    expect(result.dailyHistory?.[0]).toMatchObject({ requests: 1, inputTokens: 15, outputTokens: 7, costUsd: .00005, byModel: { 'claude-haiku-4-5': { requests: 1, inputTokens: 15, costUsd: .00005 } } });
     expect(prisma.gatewayUsage.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { gatewayUserId: 'own-user', createdAt: { gte: expect.any(Date) } } }));
   });
 });
@@ -116,11 +115,64 @@ describe('live subscription window enforcement', () => {
     const aggregate = vi.fn().mockResolvedValue({ _sum: { costUsd: 2 } });
     const prisma = { gatewayUser: { findUnique: vi.fn().mockResolvedValue(row) }, gatewayUsage: { aggregate } };
     const service = new GatewayUserService(prisma as any, { quotaSnapshot: vi.fn().mockResolvedValue(row.motherAccount) } as any);
-    vi.spyOn(service, 'getPoolSettings').mockResolvedValue({ at: 0, shareUsd: 165, defaultUserShares: 1, defaultTotalShares: 6 });
     const sub = { id: 'claude-sub', startsAt: new Date(Date.now() - 3600000), config: JSON.stringify({ products: ['anthropic'], usdQuotaByProduct: { anthropic: { fiveHour, weekly } } }) };
     const status = () => service.quotaStatus({ id: 'u', customerId: 'c', motherId: 'm', shares: 1 }, row, [sub]);
     return { status, aggregate, row, sub, service };
   }
+  it('admin list uses exactly the admission calculation, not shares or old counters', async () => {
+    const f = fixture(10, 100);
+    const db = (f.service as any).prisma;
+    db.gatewayUser.findMany = vi.fn().mockResolvedValue([f.row]);
+    db.customer = { findMany: vi.fn().mockResolvedValue([{ id: 'c', email: 'test@example.test' }]) };
+    vi.spyOn(f.service as any, 'activeClaudeSubscriptions').mockResolvedValue([f.sub]);
+    const status = await f.status();
+    const [listed] = await f.service.listUsers();
+    expect(listed.quotaWindows).toEqual(status.quotaWindows);
+    expect(listed.quotaWindows).toMatchObject([{ period: '5h', usedUsd: 2, limitUsd: 10 }, { period: '7d', usedUsd: 2, limitUsd: 100 }]);
+    expect(listed.limitUsd).toBe(100);
+    expect(listed.usedUsd).toBe(2);
+    vi.spyOn(f.service as any, 'activeClaudeSubscriptions').mockResolvedValue([]);
+    expect((await f.service.listUsers())[0]).toMatchObject({ subscriptionValid: false, quotaWindows: [], limitUsd: 0 });
+  });
+  it('applies per-window overrides immediately and expires them on renewal', async () => {
+    const f = fixture();
+    (f.sub as any).expiresAt = new Date(Date.now() + 86400000);
+    const config = JSON.parse(f.sub.config);
+    config.gatewayQuotaOverride = { startsAt: f.sub.startsAt.toISOString(), expiresAt: (f.sub as any).expiresAt.toISOString(), fiveHour: 1, weekly: null };
+    f.sub.config = JSON.stringify(config);
+    const blocked = await f.status();
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.quotaSource).toBe('custom');
+    expect(blocked.quotaWindows).toMatchObject([{ limitUsd: 1, usedUsd: 2 }, { limitUsd: 100, usedUsd: 2 }]);
+    (f.sub as any).expiresAt = new Date(Date.now() + 172800000);
+    const renewed = await f.status();
+    expect(renewed.allowed).toBe(true);
+    expect(renewed.quotaSource).toBe('plan');
+    expect(renewed.quotaWindows[0].limitUsd).toBe(10);
+  });
+  it('does not fall back to shares when the plan has no quota', async () => {
+    const f = fixture();
+    f.sub.config = JSON.stringify({ products: ['anthropic'] });
+    expect(await f.status()).toMatchObject({ allowed: false, reason: 'quota_configuration_invalid', quotaWindows: [] });
+  });
+  it('saves and restores overrides without changing usage, and rejects inactive subscriptions', async () => {
+    const f = fixture(); const db = (f.service as any).prisma;
+    db.$transaction = (fn: any) => fn(db);
+    db.subscription = { update: vi.fn() };
+    const subscriptions = vi.spyOn(f.service as any, 'activeClaudeSubscriptions').mockResolvedValue([f.sub]);
+    await f.service.setQuotaOverride('u', { subscriptionId: f.sub.id, fiveHour: 0, weekly: 50 });
+    const saved = JSON.parse(db.subscription.update.mock.calls[0][0].data.config);
+    expect(saved.gatewayQuotaOverride).toMatchObject({ fiveHour: 0, weekly: 50 });
+    expect(saved.usdQuotaByProduct.anthropic).toEqual({ fiveHour: 10, weekly: 100 });
+    expect(db.subscription.update.mock.calls[0][0].data).toEqual({ config: expect.any(String) });
+    f.sub.config = JSON.stringify(saved);
+    await f.service.setQuotaOverride('u', { subscriptionId: f.sub.id, fiveHour: null, weekly: null });
+    expect(JSON.parse(db.subscription.update.mock.calls[1][0].data.config).gatewayQuotaOverride).toBeUndefined();
+    subscriptions.mockResolvedValue([]);
+    await expect(f.service.setQuotaOverride('u', { subscriptionId: f.sub.id, fiveHour: 0, weekly: 50 })).rejects.toThrow('订阅已变更');
+    await expect(f.service.setQuotaOverride('u', { subscriptionId: f.sub.id, fiveHour: -1, weekly: 50 })).rejects.toThrow('额度必须');
+    expect(db.subscription.update).toHaveBeenCalledTimes(2);
+  });
   it('uses actual ledger usage, not the old shared counter, for both bars', async () => {
     const f = fixture(); const q = await f.status();
     expect(q.allowed).toBe(true);
@@ -134,12 +186,25 @@ describe('live subscription window enforcement', () => {
   });
   it('zero 5h config hides and disables only the personal 5h cap', async () => {
     const f = fixture(0, 100); const q = await f.status();
-    expect(q.allowed).toBe(true); expect(q.windows[0].state).toBe('unlimited'); expect(q.windows[1].remaining).toBe(.98); expect(f.aggregate).toHaveBeenCalledTimes(1);
+    expect(q.allowed).toBe(true); expect(q.windows[0].state).toBe('unlimited'); expect(q.windows[1].remaining).toBe(.98); expect(f.aggregate).toHaveBeenCalledTimes(2);
   });
   it('cannot disable the provider cap by setting the personal cap to zero', async () => {
     const f = fixture(0, 100);
     Object.assign(f.row.motherAccount, { accountName: 'a', usageSyncedAt: new Date(), usageJson: JSON.stringify([{ boundAccount: 'a', pool: 'private', share: { windows: { '5h': { freshness: 'fresh', remaining: 0, resetAt: Date.now() + 60000 } } } }]) });
     const q = await f.status(); expect(q.allowed).toBe(false); expect(q.reason).toBe('quota_5h_exhausted'); expect(q.windows[0].state).toBe('unlimited');
+  });
+  it.each(['5h', '7d'])('lets upstream reconcile uncertain %s readings without bypassing GFA limits', async period => {
+    const f = fixture();
+    Object.assign(f.row.motherAccount, { accountName: 'a', usageSyncedAt: new Date(), usageJson: JSON.stringify([
+      { boundAccount: 'a', pool: 'private', share: { windows: { [period]: {
+        freshness: 'fresh', remaining: 1, uncertain: true, inFlight: 0, reserved: .005, resetAt: Date.now() + 60000,
+      } } } },
+    ]) });
+    expect(await f.status()).toMatchObject({ allowed: true, reason: 'ok', subscriptionId: 'claude-sub' });
+    f.aggregate.mockResolvedValue({ _sum: { costUsd: 100 } });
+    expect(await f.status()).toMatchObject({ allowed: false, reason: 'quota_5h_exhausted' });
+    expect(await f.service.quotaStatus({ id: 'u', customerId: 'c', motherId: 'm', shares: 1 }, f.row, []))
+      .toMatchObject({ allowed: false, reason: 'subscription_required' });
   });
   it('rejects invalid settings instead of treating them as unlimited', async () => {
     const f = fixture(-1); expect((await f.status()).reason).toBe('quota_configuration_invalid'); expect(f.aggregate).not.toHaveBeenCalled();
@@ -151,12 +216,11 @@ describe('admin allocation enforces subscription and capacity', () => {
     const db: any = {
       customer: { findUnique: vi.fn().mockResolvedValue({ id: 'c', status }) },
       subscription: { findMany: vi.fn().mockResolvedValue(products.length ? [{ config: JSON.stringify({ products }) }] : []) },
-      gatewayUser: { findUnique: vi.fn().mockResolvedValue(null), groupBy: vi.fn().mockResolvedValue([{ motherAccountId: 'm', _sum: { shares: 6 } }]), create: vi.fn() },
+      gatewayUser: { findUnique: vi.fn().mockResolvedValue(null), groupBy: vi.fn().mockResolvedValue([{ motherAccountId: 'm', _count: { _all: 6 } }]), create: vi.fn() },
       gatewayMotherAccount: { findMany: vi.fn().mockResolvedValue([{ id: 'm', totalShares: 6 }]) },
       $transaction: (fn: any) => fn(db),
     };
     const service = new GatewayUserService(db, {} as any);
-    vi.spyOn(service, 'getPoolSettings').mockResolvedValue({ at: 0, shareUsd: 165, defaultUserShares: 1, defaultTotalShares: 6 });
     return { service, db };
   }
   it.each([{ products: [] }, { products: ['codex'] }])('rejects direct allocation with products $products', async ({ products }) => {
@@ -177,6 +241,17 @@ describe('admin allocation enforces subscription and capacity', () => {
     expect((await (service as any).pickMother(undefined, db)).id).toBe('free');
     db.gatewayMotherAccount.findMany.mockResolvedValue([]);
     await expect((service as any).pickMother(undefined, db)).rejects.toMatchObject({ status: 400 });
+  });
+  it('rebinds only with an active subscription and preserves the usage ledger', async () => {
+    const { service, db } = fixture();
+    db.gatewayUser.findUnique.mockResolvedValue({ id: 'u', customerId: 'c', keyHash: 'hash', motherAccountId: 'old' });
+    db.gatewayUser.update = vi.fn();
+    await service.updateUser('u', { motherAccountId: 'm' });
+    expect(db.gatewayUser.update).toHaveBeenCalledWith({ where: { id: 'u' }, data: { motherAccountId: 'm' } });
+    expect(db.gatewayMotherAccount.findMany).toHaveBeenCalledWith({ where: { enabled: true, status: 'ready', id: 'm' } });
+    db.subscription.findMany.mockResolvedValue([]);
+    await expect(service.updateUser('u', { motherAccountId: 'm' })).rejects.toMatchObject({ status: 403 });
+    expect(db.gatewayUser.update).toHaveBeenCalledTimes(1);
   });
   it('does not truncate fractional shares into valid allocations', async () => {
     const { service } = fixture();

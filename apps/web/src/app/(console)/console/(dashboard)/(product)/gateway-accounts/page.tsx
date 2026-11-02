@@ -18,6 +18,7 @@ type WindowStat = {
   remaining?: number | null;
   resetAt?: number | null;
   freshness?: string | null;
+  readingAt?: number | null;
 };
 
 type KeyUsage = {
@@ -29,6 +30,7 @@ type KeyUsage = {
 type MotherAccount = {
   id: string;
   accountName: string;
+  accountType: string | null;
   upstreamId: string | null;
   enabled: boolean;
   status: "pending" | "ready" | "key_lost" | "error";
@@ -58,12 +60,13 @@ function pct(v: number | null | undefined) {
   return typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "未知";
 }
 
-function windowCell(w?: WindowStat, noKeys = false) {
-  if (noKeys) return "未查到关联 Key";
-  if (!w) return "未获取窗口数据";
-  const stale = w.freshness && w.freshness !== "fresh" ? `(${w.freshness})` : "";
-  const reset = typeof w.resetAt === "number" ? ` · 重置 ${new Date(w.resetAt).toLocaleString()}` : "";
-  return `剩余 ${pct(w.remaining)}${stale}${reset}`;
+function windowCell(w?: WindowStat) {
+  if (!w) return "暂未获取";
+  return <div className="flex flex-col gap-1">
+    <span>{typeof w.remaining === "number" ? `剩余 ${pct(w.remaining)}` : "暂未获取"}</span>
+    {typeof w.resetAt === "number" && <span className="text-muted-foreground">重置 {new Date(w.resetAt).toLocaleString()}</span>}
+    <span className="text-muted-foreground">{typeof w.readingAt === "number" ? `更新于 ${new Date(w.readingAt).toLocaleString()}` : "更新时间未知"}</span>
+  </div>;
 }
 
 export default function GatewayAccountsPage() {
@@ -175,7 +178,7 @@ export default function GatewayAccountsPage() {
   }
 
   function editShares(row: MotherAccount) {
-    const v = window.prompt(`该母号总份数(已分配 ${row.allocatedShares} 份,不能更少)`, String(row.totalShares));
+    const v = window.prompt(`参考承载人数（已分配 ${row.userCount} 人，允许超配）`, String(row.totalShares));
     const n = Number(v);
     if (v && Number.isInteger(n) && n !== row.totalShares) void patchRow(row, { totalShares: n });
   }
@@ -241,9 +244,10 @@ export default function GatewayAccountsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>账号</TableHead>
+                  <TableHead>账号类型</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>调用地址</TableHead>
-                  <TableHead>份数(已分配/参考总份数)</TableHead>
+                  <TableHead>已分配 / 参考人数</TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>Key</TableHead>
                   <TableHead>5 小时窗口</TableHead>
@@ -262,20 +266,21 @@ export default function GatewayAccountsPage() {
                         <div className="font-medium">{r.accountName}</div>
                         {r.lastError ? <div className="text-xs text-destructive">{r.lastError}</div> : null}
                       </TableCell>
+                      <TableCell>{r.accountType ?? "未知"}</TableCell>
                       <TableCell><Badge variant={st.variant}>{st.text}</Badge></TableCell>
                       <TableCell className="text-xs">
                         <button className="underline-offset-2 hover:underline" onClick={() => editBaseUrl(r)}>{r.baseUrl}</button>
                       </TableCell>
                       <TableCell className="text-xs">
                         <button className="underline-offset-2 hover:underline" onClick={() => editShares(r)}>
-                          {r.allocatedShares}/{r.totalShares}({r.userCount} 人)
+                          {r.userCount} / {r.totalShares} 人
                         </button>
-                        {r.allocatedShares > r.totalShares && <Badge variant="secondary" className="ml-2">超配 {r.allocatedShares - r.totalShares} 份</Badge>}
+                        {r.userCount > r.totalShares && <Badge variant="secondary" className="ml-2">超配 {r.userCount - r.totalShares} 人</Badge>}
                       </TableCell>
                       <TableCell className="text-xs" title={r.models.join("\n")}>{r.models.length} 个</TableCell>
                       <TableCell className="font-mono text-xs">{r.hasKey ? r.keyHint : "—"}</TableCell>
-                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["5h"], r.usage?.length === 0)}</TableCell>
-                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["7d"], r.usage?.length === 0)}</TableCell>
+                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["5h"])}</TableCell>
+                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["7d"])}</TableCell>
                       <TableCell><Switch checked={r.enabled} onCheckedChange={(v) => toggle(r, v)} /></TableCell>
                       <TableCell>
                         <Button variant="ghost" size="icon" onClick={() => remove(r)} aria-label="删除">

@@ -1,5 +1,5 @@
-import { render, screen, cleanup } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GatewayUsagePanel } from './GatewayUsagePanel'
 afterEach(cleanup)
 describe('gateway usage', () => {
@@ -39,4 +39,19 @@ it('omits disabled windows and never treats unknown usage as full', () => {
   expect(screen.queryByRole('progressbar', { name: 'Claude 5 小时剩余额度' })).toBeNull()
   expect(screen.getByRole('progressbar', { name: 'Claude 每周剩余额度' }).getAttribute('aria-valuenow')).toBeNull()
   expect(screen.getByText('暂未获取')).toBeTruthy()
+})
+
+it('filters models and totals together without changing cumulative totals', () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-02T12:00:00Z'))
+  try {
+    const model = (name: string) => ({ model: name, requests: 1, inputTokens: 179149, outputTokens: 4, cacheReadTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, costUsd: .1 })
+    const day = (date: string, name: string) => ({ date, requests: 1, costUsd: .1, inputTokens: 179149, outputTokens: 4, cachedTokens: 0, cacheWriteTokens: 0, byModel: { [name]: model(name) } })
+    render(<GatewayUsagePanel summary={{ configured: true, subscriptionValid: true, enabled: true, upstreamEnabled: true, totalRequests: 2, totalUsedUsd: .2, dailyHistory: [day('2026-11-02', 'current-model'), day('2026-11-01', 'previous-model')] }} />)
+    fireEvent.click(screen.getByRole('button', { name: '上周' }))
+    expect(screen.queryByText('current-model')).toBeNull()
+    expect(screen.getByText('previous-model')).toBeTruthy()
+    expect(screen.getByTitle('179,149 Token').textContent).toBe('179.15K')
+    expect(screen.getByText(/累计 2 次请求/)).toBeTruthy()
+    expect(screen.getByText(/所选时段 · 1 次请求/)).toBeTruthy()
+  } finally { vi.useRealTimers() }
 })

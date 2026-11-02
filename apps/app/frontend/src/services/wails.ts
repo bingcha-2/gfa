@@ -151,8 +151,10 @@ export async function activateCode(code: string): Promise<ActivateCodeResult> {
 }
 
 // ===== Stats =====
+export type GatewayModelUsage = { model: string; requests: number; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWrite5m: number | null; cacheWrite1h: number | null; costUsd: number | null }
+
 export interface GatewaySummary {
-  dailyHistory?: { date: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; requests: number; costUsd: number }[]
+  dailyHistory?: { date: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; requests: number; costUsd: number; byModel?: Record<string, GatewayModelUsage> }[]
   loading?: boolean
   error?: string
   configured?: boolean
@@ -165,7 +167,7 @@ export interface GatewaySummary {
   totalUsedUsd?: number
   totalRequests?: number
   windows?: { period: string; remaining: number | null; resetAt: number | null; state?: "limited" | "unlimited" | "unknown"; exhausted?: boolean; freshness?: string; calibrationStatus?: string | null; uncertain?: boolean }[]
-  models?: { model: string; requests: number; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWrite5m: number | null; cacheWrite1h: number | null; costUsd: number | null }[]
+  models?: GatewayModelUsage[]
 }
 export interface StatsResponse {
   gateway?: GatewaySummary | null

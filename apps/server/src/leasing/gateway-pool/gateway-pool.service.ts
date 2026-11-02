@@ -1,3 +1,4 @@
+import { accountUsageRows } from "./account-usage";
 import { hasApiPrice } from "@gfa/shared";
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
@@ -5,7 +6,7 @@ import { nanoid } from "nanoid";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { decryptKey, encryptKey, keyHint } from "./key-vault";
-import { fetchAccountKeyUsage, fetchModels, provisionOneKey, UpstreamError, type UpstreamConfig } from "./upstream-client";
+import { fetchAccountUsage, fetchModels, provisionOneKey, UpstreamError, type UpstreamConfig } from "./upstream-client";
 import { upstreamWindowTransition } from "./upstream-window";
 
 const MANUAL_REFRESH_MIN_GAP_MS = 10_000;
@@ -25,14 +26,20 @@ function parseModels(json: string | null | undefined): string[] {
 /** 对外(后台接口)可见的字段。刻意不含 keyCipher。 */
 function toView(r: any) {
   let usage: unknown = null;
+  let accountType: string | null = null;
   try {
-    usage = r.usageJson ? JSON.parse(r.usageJson) : null;
+    const raw = r.usageJson ? JSON.parse(r.usageJson) : null;
+    usage = raw ? accountUsageRows(raw) : null;
+    if (raw?.account?.provider === "anthropic") {
+      accountType = ({ 1: "Pro", 5: "Max 5x", 20: "Max 20x" } as Record<number, string>)[raw.account.tier?.weight] ?? null;
+    }
   } catch {
     usage = null;
   }
   return {
     id: r.id,
     accountName: r.accountName,
+    accountType,
     upstreamId: r.upstreamId,
     enabled: r.enabled,
     status: r.status,
@@ -313,15 +320,7 @@ export class GatewayPoolService {
     const row = await this.mustGet(id);
     const now = new Date();
     try {
-      const usage = await fetchAccountKeyUsage(await this.upstreamConfig(), row.accountName);
-      let invalidKey = false;
-      if (usage.length === 0 && row.keyCipher) {
-        // An empty association list is not proof of invalid credentials. Verify
-        // using read-only model discovery before marking the stored key unusable.
-        try { await fetchModels(row.baseUrl, decryptKey(row.keyCipher)); }
-        catch (err) { invalidKey = err instanceof UpstreamError && err.status === 401; }
-      }
-
+      const usage = await fetchAccountUsage(await this.upstreamConfig(), row.accountName);
       const changed = await this.prisma.$transaction(async (tx) => {
         const current = await tx.gatewayMotherAccount.findUniqueOrThrow({ where: { id } });
         const prev = current.upstreamResetAt7d != null ? Number(current.upstreamResetAt7d) : null;
@@ -333,8 +332,7 @@ export class GatewayPoolService {
             usageJson: JSON.stringify(usage),
             usageSyncedAt: now,
             lastSyncAt: now,
-            lastError: invalidKey ? "上游拒绝当前 Key（401），请核对是否已删除或轮换" : usage.length === 0 ? "上游未返回该账号的关联 Key 用量" : row.status === "key_lost" ? row.lastError : row.keyCipher ? null : row.lastError,
-            ...(invalidKey ? { status: "key_lost" } : {}),
+            lastError: row.status === "key_lost" ? row.lastError : row.keyCipher ? null : row.lastError,
             ...(fiveHour.resetAt !== null ? { upstreamResetAt5h: BigInt(fiveHour.resetAt) } : {}),
             ...(transition.resetAt !== null ? { upstreamResetAt7d: BigInt(transition.resetAt) } : {}),
           },

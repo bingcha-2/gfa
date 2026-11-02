@@ -1,3 +1,4 @@
+import { accountUsageRows } from "./account-usage";
 export type Period = "5h" | "7d";
 export const WINDOW_MS: Record<Period, number> = { "5h": 5 * 3600_000, "7d": 7 * 86400_000 };
 export type QuotaWindow = { period: Period; state: "limited" | "unlimited" | "unknown";
@@ -8,7 +9,7 @@ const number = (v: unknown): v is number => typeof v === "number" && Number.isFi
  * upstream capability counts; a product name (including Ultra) is never proof. */
 export function upstreamWindows(mother: any, now = Date.now()): QuotaWindow[] {
   let rows: any[] = [];
-  try { const parsed = JSON.parse(mother?.usageJson || "[]"); if (Array.isArray(parsed)) rows = parsed; } catch { /* unknown */ }
+  try { const parsed = JSON.parse(mother?.usageJson || "[]"); rows = accountUsageRows(parsed, now); } catch { /* unknown */ }
   const matches = rows.filter(r => r?.boundAccount === mother?.accountName && r?.pool === "private");
   const key = matches.length === 1 ? matches[0] : null;
   const syncedAt = new Date(mother?.usageSyncedAt || 0).getTime();

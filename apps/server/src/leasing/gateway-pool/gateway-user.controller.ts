@@ -8,7 +8,6 @@
  *   POST   console/gateway-users/:id/reset       清零本周期用量
  *   POST   console/gateway-users/:id/rotate-key  换 key(旧 key 立即失效)
  *   DELETE console/gateway-users/:id             删除
- *   GET/PUT console/gateway-users/settings       每份美元额度、默认用户份数、默认母号份数
  *
  * 客户端:
  *   POST app/gateway/activate  本人激活「一键托管」,返回专用 key、母号 id、模型、额度
@@ -48,21 +47,6 @@ export class GatewayUserAdminController {
     return this.users.allocationEligibility(email);
   }
 
-  @Get("settings")
-  getSettings() {
-    return this.users.getPoolSettings();
-  }
-
-  @Put("settings")
-  async saveSettings(
-    @Body() body: { shareUsd?: number; defaultUserShares?: number; defaultTotalShares?: number },
-    @Request() req: any,
-  ) {
-    const r = await this.users.savePoolSettings(body || {});
-    await this.audit(req, "GATEWAY_POOL_SETTINGS_SAVE", "settings", { ...body });
-    return r;
-  }
-
   @Get()
   list() {
     return this.users.listUsers();
@@ -76,9 +60,16 @@ export class GatewayUserAdminController {
   }
 
   @Patch(":id")
-  async update(@Param("id") id: string, @Body() body: { shares?: number; enabled?: boolean }, @Request() req: any) {
+  async update(@Param("id") id: string, @Body() body: { shares?: number; enabled?: boolean; motherAccountId?: string }, @Request() req: any) {
     await this.users.updateUser(id, body || {});
     await this.audit(req, "GATEWAY_USER_UPDATE", id, { ...body });
+    return { ok: true };
+  }
+
+  @Put(":id/quota")
+  async quota(@Param("id") id: string, @Body() body: { subscriptionId: string; fiveHour: number | null; weekly: number | null }, @Request() req: any) {
+    await this.users.setQuotaOverride(id, body);
+    await this.audit(req, "GATEWAY_USER_QUOTA_UPDATE", id, { ...body });
     return { ok: true };
   }
 

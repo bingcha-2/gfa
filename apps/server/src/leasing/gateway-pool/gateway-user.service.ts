@@ -1,3 +1,4 @@
+import { quotaPolicy, subscriptionTerm } from "./quota-policy";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { requireApiValue, apiPriceRegistryAt, hasApiPrice, type ApiPricingMode } from "@gfa/shared";
 import { createHash, randomBytes } from "node:crypto";
@@ -10,9 +11,6 @@ import { rowToConfig } from "../subscription/subscription-config";
 
 
 const STATE_TTL_MS = 60_000;
-const SETTING_SHARE_USD = "gateway_share_usd";
-const SETTING_DEFAULT_USER_SHARES = "gateway_default_user_shares";
-const SETTING_DEFAULT_TOTAL_SHARES = "gateway_default_total_shares";
 
 export type UsageTokens = {
   input: number;
@@ -56,7 +54,6 @@ export function costUsd(model: string, t: UsageTokens, occurredAt = Date.now(), 
 @Injectable()
 export class GatewayUserService implements OnModuleInit {
   private readonly cache = new Map<string, UserState>(); // keyHash → state
-  private settings: { at: number; shareUsd: number; defaultUserShares: number; defaultTotalShares: number } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -68,47 +65,6 @@ export class GatewayUserService implements OnModuleInit {
     this.pool.onUsersReset(() => this.cache.clear());
   }
 
-  // ── 配置(后台可改) ─────────────────────────────────────────────
-  async getPoolSettings() {
-    if (this.settings && Date.now() - this.settings.at < STATE_TTL_MS) return this.settings;
-    const rows = await this.prisma.siteSetting.findMany({
-      where: { key: { in: [SETTING_SHARE_USD, SETTING_DEFAULT_USER_SHARES, SETTING_DEFAULT_TOTAL_SHARES] } },
-    });
-    const m = new Map<string, string>(rows.map((r: any) => [r.key, r.value]));
-    const num = (k: string, d: number) => {
-      const n = Number(m.get(k));
-      return Number.isFinite(n) && n > 0 ? n : d;
-    };
-    this.settings = {
-      at: Date.now(),
-      shareUsd: num(SETTING_SHARE_USD, 165),
-      defaultUserShares: Math.floor(num(SETTING_DEFAULT_USER_SHARES, 1)),
-      defaultTotalShares: Math.floor(num(SETTING_DEFAULT_TOTAL_SHARES, 6)),
-    };
-    return this.settings;
-  }
-
-  async savePoolSettings(input: { shareUsd?: number; defaultUserShares?: number; defaultTotalShares?: number }) {
-    const put = async (key: string, v: unknown, min: number, integer: boolean) => {
-      if (v === undefined) return;
-      const n = Number(v);
-      if (!Number.isFinite(n) || n < min || (integer && !Number.isInteger(n))) {
-        throw new BadRequestException(`${key} 不合法`);
-      }
-      await this.prisma.siteSetting.upsert({ where: { key }, update: { value: String(n) }, create: { key, value: String(n) } });
-    };
-    await put(SETTING_SHARE_USD, input.shareUsd, 0.01, false);
-    await put(SETTING_DEFAULT_USER_SHARES, input.defaultUserShares, 1, true);
-    await put(SETTING_DEFAULT_TOTAL_SHARES, input.defaultTotalShares, 1, true);
-    this.settings = null;
-    return this.getPoolSettings();
-  }
-
-  limitUsd(shares: number, shareUsd: number) {
-    return Math.round(shares * shareUsd * 1e6) / 1e6;
-  }
-
-  /** 用户自己的网关账单；不返回母号身份、密钥或其他用户用量。 */
   async summary(customerId: string) {
     const [row, subscriptions] = await Promise.all([
       this.prisma.gatewayUser.findUnique({ where: { customerId }, include: { motherAccount: true } }),
@@ -125,15 +81,15 @@ export class GatewayUserService implements OnModuleInit {
     });
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
-    since.setUTCDate(since.getUTCDate() - 29);
+    since.setUTCDate(since.getUTCDate() - 34);
     const recent = await this.prisma.gatewayUsage.findMany({
       where: { gatewayUserId: row.id, createdAt: { gte: since } },
-      select: { createdAt: true, inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheWrite5m: true, cacheWrite1h: true, costUsd: true },
+      select: { createdAt: true, model: true, inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheWrite5m: true, cacheWrite1h: true, costUsd: true },
     });
-    const daily = new Map<string, { date: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; requests: number; costUsd: number }>();
-    for (let day = 0; day < 30; day++) {
+    const daily = new Map<string, { date: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; requests: number; costUsd: number; byModel: Record<string, { model: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWrite5m: number; cacheWrite1h: number; costUsd: number }> }>();
+    for (let day = 0; day < 35; day++) {
       const date = new Date(since.getTime() + day * 86400000).toISOString().slice(0, 10);
-      daily.set(date, { date, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, requests: 0, costUsd: 0 });
+      daily.set(date, { date, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, requests: 0, costUsd: 0, byModel: {} });
     }
     for (const usage of recent) {
       const bucket = daily.get(usage.createdAt.toISOString().slice(0, 10));
@@ -141,6 +97,11 @@ export class GatewayUserService implements OnModuleInit {
       bucket.inputTokens += usage.inputTokens; bucket.outputTokens += usage.outputTokens;
       bucket.cachedTokens += usage.cacheReadTokens; bucket.cacheWriteTokens += usage.cacheWrite5m + usage.cacheWrite1h;
       bucket.requests++; bucket.costUsd += usage.costUsd;
+      const model = bucket.byModel[usage.model] ??= { model: usage.model, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, costUsd: 0 };
+      model.requests++;
+      model.inputTokens += usage.inputTokens; model.outputTokens += usage.outputTokens;
+      model.cacheReadTokens += usage.cacheReadTokens; model.cacheWrite5m += usage.cacheWrite5m;
+      model.cacheWrite1h += usage.cacheWrite1h; model.costUsd += usage.costUsd;
     }
     return { configured: true, subscriptionValid, enabled: row.enabled,
       upstreamEnabled: row.motherAccount.enabled && row.motherAccount.status === "ready",
@@ -152,10 +113,9 @@ export class GatewayUserService implements OnModuleInit {
 
   // ── 后台管理 ─────────────────────────────────────────────────────
   async listUsers() {
-    const { shareUsd } = await this.getPoolSettings();
     const rows = await this.prisma.gatewayUser.findMany({
       orderBy: { createdAt: "asc" },
-      include: { motherAccount: { select: { id: true, accountName: true } } },
+      include: { motherAccount: true },
     });
     const customers = await this.prisma.customer.findMany({
       where: { id: { in: rows.map((r: any) => r.customerId) } },
@@ -163,18 +123,29 @@ export class GatewayUserService implements OnModuleInit {
     });
     const email = new Map<string, string>(customers.map((c: any) => [c.id, c.email]));
     return Promise.all(rows.map(async (r: any) => {
-      const subscriptionValid = await this.hasActiveSubscription(r.customerId);
-      const limit = this.limitUsd(r.shares, shareUsd);
+      const subscriptions = await this.activeClaudeSubscriptions(r.customerId);
+      const subscriptionValid = subscriptions.length > 0;
+      const quota = await this.quotaStatus({ id: r.id, customerId: r.customerId, motherId: r.motherAccountId, shares: r.shares }, r, subscriptions);
+      const selected = subscriptions.find((sub: any) => sub.id === quota.subscriptionId) ?? subscriptions[0];
+      let planName = "Claude 套餐";
+      try { const config = JSON.parse(selected?.config || "{}"); planName = config.planName || config.name || planName; } catch { /* legacy snapshot */ }
       return {
+        subscriptionName: selected ? planName : null,
+        subscriptionExpiresAt: selected?.expiresAt ?? null,
         id: r.id,
         email: email.get(r.customerId) ?? "",
         subscriptionValid,
         motherAccountId: r.motherAccountId,
         motherAccountName: r.motherAccount?.accountName,
         shares: r.shares,
-        limitUsd: limit,
-        usedUsd: r.usedUsd,
-        remainingUsd: Math.max(0, limit - r.usedUsd),
+        limitUsd: quota.limitUsd,
+        usedUsd: quota.usedUsd,
+        remainingUsd: quota.remainingUsd,
+        quotaWindows: quota.quotaWindows,
+        quotaReason: quota.reason,
+        subscriptionId: quota.subscriptionId,
+        quotaSource: quota.quotaSource,
+        quotaOverrides: quota.quotaOverrides,
         totalUsedUsd: r.totalUsedUsd,
         totalRequests: r.totalRequests,
         lastUsedAt: r.lastUsedAt,
@@ -201,11 +172,10 @@ export class GatewayUserService implements OnModuleInit {
         throw new ForbiddenException("必须有有效的 Claude 订阅才能分配母号");
       }
       if (await db.gatewayUser.findUnique({ where: { customerId: customer.id } })) {
-        throw new BadRequestException("该用户已分配,请直接修改份数");
+        throw new BadRequestException("该用户已分配，请在管理面板调整");
       }
-      const st = await this.getPoolSettings();
-      const k = shares === undefined ? st.defaultUserShares : Number(shares);
-      if (!Number.isSafeInteger(k) || k < 1) throw new BadRequestException("份数至少为 1");
+      if (shares !== undefined && shares !== 1) throw new BadRequestException("每个用户占一个名额");
+      const k = 1;
 
       const mother = await this.pickMother(motherAccountId, db);
       const plain = `gfa-${randomBytes(24).toString("hex")}`;
@@ -227,8 +197,8 @@ export class GatewayUserService implements OnModuleInit {
     const mothers = await db.gatewayMotherAccount.findMany({
       where: { enabled: true, status: "ready", ...(specified ? { id: specified } : {}) },
     });
-    const sums = await db.gatewayUser.groupBy({ by: ["motherAccountId"], _sum: { shares: true } });
-    const used = new Map<string, number>(sums.map((s: any) => [s.motherAccountId, s._sum.shares ?? 0]));
+    const sums = await db.gatewayUser.groupBy({ by: ["motherAccountId"], _count: { _all: true } });
+    const used = new Map<string, number>(sums.map((s: any) => [s.motherAccountId, s._count._all ?? 0]));
     const free = (m: any) => m.totalShares - (used.get(m.id) ?? 0);
     // Total shares is a reference capacity; prefer the greatest spare capacity,
     // then the least overallocated account when every account is already full.
@@ -237,25 +207,21 @@ export class GatewayUserService implements OnModuleInit {
     return ok[0];
   }
 
-  async updateUser(id: string, input: { shares?: number; enabled?: boolean }) {
+  async updateUser(id: string, input: { shares?: number; enabled?: boolean; motherAccountId?: string }) {
     await this.prisma.$transaction(async (db) => {
       const row = await db.gatewayUser.findUnique({ where: { id } });
       if (!row) throw new NotFoundException("用户不存在");
-      if ((input.enabled === true || (input.shares !== undefined && Number(input.shares) > row.shares)) &&
+      if ((input.enabled === true || input.motherAccountId !== undefined || (input.shares !== undefined && Number(input.shares) > row.shares)) &&
           !(await this.activeClaudeSubscriptions(row.customerId, db)).length) {
         throw new ForbiddenException("必须有有效的 Claude 订阅才能启用或增加份数");
       }
       const data: Record<string, unknown> = {};
       if (input.enabled !== undefined) data.enabled = Boolean(input.enabled);
-      if (input.shares !== undefined) {
-        const k = Number(input.shares);
-        if (!Number.isSafeInteger(k) || k < 1) throw new BadRequestException("份数至少为 1");
-        const mother = await db.gatewayMotherAccount.findUnique({ where: { id: row.motherAccountId } });
-        if (!mother) throw new BadRequestException("母号不存在");
-        if (k > row.shares && (!mother.enabled || mother.status !== "ready")) {
-          throw new BadRequestException("母号当前不可用，不能增加份数");
-        }
-        data.shares = k;
+      if (input.shares !== undefined && input.shares !== 1) throw new BadRequestException("每个用户占一个名额");
+      if (input.motherAccountId !== undefined) {
+        if (typeof input.motherAccountId !== "string" || !input.motherAccountId.trim()) throw new BadRequestException("请选择母号");
+        const mother = await this.pickMother(input.motherAccountId, db);
+        data.motherAccountId = mother.id;
       }
       await db.gatewayUser.update({ where: { id }, data });
       this.cache.delete(row.keyHash);
@@ -288,6 +254,26 @@ export class GatewayUserService implements OnModuleInit {
     this.cache.delete(row.keyHash);
   }
 
+  async setQuotaOverride(id: string, input: { subscriptionId: string; fiveHour: number | null; weekly: number | null }) {
+    for (const period of ["fiveHour", "weekly"] as const) {
+      const value = input?.[period];
+      if (value !== null && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+        throw new BadRequestException("额度必须为非负金额；null 表示跟随套餐，0 表示不限额");
+      }
+    }
+    await this.prisma.$transaction(async tx => {
+      const user = await tx.gatewayUser.findUnique({ where: { id } });
+      if (!user) throw new NotFoundException("用户不存在");
+      const subs = await this.activeClaudeSubscriptions(user.customerId, tx);
+      const sub = subs.find((sub: any) => sub.id === input.subscriptionId);
+      if (!sub) throw new BadRequestException("订阅已变更或失效，请刷新后重试");
+      const config = JSON.parse(sub.config || "{}");
+      if (input.fiveHour === null && input.weekly === null) delete config.gatewayQuotaOverride;
+      else config.gatewayQuotaOverride = { ...subscriptionTerm(sub), fiveHour: input.fiveHour, weekly: input.weekly };
+      await tx.subscription.update({ where: { id: sub.id }, data: { config: JSON.stringify(config) } });
+    });
+  }
+
   // ── 客户端「一键托管」 ───────────────────────────────────────────
   /** 本人激活:返回专用 key、母号 id、模型和额度。托管时顺带刷新该母号的模型列表(10 分钟内不重复请求上游)。 */
   async activate(customerId: string) {
@@ -300,15 +286,14 @@ export class GatewayUserService implements OnModuleInit {
     });
     if (!row || !row.enabled) throw new NotFoundException("尚未为你开通,请联系管理员");
     const models = (await this.pool.refreshModels(row.motherAccountId)).filter(model => hasApiPrice("anthropic", model));
-    const { shareUsd } = await this.getPoolSettings();
-    const limit = this.limitUsd(row.shares, shareUsd);
+    const quota = await this.quotaStatus({ id: row.id, customerId, motherId: row.motherAccountId, shares: row.shares });
     return {
       key: decryptKey(row.keyCipher),
       motherAccountId: row.motherAccountId,
       shares: row.shares,
-      limitUsd: limit,
-      usedUsd: row.usedUsd,
-      remainingUsd: Math.max(0, limit - row.usedUsd),
+      limitUsd: quota.limitUsd,
+      usedUsd: quota.usedUsd,
+      remainingUsd: quota.remainingUsd,
       models,
     };
   }
@@ -369,25 +354,26 @@ export class GatewayUserService implements OnModuleInit {
     const upstream = upstreamWindows(mother, now);
     const subscriptions = active ?? await this.activeClaudeSubscriptions(state.customerId);
     const base = { allowed: false, reason: "subscription_required", subscriptionId: null as string | null,
+      quotaSource: "plan", quotaOverrides: { fiveHour: null as number | null, weekly: null as number | null },
+      quotaWindows: [] as { period: Period; usedUsd: number; limitUsd: number | null; resetAt: number | null }[],
       windows: upstream, usedUsd: row?.usedUsd ?? 0, limitUsd: 0, remainingUsd: null as number | null, retryAt: null as number | null };
     if (!subscriptions.length) return base;
     if (!row?.enabled || !mother?.enabled || mother.status !== "ready") return { ...base, reason: "service_disabled" };
-    const settings = await this.getPoolSettings();
     let first: typeof base | undefined;
     for (let index = 0; index < subscriptions.length; index++) {
       const sub = subscriptions[index];
       const config: any = rowToConfig(sub);
       const configured = config.usdQuotaByProduct?.anthropic;
-      const quota = configured ?? { fiveHour: 0, weekly: this.limitUsd(state.shares, settings.shareUsd) };
-      const limits = [quota.fiveHour ?? 0, quota.weekly ?? 0];
+      const quota = quotaPolicy(sub, configured);
+      const limits = [quota.fiveHour, quota.weekly];
       if (limits.some(v => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
-        first ??= { ...base, reason: "quota_configuration_invalid" }; continue;
+        first ??= { ...base, subscriptionId: sub.id, quotaSource: quota.source, quotaOverrides: quota.overrides, reason: "quota_configuration_invalid" }; continue;
       }
       const personal = new Map<Period, { limit: number; used: number; resetAt: number | null }>();
+      const quotaWindows: typeof base.quotaWindows = [];
       let weeklyUsed = 0;
       for (const period of ["5h", "7d"] as Period[]) {
         const limit = period === "5h" ? limits[0] : limits[1];
-        if (limit === 0 && period !== "7d") continue;
         const up = upstream.find(w => w.period === period)!;
         const anchored = { ...up, resetAt: up.state === "unlimited" ? null :
           Number(period === "5h" ? mother.upstreamResetAt5h : mother.upstreamResetAt7d) || up.resetAt };
@@ -404,15 +390,19 @@ export class GatewayUserService implements OnModuleInit {
           ] }, _sum: { costUsd: true },
         });
         let used = sum._sum.costUsd ?? 0;
+        quotaWindows.push({ period, usedUsd: used, limitUsd: limit > 0 ? limit : null, resetAt: range.end });
         if (period === "7d") weeklyUsed = used;
         if (limit > 0) personal.set(period, { limit, used, resetAt: range.end });
       }
       const windows = (["5h", "7d"] as Period[]).map(period => personalWindow(period, personal.get(period) ?? null));
       const exhausted = windows.find(w => w.exhausted) ?? upstream.find(w => w.exhausted);
-      const uncertain = upstream.some(w => w.uncertain);
-      const candidate = { ...base, allowed: !exhausted && !uncertain, subscriptionId: sub.id,
-        reason: exhausted ? `quota_${exhausted.period}_exhausted` : uncertain ? "quota_reading_uncertain" : "ok",
-        windows, usedUsd: weeklyUsed, limitUsd: limits[1], remainingUsd: limits[1] > 0 ? Math.max(0, limits[1] - weeklyUsed) : null,
+      // A usage snapshot's uncertain flag is not an admission decision. The
+      // provider reconciles interrupted requests during its next admission;
+      // rejecting here can prevent that recovery indefinitely. Preserve GFA
+      // limits and confirmed exhaustion, then let upstream enforce its ledger.
+      const candidate = { ...base, allowed: !exhausted, subscriptionId: sub.id,
+        reason: exhausted ? `quota_${exhausted.period}_exhausted` : "ok",
+        quotaSource: quota.source, quotaOverrides: quota.overrides, windows, quotaWindows, usedUsd: weeklyUsed, limitUsd: limits[1], remainingUsd: limits[1] > 0 ? Math.max(0, limits[1] - weeklyUsed) : null,
         retryAt: exhausted?.resetAt ?? null };
       first ??= candidate;
       if (candidate.allowed) return candidate;

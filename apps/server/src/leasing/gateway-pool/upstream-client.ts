@@ -61,13 +61,24 @@ export async function provisionOneKey(cfg: UpstreamConfig, params: {
   return r as ProvisionResult;
 }
 
-/** 按账号名查询关联 key 的用量(只读,不含 key 明文)。 */
-export async function fetchAccountKeyUsage(cfg: UpstreamConfig, account: string): Promise<unknown[]> {
+/** 查询母号自身的账号卡片用量；现有配置是运营密钥，使用 ops 入口。 */
+export async function fetchAccountUsage(cfg: UpstreamConfig, account: string): Promise<AccountUsage> {
   const q = new URLSearchParams({ account }).toString();
-  const body = await call(cfg, `/teamclaude/ops/account-key-usage?${q}`, { method: "GET" });
-  if (!Array.isArray(body)) throw new UpstreamError("unexpected usage response shape", 200);
-  return body;
+  const body = await call(cfg, `/teamclaude/ops/account-usage?${q}`, { method: "GET" });
+  if (!body?.account || body.account.name !== account || !Array.isArray(body.account.windows)) {
+    throw new UpstreamError("unexpected account usage response shape", 200);
+  }
+  return body as AccountUsage;
 }
+
+export type AccountUsage = {
+  generatedAt: number;
+  account: {
+    id: string; name: string; enabled: boolean;
+    windows: Array<{ bucket: string; used: number | null; remaining: number | null;
+      resetAt: number | null; seenAt: number | null }>;
+  };
+};
 
 /** 用母号自己的 key 取该母号支持的模型(GET {baseUrl}/v1/models,Anthropic 格式)。 */
 export async function fetchModels(baseUrl: string, key: string): Promise<string[]> {
