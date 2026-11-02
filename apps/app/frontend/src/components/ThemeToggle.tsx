@@ -1,33 +1,32 @@
-import { useEffect, useState } from 'react'
-import { Sun, Moon } from 'lucide-react'
-import { getTheme, setTheme, type Theme } from '@/lib/theme'
+import { useState } from 'react'
+import { Sun, Moon, Monitor, ChevronDown } from 'lucide-react'
+import { getThemePreference, setTheme, type ThemePreference } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
 
-/** 顶栏的明/暗切换。受控于本地状态 + theme 模块的持久化。 */
 export function ThemeToggle({ className }: { className?: string }) {
   const t = useT()
-  const [theme, setThemeState] = useState<Theme>(() => getTheme())
-
-  useEffect(() => { setTheme(theme) }, [theme])
-
-  const next = theme === 'dark' ? 'light' : 'dark'
-  const toggle = () => setThemeState(next)
+  const [preference, setPreference] = useState<ThemePreference>(getThemePreference)
+  const Icon = preference === 'system' ? Monitor : preference === 'dark' ? Moon : Sun
 
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      title={next === 'dark' ? t('theme.toDark') : t('theme.toLight')}
-      aria-label={next === 'dark' ? t('theme.toDark') : t('theme.toLight')}
-      className={cn(
-        'inline-flex items-center justify-center w-8 h-8 rounded-[8px] text-[var(--text-secondary)]',
-        'border border-[var(--border-light)] bg-[var(--bg-secondary)]',
-        'hover:text-[var(--text-primary)] hover:border-[var(--border)] transition-colors cursor-pointer',
-        className,
-      )}
-    >
-      {theme === 'dark' ? <Moon size={15} /> : <Sun size={15} />}
-    </button>
+    <div className={cn('relative inline-flex items-center text-[var(--text-secondary)]', className)}>
+      <Icon size={14} className="pointer-events-none absolute left-2.5" aria-hidden="true" />
+      <select
+        aria-label={t('theme.label')}
+        value={preference}
+        onChange={event => {
+          const next = event.target.value as ThemePreference
+          setPreference(next)
+          setTheme(next)
+        }}
+        className="h-8 cursor-pointer appearance-none rounded-lg border border-[var(--border-light)] bg-[var(--bg-secondary)] pl-8 pr-7 text-[12px] text-[var(--text-primary)] transition-colors hover:border-[var(--border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+      >
+        <option value="system">{t('theme.system')}</option>
+        <option value="light">{t('theme.light')}</option>
+        <option value="dark">{t('theme.dark')}</option>
+      </select>
+      <ChevronDown size={12} className="pointer-events-none absolute right-2" aria-hidden="true" />
+    </div>
   )
 }

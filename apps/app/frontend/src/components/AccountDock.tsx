@@ -75,17 +75,12 @@ export function AccountDock({
 
   if (!account) return null
 
-  // 「是否已订阅」必须反映真实可用态(见原 AccountStatusCard 注释):卡密被标记不可用
-  // 或会话失效时一律视为未订阅;否则才用「有未过期有效期」判定。
-  const hasActivePlan =
-    !cardUnusable &&
-    !account.sessionUnusable &&
-    !!account.planExpiry &&
-    account.planExpiry !== 'null' &&
-    new Date(account.planExpiry).getTime() > Date.now()
-  const unusable = cardUnusable || account.sessionUnusable
+  // 多订阅快照是授权依据，旧 planExpiry 不能代表全部订阅。
+  const hasActivePlan = !account.sessionUnusable && (account.subscriptions ?? []).some(sub =>
+    sub.status.toUpperCase() === 'ACTIVE' && (!sub.expiresAt || new Date(sub.expiresAt).getTime() > Date.now()))
+  const unusable = account.sessionUnusable || (cardUnusable && !hasActivePlan)
   const planLabel =
-    account.planName || (hasActivePlan ? t('account.activeMember') : t('account.noSubscription'))
+    hasActivePlan ? (account.planName || t('account.activeMember')) : t('account.noSubscription')
   const planExpiryLabel =
     account.planExpiry && account.planExpiry !== 'null' ? formatDate(account.planExpiry) : '—'
 

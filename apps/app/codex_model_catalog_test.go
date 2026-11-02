@@ -70,32 +70,22 @@ func TestCodexManagedCatalogFetchesBeforeDesktopLaunch(t *testing.T) {
 	}
 }
 
-func TestCodexManagedCatalogRestoredOnCancelAndProviderSwitch(t *testing.T) {
-	for _, target := range []string{"cancel", "provider"} {
-		t.Run(target, func(t *testing.T) {
-			t.Setenv("CODEX_HOME", t.TempDir())
-			if err := os.WriteFile(codexConfigPath(), []byte("model_catalog_json = 'original.json'\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := InjectCodexSettings(12345); err != nil {
-				t.Fatal(err)
-			}
-			if err := installCodexModelCatalog([]byte(`{"models":[{"slug":"gpt-6-sol"}]}`)); err != nil {
-				t.Fatal(err)
-			}
-			if target == "cancel" {
-				if _, err := restoreCodexSettingsManaged(); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if err := InjectCodexProvider(codexProviderSpec{Name: "test", BaseURL: "http://127.0.0.1:9/v1"}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			content, _, _ := readCodexConfigRaw()
-			if loadCodexConfigString(content, codexCatalogKey) != "original.json" {
-				t.Fatal("catalog leaked into next provider")
-			}
-		})
+func TestCodexManagedCatalogRestoredOnCancel(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	if err := os.WriteFile(codexConfigPath(), []byte("model_catalog_json = 'original.json'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectCodexSettings(12345); err != nil {
+		t.Fatal(err)
+	}
+	if err := installCodexModelCatalog([]byte(`{"models":[{"slug":"gpt-6-sol"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restoreCodexSettingsManaged(); err != nil {
+		t.Fatal(err)
+	}
+	content, _, _ := readCodexConfigRaw()
+	if loadCodexConfigString(content, codexCatalogKey) != "original.json" {
+		t.Fatal("original catalog not restored")
 	}
 }

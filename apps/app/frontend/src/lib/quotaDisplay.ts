@@ -20,3 +20,8 @@ export function quotaRemainingPercent(used: number, limit: number): number {
   const normalizedUsed = Math.max(0, Number(used) || 0)
   return Math.max(0, Math.min(100, Math.round((1 - normalizedUsed / normalizedLimit) * 100)))
 }
+
+/** Semantic quota colors, shared by all products. */
+export function quotaColor(percent: number) {
+  return percent < 15 ? 'var(--danger)' : percent < 40 ? 'var(--warning)' : 'var(--success)'
+}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const catalogHook = vi.hoisted(() => ({ value: null as any }));
@@ -27,16 +27,14 @@ describe("PlanCatalogPage quota reference", () => {
     };
   });
 
-  it("updates the suggested per-share pool when the operator edits oversell factor", async () => {
+  it("uses business tier names and preserves the configured allowance", async () => {
     render(<PlanCatalogPage />);
+    expect(screen.queryByText("Codex 中转")).not.toBeInTheDocument();
 
-    expect(await screen.findByText(/8 个基础份额 × 1\.5 倍超卖，共 12 份换算/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("超卖倍率"), { target: { value: "2" } });
+    expect(await screen.findByRole('button', { name: '高配版' })).toBeInTheDocument();
+    expect(screen.queryByText('母号额度池参考')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /max-20x/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Anthropic (Claude) 高配版 每份 5 小时美元额度')).toHaveValue(30);
 
-    await waitFor(() => {
-      expect(screen.getByText(/8 个基础份额 × 2 倍超卖，共 16 份换算/)).toBeInTheDocument();
-    });
-    const codex20xRow = screen.getByText("Codex Pro 20x").closest("tr");
-    expect(codex20xRow).toHaveTextContent("$218.75");
   });
 });

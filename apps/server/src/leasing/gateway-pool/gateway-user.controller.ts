@@ -13,7 +13,7 @@
  * 客户端:
  *   POST app/gateway/activate  本人激活「一键托管」,返回专用 key、母号 id、模型、额度
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Request, UseGuards } from "@nestjs/common";
 
 import { ConsoleJwtGuard } from "../../shared/auth/console-jwt.guard";
 import { Roles } from "../../shared/auth/roles.decorator";
@@ -41,6 +41,11 @@ export class GatewayUserAdminController {
       targetId,
       detail: { ...detail, ip: req.ip },
     });
+  }
+
+  @Get("eligibility")
+  eligibility(@Query("email") email: string) {
+    return this.users.allocationEligibility(email);
   }
 
   @Get("settings")
@@ -102,6 +107,14 @@ export class GatewayUserAdminController {
 @Controller("app/gateway")
 export class GatewayClientController {
   constructor(private readonly users: GatewayUserService) {}
+
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Post("summary")
+  @HttpCode(200)
+  summary(@CurrentCustomer() customer: CustomerUser) {
+    return this.users.summary(customer.customerId);
+  }
 
   @Public()
   @UseGuards(CustomerJwtGuard)

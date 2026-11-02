@@ -11,7 +11,7 @@ export function PromoSection() {
       title: t('promo.storeTitle'),
       desc: t('promo.storeDescFull'),
       cta: t('promo.storeCtaFull'),
-      link: 'https://bcai.store',
+      link: 'https://niuma996.icu/',
       tone: 'var(--primary)',
     },
     {
@@ -20,7 +20,7 @@ export function PromoSection() {
       title: t('promo.apiTitle'),
       desc: t('promo.apiDescFull'),
       cta: t('promo.apiCtaFull'),
-      link: 'https://bcai.online',
+      link: 'https://www.tk4me.com/',
       tone: 'var(--primary)',
     },
   ]

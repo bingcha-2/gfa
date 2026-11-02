@@ -73,7 +73,7 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
 
   it('Claude Code 报 FILE_PERM:原样展示后端诊断,不去开「App 管理」', async () => {
     setPlatform('MacIntel')
-    apiMocks.injectSelected.mockResolvedValueOnce(filePermMsg('Claude Code'))
+    apiMocks.hostClaudeGateway.mockResolvedValueOnce(filePermMsg('Claude Code'))
     render(<Harness target="claude" />)
     fireEvent.click(screen.getByRole('button', { name: 'go' }))
 
@@ -89,7 +89,7 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
 
   it('FILE_PERM 的指引不被外层括号截断(与后端 %v 包装的往返契约)', async () => {
     setPlatform('MacIntel')
-    apiMocks.injectSelected.mockResolvedValueOnce(filePermMsg('Claude Code'))
+    apiMocks.hostClaudeGateway.mockResolvedValueOnce(filePermMsg('Claude Code'))
     render(<Harness target="claude" />)
     fireEvent.click(screen.getByRole('button', { name: 'go' }))
 
@@ -114,7 +114,7 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
 
   it('Claude Code 普通失败:不引导去开「App 管理」,原样展示错误', async () => {
     setPlatform('MacIntel')
-    apiMocks.injectSelected.mockResolvedValueOnce('Claude Code: 接管失败 (序列化 settings.json 失败)')
+    apiMocks.hostClaudeGateway.mockResolvedValueOnce('Claude Code: 接管失败 (序列化 settings.json 失败)')
     render(<Harness target="claude" />)
     fireEvent.click(screen.getByRole('button', { name: 'go' }))
 
@@ -164,7 +164,7 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
 
   it('弹窗打开时 busyLabel 已清空,遮罩不会残留「正在接管…」文案', async () => {
     setPlatform('MacIntel')
-    apiMocks.injectSelected.mockResolvedValueOnce(filePermMsg('Claude Code'))
+    apiMocks.hostClaudeGateway.mockResolvedValueOnce(filePermMsg('Claude Code'))
     render(<Harness target="claude" />)
     fireEvent.click(screen.getByRole('button', { name: 'go' }))
 

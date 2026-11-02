@@ -27,11 +27,11 @@ function TrendTooltip({ active, payload, label }: any) {
   )
 }
 
-export function UsageTrendChart() {
+export function UsageTrendChart({ history, utc = false }: { utc?: boolean; history?: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[] } = {}) {
   const t = useT()
   const { dailyHistory, hourlyHistory, chartMode } = useAppStore()
   // 默认档:只有今天有数据时落在「日」,否则「周」(对齐旧版 chartMode 自动判定)
-  const [range, setRange] = useState<Range>(chartMode === 'hourly' ? 'day' : 'week')
+  const [range, setRange] = useState<Range>(history ? 'week' : chartMode === 'hourly' ? 'day' : 'week')
 
   const RANGES: { key: Range; label: string }[] = [
     { key: 'day', label: t('trend.rangeDay') },
@@ -42,7 +42,7 @@ export function UsageTrendChart() {
 
   const rows = range === 'day'
     ? hourlyHistory.map((h) => ({ label: h.hour, input: h.inputTokens, output: h.outputTokens, cacheWrite: h.cacheWriteTokens || 0, cacheRead: h.cachedTokens || 0 }))
-    : [...dailyHistory].slice(0, DAYS[range]).reverse().map((d) => ({ label: d.date.slice(5), input: d.inputTokens, output: d.outputTokens, cacheWrite: d.cacheWriteTokens || 0, cacheRead: d.cachedTokens || 0 }))
+    : [...(history ?? dailyHistory)].slice(0, DAYS[range]).reverse().map((d) => ({ label: d.date.slice(5), input: d.inputTokens, output: d.outputTokens, cacheWrite: d.cacheWriteTokens || 0, cacheRead: d.cachedTokens || 0 }))
   const hasData = rows.some((r) => r.input + r.output + r.cacheWrite + r.cacheRead > 0)
   // 标签密度:小时(24)隔 3 个、月(30)隔 2 个,其余全显
   const interval = range === 'day' ? 3 : range === 'month' ? 2 : 0
@@ -50,9 +50,9 @@ export function UsageTrendChart() {
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle>{t('trend.title', { range: t(TITLE_KEY[range]) })}</CardTitle>
+        <CardTitle>{t('trend.title', { range: t(TITLE_KEY[range]) })}{utc && <span className="ml-2 text-[10px] font-normal text-[var(--text-muted)]">UTC</span>}</CardTitle>
         <div className="flex gap-0.5 rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] p-0.5">
-          {RANGES.map((r) => (
+          {RANGES.filter(r => !history || r.key !== 'day').map((r) => (
             <button
               key={r.key}
               type="button"

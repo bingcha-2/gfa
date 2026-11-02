@@ -49,7 +49,7 @@ type UpstreamSettings = { baseUrl: string; hasOpKey: boolean; opKeyHint: string 
 const STATUS_LABEL: Record<MotherAccount["status"], { text: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   pending: { text: "待开 Key", variant: "secondary" },
   ready: { text: "正常", variant: "default" },
-  key_lost: { text: "Key 丢失,需上游轮换", variant: "destructive" },
+  key_lost: { text: "Key 不可用", variant: "destructive" },
   error: { text: "异常", variant: "destructive" },
 };
 
@@ -58,8 +58,9 @@ function pct(v: number | null | undefined) {
   return typeof v === "number" ? `${(v * 100).toFixed(1)}%` : "未知";
 }
 
-function windowCell(w?: WindowStat) {
-  if (!w) return "—";
+function windowCell(w?: WindowStat, noKeys = false) {
+  if (noKeys) return "未查到关联 Key";
+  if (!w) return "未获取窗口数据";
   const stale = w.freshness && w.freshness !== "fresh" ? `(${w.freshness})` : "";
   const reset = typeof w.resetAt === "number" ? ` · 重置 ${new Date(w.resetAt).toLocaleString()}` : "";
   return `剩余 ${pct(w.remaining)}${stale}${reset}`;
@@ -242,7 +243,7 @@ export default function GatewayAccountsPage() {
                   <TableHead>账号</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>调用地址</TableHead>
-                  <TableHead>份数(已分配/总)</TableHead>
+                  <TableHead>份数(已分配/参考总份数)</TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>Key</TableHead>
                   <TableHead>5 小时窗口</TableHead>
@@ -269,11 +270,12 @@ export default function GatewayAccountsPage() {
                         <button className="underline-offset-2 hover:underline" onClick={() => editShares(r)}>
                           {r.allocatedShares}/{r.totalShares}({r.userCount} 人)
                         </button>
+                        {r.allocatedShares > r.totalShares && <Badge variant="secondary" className="ml-2">超配 {r.allocatedShares - r.totalShares} 份</Badge>}
                       </TableCell>
                       <TableCell className="text-xs" title={r.models.join("\n")}>{r.models.length} 个</TableCell>
                       <TableCell className="font-mono text-xs">{r.hasKey ? r.keyHint : "—"}</TableCell>
-                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["5h"])}</TableCell>
-                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["7d"])}</TableCell>
+                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["5h"], r.usage?.length === 0)}</TableCell>
+                      <TableCell className="text-xs">{windowCell(u?.share?.windows?.["7d"], r.usage?.length === 0)}</TableCell>
                       <TableCell><Switch checked={r.enabled} onCheckedChange={(v) => toggle(r, v)} /></TableCell>
                       <TableCell>
                         <Button variant="ghost" size="icon" onClick={() => remove(r)} aria-label="删除">

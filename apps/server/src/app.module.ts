@@ -1,3 +1,4 @@
+import { PricingModule } from "./shared/pricing/pricing.module";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
@@ -82,6 +83,7 @@ import { SupportAgentModule } from "./leasing/account/support-agent/support-agen
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    PricingModule,
     AuthModule,
     AuditLogModule,
     AccountModule,

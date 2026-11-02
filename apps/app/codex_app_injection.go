@@ -92,7 +92,7 @@ func buildCodexAppLaunchPlan(skinEnabled, brandingEnabled bool, reserve func() (
 	if !skinEnabled && !brandingEnabled {
 		return codexAppLaunchPlan{}, nil
 	}
-	port := codexSkinChannelPort
+	port := codexAppDefaultDebugPort
 	if !skinEnabled {
 		var err error
 		port, err = reserve()
@@ -155,7 +155,7 @@ func codexAppLaunchEnvironment(plan codexAppLaunchPlan, base []string) []string 
 func prepareCodexAppLaunchPlan() codexAppLaunchPlan {
 	brandingEnabled := currentCodexModelProvider() == codexProviderID
 	plan, err := buildCodexAppLaunchPlan(
-		codexSkinChannelEnabled(),
+		false,
 		brandingEnabled,
 		reserveCodexAppInjectionPort,
 	)
@@ -573,3 +573,5 @@ func codexRemoteBrandingScript(quota codexAppQuotaView) string {
 		"__WEEKLY__", jsonScriptValue(quota.Weekly),
 	).Replace(template)
 }
+
+const codexAppDefaultDebugPort = 9335

@@ -1,38 +1,50 @@
-/**
- * 主题(明/暗)管理。Wails 桌面端无 next-themes,这里用最小实现:
- *   • 深色优先:读不到本地偏好(新用户)时默认深色,与官网 / 用户中心一致;之后记住选择。
- *   • 通过给 <html> 加/去 `.dark` 类切换(Tailwind darkMode: 'class')。
- *   • applyTheme 在渲染前调用(main.tsx),避免首帧闪烁。
- */
-
+/** System appearance is the default; explicit light/dark choices are optional. */
 export type Theme = 'light' | 'dark'
+export type ThemePreference = Theme | 'system'
 
-const STORAGE_KEY = 'bcai_theme'
+// The old key defaulted to dark and cannot distinguish an explicit user choice
+// from a value written on mount. Start those installations in system mode too.
+const STORAGE_KEY = 'bcai_theme_preference'
+let stopListening: (() => void) | undefined
 
-/** 读取生效主题:用户已选 → 用之;否则深色优先(与 web 端统一品牌观感)。 */
-export function getTheme(): Theme {
+export function getThemePreference(): ThemePreference {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved === 'light' || saved === 'dark') return saved
-  } catch { /* localStorage 不可用时降级到深色 */ }
-  return 'dark'
+    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved
+  } catch { /* System appearance also works without persistent storage. */ }
+  return 'system'
 }
 
-/** 把主题落到 DOM(加/去 .dark)。 */
+export function getTheme(): Theme {
+  const preference = getThemePreference()
+  if (preference !== 'system') return preference
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 export function applyTheme(theme: Theme): void {
-  const root = document.documentElement
-  root.classList.toggle('dark', theme === 'dark')
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.style.colorScheme = theme
 }
 
-/** 持久化并应用。 */
-export function setTheme(theme: Theme): void {
-  try { localStorage.setItem(STORAGE_KEY, theme) } catch { /* ignore */ }
-  applyTheme(theme)
+export function setTheme(preference: ThemePreference): void {
+  try { localStorage.setItem(STORAGE_KEY, preference) } catch { /* Apply this choice for the current page. */ }
+  applyTheme(preference === 'system'
+    ? (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : preference)
 }
 
-/** 初始化:渲染前调用一次。 */
+/** Apply before rendering, then follow OS changes without requiring a restart. */
 export function initTheme(): Theme {
-  const t = getTheme()
-  applyTheme(t)
-  return t
+  stopListening?.()
+  const theme = getTheme()
+  applyTheme(theme)
+  if (typeof window.matchMedia === 'function') {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => {
+      if (getThemePreference() === 'system') applyTheme(media.matches ? 'dark' : 'light')
+    }
+    media.addEventListener('change', onChange)
+    stopListening = () => media.removeEventListener('change', onChange)
+  }
+  return theme
 }

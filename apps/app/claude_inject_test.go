@@ -454,7 +454,7 @@ func TestInjectClearsTopLevelModelAndRestores(t *testing.T) {
 }
 
 // 桌面端「只清模型」:删 model 字段 + 模型 env 键,但不注入 BASE_URL;保留无关 env;Restore 还原。
-func TestCleanClaudeModelConfigClearsAndRestores(t *testing.T) {
+func TestLegacyDesktopModelBackupClearsAndRestores(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 	writeSeedSettings(t, dir, map[string]interface{}{
@@ -462,8 +462,8 @@ func TestCleanClaudeModelConfigClearsAndRestores(t *testing.T) {
 		"env":   map[string]interface{}{"ANTHROPIC_MODEL": "x", "MY_VAR": "keep"},
 	})
 
-	if err := CleanClaudeModelConfig(); err != nil {
-		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	if err := seedLegacyDesktopModelBackup(); err != nil {
+		t.Fatalf("seedLegacyDesktopModelBackup: %v", err)
 	}
 	settings := readClaudeSettings(t)
 	if _, ok := settings["model"]; ok {
@@ -502,8 +502,8 @@ func TestDesktopRestoreSkipsWhileFullInjectActive(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 	writeSeedSettings(t, dir, map[string]interface{}{"model": "opus"})
 
-	if err := CleanClaudeModelConfig(); err != nil {
-		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	if err := seedLegacyDesktopModelBackup(); err != nil {
+		t.Fatalf("seedLegacyDesktopModelBackup: %v", err)
 	}
 	if err := InjectClaudeSettings(9200); err != nil {
 		t.Fatalf("InjectClaudeSettings: %v", err)
@@ -548,8 +548,8 @@ func TestCLIFirstThenDesktopCoexistRestoresOriginal(t *testing.T) {
 		t.Fatalf("InjectClaudeSettings: %v", err)
 	}
 	// ② 桌面单清:CLI 已生效,当前就是最小态(无模型)→ 保持最小态不动。
-	if err := CleanClaudeModelConfig(); err != nil {
-		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	if err := seedLegacyDesktopModelBackup(); err != nil {
+		t.Fatalf("seedLegacyDesktopModelBackup: %v", err)
 	}
 	settings := readClaudeSettings(t)
 	if _, ok := settings["model"]; ok {
@@ -592,4 +592,27 @@ func TestCLIFirstThenDesktopCoexistRestoresOriginal(t *testing.T) {
 	if _, err := os.Stat(claudeBackupPath()); !os.IsNotExist(err) {
 		t.Fatal("全部取消后备份文件应被删除")
 	}
+}
+
+// Test-only fixture for backups produced by older releases.
+func seedLegacyDesktopModelBackup() error {
+	claudeInjectMu.Lock()
+	defer claudeInjectMu.Unlock()
+
+	bk := readClaudeBackup()
+	if bk == nil {
+		bk = &claudeBackup{}
+	}
+	captureClaudeOriginal(bk)
+	bk.DesktopActive = true
+	writeClaudeBackup(bk)
+
+	if bk.CLIActive {
+		return nil // 完整接管已把文件隔离成最小态(无模型),无需再清
+	}
+	if err := restoreClaudeOriginalFile(bk, true); err != nil {
+		return err
+	}
+	Log("[claude-inject] 已清理用户自定义模型配置(顶层 model + 模型 env 键): %s", claudeSettingsPath())
+	return nil
 }

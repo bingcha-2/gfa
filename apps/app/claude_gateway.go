@@ -272,20 +272,15 @@ func IsClaudeGatewayInjected() bool {
 // HostClaudeGateway 是「一键托管」(网关模式)入口:激活 → 写配置。
 // 不检查出口代理、不要求 TUN;只要求已登录。
 func (a *App) HostClaudeGateway() (string, error) {
-	cfg := LoadConfig()
-	if err := validateTakeoverPrereqs(cfg); err != nil {
+	act, err := activateClaudeGateway()
+	if err != nil {
 		return "", err
 	}
-	body, status, err := doAuthPostWithBearer("/app/gateway/activate", struct{}{}, cfg.UserToken)
-	if err != nil {
-		return "", fmt.Errorf("连接服务器失败: %v", err)
+	if err := restoreLegacyHostEnvironment(); err != nil {
+		return "", err
 	}
-	if status != 200 && status != 201 {
-		return "", fmt.Errorf("%s", gatewayActivateError(body, status))
-	}
-	var act GatewayActivation
-	if err := json.Unmarshal(body, &act); err != nil || act.Key == "" {
-		return "", fmt.Errorf("服务器返回的托管信息无效")
+	if err := restoreLegacySandboxWrapper(); err != nil {
+		return "", err
 	}
 	if err := InjectClaudeGateway(gatewayClaudeBaseURL(), act.Key, act.Models); err != nil {
 		return "", takeoverErrorForUser(err)
@@ -324,4 +319,24 @@ func gatewayActivateError(body []byte, status int) string {
 		return "登录状态已失效,请重新登录"
 	}
 	return fmt.Sprintf("托管失败(HTTP %d)", status)
+}
+
+// activateClaudeGateway shares the server-issued user key and mother-account quota across CLI and Desktop.
+func activateClaudeGateway() (*GatewayActivation, error) {
+	cfg := LoadConfig()
+	if err := validateTakeoverPrereqs(cfg); err != nil {
+		return nil, err
+	}
+	body, status, err := doAuthPostWithBearer("/app/gateway/activate", struct{}{}, cfg.UserToken)
+	if err != nil {
+		return nil, fmt.Errorf("连接服务器失败: %v", err)
+	}
+	if status != 200 && status != 201 {
+		return nil, fmt.Errorf("%s", gatewayActivateError(body, status))
+	}
+	var act GatewayActivation
+	if err := json.Unmarshal(body, &act); err != nil || act.Key == "" {
+		return nil, fmt.Errorf("服务器返回的托管信息无效")
+	}
+	return &act, nil
 }

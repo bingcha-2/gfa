@@ -1,13 +1,6 @@
 "use client";
 
-// 套餐配置页等级下拉取数 hook。
-//
-// 给定产品集合,逐产品拉 GET /api/console/account-levels?product=xxx(ConsoleJwt,cookie
-// 自动带,经 next.config 的 /api/console/* rewrite 直达 NestJS),返回该产品账号池里实际
-// 存在的 planType 去重列表。合并成 { product: levels[] } 供 ProductsSection 的等级选择用 ——
-// 账号池里没有的等级选不了,使 console 档名 ↔ account.planType ↔ 绑定匹配天然一致。
-//
-// 容错:任一产品请求失败 → 该产品等级落空数组(不阻塞整页、不抛错)。
+// 读取母号产品的库存等级，作为配置页提示；查询失败不等于没有库存。
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -18,16 +11,16 @@ export interface UseAccountLevelsResult {
   loading: boolean;
 }
 
-async function fetchLevels(product: string): Promise<string[]> {
+async function fetchLevels(product: string): Promise<string[] | null> {
   try {
     const res = await fetch(`/api/console/account-levels?product=${encodeURIComponent(product)}`, {
       cache: "no-store",
     });
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const data = (await res.json()) as { levels?: unknown };
-    return Array.isArray(data.levels) ? data.levels.map((l) => String(l)) : [];
+    return Array.isArray(data.levels) ? data.levels.map((l) => String(l)) : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -50,7 +43,7 @@ export function useAccountLevels(products: string[]): UseAccountLevelsResult {
     Promise.all(list.map(async (product) => [product, await fetchLevels(product)] as const))
       .then((entries) => {
         if (cancelled) return;
-        setLevels(Object.fromEntries(entries));
+        setLevels(Object.fromEntries(entries.filter((entry): entry is readonly [string, string[]] => entry[1] !== null)));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

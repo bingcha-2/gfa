@@ -62,20 +62,16 @@ func (l *Leaser) RefreshQuotaInBackground(card, deviceId, upstreamProxy string) 
 	l.preheatBoundProducts(card, deviceId, upstreamProxy, true, false)
 }
 
-// preheatBoundProducts 预热独立的 Codex/Claude 租号路径。Codex随后真实查询上游额度；
-// Claude仅在激活或手动刷新时同步GFA已有快照，后台定时任务不会为此空租Token。
+// preheatBoundProducts 刷新仍使用租号路径的 Codex 额度。
 func (l *Leaser) preheatBoundProducts(card, deviceId, upstreamProxy string, force, includeClaudeSnapshot bool) {
 	// 该卡若开通 codex,刷新 codex 5h/周窗口 + bucket(独立 leaser / 独立端点)。
-	if cardCoversProduct(l.CardProducts(), "codex") {
+	if l.canRefreshProduct("codex") {
 		if lease, err := GetCodexLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy); err == nil {
 			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease, force)
 		}
 	}
-	// 该卡若开通 anthropic,预热一次 claude 模型租号,让 5h 血条在首个 /v1/messages 之前
-	// 就有数据(服务端把 claudeWindows + accountBuckets 随 lease 带回)。计量在代理请求时进行。
-	if includeClaudeSnapshot && cardCoversProduct(l.CardProducts(), "anthropic") {
-		_, _ = GetClaudeLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy)
-	}
+	// Claude CLI/Desktop 使用服务端网关，不再租用旧 OAuth 账号。
+
 }
 
 // markCardUnusable 标记卡密不可用并停掉自动租号(不再每 15s 刷 Invalid)。

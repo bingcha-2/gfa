@@ -22,7 +22,6 @@ export const zhTW: DeepPartialDict = {
   nav: {
     home: '遠程',
     takeover: '接管中心',
-    faq: '使用指南',
     logs: '日誌',
     settings: '設定',
     expandSidebar: '展開側邊欄',
@@ -33,6 +32,10 @@ export const zhTW: DeepPartialDict = {
   },
 
   theme: {
+    label: '外觀主題',
+    system: '跟隨系統',
+    light: '淺色',
+    dark: '深色',
     toDark: '切換到深色',
     toLight: '切換到淺色',
   },
@@ -118,16 +121,16 @@ export const zhTW: DeepPartialDict = {
 
   promo: {
     storeTitle: '冰茶商店',
-    storeDescCard: 'Codex Plus · Cursor · Windsurf 一鍵代理',
+    storeDescCard: 'Codex · Gemini · Claude · 驗證碼等',
     storeCta: '選購',
     apiTitle: '冰茶 API',
-    apiDescCard: 'Claude / Gemini / GPT 低價呼叫',
+    apiDescCard: '摻水老闆直接剁頭',
     apiCta: '了解',
     hotTag: '熱賣',
     newTag: 'NEW',
-    storeDescFull: 'Codex Plus · Cursor Pro · Windsurf\n一鍵代理全套組合,9.9 元起',
+    storeDescFull: 'Codex · Gemini · Claude · 驗證碼等',
     storeCtaFull: '立即選購',
-    apiDescFull: 'Claude / Gemini / GPT 低價呼叫\n企業級穩定,依用量計費',
+    apiDescFull: '摻水老闆直接剁頭',
     apiCtaFull: '了解更多',
   },
 
@@ -185,11 +188,6 @@ export const zhTW: DeepPartialDict = {
     stopping: '正在停止接管 {name}...',
     injectingWait: '正在接管 {name} · 等待生效...',
     stoppingWait: '正在停止接管 {name} · 等待生效...',
-    caDegradedTitle: '接管成功 · 憑證已降級安裝',
-    caFailedTitle: '推理已接管 · Max 待啟用',
-    caRetakeBtn: '重新接管 · 裝憑證',
-    storeClaudeTitle: '⚠ 商店版無法接管',
-    storeClaudeBtn: '下載獨立版',
     permissionTitle: '需要系統權限',
     permissionBody: '{message}\n\n請在「系統設定 → 隱私權與安全性 → App 管理」中開啟冰茶AI 的權限,然後重試。',
     // 檔案屬主/權限位問題,與系統隱私權限無關:內文直接用後端診斷出的可執行指引。
@@ -201,7 +199,7 @@ export const zhTW: DeepPartialDict = {
     needCardTitle: '需要登入帳號',
     needCardBody: '{product} 接管需要登入帳號,請先在登入頁登入後再開啟。',
     desktopConfirmTitle: '接管 Claude Desktop',
-    desktopConfirmBody: '⚠ Chat 和 Cowork 無法接管使用,請使用桌面版 Code 功能!\n\n接管會重啟 Claude 桌面版 —— 這會中斷目前正在執行的 Cowork 工作階段。是否繼續?',
+    desktopConfirmBody: '切換會重啟 Claude Desktop，並中斷目前工作階段。3P 模式使用獨立的本機記錄；原帳號歷史不會遷移。是否繼續？',
     hubPermission1: '接管 Hub 需修改應用程式檔案,需授予 ',
     hubPermission2: 'App 管理',
     hubPermission3: ' 權限。',
@@ -263,23 +261,6 @@ export const zhTW: DeepPartialDict = {
     repairAuthFailed: '修復 Codex 登入狀態失敗：{error}',
   },
 
-  faq: {
-    subtitle: '常見問題解答,協助你快速上手',
-    searchPlaceholder: '搜尋問題...',
-    loadFailed: '無法載入常見問題,請檢查網路連線',
-    noMatch: '沒有找到符合的問題',
-    empty: '暫無常見問題',
-    noAnswer: '沒有找到答案?',
-    wechatContact: '加微信 {wechat} 聯絡客服',
-    groupContact: '加入售後群組聯絡客服',
-    viewFull: '查看完整版',
-    githubTitle: '問題回饋與協助',
-    githubDesc: '前往使用者中心提交問題、建議或聯絡客服',
-    githubCta: '前往使用者中心',
-    supportTitle: '線上客服',
-    supportDesc: '遇到額度、登入、訂閱或客戶端問題，直接和 AI 助手聊。',
-    supportCta: '立即諮詢',
-  },
 
   settings: {
     pathsTitle: '安裝路徑',

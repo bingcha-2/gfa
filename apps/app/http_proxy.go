@@ -132,8 +132,8 @@ func bindProxyListener(preferred int) (net.Listener, int, error) {
 }
 
 // reinjectActiveTargets 在 HTTP 代理退到非首选端口后,把【已接管且仍指向旧端口】的集成
-// 重新指到新端口(否则它们的请求仍发往被占的旧端口)。best-effort,逐个容错;不含 mitm 类
-// 目标(走独立 48801,与此端口无关)。
+// 重新指到新端口(否则它们的请求仍发往被占的旧端口)。best-effort,逐个容错;不含远程网关配置
+// 目标(直连服务端,与本地监听端口无关)。
 func reinjectActiveTargets(oldPort, newPort int) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -142,7 +142,7 @@ func reinjectActiveTargets(oldPort, newPort int) {
 	}()
 	var moved []string
 	for _, t := range takeoverTargets {
-		if t.InjectionType() == "mitm" || !t.IsInjected(oldPort) {
+		if t.InjectionType() == "gateway" || (t.Key() == "claude" && IsClaudeGatewayInjected()) || !t.IsInjected(oldPort) {
 			continue
 		}
 		if _, err := t.Inject(newPort); err != nil {

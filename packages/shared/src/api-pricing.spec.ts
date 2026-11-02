@@ -89,29 +89,18 @@ describe("API-equivalent pricing", () => {
       contextTokens: 300_000,
       inputTokens: 1_000_000,
     }))).toMatchObject({
-      // Flagship (gpt-5.6-sol) Priority rate, not another model's higher rate.
-      usd: 10,
+      // Missing tier is unpriced, never borrowed from another model.
+      usd: 0,
       contextTier: "unknown",
       quality: "unsupported-context",
     });
   });
 
-  it("prices an unknown model at the flagship rate, not the highest active legacy rate", () => {
-    // Unknown Anthropic id → flagship opus-4-8 ($5 in / $25 out), NOT the still-
-    // active legacy opus-4-1 ($15/$75) that the old max-across-active fallback used.
-    expect(calculateApiValue(usage({
-      provider: "anthropic",
-      modelId: "claude-opus-9-preview",
-      inputTokens: 1_000_000,
-    }))).toMatchObject({ usd: 5, quality: "conservative-fallback" });
-    expect(calculateApiValue(usage({
-      provider: "anthropic",
-      modelId: "claude-opus-9-preview",
-      outputTokens: 1_000_000,
-    }))).toMatchObject({ usd: 25, quality: "conservative-fallback" });
-    // Unknown Codex id → flagship gpt-5.6-sol short ($5 in / $30 out).
-    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", inputTokens: 1_000_000 })).usd).toBe(5);
-    expect(calculateApiValue(usage({ modelId: "gpt-6-codex", outputTokens: 1_000_000 })).usd).toBe(30);
+  it("leaves unknown models unpriced", () => {
+    for (const provider of ["anthropic", "codex"] as const) {
+      expect(calculateApiValue(usage({provider, modelId:"unknown", inputTokens:1e6})))
+        .toMatchObject({usd:0, quality:"conservative-fallback"});
+    }
   });
 
   it("marks an unpublished model/mode pairing as conservative", () => {
@@ -187,7 +176,7 @@ describe("API-equivalent pricing", () => {
 
   it("marks unknown models instead of presenting fallback as exact", () => {
     const value = calculateApiValue(usage({ modelId: "gpt-future", inputTokens: 1_000_000 }));
-    expect(value.usd).toBeGreaterThan(0);
+    expect(value.usd).toBe(0);
     expect(value.quality).toBe("conservative-fallback");
   });
 });

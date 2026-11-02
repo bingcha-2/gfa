@@ -34,10 +34,7 @@ import (
 // settings 里的同名键挡不住 shell;唯有写「空串」才能经 Object.assign 覆盖掉 shell 值。
 // 空串被 claude 视作未设置 → 强制走哨兵 AUTH_TOKEN→代理链路,不进 API-key / Foundry 模式。
 //
-// 【与桌面 MITM 接管共存】桌面端(claudeDesktopTarget)走 MITM,不注入 BASE_URL,但其 spawn
-// 的 Code 子进程仍读同一份 settings.json,故用 CleanClaudeModelConfig 单清模型配置。两条路径
-// 共用一份备份 + CLIActive/DesktopActive 双层标志协调:谁先动谁捕获「真原文件」,最后一个取消
-// 接管者才整份还原真原文件并删备份;中途取消的一方按对方是否仍在生效决定写回何种态。
+// DesktopActive 仅用于升级旧版本时恢复共享备份。原生 Desktop 3P 不再修改 CLI 设置。
 
 const (
 	claudeBaseURLKey   = "ANTHROPIC_BASE_URL"
@@ -107,7 +104,7 @@ type claudeBackup struct {
 	HadFile  bool   `json:"hadFile"`
 	Original string `json:"original,omitempty"`
 	// CLIActive=Claude Code 完整接管(InjectClaudeSettings)是否生效;
-	// DesktopActive=桌面 MITM 单清模型(CleanClaudeModelConfig)是否生效。
+	// DesktopActive=旧版本桌面单清模型是否仍待恢复。
 	CLIActive     bool `json:"cliActive"`
 	DesktopActive bool `json:"desktopActive"`
 
@@ -165,9 +162,6 @@ func minimalClaudeSettings(proxyPort int) map[string]interface{} {
 	for _, k := range claudeFoundryKeys {
 		env[k] = ""
 	}
-	if tz := hostProtectionProcessTimezone(); tz != "" {
-		env[claudeTimezoneKey] = tz
-	}
 	return map[string]interface{}{"env": env}
 }
 
@@ -216,9 +210,6 @@ func captureClaudeOriginal(bk *claudeBackup) {
 		deleteIfEmptyString(env, claudeApiKeyKey)
 		for _, k := range claudeFoundryKeys {
 			deleteIfEmptyString(env, k)
-		}
-		if tz, _ := env[claudeTimezoneKey].(string); tz != "" && tz == hostProtectionProcessTimezone() {
-			delete(env, claudeTimezoneKey)
 		}
 		if len(env) == 0 {
 			delete(m, "env")
@@ -415,32 +406,6 @@ func writeClaudeBackup(bk *claudeBackup) {
 	}
 }
 
-// CleanClaudeModelConfig 供桌面端 MITM 接管调用:桌面端硬覆盖 ANTHROPIC_BASE_URL,env 注入
-// 对它无效,但其 spawn 的 Code 子进程仍读 settings.json 的模型配置 —— 留着会把别名 / 号池不认
-// 的 id 经 MITM 原样打到公开 api.anthropic.com → 404。故单清模型配置,不注入 BASE_URL。
-// 若 Claude Code 完整接管已生效(当前已是 GFA 最小文件、本就无模型),则无需再动。
-func CleanClaudeModelConfig() error {
-	claudeInjectMu.Lock()
-	defer claudeInjectMu.Unlock()
-
-	bk := readClaudeBackup()
-	if bk == nil {
-		bk = &claudeBackup{}
-	}
-	captureClaudeOriginal(bk)
-	bk.DesktopActive = true
-	writeClaudeBackup(bk)
-
-	if bk.CLIActive {
-		return nil // 完整接管已把文件隔离成最小态(无模型),无需再清
-	}
-	if err := restoreClaudeOriginalFile(bk, true); err != nil {
-		return err
-	}
-	Log("[claude-inject] 已清理用户自定义模型配置(顶层 model + 模型 env 键): %s", claudeSettingsPath())
-	return nil
-}
-
 // RestoreClaudeModelConfig 取消桌面 MITM 接管。若 Claude Code 完整接管仍生效,文件应保持隔离
 // 态、模型保持清除 —— 只落标志、保留备份;否则整份还原真原文件并删备份。
 func RestoreClaudeModelConfig() error {
@@ -448,9 +413,11 @@ func RestoreClaudeModelConfig() error {
 	defer claudeInjectMu.Unlock()
 
 	bk := readClaudeBackup()
-	if bk == nil || !bk.OriginalCaptured {
-		_ = os.Remove(claudeBackupPath())
+	if bk == nil || !bk.DesktopActive {
 		return nil
+	}
+	if !bk.OriginalCaptured {
+		return fmt.Errorf("旧 Desktop 模型备份缺少原配置，停止恢复")
 	}
 	bk.DesktopActive = false
 	if bk.CLIActive {

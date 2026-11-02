@@ -1,10 +1,11 @@
 "use client";
 
+import { catalogLevelLabel } from "@/lib/account/catalog-level-label";
+
 import { Separator } from "@/components/ui/separator";
 
 import { NumberInput, YuanInput } from "./form-bits";
 import { productLabel } from "./catalog-defaults";
-import { QuotaReferencePanel } from "./quota-reference-panel";
 import type {
   BindPricingForm,
   ProductRow,
@@ -27,7 +28,6 @@ export interface PricingSectionProps {
 export function PricingSection({
   products,
   bind,
-  oversellFactor,
   onBindChange,
   disabled,
 }: PricingSectionProps) {
@@ -35,7 +35,6 @@ export function PricingSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <QuotaReferencePanel oversellFactor={oversellFactor} />
 
       <PriceGroup title="等级价格与每份美元额度">
         <p className="text-xs text-muted-foreground">
@@ -56,12 +55,12 @@ export function PricingSection({
                   <div className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem_7rem] gap-2 text-[11px] text-muted-foreground">
                     <span>等级</span>
                     <span>价格</span>
-                    <span>每份 · 5 小时</span>
+                    <span title="填 0 关闭 GFA 的 5 小时限制；不改变上游账号的限制">每份 · 5 小时（0 关闭）</span>
                     <span>每份 · 周</span>
                   </div>
                   {row.levels.map((level) => (
                     <div key={level} className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem_7rem] items-center gap-2">
-                      <span className="font-mono text-xs">{level}</span>
+                      <span className="font-mono text-xs">{catalogLevelLabel(row.product, level)}</span>
                       <YuanInput
                         className="w-28"
                         value={bind.levelPrice[row.product]?.[level] ?? ""}
@@ -78,7 +77,7 @@ export function PricingSection({
                           })
                         }
                         disabled={disabled}
-                        aria-label={`绑定 ${productLabel(row.product)} ${level} 价格`}
+                        aria-label={`绑定 ${productLabel(row.product)} ${catalogLevelLabel(row.product, level)} 价格`}
                       />
                       {supportsUsdQuota(row.product) ? (
                         <>
@@ -88,7 +87,7 @@ export function PricingSection({
                             onChange={(v) => onBindChange(updateUsdQuota(bind, row.product, level, "fiveHour", v))}
                             disabled={disabled}
                             suffix="$ / 5h"
-                            aria-label={`${productLabel(row.product)} ${level} 每份 5 小时美元额度`}
+                            aria-label={`${productLabel(row.product)} ${catalogLevelLabel(row.product, level)} 每份 5 小时美元额度`}
                           />
                           <NumberInput
                             className="w-28"
@@ -96,7 +95,7 @@ export function PricingSection({
                             onChange={(v) => onBindChange(updateUsdQuota(bind, row.product, level, "weekly", v))}
                             disabled={disabled}
                             suffix="$ / 周"
-                            aria-label={`${productLabel(row.product)} ${level} 每份每周美元额度`}
+                            aria-label={`${productLabel(row.product)} ${catalogLevelLabel(row.product, level)} 每份每周美元额度`}
                           />
                         </>
                       ) : (

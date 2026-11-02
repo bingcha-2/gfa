@@ -101,7 +101,7 @@ export interface UpdateStatus {
 }
 
 // ===== Pages =====
-export type PageId = 'takeover' | 'remote' | 'logs' | 'faq' | 'settings' | 'local_codex' | 'local_antigravity'
+export type PageId = 'takeover' | 'remote' | 'logs' | 'settings'
 
 // ===== Log =====
 export interface ParsedLog {

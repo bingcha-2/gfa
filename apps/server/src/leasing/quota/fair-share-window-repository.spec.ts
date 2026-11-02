@@ -97,6 +97,8 @@ describe("FairShareWindowRepository with SQLite", () => {
     `);
     await prisma.$executeRawUnsafe(`
       CREATE TABLE QuotaReportReceipt (
+        pricingVersion TEXT NOT NULL DEFAULT 'legacy',
+        apiValueUsd REAL NOT NULL DEFAULT 0,
         provider TEXT NOT NULL,
         reportId TEXT NOT NULL,
         accountId INTEGER NOT NULL,
@@ -390,6 +392,7 @@ describe("FairShareWindowRepository with SQLite", () => {
         reportId: "report-accounting", at: new Date(T + 1234), accessKeyId: "A", accountEmail: "a@x.com",
         customerId: "c1", modelKey: "gpt-5.6-luna", bucket: "codex-gpt", status: 200,
         inputTokens: 10, outputTokens: 2, cachedInputTokens: 3, cacheCreationTokens: 0,
+        apiValueUsd: .00123, apiPriced: true,
         rawTotalTokens: 15, totalTokens: 12, reverseProxy: false, serviceTier: "standard",
       }],
     };
@@ -397,7 +400,8 @@ describe("FairShareWindowRepository with SQLite", () => {
     await repository.checkpointBatch([checkpoint]);
     const rows = await prisma.cardUsageHourly.findMany();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 });
+    expect(rows[0]).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12, apiValueUsd: .00123 });
+    expect(await prisma.quotaReportReceipt.findFirst()).toMatchObject({ pricingVersion: "api-pricing-2026-10-27", apiValueUsd: .00123 });
   });
 
   it("atomically commits receipt + hourly with compact heads but leaves detail rows to the background flush", async () => {

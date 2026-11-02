@@ -202,3 +202,15 @@ func TestCodexLeaseSyncsAccessKeyStatusToMainLeaser(t *testing.T) {
 		t.Fatalf("shareSeats = %v, want 2", got)
 	}
 }
+
+func TestCodexLeaseRejectsRetiredServerRelay(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "mode": "relay", "relay": map[string]string{"baseUrl": "https://unused.test", "apiKey": "retired"}})
+	}))
+	defer srv.Close()
+	withCodexAPIBase(t, srv.URL)
+	lease, err := (&CodexLeaser{}).LeaseToken("card", "dev", true, nil, "")
+	if err == nil || lease != nil {
+		t.Fatal("retired relay lease must be rejected")
+	}
+}

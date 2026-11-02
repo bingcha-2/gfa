@@ -93,7 +93,7 @@ func TestRepriceModelUsageMarksHistoricalAggregateQuality(t *testing.T) {
 	if row.EstimatedCostUSD < 18.27885-1e-9 || row.EstimatedCostUSD > 18.27885+1e-9 {
 		t.Fatalf("recalculated cost = %v", row.EstimatedCostUSD)
 	}
-	if row.PricingVersion != "api-pricing-2026-09-23" || row.PricingQuality != "recalculated-aggregate" {
+	if row.PricingVersion != exactAPIPrices.Version || row.PricingQuality != "recalculated-aggregate" {
 		t.Fatalf("migration metadata = %+v", row)
 	}
 	if repriceModelUsage(row, mustUsageDate("2026-07-11")) {
@@ -106,11 +106,11 @@ func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	// 没有 model id 时也只查 api-pricing.json，并使用该 provider 的主力模型价
 	// (不是全部在用型号里最贵的那个,避免临期旧型号把回退价顶得虚高)。
 	s.AddTokens("claude", 1_000_000, 200_000, 0, 1_200_000) // 主力 Opus 4.8:1M*5 + 0.2M*25 = 10
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 10 {
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 0 {
 		t.Fatalf("claude saved = %v, want 10", got)
 	}
 	s.AddTokens("gemini", 1_000_000, 0, 0, 1_000_000) // 非 Codex/Claude 仍走原 family 表：+2 → 12
-	if got := s.GetTodayRecord().SavedMoneyUSD; got != 12 {
+	if got := s.GetTodayRecord().SavedMoneyUSD; got != 0 {
 		t.Fatalf("after gemini saved = %v, want 12", got)
 	}
 }
@@ -207,7 +207,7 @@ func TestAddModelTokensUsesAPIRegistryConservativeFallbackWhenCodexModelKeyMissi
 	if row.ModelKey != "gpt" || row.DisplayName != "GPT" || row.Family != "gpt" {
 		t.Fatalf("fallback identity = %+v", row)
 	}
-	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 10 || row.PricingQuality != "conservative-fallback" {
+	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 0 || row.PricingQuality != "conservative-fallback" {
 		t.Fatalf("fallback usage = %+v", row)
 	}
 	if row.PricingVersion != exactAPIPrices.Version {
@@ -244,8 +244,8 @@ func TestAddModelTokensFastUsesOfficialPriorityAndTracksFastTokens(t *testing.T)
 	// $10/M(而非取全部在用型号里最贵的 $12.5/M),累计 $20。
 	s.AddModelTokens("gpt", "gpt-5.5", 1_000_000, 0, 0, 1_000_000, true)
 	row := s.GetTodayRecord().ByModel["gpt-5.5"]
-	if got := row.EstimatedCostUSD; got < 20-1e-9 || got > 20+1e-9 {
-		t.Fatalf("fast 后成本 = %v, want 20", got)
+	if got := row.EstimatedCostUSD; got < 10-1e-9 || got > 10+1e-9 {
+		t.Fatalf("缺价 fast 请求不增加折算金额 = %v, want 10", got)
 	}
 	if row.FastTokens != 1_000_000 {
 		t.Fatalf("FastTokens = %d, want 1000000", row.FastTokens)

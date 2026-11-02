@@ -81,7 +81,7 @@ describe("CatalogPurchase unified bind line", () => {
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
     expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥12.37");
 
-    fireEvent.click(screen.getByRole("radio", { name: "Max 20x" }));
+    fireEvent.click(screen.getByRole("radio", { name: "高配版" }));
     expect(screen.getByTestId("catalog-total")).toHaveTextContent("¥37.37");
 
     fireEvent.click(screen.getByRole("radio", { name: "2/8 席" }));

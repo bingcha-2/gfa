@@ -1,13 +1,8 @@
 "use client";
 
-// 「产品与等级」区块(spec §7 表单②)。
-//   每产品一张卡:启用开关 + 等级选择(绑定线可选档)。
-//   等级 = 绑定线可选档,从该产品账号池里实际存在的 planType 里选(GET
-//   /api/console/account-levels),账号池里没有的等级选不了 —— 这样 console 档名 ↔
-//   account.planType ↔ 绑定匹配天然一致,根除"档名对不上→绑定失败"(spec §3 line 111
-//   「等级档名以实际可绑的号为准」)。
-//   停用产品仍保留其等级与价(便于重新启用),只是不进 config.products。
-// 受控:value = ProductRow[],onChange 回传整张新数组(上层合并进表单)。
+import { catalogLevelLabel } from "@/lib/account/catalog-level-label";
+
+// 套餐档位独立于当前库存；库存只作为母号产品的供给提示。
 
 import { CheckIcon } from "lucide-react";
 
@@ -38,6 +33,7 @@ export function ProductsSection({ value, onChange, availableLevels, disabled }: 
           key={row.product}
           row={row}
           poolLevels={availableLevels?.[row.product] ?? []}
+          inventoryKnown={Array.isArray(availableLevels?.[row.product])}
           disabled={disabled}
           onToggle={(enabled) => setRow(index, { enabled })}
           onLevelsChange={(levels) => setRow(index, { levels })}
@@ -53,12 +49,14 @@ export function ProductsSection({ value, onChange, availableLevels, disabled }: 
 function ProductCard({
   row,
   poolLevels,
+  inventoryKnown,
   disabled,
   onToggle,
   onLevelsChange,
 }: {
   row: ProductRow;
   poolLevels: string[];
+  inventoryKnown: boolean;
   disabled?: boolean;
   onToggle: (enabled: boolean) => void;
   onLevelsChange: (levels: string[]) => void;
@@ -71,10 +69,9 @@ function ProductCard({
     );
   };
 
-  // 候选 = 账号池里的等级 ∪ 当前已选(后者可能含池里已不存在的「孤儿」老配置 —— 仍展示
-  // 并允许移除,避免静默丢失;保序:先池里档,再补孤儿)。
-  const orphanLevels = row.levels.filter((l) => !poolLevels.includes(l));
-  const options = [...poolLevels, ...orphanLevels];
+  const presets: Record<string, string[]> = { anthropic: ['pro', 'max-5x', row.levels.includes('ultra') && !row.levels.includes('max-20x') ? 'ultra' : 'max-20x'], codex: ['plus', 'pro'], antigravity: ['pro', 'ultra'] };
+  const gateway = row.product === 'anthropic';
+  const options = [...new Set([...(presets[row.product] ?? []), ...row.levels, ...(gateway ? [] : poolLevels)])];
 
   return (
     <div
@@ -97,21 +94,21 @@ function ProductCard({
         </Badge>
       </div>
 
-      {/* 等级选择(绑定线档):从账号池实际 planType 里点选,不可手填。 */}
+      {/* 等级选择与库存独立，缺货不会删除已有套餐。 */}
       <div className="mt-3">
         <div className="mb-1.5 text-xs text-muted-foreground">
-          绑定线等级(从账号池实际等级里选)
+          {gateway ? '套餐档位（不依赖旧账号池）' : '套餐档位（分配时检查母号库存）'}
         </div>
 
         {options.length === 0 ? (
           <p className="text-xs text-amber-600 dark:text-amber-500">
-            该产品账号池里没有可选等级,请先到账号管理录入对应等级的号。
+            暂无套餐档位。
           </p>
         ) : (
           <div className="flex flex-wrap items-center gap-1.5">
             {options.map((level) => {
               const selected = row.levels.includes(level);
-              const orphan = !poolLevels.includes(level);
+              const orphan = !gateway && inventoryKnown && !poolLevels.includes(level);
               return (
                 <button
                   key={level}
@@ -119,7 +116,7 @@ function ProductCard({
                   onClick={() => toggleLevel(level)}
                   disabled={disabled}
                   aria-pressed={selected}
-                  title={orphan ? "账号池里已无此等级(老配置),点击移除" : undefined}
+                  title={orphan ? "暂无对应等级母号；可配置套餐，分配时仍需可用库存" : undefined}
                   className={cn(
                     "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
                     "disabled:pointer-events-none disabled:opacity-50",
@@ -130,8 +127,8 @@ function ProductCard({
                   )}
                 >
                   {selected && <CheckIcon className="size-3" />}
-                  {level}
-                  {orphan && <span className="text-[10px]">(已移除)</span>}
+                  {catalogLevelLabel(row.product, level)}
+                  {orphan && <span className="text-[10px]">(暂无母号)</span>}
                 </button>
               );
             })}

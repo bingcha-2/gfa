@@ -51,8 +51,8 @@ func TestClassifyError_UnknownIsTransient(t *testing.T) {
 func TestBuildNotifications_SkipsEmptyAndDedups(t *testing.T) {
 	sources := []errorSource{
 		{Source: "claude", Msg: "Claude token refresh failed: invalid_grant"},
-		{Source: "codex", Msg: ""},                       // no error → skipped
-		{Source: "antigravity", Msg: "额度恢复中，请稍后重试"}, // transient
+		{Source: "codex", Msg: ""},                                             // no error → skipped
+		{Source: "antigravity", Msg: "额度恢复中，请稍后重试"},                            // transient
 		{Source: "claude2", Msg: "Claude token refresh failed: invalid_grant"}, // dup → deduped
 	}
 	out := buildNotifications(sources)
@@ -95,5 +95,12 @@ func TestDerivedNotifications(t *testing.T) {
 	// not configured yet → no proxy-down nag
 	if out := derivedNotifications(clientHealth{CardConfigured: false, ProxyRunning: false}); len(out) != 0 {
 		t.Fatalf("unconfigured → %+v, want none", out)
+	}
+}
+
+func TestCodexSubscriptionErrorIsProductSpecific(t *testing.T) {
+	out := buildNotifications([]errorSource{{Source: "codex", Msg: `remote codex status 403: {"ok":false,"error":"SUBSCRIPTION_EXPIRED"}`}})
+	if len(out) != 1 || out[0].Message != "需要有效的 Codex 订阅，请检查套餐包含的产品及有效期" || out[0].Recoverable {
+		t.Fatalf("unexpected notification: %+v", out)
 	}
 }

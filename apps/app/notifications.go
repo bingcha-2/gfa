@@ -89,6 +89,14 @@ func buildNotifications(sources []errorSource) []Notification {
 		if strings.TrimSpace(s.Msg) == "" {
 			continue
 		}
+		if strings.Contains(s.Msg, "SUBSCRIPTION_EXPIRED") {
+			name := map[string]string{"codex": "Codex", "claude": "Claude", "antigravity": "Antigravity"}[s.Source]
+			if name == "" {
+				name = "该产品"
+			}
+			out = append(out, Notification{Level: "block", Category: "auth", Message: "需要有效的 " + name + " 订阅，请检查套餐包含的产品及有效期", Source: s.Source, DedupKey: s.Source + "-subscription", Recoverable: false})
+			continue
+		}
 		n := classifyError(s.Msg)
 		n.Source = s.Source
 		if seen[n.DedupKey] {

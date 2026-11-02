@@ -15,10 +15,6 @@ const remoteCodexProvider = {
     new RemoteCodexService({
       tokenUsageTracker, accountQuotaSnapshotTracker, accountQuotaEstimator, banEventRecorder, requestLogRecorder,
       accessKeyStore, prisma,
-      relayConfigProvider: async () => {
-        const settings = await planCatalog.resolveCodexRelaySettings();
-        return settings.enabled ? settings : null;
-      },
       publishedCatalogProvider: () => planCatalog.getPublished(),
     }),
   inject: ["TOKEN_USAGE_TRACKER", "ACCOUNT_QUOTA_SNAPSHOT_TRACKER", "ACCOUNT_QUOTA_ESTIMATOR", "BAN_EVENT_TRACKER", "REQUEST_LOG_TRACKER", "SHARED_ACCESS_KEY_STORE", PrismaService, PlanCatalogService],

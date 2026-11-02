@@ -12,18 +12,20 @@ import {
 } from "@/lib/account/catalog-pricing";
 import { formatPriceCents } from "@/lib/account/format-extensions";
 import { fmt } from "@/lib/i18n";
-import { useDict } from "@/lib/i18n/client";
+import { catalogLevelLabel } from "@/lib/account/catalog-level-label";
+import { useLocale, useDict } from "@/lib/i18n/client";
 
 const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 const MAX_DEVICES = 20;
 
 export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
   const dict = useDict();
+  const locale = useLocale();
   const t = dict.portalApp.billing;
   const c = t.catalog;
 
   const productName = (p: string) => c.productNames[p] ?? p;
-  const levelName = (l: string) => c.levelNames[l] ?? l;
+  const levelName = (product: string, l: string) => catalogLevelLabel(product, l, c.levelNames[l] ?? l, locale);
 
   const [bindLevels, setBindLevels] = useState<Record<string, string>>({});
   const shareCapacity = catalog.shareCapacity ?? 8;
@@ -119,7 +121,7 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
                             className="account-chip account-chip--sm"
                             onClick={() => setBindLevel(product, level)}
                           >
-                            {levelName(level)}
+                            {levelName(product, level)}
                           </button>
                         ))}
                       </div>
