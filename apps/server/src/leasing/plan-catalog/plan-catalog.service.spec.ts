@@ -55,6 +55,8 @@ describe("PlanCatalogService Codex relay settings", () => {
         apiKeyConfigured: true,
         apiKeyHint: "****ecret",
       });
+      expect(runtime.models).toContain("gpt-6.1-terra");
+      expect(runtime.modelMap["gpt-6.1-terra"]).toBe("gpt-6.1-terra");
       expect(JSON.stringify(publicSettings)).not.toContain("sk-env-only-secret");
     } finally {
       vi.unstubAllEnvs();

@@ -3,6 +3,17 @@ import { describe, expect, it } from "vitest";
 import { apiValueUsdForEvent } from "../api-usd-quota";
 
 describe("apiValueUsdForEvent", () => {
+  it.each([
+    ["standard", 272000, 0.74], ["fast", 272000, 1.48],
+    ["standard", 272001, 1.23], ["priority", 272001, 2.46],
+  ] as const)("prices Terra cached-input subsets in %s mode at context %i", (serviceTier, contextTokens, expected) => {
+    expect(apiValueUsdForEvent({
+      product: "codex", modelKey: "gpt-6.1-terra", serviceTier,
+      inputTokens: 1_000_000, cachedInputTokens: 800_000,
+      outputTokens: 100_000, contextTokens,
+      occurredAt: Date.parse("2026-10-27T00:00:00Z"),
+    })).toBeCloseTo(expected);
+  });
   it.each([ ["standard", 1.375], ["priority", 2.75], ["fast", 2.75] ] as const)("prices Astra gross-input subsets in %s mode", (serviceTier, expected) => {
     const event = {
       product: "codex", modelKey: "gpt-6-astra", serviceTier,

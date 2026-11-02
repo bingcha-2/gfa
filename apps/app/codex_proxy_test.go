@@ -86,6 +86,15 @@ func TestIsCodexGenerationRequest(t *testing.T) {
 	}
 }
 
+func TestCodexTerra61ReasoningPassesThroughUnchanged(t *testing.T) {
+	for _, effort := range []string{"none", "low", "medium", "high", "xhigh", "max"} {
+		body := []byte(`{"model":"gpt-6.1-terra","reasoning":{"effort":"` + effort + `"},"input":"hello"}`)
+		if got := normalizeCodexRequestBody("/v1/responses", body); !bytes.Equal(got, body) {
+			t.Fatalf("Terra %s request was rewritten: %s", effort, got)
+		}
+	}
+}
+
 func TestCodexResponsesLiteMaxPassesThroughUnchanged(t *testing.T) {
 	const responsesLiteHeader = "X-OpenAI-Internal-Codex-Responses-Lite"
 	body := []byte(`{"model":"gpt-5.6-terra","reasoning":{"effort":"max"}}`)

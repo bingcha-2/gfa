@@ -1,0 +1,93 @@
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+bcai.online {
+	header Alt-Svc "clear"
+	encode zstd gzip
+
+	redir /bingcha https://key.bcai.online 308
+	redir /bingcha/* https://key.bcai.online 308
+
+	handle_path /assets/* {
+		root * /var/www/bcai/assets
+		file_server
+	}
+
+	@cliproxy_antigravity_panel {
+		path /cliproxy-antigravity/*
+	}
+	handle @cliproxy_antigravity_panel {
+		header Set-Cookie "cliproxy_panel=antigravity; Path=/; Secure; SameSite=Lax"
+		uri strip_prefix /cliproxy-antigravity
+		reverse_proxy 127.0.0.1:8318
+	}
+
+	@cliproxy_gemini_panel {
+		path /cliproxy-gemini/*
+	}
+	handle @cliproxy_gemini_panel {
+		header Set-Cookie "cliproxy_panel=gemini; Path=/; Secure; SameSite=Lax"
+		uri strip_prefix /cliproxy-gemini
+		reverse_proxy 127.0.0.1:8317
+	}
+
+	@cliproxy_gemini_models {
+		path /v1/models
+		header Cookie *cliproxy_panel=gemini*
+	}
+	handle @cliproxy_gemini_models {
+		reverse_proxy 127.0.0.1:8317
+	}
+
+	@cliproxy_antigravity_models {
+		path /v1/models
+		header Cookie *cliproxy_panel=antigravity*
+	}
+	handle @cliproxy_antigravity_models {
+		reverse_proxy 127.0.0.1:8318
+	}
+
+	@cliproxy_gemini_management {
+		path /management.html /v0/management* /v0/resource/plugins/*
+		header Cookie *cliproxy_panel=gemini*
+	}
+	handle @cliproxy_gemini_management {
+		reverse_proxy 127.0.0.1:8317
+	}
+
+	@cliproxy_antigravity_management {
+		path /management.html /v0/management* /v0/resource/plugins/*
+		header Cookie *cliproxy_panel=antigravity*
+	}
+	handle @cliproxy_antigravity_management {
+		reverse_proxy 127.0.0.1:8318
+	}
+
+	@cliproxy_management_default {
+		path /management.html /v0/management* /v0/resource/plugins/*
+	}
+	handle @cliproxy_management_default {
+		reverse_proxy 127.0.0.1:8318
+	}
+
+	reverse_proxy 172.19.0.4:3000 {
+		transport http {
+			max_conns_per_host 50000
+		}
+	}
+}
+
+key.bcai.online {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:18081 {
+		flush_interval -1
+	}
+}
+
+sub2api.bcai.online {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:18080
+}

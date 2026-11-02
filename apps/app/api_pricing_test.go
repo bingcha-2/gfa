@@ -6,6 +6,27 @@ import (
 	"time"
 )
 
+func TestAPIValueTerra61(t *testing.T) {
+	at := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		mode    string
+		context int64
+		want    float64
+	}{
+		{"standard", 272_000, 0.74},
+		{"priority", 272_000, 1.48},
+		{"standard", 272_001, 1.23},
+		{"priority", 272_001, 2.46},
+	} {
+		// Fresh input and cached input are separate in the pricing function.
+		got := calculateAPIValue("codex", "gpt-6.1-terra", tc.mode, tc.context,
+			200_000, 100_000, 800_000, 0, 0, at)
+		if math.Abs(got.USD-tc.want) > 1e-9 || got.Quality != "exact" || got.CanonicalModelID != "gpt-6.1-terra" {
+			t.Fatalf("Terra %s context %d = %+v, want $%v exact", tc.mode, tc.context, got, tc.want)
+		}
+	}
+}
+
 func TestAPIValueUsesExactModelAndContextPrices(t *testing.T) {
 	at := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
 	sol := calculateAPIValue("codex", "gpt-5.6-sol", "standard", 100_000,
