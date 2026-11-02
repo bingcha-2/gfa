@@ -137,6 +137,14 @@ api.bcai.lol {
 		reverse_proxy localhost:3001
 	}
 
+	# 网关转发(Claude Code 的 /v1/messages,含流式 SSE):关闭响应缓冲,逐块下发。
+	@gatewaySurface path /api/gateway/*
+	handle @gatewaySurface {
+		reverse_proxy localhost:3001 {
+			flush_interval -1
+		}
+	}
+
 	handle {
 		respond 404
 	}
