@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const { apiMocks } = vi.hoisted(() => ({
   apiMocks: {
     injectSelected: vi.fn(),
+    clearDesktopPolicyConflict: vi.fn(),
     // 默认「未被分配网关额度」→ 回退到原有接管流程,保持既有用例语义不变。
     hostClaudeGateway: vi.fn().mockRejectedValue(new Error('尚未为你开通,请联系管理员')),
     restoreSelected: vi.fn(),
@@ -15,6 +16,7 @@ const { apiMocks } = vi.hoisted(() => ({
 }))
 vi.mock('@/services/wails', () => ({
   injectSelected: apiMocks.injectSelected,
+  clearDesktopPolicyConflict: apiMocks.clearDesktopPolicyConflict,
   hostClaudeGateway: apiMocks.hostClaudeGateway,
   restoreSelected: apiMocks.restoreSelected,
   openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
@@ -170,6 +172,52 @@ describe('useRemoteTakeover — 接管失败的分派', () => {
 
     await screen.findByRole('dialog')
     expect(screen.getByTestId('busy-label')).toBeEmptyDOMElement()
+  })
+})
+
+describe('Claude Desktop policy conflict recovery', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    store.state.fetchIDEStatus = () => []
+  })
+
+  it('clears only after confirmation and retries takeover once', async () => {
+    setPlatform('Win32')
+    store.state.fetchIDEStatus = () => [{ id: 'claude_desktop', injected: true }]
+    apiMocks.injectSelected.mockRejectedValueOnce(new Error('POLICY_CONFLICT:HKCU foreign gateway'))
+      .mockResolvedValueOnce('Claude Desktop: 已接管')
+    apiMocks.clearDesktopPolicyConflict.mockResolvedValueOnce('policy-backup')
+    render(<Harness target="claude_desktop" />)
+    fireEvent.click(screen.getByRole('button', { name: 'go' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('HKCU foreign gateway')
+    expect(apiMocks.clearDesktopPolicyConflict).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '确认' }))
+    await waitFor(() => expect(apiMocks.injectSelected).toHaveBeenCalledTimes(2))
+    expect(apiMocks.clearDesktopPolicyConflict).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.getByTestId('busy-label')).toBeEmptyDOMElement())
+  })
+
+  it('does not clear or retry when the user cancels', async () => {
+    setPlatform('Win32')
+    apiMocks.injectSelected.mockRejectedValueOnce(new Error('POLICY_CONFLICT:HKCU foreign gateway'))
+    render(<Harness target="claude_desktop" />)
+    fireEvent.click(screen.getByRole('button', { name: 'go' }))
+    fireEvent.click(await screen.findByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(apiMocks.clearDesktopPolicyConflict).not.toHaveBeenCalled()
+    expect(apiMocks.injectSelected).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows cleanup failure without retrying takeover', async () => {
+    setPlatform('Win32')
+    apiMocks.injectSelected.mockRejectedValueOnce(new Error('POLICY_CONFLICT:HKCU foreign gateway'))
+    apiMocks.clearDesktopPolicyConflict.mockRejectedValueOnce(new Error('备份失败'))
+    render(<Harness target="claude_desktop" />)
+    fireEvent.click(screen.getByRole('button', { name: 'go' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认' }))
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('备份失败'))
+    expect(apiMocks.injectSelected).toHaveBeenCalledTimes(1)
+    await dismissDialog()
   })
 })
 

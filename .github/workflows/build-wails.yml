@@ -151,7 +151,7 @@ jobs:
       - name: Claude gateway and migration regression tests
         working-directory: ${{ env.WAILS_DIR }}
         shell: bash
-        run: go test . -run 'Test(Gateway|DesktopGateway|DesktopMigration|DesktopLegacy|DesktopWindowsConfig|ModelAllowed|PriceSync|Legacy|Retired)' -count=1 -v -timeout 3m
+        run: go test . -run 'Test(Gateway|DesktopGateway|DesktopMigration|DesktopLegacy|DesktopWindowsConfig|DesktopPolicy|PolicyValues|MsixAppUserModelID|ModelAllowed|PriceSync|Legacy|Retired)' -count=1 -v -timeout 3m
 
       - name: Codex request regression tests
         working-directory: ${{ env.WAILS_DIR }}
