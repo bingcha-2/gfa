@@ -257,4 +257,37 @@ describe('admin allocation enforces subscription and capacity', () => {
     const { service } = fixture();
     await expect(service.assign('test@example.test', 1.5)).rejects.toMatchObject({ status: 400 });
   });
+  it('automatically creates one encrypted assignment and reuses it on renewal', async () => {
+    vi.stubEnv('GATEWAY_KEY_KEK', 'ab'.repeat(32));
+    try {
+      const { service, db } = fixture();
+      db.gatewayUser.create.mockImplementation(async ({ data }: any) => {
+        db.gatewayUser.findUnique.mockResolvedValue({ ...data, id: 'u', enabled: true, motherAccount: { enabled: true, status: 'ready' } });
+        return { id: 'u' };
+      });
+      expect(await service.ensureAssigned('c')).toEqual({ id: 'u', created: true, enabled: true, motherAvailable: true });
+      expect(await service.ensureAssigned('c')).toEqual({ id: 'u', created: false, enabled: true, motherAvailable: true });
+      expect(db.gatewayUser.create).toHaveBeenCalledTimes(1);
+      const data = db.gatewayUser.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ customerId: 'c', motherAccountId: 'm', shares: 1 });
+      expect(data.keyHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(data.keyCipher).toBeTruthy();
+      expect(JSON.stringify(data)).not.toContain('gfa-');
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it('keeps disabled existing assignments and never recreates keys or changes usage', async () => {
+    const { service, db } = fixture();
+    db.gatewayUser.findUnique.mockResolvedValue({ id: 'u', enabled: false, motherAccount: { enabled: false, status: 'error' } });
+    expect(await service.ensureAssigned('c')).toEqual({ id: 'u', created: false, enabled: false, motherAvailable: false });
+    expect(db.gatewayUser.create).not.toHaveBeenCalled();
+    expect(db.gatewayMotherAccount.findMany).not.toHaveBeenCalled();
+  });
+  it('does not create an assignment without a ready mother or valid entitlement', async () => {
+    const { service, db } = fixture();
+    db.gatewayMotherAccount.findMany.mockResolvedValue([]);
+    await expect(service.ensureAssigned('c')).rejects.toThrow('没有可用母号');
+    db.subscription.findMany.mockResolvedValue([]);
+    await expect(service.ensureAssigned('c')).rejects.toMatchObject({ status: 403 });
+    expect(db.gatewayUser.create).not.toHaveBeenCalled();
+  });
 });

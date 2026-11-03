@@ -7,12 +7,14 @@
  * and tokenVersion are NEVER returned. Disabling a customer bumps tokenVersion
  * so all their existing JWTs are revoked (forced logout).
  */
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { BillingService } from "../../account/billing/billing.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
+import { rowToConfig } from "../../subscription/subscription-config";
+import { GatewayUserService } from "../../gateway-pool/gateway-user.service";
 import type { Selection } from "../../plan-catalog/pricing";
 import { UpdateCustomerDto } from "./dto/customer-admin.dto";
 
@@ -31,6 +33,7 @@ export class CustomerAdminService {
     private readonly prisma: PrismaService,
     private readonly billing: BillingService,
     private readonly subscriptions: SubscriptionService,
+    private readonly gatewayUsers: GatewayUserService,
   ) {}
 
   /**
@@ -255,6 +258,28 @@ export class CustomerAdminService {
     this.logger.log(
       `[customer-admin] granted catalog subscription ${sub.id} to customer ${id} (order ${order.id})`,
     );
+    const products = rowToConfig(sub).products;
+    if (Array.isArray(products) && products.includes("anthropic")) {
+      // 订阅已经生效，分配失败不能返回发放失败，否则重试会再次延长订阅。
+      try {
+        const assignment = await this.gatewayUsers.ensureAssigned(id);
+        const needsAttention = !assignment.enabled || !assignment.motherAvailable;
+        const message = !assignment.enabled
+          ? "订阅已发放；该用户的网关服务已停用，请到网关用户检查并启用"
+          : !assignment.motherAvailable
+            ? "订阅已发放；原母号暂不可用，请到网关用户更换母号"
+            : assignment.created ? "订阅已发放，已自动分配 Claude 母号" : "订阅已发放，已沿用原 Claude 母号";
+        return { ...sub, gatewayAllocation: { status: needsAttention ? "attention" : "ready", message } };
+      } catch (error) {
+        const reason = error instanceof BadRequestException || error instanceof ForbiddenException
+          ? error.message : "自动分配暂时失败";
+        this.logger.warn(`[customer-admin] gateway allocation pending for subscription ${sub.id}: ${reason}`);
+        return { ...sub, gatewayAllocation: {
+          status: "attention",
+          message: `订阅已发放，但${reason}。请到网关用户补分配，无需重复发放订阅`,
+        } };
+      }
+    }
     return sub;
   }
 }

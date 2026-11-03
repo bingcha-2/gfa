@@ -2,6 +2,7 @@ import { quotaPolicy, subscriptionTerm } from "./quota-policy";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { requireApiValue, apiPriceRegistryAt, hasApiPrice, type ApiPricingMode } from "@gfa/shared";
 import { createHash, randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { decryptKey, encryptKey } from "./key-vault";
@@ -175,22 +176,41 @@ export class GatewayUserService implements OnModuleInit {
         throw new BadRequestException("该用户已分配，请在管理面板调整");
       }
       if (shares !== undefined && shares !== 1) throw new BadRequestException("每个用户占一个名额");
-      const k = 1;
+      return this.createAssignment(customer.id, db, motherAccountId);
+    });
+  }
 
-      const mother = await this.pickMother(motherAccountId, db);
-      const plain = `gfa-${randomBytes(24).toString("hex")}`;
-      const row = await db.gatewayUser.create({
-        data: {
-          customerId: customer.id,
-          motherAccountId: mother.id,
-          shares: k,
-          keyHash: hashKey(plain),
-          keyCipher: encryptKey(plain),
-          keyHint: `****${plain.slice(-4)}`,
-        },
+  /** 订阅发放后的幂等分配：续期保留原母号、密钥、用量及管理员停用状态。 */
+  async ensureAssigned(customerId: string) {
+    return this.prisma.$transaction(async (db) => {
+      if (!(await this.activeClaudeSubscriptions(customerId, db)).length) {
+        throw new ForbiddenException("必须有有效的 Claude 订阅才能分配母号");
+      }
+      const existing = await db.gatewayUser.findUnique({
+        where: { customerId },
+        include: { motherAccount: { select: { enabled: true, status: true } } },
+      });
+      if (existing) {
+        return {
+          id: existing.id, created: false, enabled: existing.enabled,
+          motherAvailable: existing.motherAccount.enabled && existing.motherAccount.status === "ready",
+        };
+      }
+      const assigned = await this.createAssignment(customerId, db);
+      return { id: assigned.id, created: true, enabled: true, motherAvailable: true };
     });
-    return { id: row.id, motherAccountId: mother.id, motherAccountName: mother.accountName, shares: k };
+  }
+
+  private async createAssignment(customerId: string, db: Prisma.TransactionClient, motherAccountId?: string) {
+    const mother = await this.pickMother(motherAccountId, db);
+    const plain = `gfa-${randomBytes(24).toString("hex")}`;
+    const row = await db.gatewayUser.create({
+      data: {
+        customerId, motherAccountId: mother.id, shares: 1,
+        keyHash: hashKey(plain), keyCipher: encryptKey(plain), keyHint: `****${plain.slice(-4)}`,
+      },
     });
+    return { id: row.id, motherAccountId: mother.id, motherAccountName: mother.accountName, shares: 1 };
   }
 
   private async pickMother(specified?: string, db: any = this.prisma) {

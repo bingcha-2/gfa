@@ -174,11 +174,15 @@ export function GrantSubscriptionDialog({
     }
     try {
       setGranting(true);
-      await apiRequest(`customers/${customerId}/subscriptions`, {
+      const result = await apiRequest<{ gatewayAllocation?: { status: string; message: string } }>(`customers/${customerId}/subscriptions`, {
         method: "POST",
         body: { selection, durationDays: days },
       });
-      toast.success("已发放订阅");
+      if (result.gatewayAllocation?.status === "attention") {
+        toast.warning(result.gatewayAllocation.message, { duration: 12000 });
+      } else {
+        toast.success(result.gatewayAllocation?.message ?? "已发放订阅");
+      }
       onOpenChange(false);
       await onGranted();
     } catch (err) {
@@ -194,7 +198,7 @@ export function GrantSubscriptionDialog({
         <DialogHeader>
           <DialogTitle>手动发放订阅</DialogTitle>
           <DialogDescription>
-            按当前发布的套餐目录发放统一绑定线订阅。同产品的旧订阅会被自动取代。
+            按当前发布的套餐目录发放订阅。包含 Claude 时自动分配母号，已分配的用户沿用原母号。
           </DialogDescription>
         </DialogHeader>
 
