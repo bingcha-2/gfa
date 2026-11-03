@@ -72,7 +72,13 @@ func startClaudeDesktop() error {
 		return fmt.Errorf("未找到 Claude Desktop (Claude.exe)")
 	}
 	if isMicrosoftStoreClaude(bin) {
-		return fmt.Errorf("请手动重启 Microsoft Store 版 Claude Desktop")
+		// 原生 3P 配置全在文件里,不需要往进程注入 env/argv,可以按包激活启动。
+		// MSIX 会在进程内缓存 deploymentMode,必须是完整重启(stopClaudeDesktop 已结束进程)。
+		aumid := msixAppUserModelID(bin)
+		if aumid == "" {
+			return fmt.Errorf("无法识别 Microsoft Store 版 Claude Desktop 的包标识,请手动重启")
+		}
+		return exec.Command("explorer.exe", `shell:AppsFolder\`+aumid).Start()
 	}
 	return exec.Command(bin).Start()
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -93,4 +94,16 @@ func statIsFile(p string) bool {
 func isMicrosoftStoreClaude(path string) bool {
 	norm := strings.ToLower(strings.ReplaceAll(path, `\`, "/"))
 	return strings.Contains(norm, "/windowsapps/")
+}
+
+var msixPackageDirRE = regexp.MustCompile(`(?i)/windowsapps/(Claude)_[^_/]+_[^_/]+__([a-z0-9]+)/`)
+
+// msixAppUserModelID 从 ...\WindowsApps\Claude_<ver>_<arch>__<publisherId>\... 推出
+// 启动用的 AppUserModelID(Claude_<publisherId>!Claude)。无法识别返回空串。
+func msixAppUserModelID(path string) string {
+	m := msixPackageDirRE.FindStringSubmatch(strings.ReplaceAll(path, `\`, "/"))
+	if m == nil {
+		return ""
+	}
+	return m[1] + "_" + m[2] + "!Claude"
 }

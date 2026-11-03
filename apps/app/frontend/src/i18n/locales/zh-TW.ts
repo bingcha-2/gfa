@@ -200,6 +200,8 @@ export const zhTW: DeepPartialDict = {
     needCardBody: '{product} 接管需要登入帳號,請先在登入頁登入後再開啟。',
     desktopConfirmTitle: '接管 Claude Desktop',
     desktopConfirmBody: '切換會重啟 Claude Desktop，並中斷目前工作階段。3P 模式使用獨立的本機記錄；原帳號歷史不會遷移。是否繼續？',
+    policyConflictTitle: '系統原則正在覆寫閘道設定',
+    policyConflictBody: 'Claude Desktop 已被登錄檔原則（Policies\\Claude）管理，會覆寫本軟體的設定，接管不會生效：\n\n{detail}\n\n是否先備份再移除這些閘道原則項目？會先匯出 .reg 備份；機器層級（HKLM）原則需要系統管理員授權（UAC）。',
     hubPermission1: '接管 Hub 需修改應用程式檔案,需授予 ',
     hubPermission2: 'App 管理',
     hubPermission3: ' 權限。',

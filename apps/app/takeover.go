@@ -434,6 +434,9 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	if detectClaudeDesktopPath() == "" {
 		return "", fmt.Errorf("未检测到 Claude Desktop")
 	}
+	if conflict := desktopPolicyConflict(gatewayClaudeBaseURL()); conflict != "" {
+		return "", fmt.Errorf("%s%s", desktopPolicyConflictPrefix, conflict)
+	}
 	act, err := activateClaudeGateway()
 	if err != nil {
 		return "", err

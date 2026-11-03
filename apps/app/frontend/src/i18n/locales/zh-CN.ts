@@ -201,6 +201,8 @@ export const zhCN = {
     needCardBody: '{product} 接管需要登录账号,请先在登录页登录后再开启。',
     desktopConfirmTitle: '接管 Claude Desktop',
     desktopConfirmBody: '切换会重启 Claude Desktop，并中断当前会话。3P 模式使用独立的本地会话记录；原账号的历史记录不会迁移。是否继续？',
+    policyConflictTitle: '系统策略正在覆盖网关配置',
+    policyConflictBody: 'Claude Desktop 已被注册表策略（Policies\\Claude）托管，会覆盖本软件的配置，接管不会生效：\n\n{detail}\n\n是否先备份再清除这些网关策略项？会先导出 .reg 备份；机器级（HKLM）策略需要管理员授权（UAC 弹窗）。',
     hubPermission1: '接管 Hub 需修改应用文件,需授予 ',
     hubPermission2: 'App 管理',
     hubPermission3: ' 权限。',
