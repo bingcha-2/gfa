@@ -23,6 +23,8 @@ export function BrowseForPath(arg1:string):Promise<string>;
 
 export function CheckForUpdate():Promise<Record<string, any>>;
 
+export function ClearDesktopPolicyConflict():Promise<string>;
+
 export function ClearLogs():Promise<boolean>;
 
 export function ClearStats():Promise<boolean>;

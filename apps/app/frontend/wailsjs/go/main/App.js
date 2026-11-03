@@ -15,6 +15,10 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
+export function ClearDesktopPolicyConflict() {
+  return window['go']['main']['App']['ClearDesktopPolicyConflict']();
+}
+
 export function ClearLogs() {
   return window['go']['main']['App']['ClearLogs']();
 }

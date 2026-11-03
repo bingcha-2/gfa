@@ -435,7 +435,7 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 		return "", fmt.Errorf("未检测到 Claude Desktop")
 	}
 	if conflict := desktopPolicyConflict(gatewayClaudeBaseURL()); conflict != "" {
-		return "", fmt.Errorf("检测到系统策略已托管 Claude Desktop 网关,会覆盖本软件的配置,接管不会生效。请先移除以下注册表策略(例如其它工具写入的 Policies\\Claude)后重试:\n%s", conflict)
+		return "", fmt.Errorf("%s%s", desktopPolicyConflictPrefix, conflict)
 	}
 	act, err := activateClaudeGateway()
 	if err != nil {

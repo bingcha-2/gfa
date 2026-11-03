@@ -67,7 +67,7 @@ export function useRemoteTakeover() {
   // 每个弹窗分支都先 setBusy(null) 再弹 —— 等用户读弹窗时本就不该继续转圈。这【不再】是
   // 正确性要求:LoadingOverlay 的 z 已经低于 Dialog,漏关也只是多转个圈,不会盖住弹窗
   // (盖住弹窗曾是真事故,见 LoadingOverlay 的注释)。
-  const runTakeover = async (target: string, inject: boolean): Promise<boolean> => {
+  const runTakeover = async (target: string, inject: boolean, retried = false): Promise<boolean> => {
     setBusy(target)
     setBusyLabel(inject ? t('takeover.injecting', { name: targetName(target) }) : t('takeover.stopping', { name: targetName(target) }))
     try {
@@ -122,6 +122,24 @@ export function useRemoteTakeover() {
       setBusy(null) // 先关遮罩再弹错误窗,否则被遮罩盖住
       await fetchIDEStatus()
       const raw = String(err)
+      // 其它工具(如 opclaude)留下的 Policies\Claude 网关策略会覆盖本软件配置:
+      // 让用户确认后由后端备份并清理,然后自动重试一次(retried 防止循环)。
+      if (inject && target === 'claude_desktop' && !retried && raw.includes('POLICY_CONFLICT:')) {
+        const detail = raw.split('POLICY_CONFLICT:').pop()?.trim() || raw
+        if (await showConfirm(t('takeover.policyConflictTitle'), t('takeover.policyConflictBody', { detail }))) {
+          setBusy(target)
+          setBusyLabel(t('takeover.injecting', { name: targetName(target) }))
+          try {
+            await api.clearDesktopPolicyConflict()
+          } catch (clearErr) {
+            setBusy(null)
+            await showAlert(t('takeover.opFailed'), String(clearErr))
+            return false
+          }
+          return runTakeover(target, inject, true)
+        }
+        return false
+      }
       // 出口前置闸拦截:EGRESS_BLOCKED 前缀 → 专门强提示(开 TUN 引导),而不是泛化「操作失败」。
       if (raw.includes('EGRESS_BLOCKED:')) {
         const detail = raw.split('EGRESS_BLOCKED:').pop()?.trim() || raw

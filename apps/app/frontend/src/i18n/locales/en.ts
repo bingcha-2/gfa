@@ -201,6 +201,8 @@ export const en: DeepPartialDict = {
     needCardBody: 'Taking over {product} requires a signed-in account — please sign in first.',
     desktopConfirmTitle: 'Take over Claude Desktop',
     desktopConfirmBody: 'Switching restarts Claude Desktop and interrupts running sessions. 3P mode uses separate local history; existing account conversations are not migrated. Continue?',
+    policyConflictTitle: 'System policy is overriding the gateway',
+    policyConflictBody: 'Claude Desktop is managed by registry policy (Policies\\Claude), which overrides this app\'s settings, so takeover would have no effect:\n\n{detail}\n\nBack up and remove these gateway policy values now? A .reg backup is saved first. Machine-wide (HKLM) values need administrator approval (UAC).',
     hubPermission1: 'Taking over the Hub modifies app files and needs the ',
     hubPermission2: 'App Management',
     hubPermission3: ' permission.',

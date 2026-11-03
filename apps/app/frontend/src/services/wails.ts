@@ -20,6 +20,7 @@ import {
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   InstallStandaloneClaude as _InstallStandaloneClaude,
   HostClaudeGateway as _HostClaudeGateway,
+  ClearDesktopPolicyConflict as _ClearDesktopPolicyConflict,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   DetectCompetingClaudeConfig as _DetectCompetingClaudeConfig,
@@ -286,6 +287,10 @@ export async function installStandaloneClaude(): Promise<void> {
 // Claude Code「网关托管」:激活专用 key 并写入 settings.json,不走 TUN/MITM/出口闸。
 export async function hostClaudeGateway(): Promise<string> {
   return _HostClaudeGateway()
+}
+
+export async function clearDesktopPolicyConflict(): Promise<string> {
+  return _ClearDesktopPolicyConflict()
 }
 
 export async function injectSelected(targets: string[]): Promise<string> {

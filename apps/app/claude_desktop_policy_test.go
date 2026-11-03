@@ -36,3 +36,22 @@ func TestMsixAppUserModelID(t *testing.T) {
 		t.Fatal("non-MSIX path must yield empty")
 	}
 }
+
+func TestPolicyValuesToClearOnlyGatewayOwned(t *testing.T) {
+	v := parseRegQueryValues(sampleRegQuery)
+	got := policyValuesToClear(v)
+	want := []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceCredentialHelper"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+	for _, n := range got {
+		if n == "disableAutoUpdates" {
+			t.Fatal("unrelated policy value must not be cleared")
+		}
+	}
+}
