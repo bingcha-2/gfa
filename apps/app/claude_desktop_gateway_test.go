@@ -149,8 +149,11 @@ func TestDesktopGatewayRoundTrip(t *testing.T) {
 	if doc["inferenceGatewayApiKey"] != "gfa-rotated" || doc["inferenceGatewayAuthScheme"] != "bearer" {
 		t.Fatal("wrong native profile")
 	}
-	if stat, err := os.Stat(profile); err != nil || stat.Mode().Perm() != 0600 {
-		t.Fatal("profile must be private", err)
+	if stat, err := os.Stat(profile); err != nil {
+		t.Fatal("profile must exist", err)
+	} else if os.PathSeparator != '\\' && stat.Mode().Perm() != 0600 {
+		// Windows uses ACLs rather than POSIX permission bits.
+		t.Fatalf("profile permission = %o, want 600", stat.Mode().Perm())
 	}
 	if err := restoreDesktopGatewayAt(threep); err != nil {
 		t.Fatal(err)
