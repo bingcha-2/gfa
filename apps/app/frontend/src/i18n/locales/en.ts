@@ -22,6 +22,8 @@ export const en: DeepPartialDict = {
   nav: {
     home: 'Remote',
     takeover: 'Takeover',
+    selfAccounts: 'My Accounts',
+    selfAccountsTitle: 'My Accounts',
     logs: 'Logs',
     settings: 'Settings',
     expandSidebar: 'Expand sidebar',

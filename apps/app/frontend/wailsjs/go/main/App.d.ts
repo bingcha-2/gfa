@@ -31,6 +31,8 @@ export function ClearStats():Promise<boolean>;
 
 export function DetectCompetingClaudeConfig():Promise<Array<main.ClaudeConfigConflict>>;
 
+export function DeleteSelfAccount(arg1:string):Promise<void>;
+
 export function DownloadUpdate():Promise<void>;
 
 export function ExportDiagnosticBundle():Promise<string>;
@@ -57,6 +59,8 @@ export function GetLogs():Promise<Array<string>>;
 
 export function GetReferralInfo():Promise<Record<string, any>>;
 
+export function GetSelfAccountState():Promise<Record<string, any>>;
+
 export function GetStats():Promise<Record<string, any>>;
 
 export function GetUpdateStatus():Promise<main.UpdateStatus>;
@@ -68,6 +72,10 @@ export function HostClaudeGateway():Promise<string>;
 export function InjectSelected(arg1:Array<string>):Promise<string>;
 
 export function InstallStandaloneClaude():Promise<void>;
+
+export function ImportSelfAccountAuth():Promise<Record<string, any>>;
+
+export function LoginNewSelfAccount():Promise<Record<string, any>>;
 
 export function IsHubRunningCheck():Promise<boolean>;
 
@@ -211,6 +219,10 @@ export function OpenSystemPermissionSettings():Promise<void>;
 
 export function RefreshQuota():Promise<void>;
 
+export function RefreshSelfAccountQuota(arg1:string):Promise<Record<string, any>>;
+
+export function RefreshSelfAccountQuotas(arg1:boolean):Promise<Record<string, any>>;
+
 export function RefreshUsageSummary():Promise<Record<string, any>>;
 
 
@@ -243,11 +255,19 @@ export function SanitizeCompetingClaudeConfig(arg1:Array<string>):Promise<main.S
 
 export function SaveConfig(arg1:main.Config):Promise<void>;
 
+export function SaveCurrentSelfAccount(arg1:string):Promise<Record<string, any>>;
+
 
 export function SetCodexFastMode(arg1:boolean):Promise<void>;
+
+export function SetSelfAccountAlertConfig(arg1:boolean,arg2:number):Promise<Record<string, any>>;
 
 export function SetSubscriptionPriority(arg1:string,arg2:number):Promise<void>;
 
 export function UserLogin(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function UserLogout():Promise<void>;
+
+export function SwitchSelfAccount(arg1:string):Promise<Record<string, any>>;
+
+export function UpdateSelfAccountAlias(arg1:string,arg2:string):Promise<void>;

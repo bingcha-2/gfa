@@ -23,6 +23,8 @@ export const zhCN = {
   nav: {
     home: '远程',
     takeover: '接管中心',
+    selfAccounts: '自有账号',
+    selfAccountsTitle: '自有账号管理',
     logs: '日志',
     settings: '设置',
     expandSidebar: '展开侧边栏',

@@ -22,6 +22,7 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
 
   const pageTitles: Record<PageId, string> = {
     takeover: t('nav.takeover'),
+    'self-accounts': t('nav.selfAccountsTitle'),
     remote: '用量与额度',
     logs: t('nav.logs'),
     settings: t('nav.settings'),

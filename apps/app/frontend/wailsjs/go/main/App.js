@@ -31,6 +31,10 @@ export function DetectCompetingClaudeConfig() {
   return window['go']['main']['App']['DetectCompetingClaudeConfig']();
 }
 
+export function DeleteSelfAccount(arg1) {
+  return window['go']['main']['App']['DeleteSelfAccount'](arg1);
+}
+
 export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
 }
@@ -81,6 +85,10 @@ export function GetReferralInfo() {
   return window['go']['main']['App']['GetReferralInfo']();
 }
 
+export function GetSelfAccountState() {
+  return window['go']['main']['App']['GetSelfAccountState']();
+}
+
 export function GetStats() {
   return window['go']['main']['App']['GetStats']();
 }
@@ -103,6 +111,14 @@ export function InjectSelected(arg1) {
 
 export function InstallStandaloneClaude() {
   return window['go']['main']['App']['InstallStandaloneClaude']();
+}
+
+export function ImportSelfAccountAuth() {
+  return window['go']['main']['App']['ImportSelfAccountAuth']();
+}
+
+export function LoginNewSelfAccount() {
+  return window['go']['main']['App']['LoginNewSelfAccount']();
 }
 
 export function IsHubRunningCheck() {
@@ -255,6 +271,14 @@ export function RefreshQuota() {
   return window['go']['main']['App']['RefreshQuota']();
 }
 
+export function RefreshSelfAccountQuota(arg1) {
+  return window['go']['main']['App']['RefreshSelfAccountQuota'](arg1);
+}
+
+export function RefreshSelfAccountQuotas(arg1) {
+  return window['go']['main']['App']['RefreshSelfAccountQuotas'](arg1);
+}
+
 export function RefreshUsageSummary() {
   return window['go']['main']['App']['RefreshUsageSummary']();
 }
@@ -301,9 +325,17 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SaveCurrentSelfAccount(arg1) {
+  return window['go']['main']['App']['SaveCurrentSelfAccount'](arg1);
+}
+
 
 export function SetCodexFastMode(arg1) {
   return window['go']['main']['App']['SetCodexFastMode'](arg1);
+}
+
+export function SetSelfAccountAlertConfig(arg1, arg2) {
+  return window['go']['main']['App']['SetSelfAccountAlertConfig'](arg1, arg2);
 }
 
 export function SetSubscriptionPriority(arg1, arg2) {
@@ -316,4 +348,12 @@ export function UserLogin(arg1, arg2) {
 
 export function UserLogout() {
   return window['go']['main']['App']['UserLogout']();
+}
+
+export function SwitchSelfAccount(arg1) {
+  return window['go']['main']['App']['SwitchSelfAccount'](arg1);
+}
+
+export function UpdateSelfAccountAlias(arg1, arg2) {
+  return window['go']['main']['App']['UpdateSelfAccountAlias'](arg1, arg2);
 }

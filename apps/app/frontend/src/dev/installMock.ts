@@ -115,6 +115,32 @@ let mockIDEProducts = [
   { id: 'codex', name: 'Codex', detected: true, detectedPath: '/Applications/Codex.app', injected: false, supportsInjection: true, injectionType: 'config' },
 ]
 
+let mockSelfAccountState = {
+  activeId: 'self-primary',
+  alert: { enabled: true, threshold: 20 },
+  storage: { localOnly: true, encrypted: true },
+  accounts: [
+    {
+      id: 'self-primary', alias: '工作号', email: 'dev@openai.example', accountId: 'acct-primary', planType: 'pro', current: true,
+      createdAt: now - 20 * 86400_000, updatedAt: now - 4 * 60_000, lastUsedAt: now - 2 * 60_000,
+      quota: {
+        fiveHour: { remaining: 68, resetAt: now + 3 * 3600_000, known: true },
+        weekly: { remaining: 44, resetAt: now + 4 * 86400_000, known: true },
+        fetchedAt: now - 4 * 60_000,
+      },
+    },
+    {
+      id: 'self-backup', alias: '备用号', email: 'backup@openai.example', accountId: 'acct-backup', planType: 'plus', current: false,
+      createdAt: now - 12 * 86400_000, updatedAt: now - 35 * 60_000, lastUsedAt: now - 86400_000,
+      quota: {
+        fiveHour: { remaining: 91, resetAt: now + 4 * 3600_000, known: true },
+        weekly: { remaining: 76, resetAt: now + 5 * 86400_000, known: true },
+        fetchedAt: now - 35 * 60_000,
+      },
+    },
+  ],
+}
+
 const targetProductId = (target: unknown) => target === 'claude' ? 'claude_code' : target === 'claude_desktop' ? 'claude_desktop' : target === 'codex' ? 'codex' : String(target)
 
 // 已知方法给真数据;其余任何 App.* 调用回退到无害的 async()=>null,避免未 mock 的方法炸掉页面。
@@ -148,6 +174,33 @@ const appMethods: Record<string, (...args: unknown[]) => Promise<unknown>> = {
     const ids = (targets as unknown[]).map(targetProductId)
     mockIDEProducts = mockIDEProducts.map((product) => ids.includes(product.id) ? { ...product, injected: false } : product)
     return '✓ 已恢复'
+  },
+  GetSelfAccountState: async () => mockSelfAccountState,
+  RefreshSelfAccountQuotas: async () => mockSelfAccountState,
+  RefreshSelfAccountQuota: async (id) => mockSelfAccountState.accounts.find((item) => item.id === id),
+  SaveCurrentSelfAccount: async () => mockSelfAccountState.accounts[0],
+  LoginNewSelfAccount: async () => mockSelfAccountState.accounts[1],
+  ImportSelfAccountAuth: async () => mockSelfAccountState.accounts[1],
+  SetSelfAccountAlertConfig: async (enabled, threshold) => {
+    mockSelfAccountState = { ...mockSelfAccountState, alert: { enabled: Boolean(enabled), threshold: Number(threshold) } }
+    return mockSelfAccountState
+  },
+  UpdateSelfAccountAlias: async (id, alias) => {
+    mockSelfAccountState = {
+      ...mockSelfAccountState,
+      accounts: mockSelfAccountState.accounts.map((item) => item.id === id ? { ...item, alias: String(alias) } : item),
+    }
+  },
+  DeleteSelfAccount: async (id) => {
+    mockSelfAccountState = { ...mockSelfAccountState, accounts: mockSelfAccountState.accounts.filter((item) => item.id !== id) }
+  },
+  SwitchSelfAccount: async (id) => {
+    mockSelfAccountState = {
+      ...mockSelfAccountState,
+      activeId: String(id),
+      accounts: mockSelfAccountState.accounts.map((item) => ({ ...item, current: item.id === id })),
+    }
+    return { account: mockSelfAccountState.accounts.find((item) => item.id === id), reloadMode: 'daemon_restarted', takeoverDisabled: false }
   },
 }
 

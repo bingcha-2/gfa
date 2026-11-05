@@ -3,10 +3,12 @@ import { AppShell } from '@/components/layout/AppShell'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { SelfAccountsPage } from '@/pages/SelfAccountsPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { TakeoverCenterPage } from '@/features/takeover/TakeoverCenterPage'
 import { ToastHost } from '@/components/ToastHost'
 import { PatronThanks } from '@/components/PatronThanks'
+import { SelfAccountQuotaAlert } from '@/components/SelfAccountQuotaAlert'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { usePolling } from '@/hooks/usePolling'
@@ -72,6 +74,7 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'takeover': return <TakeoverCenterPage onNavigate={setCurrentPage} />
+      case 'self-accounts': return <SelfAccountsPage />
       case 'remote': return <DashboardPage />
       case 'logs': return <LogsPage />
       case 'settings': return <SettingsPage />
@@ -85,6 +88,7 @@ export default function App() {
       </AppShell>
       <ToastHost />
       <PatronThanks />
+      <SelfAccountQuotaAlert onOpenAccounts={() => setCurrentPage('self-accounts')} />
     </div>
   )
 }

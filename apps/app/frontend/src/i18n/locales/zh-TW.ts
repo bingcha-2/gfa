@@ -22,6 +22,8 @@ export const zhTW: DeepPartialDict = {
   nav: {
     home: '遠程',
     takeover: '接管中心',
+    selfAccounts: '自有帳號',
+    selfAccountsTitle: '自有帳號管理',
     logs: '日誌',
     settings: '設定',
     expandSidebar: '展開側邊欄',

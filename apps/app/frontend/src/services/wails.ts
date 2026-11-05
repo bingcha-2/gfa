@@ -43,6 +43,16 @@ import {
   RepairCodexAuth as _RepairCodexAuth,
   SetSubscriptionPriority as _SetSubscriptionPriority,
   ActivateCode as _ActivateCode,
+  DeleteSelfAccount as _DeleteSelfAccount,
+  GetSelfAccountState as _GetSelfAccountState,
+  ImportSelfAccountAuth as _ImportSelfAccountAuth,
+  LoginNewSelfAccount as _LoginNewSelfAccount,
+  RefreshSelfAccountQuota as _RefreshSelfAccountQuota,
+  RefreshSelfAccountQuotas as _RefreshSelfAccountQuotas,
+  SaveCurrentSelfAccount as _SaveCurrentSelfAccount,
+  SetSelfAccountAlertConfig as _SetSelfAccountAlertConfig,
+  SwitchSelfAccount as _SwitchSelfAccount,
+  UpdateSelfAccountAlias as _UpdateSelfAccountAlias,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal / Site URLs =====
@@ -68,7 +78,15 @@ export const SITE_URLS = {
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
 import type { main } from '../../wailsjs/go/models'
-import type { Config, IDEStatus, UpdateStatus, AccountState } from '@/types'
+import type {
+  Config,
+  IDEStatus,
+  UpdateStatus,
+  AccountState,
+  SelfAccount,
+  SelfAccountState,
+  SelfAccountSwitchResult,
+} from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -149,6 +167,48 @@ export interface ActivateCodeResult {
 // 让新订阅立即出现。失败时 Go 侧把后端可读错误码透传为 "CODE_X: 消息",调用方按码映射文案。
 export async function activateCode(code: string): Promise<ActivateCodeResult> {
   return _ActivateCode(code) as Promise<ActivateCodeResult>
+}
+
+// ===== Self-owned Codex accounts =====
+// These methods only access the encrypted vault and Codex files on this computer.
+export async function getSelfAccountState(): Promise<SelfAccountState> {
+  return _GetSelfAccountState() as Promise<SelfAccountState>
+}
+
+export async function saveCurrentSelfAccount(alias = ''): Promise<SelfAccount> {
+  return _SaveCurrentSelfAccount(alias) as Promise<SelfAccount>
+}
+
+export async function importSelfAccountAuth(): Promise<SelfAccount | null> {
+  return _ImportSelfAccountAuth() as Promise<SelfAccount | null>
+}
+
+export async function loginNewSelfAccount(): Promise<SelfAccount> {
+  return _LoginNewSelfAccount() as Promise<SelfAccount>
+}
+
+export async function switchSelfAccount(id: string): Promise<SelfAccountSwitchResult> {
+  return _SwitchSelfAccount(id) as Promise<SelfAccountSwitchResult>
+}
+
+export async function updateSelfAccountAlias(id: string, alias: string): Promise<void> {
+  await _UpdateSelfAccountAlias(id, alias)
+}
+
+export async function deleteSelfAccount(id: string): Promise<void> {
+  await _DeleteSelfAccount(id)
+}
+
+export async function setSelfAccountAlertConfig(enabled: boolean, threshold: number): Promise<SelfAccountState> {
+  return _SetSelfAccountAlertConfig(enabled, threshold) as Promise<SelfAccountState>
+}
+
+export async function refreshSelfAccountQuotas(activeOnly: boolean): Promise<SelfAccountState> {
+  return _RefreshSelfAccountQuotas(activeOnly) as Promise<SelfAccountState>
+}
+
+export async function refreshSelfAccountQuota(id: string): Promise<SelfAccount> {
+  return _RefreshSelfAccountQuota(id) as Promise<SelfAccount>
 }
 
 // ===== Stats =====

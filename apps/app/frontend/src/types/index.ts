@@ -101,7 +101,47 @@ export interface UpdateStatus {
 }
 
 // ===== Pages =====
-export type PageId = 'takeover' | 'remote' | 'logs' | 'settings'
+export type PageId = 'takeover' | 'self-accounts' | 'remote' | 'logs' | 'settings'
+
+// ===== Local Codex accounts =====
+export interface SelfAccountQuotaWindow {
+  remaining: number
+  resetAt: number
+  known: boolean
+}
+
+export interface SelfAccountQuota {
+  fiveHour?: SelfAccountQuotaWindow | null
+  weekly?: SelfAccountQuotaWindow | null
+  fetchedAt?: number
+  error?: string
+}
+
+export interface SelfAccount {
+  id: string
+  alias: string
+  email: string
+  accountId: string
+  planType: string
+  current: boolean
+  quota?: SelfAccountQuota | null
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number
+}
+
+export interface SelfAccountState {
+  accounts: SelfAccount[]
+  activeId: string
+  alert: { enabled: boolean; threshold: number }
+  storage: { localOnly: boolean; encrypted: boolean }
+}
+
+export interface SelfAccountSwitchResult {
+  account: SelfAccount
+  reloadMode: 'not_running' | 'daemon_restarted' | 'app_restarted'
+  takeoverDisabled: boolean
+}
 
 // ===== Log =====
 export interface ParsedLog {

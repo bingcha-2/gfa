@@ -6,6 +6,7 @@ import {
   ScrollText,
   Settings,
   SlidersHorizontal,
+  UsersRound,
   type LucideIcon,
 } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
@@ -69,6 +70,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
   const primaryItems: { id: PageId; label: string; icon: LucideIcon }[] = [
     { id: 'takeover', label: t('nav.takeover'), icon: SlidersHorizontal },
     { id: 'remote', label: '用量与额度', icon: Cloud },
+    { id: 'self-accounts', label: t('nav.selfAccounts'), icon: UsersRound },
   ]
   const utilityItems: { id: PageId; label: string; icon: LucideIcon }[] = [
     { id: 'logs', label: t('nav.logs'), icon: ScrollText },
