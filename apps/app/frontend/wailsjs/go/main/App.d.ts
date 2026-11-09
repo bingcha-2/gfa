@@ -71,6 +71,8 @@ export function HostClaudeGateway():Promise<string>;
 
 export function InjectSelected(arg1:Array<string>):Promise<string>;
 
+export function InjectCodexWithMode(arg1:string):Promise<string>;
+
 export function InstallStandaloneClaude():Promise<void>;
 
 export function ImportSelfAccountAuth():Promise<Record<string, any>>;

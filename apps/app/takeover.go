@@ -241,7 +241,9 @@ func (antigravityHubTarget) Restore() (string, error) {
 
 // ── Codex.app(~/.codex/config.toml 注入)──────────────────────────────────
 
-type codexTarget struct{}
+type codexTarget struct{ authMode string }
+
+var codexTakeoverMu sync.Mutex
 
 func (codexTarget) Key() string                   { return "codex" }
 func (codexTarget) ProductID() string             { return "codex" }
@@ -250,7 +252,19 @@ func (codexTarget) InjectionType() string         { return "config" }
 func (codexTarget) DetectPath() string            { return detectCodexAppPath() }
 func (codexTarget) IsInjected(proxyPort int) bool { return IsCodexInjected(proxyPort) }
 
-func (codexTarget) Inject(proxyPort int) (string, error) {
+func (target codexTarget) Inject(proxyPort int) (string, error) {
+	codexTakeoverMu.Lock()
+	defer codexTakeoverMu.Unlock()
+	mode := target.authMode
+	if mode == "" {
+		mode = LoadConfig().CodexTakeoverAuthMode
+	}
+	if mode == "" {
+		mode = "account"
+	}
+	if mode != "account" && mode != "api" {
+		return "", fmt.Errorf("不支持的 Codex 接管方式")
+	}
 	if detectCodexAppPath() == "" {
 		// 自动探测全落空(常见于 winget/scoop/choco 装完没重启 App→PATH 陈旧,或桌面端装在非标准
 		// 目录)。给出可操作指引:命令行 `where codex` 查真实路径,再到 Codex 设置里手动选择——
@@ -284,7 +298,7 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		}
 		return "", fmt.Errorf("清理旧版 Codex 登录投影失败: %w", err)
 	}
-	preserveOAuthCapabilities, oauthReason, oauthErr := detectCodexOAuthCapabilityBridge()
+	preserveOAuthCapabilities, oauthReason, oauthErr := codexOAuthBridgeForMode(mode)
 	if oauthErr != nil {
 		if guiInstalled {
 			LaunchCodexApp()
@@ -293,6 +307,10 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	}
 	Log("[codex] OAuth 账号能力桥接=%v (%s)", preserveOAuthCapabilities, oauthReason)
 	accountNotice := codexTakeoverAccountNotice(preserveOAuthCapabilities)
+	if mode == "api" {
+		// Intentional API mode already explains the feature tradeoff before takeover.
+		accountNotice = ""
+	}
 	if !preserveOAuthCapabilities {
 		// 对齐 Cockpit 无账号 API 服务：用正规的 apikey auth.json 让 Desktop
 		// 稳定进入主界面；它不是伪 OAuth，不会触发官方 wham/refresh 401。
@@ -340,14 +358,23 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 		if err := alignCodexHistoryForSwitch(codexHomeDir(), historySourceProvider, codexProviderID, true); err != nil {
 			return "", err
 		}
-		return "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI" + catalogWarning + accountNotice, nil
+		return finishCodexTakeover(mode, "Codex: ✓ 已接管并对齐历史；未识别到桌面端，请手动重启 Codex 或重新运行 CLI"+catalogWarning+accountNotice)
 	}
 	// GUI 桌面版:对齐必须在返回“已接管”前完成。与 Cockpit 一致,
 	// 关闭旧实例 → 修复当前 provider 下的所有旧会话 → 启动新实例。
 	if err := RestartCodexAfterTakeover(historySourceProvider, codexProviderID); err != nil {
 		return "", err
 	}
-	return "Codex: ✓ 已接管并重启,新旧会话均已切换" + catalogWarning + accountNotice, nil
+	return finishCodexTakeover(mode, "Codex: ✓ 已接管并重启,新旧会话均已切换"+catalogWarning+accountNotice)
+}
+
+func finishCodexTakeover(mode, message string) (string, error) {
+	cfg := LoadConfig()
+	cfg.CodexTakeoverAuthMode = mode
+	if err := SaveConfig(cfg); err != nil {
+		return "", fmt.Errorf("Codex 已应用接管，但保存接管方式失败: %w", err)
+	}
+	return message, nil
 }
 
 func codexTakeoverAccountNotice(hasOAuth bool) string {
@@ -358,6 +385,8 @@ func codexTakeoverAccountNotice(hasOAuth bool) string {
 }
 
 func (codexTarget) Restore() (string, error) {
+	codexTakeoverMu.Lock()
+	defer codexTakeoverMu.Unlock()
 	// 即使接管期间 config.toml 被其它程序改写，也要把 GFA 分桶里的会话迁回用户
 	// 原 provider；不能按当前配置猜来源，否则会把 bingchaai 历史遗留成不可见。
 	historySourceProvider := codexProviderID

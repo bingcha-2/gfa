@@ -106,6 +106,7 @@ const config = {
   userToken: 'mock-session-token', userTokenExpiry: '', userEmail: account.email,
   planName: '会员通行证', planExpiry: new Date(now + 30 * 86400_000).toISOString(), planDeviceMax: 1, deviceName: 'MockBook Pro',
   codexMode: '', codexRelayBase: '', codexRelayKey: '', codexRelayProtocol: '', codexModelMap: {},
+  codexTakeoverAuthMode: 'account',
   subscriptions: account.subscriptions,
 }
 
@@ -169,6 +170,12 @@ const appMethods: Record<string, (...args: unknown[]) => Promise<unknown>> = {
     const ids = (targets as unknown[]).map(targetProductId)
     mockIDEProducts = mockIDEProducts.map((product) => ids.includes(product.id) ? { ...product, injected: true } : product)
     return '✓ 已接管'
+  },
+  InjectCodexWithMode: async (mode) => {
+    if (mode !== 'account' && mode !== 'api') throw new Error('不支持的 Codex 接管方式')
+    config.codexTakeoverAuthMode = mode
+    mockIDEProducts = mockIDEProducts.map(product => product.id === 'codex' ? { ...product, injected: true } : product)
+    return 'Codex: ✓ 已接管（预览）'
   },
   RestoreSelected: async (targets) => {
     const ids = (targets as unknown[]).map(targetProductId)

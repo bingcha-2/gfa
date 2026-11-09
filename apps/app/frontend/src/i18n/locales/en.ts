@@ -165,6 +165,18 @@ export const en: DeepPartialDict = {
   },
 
   takeover: {
+    codexModeUnconfirmed: 'Could not confirm Codex takeover. Check the client installation path and try again.',
+    codexModeLabel: "Takeover mode",
+    codexModeAccount: "Keep account features (default)",
+    codexModeApi: "Independent API mode",
+    codexModeApply: "Apply and restart",
+    codexModeCurrent: "Current takeover mode: {mode}",
+    codexModeAccountHelp: "Keep your personal ChatGPT sign-in. If your account runs out of quota and Send becomes disabled, try independent API mode.",
+    codexModeApiHelp: "Use BingchaAI credentials without personal ChatGPT sign-in. BingchaAI subscription limits still apply. Account features such as the Work browser may be unavailable.",
+    codexModeConfirmTitle: "Apply Codex takeover mode",
+    codexModeConfirmAction: "Apply and restart",
+    codexApiConfirmBody: "Switch to independent API mode and close and reopen Codex. Save your work first.\n\nYour original sign-in will be backed up and restored when takeover stops. Account features such as the Work browser may be unavailable. BingchaAI subscription limits still apply.",
+    codexAccountConfirmBody: "Use the default mode, keeping your ChatGPT sign-in from before takeover, and close and reopen Codex. Save your work first.\n\nIf you were not signed in before takeover, API mode will still be used. A depleted personal quota may affect sending in the desktop app.",
     title: 'Takeover',
     agNote: 'Official passthrough · tokens fetched from remote automatically',
     codexNote: 'Official passthrough · ChatGPT accounts leased from remote',

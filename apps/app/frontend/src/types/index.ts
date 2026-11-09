@@ -16,6 +16,7 @@ export interface Config {
   idePath: string
   hubPath: string
   codexAppPath: string
+  codexTakeoverAuthMode?: 'account' | 'api' | ''
   claudeDesktopPath: string
   // Account-login fields
   userToken: string

@@ -57,6 +57,8 @@ type Config struct {
 	// 真正是否放行仍由代理按服务端授权闸 + 被租号能力门控(见 codex_service_tier.go / applyCodexServiceTier)。
 	// 默认 false(标准档,零行为变化);置 true 开启桌面快速档。
 	CodexFastMode bool `json:"codexFastMode"`
+	// Empty/account keeps the native ChatGPT identity; api uses managed API auth.
+	CodexTakeoverAuthMode string `json:"codexTakeoverAuthMode"`
 }
 
 // SubscriptionSnapshot 是单个生效订阅的客户端展示快照。catalog 化后订阅无 planName,

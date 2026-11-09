@@ -109,6 +109,10 @@ export function InjectSelected(arg1) {
   return window['go']['main']['App']['InjectSelected'](arg1);
 }
 
+export function InjectCodexWithMode(arg1) {
+  return window['go']['main']['App']['InjectCodexWithMode'](arg1);
+}
+
 export function InstallStandaloneClaude() {
   return window['go']['main']['App']['InstallStandaloneClaude']();
 }

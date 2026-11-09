@@ -477,10 +477,23 @@ func readCodexOAuthIdentity(readAuth func() ([]byte, error), readKeychain func()
 	return identity, ok, nil
 }
 
+// codexOAuthBridgeForMode selects the auth path after restoring the user's baseline.
+func codexOAuthBridgeForMode(mode string) (bool, string, error) {
+	// Still validate readable credentials before projecting API auth. An explicit
+	// choice must not turn a read/parse error into permission to overwrite a login.
+	preserve, reason, err := detectCodexOAuthCapabilityBridge()
+	if err != nil {
+		return false, reason, err
+	}
+	if mode == "api" {
+		return false, "用户选择独立 API 模式，备份原登录态后使用受管 API Key", nil
+	}
+	return preserve, reason, nil
+}
+
 // detectCodexOAuthCapabilityBridge 只识别 Codex 当前已经保存的完整登录形态。
-// 远程接管不是账号管理器：不得主动请求 usage 验号、不得消费轮换型 refresh token，
-// 也不得因一次 401 就覆盖用户登录态。只要本地是完整 OAuth，就原样保留并让 Codex
-// 自己负责续期；只有明确没有 OAuth（未登录/API Key）时才投影受管 API Key。
+// 不请求 usage 验号，也不消费轮换型 refresh token。默认保留完整 OAuth；
+// 仅在用户明确选择独立 API 模式时，由调用方备份后投影受管 API Key。
 func detectCodexOAuthCapabilityBridge() (bool, string, error) {
 	identity, ok, err := currentCodexOAuthIdentity()
 	if err != nil {

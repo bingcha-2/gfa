@@ -165,6 +165,18 @@ export const zhTW: DeepPartialDict = {
   },
 
   takeover: {
+    codexModeUnconfirmed: '未確認 Codex 接管狀態，請檢查用戶端安裝路徑後重試。',
+    codexModeLabel: "接管方式",
+    codexModeAccount: "保留帳號功能（預設）",
+    codexModeApi: "獨立 API 模式",
+    codexModeApply: "套用並重新啟動",
+    codexModeCurrent: "目前接管方式：{mode}",
+    codexModeAccountHelp: "保留個人 ChatGPT 登入。個人帳號額度用盡後，若傳送按鈕變灰，可嘗試獨立 API 模式。",
+    codexModeApiHelp: "使用冰茶介面憑證，不依賴個人 ChatGPT 登入；仍受冰茶訂閱額度限制。Work 瀏覽器等帳號功能可能無法使用。",
+    codexModeConfirmTitle: "套用 Codex 接管方式",
+    codexModeConfirmAction: "套用並重新啟動",
+    codexApiConfirmBody: "將切換至獨立 API 模式，並關閉、重新開啟 Codex，請先儲存目前工作。\n\n原登入資訊會備份，取消接管時還原。Work 瀏覽器等帳號功能可能無法使用；此模式仍使用冰茶訂閱額度。",
+    codexAccountConfirmBody: "將使用預設接管方式，保留接管前的 ChatGPT 登入資訊，並關閉、重新開啟 Codex，請先儲存目前工作。\n\n若接管前未登入，仍會使用 API 模式。個人帳號額度耗盡可能影響桌面端傳送。",
     title: '接管',
     agNote: '官方透傳 · 從遠端伺服器自動取得 Token',
     codexNote: '官方透傳 · 從遠端伺服器租用 ChatGPT 帳號',

@@ -34,6 +34,7 @@ export function useRemoteTakeover() {
   const t = useT()
   const config = useAppStore((s) => s.config)
   const fetchIDEStatus = useAppStore((s) => s.fetchIDEStatus)
+  const fetchConfig = useAppStore((s) => s.fetchConfig)
   const { showAlert, showConfirm, modalProps } = useModal()
 
   const hasCard = !!config?.userToken && config.userToken.trim() !== ''
@@ -67,13 +68,15 @@ export function useRemoteTakeover() {
   // 每个弹窗分支都先 setBusy(null) 再弹 —— 等用户读弹窗时本就不该继续转圈。这【不再】是
   // 正确性要求:LoadingOverlay 的 z 已经低于 Dialog,漏关也只是多转个圈,不会盖住弹窗
   // (盖住弹窗曾是真事故,见 LoadingOverlay 的注释)。
-  const runTakeover = async (target: string, inject: boolean, retried = false): Promise<boolean> => {
+  const runTakeover = async (target: string, inject: boolean, retried = false, codexMode?: api.CodexTakeoverAuthMode): Promise<boolean> => {
     setBusy(target)
     setBusyLabel(inject ? t('takeover.injecting', { name: targetName(target) }) : t('takeover.stopping', { name: targetName(target) }))
     try {
       let msg: string
       if (inject && target === 'claude') {
         msg = await api.hostClaudeGateway()
+      } else if (inject && target === 'codex' && codexMode) {
+        msg = await api.injectCodexWithMode(codexMode)
       } else {
         msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
       }
@@ -112,7 +115,13 @@ export function useRemoteTakeover() {
       }
       // 等真实状态翻转(loading 期间保持遮罩)。
       setBusyLabel(inject ? t('takeover.injectingWait', { name: targetName(target) }) : t('takeover.stoppingWait', { name: targetName(target) }))
-      await waitForInjected(target, inject)
+      const confirmed = await waitForInjected(target, inject)
+      if (inject && target === 'codex' && codexMode && !confirmed) {
+        setBusy(null)
+        await showAlert(t('takeover.opFailed'), t('takeover.codexModeUnconfirmed'))
+        return false
+      }
+      if (inject && target === 'codex' && codexMode) await fetchConfig()
       if (inject && target === 'codex' && msg?.includes('CODEX_ACCOUNT_REQUIRED:')) {
         setBusy(null)
         await showAlert(t('takeover.codexAccountTitle'), t('takeover.codexAccountBody'))
@@ -164,11 +173,16 @@ export function useRemoteTakeover() {
   const confirmDesktopTakeover = (): Promise<boolean> =>
     showConfirm(t('takeover.desktopConfirmTitle'), t('takeover.desktopConfirmBody'))
 
+  const confirmCodexTakeover = (mode: api.CodexTakeoverAuthMode): Promise<boolean> =>
+    showConfirm(t('takeover.codexModeConfirmTitle'),
+      t(mode === 'api' ? 'takeover.codexApiConfirmBody' : 'takeover.codexAccountConfirmBody'),
+      { confirmLabel: t('takeover.codexModeConfirmAction') })
+
   return {
     busy,
     // 不忙时一律给空 label:setBusy(null) 不会清 busyLabel,而宿主的遮罩还有 hostBusy 这个
     // 独立开关 —— 直接透出 busyLabel 会让遮罩在弹窗期间挂着「正在接管 X…」的旧文案。
     busyLabel: busy !== null ? busyLabel : '',
-    hasCard, runTakeover, ensureCard, confirmDesktopTakeover, modalProps,
+    hasCard, runTakeover, ensureCard, confirmDesktopTakeover, confirmCodexTakeover, modalProps,
   }
 }

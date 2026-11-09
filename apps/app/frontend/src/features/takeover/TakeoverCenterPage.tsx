@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
+import { useT } from '@/i18n'
+import type { CodexTakeoverAuthMode } from '@/services/wails'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/Modal'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
@@ -9,6 +12,12 @@ import type { PageId } from '@/types'
 
 export function TakeoverCenterPage(_props: { onNavigate?: (p: PageId) => void } = {}) {
   const tk = useRemoteTakeover()
+  const t = useT()
+  const config = useAppStore(s => s.config)
+  const savedMode = config?.codexTakeoverAuthMode === 'api' ? 'api' : 'account'
+  const [codexMode, setCodexMode] = useState<CodexTakeoverAuthMode>(savedMode)
+  const [appliedCodexMode, setAppliedCodexMode] = useState<CodexTakeoverAuthMode>(savedMode)
+  useEffect(() => { setCodexMode(savedMode); setAppliedCodexMode(savedMode) }, [savedMode])
   const products = useAppStore(s => s.ideProducts)
   const account = useAppStore(s => s.account)
   const targets = [
@@ -18,7 +27,12 @@ export function TakeoverCenterPage(_props: { onNavigate?: (p: PageId) => void } 
     { id: 'antigravity_ide', target: 'ide', name: 'Antigravity IDE', provider: 'antigravity', note: '' },
     { id: 'antigravity_hub', target: 'hub', name: 'Antigravity Hub', provider: 'antigravity', note: '' },
   ]
+  const applyCodex = async () => {
+    if (!(await tk.ensureCard('Codex')) || !(await tk.confirmCodexTakeover(codexMode))) return
+    if (await tk.runTakeover('codex', true, false, codexMode)) setAppliedCodexMode(codexMode)
+  }
   const toggle = async (target: typeof targets[number], injected: boolean) => {
+    if (!injected && target.target === 'codex') { await applyCodex(); return }
     if (!injected && target.target === 'claude_desktop' && !(await tk.confirmDesktopTakeover())) return
     if (!injected && !(await tk.ensureCard(target.name))) return
     await tk.runTakeover(target.target, !injected)
@@ -49,6 +63,22 @@ export function TakeoverCenterPage(_props: { onNavigate?: (p: PageId) => void } 
           <Button title={unavailable && !injected ? '需要有效的产品订阅才能接管' : undefined} disabled={tk.busy !== null || (!injected && (unavailable || !product?.detected))} variant={injected ? 'secondary' : 'default'} onClick={() => void toggle(target, injected)}>
             {injected ? '停止' : '接管'}
           </Button>
+          {target.id === 'codex' && <div className="w-full space-y-2 text-xs text-[var(--text-secondary)]">
+            <div className="flex flex-wrap items-center gap-3">
+              <label htmlFor="codex-takeover-mode">{t('takeover.codexModeLabel')}</label>
+              <select id="codex-takeover-mode" aria-describedby="codex-takeover-mode-help"
+                value={codexMode} disabled={tk.busy !== null || config == null}
+                onChange={event => setCodexMode(event.target.value as CodexTakeoverAuthMode)}
+                className="max-w-full rounded-md border border-[var(--border-light)] bg-[var(--bg-card)] px-3 py-2 text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50">
+                <option value="account">{t('takeover.codexModeAccount')}</option>
+                <option value="api">{t('takeover.codexModeApi')}</option>
+              </select>
+              {injected && codexMode !== appliedCodexMode && <Button variant="secondary" disabled={tk.busy !== null || unavailable}
+                onClick={() => void applyCodex()}>{t('takeover.codexModeApply')}</Button>}
+            </div>
+            <p id="codex-takeover-mode-help" className="max-w-[65ch] leading-relaxed">{t(codexMode === 'api' ? 'takeover.codexModeApiHelp' : 'takeover.codexModeAccountHelp')}</p>
+            {injected && <p>{t('takeover.codexModeCurrent', { mode: t(appliedCodexMode === 'api' ? 'takeover.codexModeApi' : 'takeover.codexModeAccount') })}</p>}
+          </div>}
         </section>
       })}
       </div>

@@ -411,6 +411,18 @@ func (a *App) BrowseForPath(title string) string {
 // InjectSelected 接管指定产品(每个产品独立,可单独调用)。
 // targets: 任意 ["ide" | "hub" | "codex"] 子集(也接受产品 id)。
 func (a *App) InjectSelected(targets []string) (string, error) {
+	return a.injectSelected(targets, "")
+}
+
+// InjectCodexWithMode shares subscription, egress and proxy checks with normal takeover.
+func (a *App) InjectCodexWithMode(mode string) (string, error) {
+	if mode != "account" && mode != "api" {
+		return "", fmt.Errorf("不支持的 Codex 接管方式")
+	}
+	return a.injectSelected([]string{"codex"}, mode)
+}
+
+func (a *App) injectSelected(targets []string, codexMode string) (string, error) {
 	cfg := LoadConfig()
 	if err := validateTakeoverPrereqs(cfg); err != nil {
 		return "", err
@@ -432,6 +444,9 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		t := findTakeoverTarget(strings.ToLower(strings.TrimSpace(raw)))
 		if t == nil {
 			continue
+		}
+		if t.Key() == "codex" && codexMode != "" {
+			t = codexTarget{authMode: codexMode}
 		}
 		// The server gateway authorizes the user and owns egress and billing.
 		if t.InjectionType() == "gateway" {

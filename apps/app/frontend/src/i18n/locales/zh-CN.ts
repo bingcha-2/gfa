@@ -166,6 +166,18 @@ export const zhCN = {
   },
 
   takeover: {
+    codexModeUnconfirmed: '未确认 Codex 接管状态，请检查客户端安装路径后重试。',
+    codexModeLabel: "接管方式",
+    codexModeAccount: "保留账号功能（默认）",
+    codexModeApi: "独立 API 模式",
+    codexModeApply: "应用并重启",
+    codexModeCurrent: "当前接管方式：{mode}",
+    codexModeAccountHelp: "保留个人 ChatGPT 登录。个人账号额度用尽后，若发送按钮变灰，可尝试独立 API 模式。",
+    codexModeApiHelp: "使用冰茶接口凭据，不依赖个人 ChatGPT 登录；仍受冰茶订阅额度限制。Work 浏览器等账号功能可能不可用。",
+    codexModeConfirmTitle: "应用 Codex 接管方式",
+    codexModeConfirmAction: "应用并重启",
+    codexApiConfirmBody: "将切换到独立 API 模式，并关闭、重新打开 Codex，请先保存当前工作。\n\n原登录信息会备份，取消接管时恢复。Work 浏览器等账号功能可能不可用；此模式仍使用冰茶订阅额度。",
+    codexAccountConfirmBody: "将使用默认接管方式，保留接管前的 ChatGPT 登录信息，并关闭、重新打开 Codex，请先保存当前工作。\n\n若接管前未登录，仍会使用 API 模式。个人账号额度耗尽可能影响桌面端发送。",
     title: '接管',
     agNote: '官方透传 · 从远程服务器自动获取 Token',
     codexNote: '官方透传 · 从远程服务器租用 ChatGPT 账号',

@@ -22,6 +22,7 @@ import {
   HostClaudeGateway as _HostClaudeGateway,
   ClearDesktopPolicyConflict as _ClearDesktopPolicyConflict,
   InjectSelected as _InjectSelected,
+  InjectCodexWithMode as _InjectCodexWithMode,
   RestoreSelected as _RestoreSelected,
   DetectCompetingClaudeConfig as _DetectCompetingClaudeConfig,
   SanitizeCompetingClaudeConfig as _SanitizeCompetingClaudeConfig,
@@ -355,6 +356,12 @@ export async function clearDesktopPolicyConflict(): Promise<string> {
 
 export async function injectSelected(targets: string[]): Promise<string> {
   return _InjectSelected(targets)
+}
+
+export type CodexTakeoverAuthMode = 'account' | 'api'
+
+export async function injectCodexWithMode(mode: CodexTakeoverAuthMode): Promise<string> {
+  return _InjectCodexWithMode(mode)
 }
 
 export async function restoreSelected(targets: string[]): Promise<string> {

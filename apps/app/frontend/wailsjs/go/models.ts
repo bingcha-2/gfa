@@ -313,6 +313,7 @@ export namespace main {
 	    codexRelayProtocol: string;
 	    codexModelMap: Record<string, string>;
 	    codexFastMode: boolean;
+	    codexTakeoverAuthMode: string;
 
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -344,6 +345,7 @@ export namespace main {
 	        this.codexRelayProtocol = source["codexRelayProtocol"];
 	        this.codexModelMap = source["codexModelMap"];
 	        this.codexFastMode = source["codexFastMode"];
+	        this.codexTakeoverAuthMode = source["codexTakeoverAuthMode"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
