@@ -1,6 +1,6 @@
 import { accountUsageRows } from "./account-usage";
 import { hasApiPrice } from "@gfa/shared";
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { nanoid } from "nanoid";
 
@@ -10,6 +10,13 @@ import { fetchAccountUsage, fetchModels, provisionOneKey, UpstreamError, type Up
 import { upstreamWindowTransition } from "./upstream-window";
 
 const MANUAL_REFRESH_MIN_GAP_MS = 10_000;
+/** 模型列表定时刷新:基础 6 小时 + [0, 6 小时) 内随机秒数,避免规律性地打上游。 */
+const MODELS_REFRESH_BASE_MS = 6 * 3_600_000;
+const MODELS_REFRESH_JITTER_SECONDS = 6 * 3_600;
+
+export function nextModelsRefreshDelayMs(random: () => number = Math.random): number {
+  return MODELS_REFRESH_BASE_MS + Math.floor(random() * MODELS_REFRESH_JITTER_SECONDS) * 1000;
+}
 const SETTING_BASE_URL = "gateway_upstream_base_url";
 const SETTING_OP_KEY = "gateway_upstream_op_key_cipher";
 const DEFAULT_BASE_URL = "https://pool.tk4me.com";
@@ -59,12 +66,46 @@ function toView(r: any) {
 }
 
 @Injectable()
-export class GatewayPoolService {
+export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(GatewayPoolService.name);
   private running: Promise<void> | null = null;
   private lastRunAt = 0;
+  private modelsTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** 启动时后台补拉过期(超过 6 小时或从未同步)的母号模型列表,之后按 6h+随机 周期全量刷新。 */
+  onApplicationBootstrap() {
+    void this.refreshAllModels(MODELS_REFRESH_BASE_MS).finally(() => this.scheduleModelsRefresh());
+  }
+
+  onModuleDestroy() {
+    if (this.modelsTimer) clearTimeout(this.modelsTimer);
+    this.modelsTimer = null;
+  }
+
+  private scheduleModelsRefresh() {
+    const delay = nextModelsRefreshDelayMs();
+    this.logger.log(`next models refresh in ${Math.round(delay / 1000)}s`);
+    this.modelsTimer = setTimeout(() => {
+      void this.refreshAllModels().finally(() => this.scheduleModelsRefresh());
+    }, delay);
+    this.modelsTimer.unref?.();
+  }
+
+  /** 刷新所有启用母号的模型列表;传 staleAfterMs 时只刷新距上次同步超过该时长的母号。 */
+  private async refreshAllModels(staleAfterMs?: number) {
+    try {
+      const rows = await this.prisma.gatewayMotherAccount.findMany({ where: { enabled: true } });
+      for (const row of rows) {
+        if (!row.keyCipher) continue;
+        if (staleAfterMs !== undefined && row.modelsSyncedAt && Date.now() - row.modelsSyncedAt.getTime() < staleAfterMs) continue;
+        await this.refreshModels(row.id, true);
+      }
+    } catch (err) {
+      this.logger.warn(`models refresh failed: ${this.safeMessage(err)}`);
+    }
+  }
 
   /** 后台展示用:不含运营 key,只告诉前端是否已配置及尾号。 */
   async getSettings() {
@@ -257,10 +298,7 @@ export class GatewayPoolService {
       try {
         if (!row.keyCipher) await this.ensureKey(row.id);
         await this.syncUsage(row.id);
-        // 模型列表变化很慢:至少间隔 1 小时才拉一次,托管时另有按需刷新。
-        if (!row.modelsSyncedAt || Date.now() - row.modelsSyncedAt.getTime() > 3_600_000) {
-          await this.refreshModels(row.id, true);
-        }
+        // 模型列表不在这里拉:由 scheduleModelsRefresh 按 6h+随机 周期刷新,托管时另有按需刷新。
       } catch (err) {
         this.logger.warn(`sync ${row.accountName} failed: ${this.safeMessage(err)}`);
       }

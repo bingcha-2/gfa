@@ -36,3 +36,13 @@ it('retains the last snapshot on account query failure without invalidating infe
   expect(data.status).toBeUndefined();
   expect(data.lastError).toBeTruthy();
 });
+
+it('schedules models refresh at 6h plus a random whole second within another 6h', async () => {
+  const { nextModelsRefreshDelayMs } = await import('./gateway-pool.service');
+  const sixHours = 6 * 3600_000;
+  expect(nextModelsRefreshDelayMs(() => 0)).toBe(sixHours);
+  expect(nextModelsRefreshDelayMs(() => 0.999999999)).toBe(sixHours + (6 * 3600 - 1) * 1000);
+  const d = nextModelsRefreshDelayMs(() => 0.5);
+  expect(d % 1000).toBe(0);
+  expect(d).toBe(sixHours + 3 * 3600_000);
+});
