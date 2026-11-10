@@ -137,7 +137,10 @@ jobs:
           # 1) 先构建前端，然后删 source map（在 go:embed 打包前）
           PORTAL_BASE="${{ github.event.inputs.portal_base || 'https://my.bcai.lol' }}"
           APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.lol' }}"
-          cd frontend && npm install && VITE_PORTAL_BASE="${PORTAL_BASE}" VITE_APEX_BASE="${APEX_BASE}" npm run build && cd ..
+          cd frontend
+          npm ci --registry=https://registry.npmjs.org --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=2
+          VITE_PORTAL_BASE="${PORTAL_BASE}" VITE_APEX_BASE="${APEX_BASE}" npm run build
+          cd ..
           find frontend/dist -name '*.map' -delete
           echo "✅ Source maps stripped before Go embed"
 
@@ -176,7 +179,7 @@ jobs:
       - name: Codex account notice regression tests
         working-directory: ${{ env.WAILS_DIR }}/frontend
         shell: bash
-        run: npm test -- src/features/takeover/useRemoteTakeover.test.tsx src/components/SelfAccountQuotaAlert.test.ts
+        run: npm test -- src/features/takeover/useRemoteTakeover.test.tsx src/features/takeover/TakeoverCenterPage.test.tsx src/components/SelfAccountQuotaAlert.test.ts
 
       # ── Windows: 重命名 + 计算 hash（裸 exe 供自动更新，NSIS 安装包供首次下载）──
       - name: Prepare Windows artifact
