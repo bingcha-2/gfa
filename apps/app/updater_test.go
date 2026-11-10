@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-func TestAppVersionMatchesRelease13734(t *testing.T) {
-	if AppVersion != "13.7.34" {
-		t.Fatalf("AppVersion = %q, want 13.7.34", AppVersion)
+func TestAppVersionMatchesRelease13735(t *testing.T) {
+	if AppVersion != "13.7.35" {
+		t.Fatalf("AppVersion = %q, want 13.7.35", AppVersion)
 	}
 }
 

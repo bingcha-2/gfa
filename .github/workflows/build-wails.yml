@@ -166,7 +166,7 @@ jobs:
       - name: Codex account preservation and diagnostics regression tests
         working-directory: ${{ env.WAILS_DIR }}
         shell: bash
-        run: go test . -run 'Test(CodexAuth|CodexOAuth|SelectCodexOAuth|CodexHasOAuth|DetectCodexOAuth|RetakeoverRestores|ReadCodexOAuth|CodexTakeoverAccount|Diagnostic|CollectDiagnostic|HealthReport|RestoreCodexAPIKey|CodexAPIKey)' -count=1 -v -timeout 3m
+        run: go test . -run 'Test(CodexAuth|CodexOAuth|SelectCodexOAuth|CodexHasOAuth|DetectCodexOAuth|RetakeoverRestores|ReadCodexOAuth|CodexTakeover|ManagedCodex|InjectRestore|Diagnostic|CollectDiagnostic|HealthReport|RestoreCodexAPIKey|CodexAPIKey)' -count=1 -v -timeout 3m
 
       - name: Codex local self account regression tests
         working-directory: ${{ env.WAILS_DIR }}
