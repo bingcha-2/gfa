@@ -3,7 +3,7 @@
  *
  *   GET    console/gateway-accounts            列表(脱敏,不含 key)
  *   POST   console/gateway-accounts            添加母号并向上游开 1 个私有 key
- *   PATCH  console/gateway-accounts/:id        启用/停用
+ *   PATCH  console/gateway-accounts/:id        更新母号配置、启用/停用
  *   DELETE console/gateway-accounts/:id        删除本地记录
  *   GET    console/gateway-accounts/settings   上游地址 + 运营 Key 是否已配置(不返回 Key)
  *   PUT    console/gateway-accounts/settings   保存上游地址/运营 Key(Key 留空不修改)
@@ -66,10 +66,10 @@ export class GatewayPoolController {
 
   @Post()
   async add(
-    @Body() body: { accountName: string; upstreamId?: string; baseUrl?: string; totalShares?: number },
+    @Body() body: { accountName: string; upstreamId?: string; baseUrl?: string; totalShares?: number; opKey?: string },
     @Request() req: any,
   ) {
-    const view = await this.pool.add(body?.accountName, body?.upstreamId, body?.baseUrl, body?.totalShares);
+    const view = await this.pool.add(body?.accountName, body?.upstreamId, body?.baseUrl, body?.totalShares, body?.opKey);
     await this.auditLog.log({
       operatorId: req.user?.id,
       action: "GATEWAY_ACCOUNT_ADD",
@@ -83,19 +83,19 @@ export class GatewayPoolController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() body: { enabled?: boolean; baseUrl?: string; totalShares?: number },
+    @Body() body: { enabled?: boolean; baseUrl?: string; totalShares?: number; opKey?: string },
     @Request() req: any,
   ) {
     if (body?.enabled !== undefined) await this.pool.setEnabled(id, Boolean(body.enabled));
-    if (body?.baseUrl !== undefined || body?.totalShares !== undefined) {
-      await this.pool.setConfig(id, { baseUrl: body.baseUrl, totalShares: body.totalShares });
+    if (body?.baseUrl !== undefined || body?.totalShares !== undefined || body?.opKey !== undefined) {
+      await this.pool.setConfig(id, { baseUrl: body.baseUrl, totalShares: body.totalShares, opKey: body.opKey });
     }
     await this.auditLog.log({
       operatorId: req.user?.id,
       action: "GATEWAY_ACCOUNT_UPDATE",
       targetType: "GatewayMotherAccount",
       targetId: id,
-      detail: { enabled: body?.enabled, baseUrl: body?.baseUrl, totalShares: body?.totalShares, ip: req.ip },
+      detail: { enabled: body?.enabled, baseUrl: body?.baseUrl, totalShares: body?.totalShares, opKeyChanged: Boolean(String(body?.opKey ?? "").trim()), ip: req.ip },
     });
     return (await this.pool.list()).find((x: any) => x.id === id);
   }

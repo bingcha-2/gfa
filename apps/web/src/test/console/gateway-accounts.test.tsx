@@ -24,20 +24,25 @@ it.each([
 ])('creates a mother account with the selected address (%s)', async (input, expected) => {
   mocks.api.mockClear();
   mocks.api.mockImplementation(async (path: string, options?: { method?: string }) => {
-    if (path.endsWith('/settings')) return { baseUrl: 'https://pool1.tk4me.com', hasOpKey: true };
+    if (path.endsWith('/settings')) return { baseUrl: 'https://pool1.tk4me.com', hasOpKey: false };
     if (options?.method === 'POST') return { status: 'ready' };
     return [];
   });
   render(<GatewayAccountsPage />);
-  await screen.findByText(/当前已配置/);
+  await screen.findByText('暂无母号');
   fireEvent.change(screen.getByLabelText('上游账号名'), { target: { value: 'mother@example.test' } });
   fireEvent.change(screen.getByLabelText('调用地址（选填）'), { target: { value: input } });
+  const key = screen.getByLabelText('运营 Key');
+  expect(screen.getByRole('button', { name: /^添加$/ })).toBeDisabled();
+  expect(key).toHaveAttribute('type', 'password');
+  fireEvent.change(key, { target: { value: 'test-operator-key' } });
   fireEvent.click(screen.getByRole('button', { name: /^添加$/ }));
   await waitFor(() => {
     expect(mocks.api).toHaveBeenCalledWith('gateway-accounts', {
       method: 'POST',
-      body: { accountName: 'mother@example.test', upstreamId: undefined, baseUrl: expected },
+      body: { accountName: 'mother@example.test', upstreamId: undefined, baseUrl: expected, opKey: 'test-operator-key' },
     });
     expect(screen.getByLabelText('调用地址（选填）')).toHaveValue('');
+    expect(key).toHaveValue('');
   });
 });

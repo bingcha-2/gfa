@@ -1,6 +1,6 @@
 /**
  * 上游(teamclaude 运营控制面)客户端。
- * 地址和运营 key 由后台配置(运营 key 加密存库),调用方解密后以 UpstreamConfig 传入。
+ * 地址和运营 key 由调用方按母号配置传入，运营 key 加密存库。
  */
 export type UpstreamConfig = { baseUrl: string; opKey: string };
 
@@ -26,6 +26,7 @@ async function call(cfg: UpstreamConfig, path: string, init: RequestInit): Promi
   const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, "")}${path}`, {
     ...init,
     headers: { ...(init.headers || {}), "x-api-key": cfg.opKey },
+    redirect: "error",
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   const text = await res.text();
@@ -37,7 +38,7 @@ async function call(cfg: UpstreamConfig, path: string, init: RequestInit): Promi
   }
   // 上游把工具错误统一放在 error 字符串里,状态码不可靠,两者都要看。
   if (!res.ok || (body && body.ok === false)) {
-    const msg = String(body?.error || `HTTP ${res.status}`);
+    const msg = String(body?.error || `HTTP ${res.status}`).replaceAll(cfg.opKey, "[redacted]");
     throw new UpstreamError(msg, res.status);
   }
   return body;

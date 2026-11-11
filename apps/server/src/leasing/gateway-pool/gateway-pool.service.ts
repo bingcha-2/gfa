@@ -69,6 +69,7 @@ function toView(r: any) {
     status: r.status,
     keyHint: r.keyHint,
     hasKey: Boolean(r.keyCipher),
+    hasOpKey: Boolean(r.opKeyCipher),
     baseUrl: r.baseUrl,
     totalShares: r.totalShares,
     models: parseModels(r.modelsJson),
@@ -163,7 +164,10 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     await this.prisma.siteSetting.upsert({ where: { key }, update: { value }, create: { key, value } });
   }
 
-  private async upstreamConfig(): Promise<UpstreamConfig> {
+  private async upstreamConfig(row: { baseUrl: string; opKeyCipher?: string | null }): Promise<UpstreamConfig> {
+    if (row.opKeyCipher) {
+      return { baseUrl: row.baseUrl, opKey: decryptKey(row.opKeyCipher) };
+    }
     const rows = await this.prisma.siteSetting.findMany({ where: { key: { in: [SETTING_BASE_URL, SETTING_OP_KEY] } } });
     const map = new Map(rows.map((r: any) => [r.key, r.value as string]));
     const cipher = map.get(SETTING_OP_KEY);
@@ -197,12 +201,27 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     this.resetListeners.push(cb);
   }
 
-  /** 修改单个母号的调用地址和参考总份数。允许已分配份数超过参考值。 */
-  async setConfig(id: string, input: { baseUrl?: string; totalShares?: number }) {
-    await this.prisma.$transaction(async (db) => {
+  /** 修改母号地址、运营 Key 或参考总份数。留空的运营 Key 保留原值。 */
+  async setConfig(id: string, input: { baseUrl?: string; totalShares?: number; opKey?: string }) {
+    const config = parseMotherConfig(input);
+    const opKey = String(input.opKey ?? "").trim();
+    const opKeyCipher = opKey ? encryptKey(opKey) : undefined;
+    const row = await this.prisma.$transaction(async (db) => {
       if (!(await db.gatewayMotherAccount.findUnique({ where: { id } }))) throw new NotFoundException("母号不存在");
-      await db.gatewayMotherAccount.update({ where: { id }, data: parseMotherConfig(input) });
+      return db.gatewayMotherAccount.update({
+        where: { id },
+        data: {
+          ...config,
+          opKeyCipher,
+          ...(config.baseUrl !== undefined ? { modelsSyncedAt: null } : {}),
+          ...(config.baseUrl !== undefined || opKeyCipher ? { lastSyncAt: null } : {}),
+        },
+      });
     });
+    if (opKeyCipher && row.enabled && !row.keyCipher) {
+      await this.ensureKey(id);
+      await this.refreshModels(id, true);
+    }
     return (await this.list()).find((x: any) => x.id === id);
   }
 
@@ -234,13 +253,14 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
   }
 
   /** 添加母号:先落库(固定 requestId),再尝试开 key;开 key 失败不丢记录,下次同步用原编号重试。 */
-  async add(accountName: string, upstreamId?: string, baseUrl?: string, totalShares?: number) {
+  async add(accountName: string, upstreamId?: string, baseUrl?: string, totalShares?: number, rawOpKey?: string) {
     const name = String(accountName || "").trim();
     if (!name || name.length > 200) throw new BadRequestException("accountName 为 1–200 个字符");
     const exists = await this.prisma.gatewayMotherAccount.findUnique({ where: { accountName: name } });
     if (exists) throw new BadRequestException("该母号已存在");
 
     const config = parseMotherConfig({ baseUrl, totalShares });
+    const opKey = String(rawOpKey ?? "").trim();
     const shares = config.totalShares ?? await this.getDefaultShares();
     const row = await this.prisma.gatewayMotherAccount.create({
       data: {
@@ -248,6 +268,7 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
         upstreamId: upstreamId?.trim() || null,
         requestId: `gw-${nanoid(24)}`,
         baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
+        opKeyCipher: opKey ? encryptKey(opKey) : undefined,
         totalShares: shares,
       },
     });
@@ -320,7 +341,7 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     const row = await this.mustGet(id);
     if (row.keyCipher) return;
     try {
-      const r = await provisionOneKey(await this.upstreamConfig(), {
+      const r = await provisionOneKey(await this.upstreamConfig(row), {
         account: row.accountName,
         accountId: row.upstreamId || undefined,
         requestId: row.requestId,
@@ -368,7 +389,7 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     const row = await this.mustGet(id);
     const now = new Date();
     try {
-      const usage = await fetchAccountUsage(await this.upstreamConfig(), row.accountName);
+      const usage = await fetchAccountUsage(await this.upstreamConfig(row), row.accountName);
       const changed = await this.prisma.$transaction(async (tx) => {
         const current = await tx.gatewayMotherAccount.findUniqueOrThrow({ where: { id } });
         const prev = current.upstreamResetAt7d != null ? Number(current.upstreamResetAt7d) : null;

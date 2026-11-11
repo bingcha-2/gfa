@@ -14,7 +14,7 @@
 - [ ] 重新构建服务端和后台(`scripts/run-production.ps1` 使用 `--no-build`,不会自动构建)。
 - [ ] 重载 Caddy,使 `/api/gateway/*` 路由生效(已改 `Caddyfile`:转发到 `:3001`,`flush_interval -1` 关闭缓冲以支持 SSE)。
 - [ ] 确认服务器能访问 `https://pool1.tk4me.com`。上游若有 IP 白名单,把服务器出口 IP 加进去(上游文档未说明)。
-- [ ] 后台「第三方母号」页先填「上游运营 Key」,再添加母号。默认 API 基址是 `https://pool1.tk4me.com`，[三方控制台](https://pool1.tk4me.com/teamclaude/console)用于网页操作。
+- [ ] 在后台「第三方母号」页添加母号时填写该账号的运营 Key 和 API 基址。地址留空使用 `https://pool1.tk4me.com`，[三方控制台](https://pool1.tk4me.com/teamclaude/console)用于网页操作。
 
 ## 2. 冒烟测试顺序
 

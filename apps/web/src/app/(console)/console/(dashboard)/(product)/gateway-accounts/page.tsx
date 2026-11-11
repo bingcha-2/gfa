@@ -7,6 +7,7 @@ import { PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -37,6 +38,7 @@ type MotherAccount = {
   status: "pending" | "ready" | "key_lost" | "error";
   keyHint: string | null;
   hasKey: boolean;
+  hasOpKey: boolean;
   lastError: string | null;
   usage: KeyUsage[] | null;
   usageSyncedAt: string | null;
@@ -78,6 +80,9 @@ export default function GatewayAccountsPage() {
   const [name, setName] = useState("");
   const [upstreamId, setUpstreamId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [motherOpKey, setMotherOpKey] = useState("");
+  const [connection, setConnection] = useState<{ id: string; accountName: string; baseUrl: string; opKey: string } | null>(null);
+  const [savingConnection, setSavingConnection] = useState(false);
   const [settings, setSettings] = useState<UpstreamSettings | null>(null);
   const [opKeyInput, setOpKeyInput] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -124,7 +129,7 @@ export default function GatewayAccountsPage() {
   }
 
   async function add() {
-    if (!name.trim()) return;
+    if (!name.trim() || !motherOpKey.trim() || adding) return;
     setAdding(true);
     try {
       const created = await apiRequest<MotherAccount>("gateway-accounts", {
@@ -133,6 +138,7 @@ export default function GatewayAccountsPage() {
           accountName: name.trim(),
           upstreamId: upstreamId.trim() || undefined,
           baseUrl: baseUrl.trim() || undefined,
+          opKey: motherOpKey.trim(),
         },
       });
       toast[created.status === "ready" ? "success" : "warning"](
@@ -141,6 +147,7 @@ export default function GatewayAccountsPage() {
       setName("");
       setUpstreamId("");
       setBaseUrl("");
+      setMotherOpKey("");
       await load();
     } catch (err) {
       toast.error(getErrorMessage(err));
@@ -179,9 +186,22 @@ export default function GatewayAccountsPage() {
     }
   }
 
-  function editBaseUrl(row: MotherAccount) {
-    const v = window.prompt("该母号的调用地址(https://…)", row.baseUrl);
-    if (v && v.trim() !== row.baseUrl) void patchRow(row, { baseUrl: v.trim() });
+  async function saveConnection() {
+    if (!connection || !connection.baseUrl.trim() || savingConnection) return;
+    setSavingConnection(true);
+    try {
+      await apiRequest(`gateway-accounts/${connection.id}`, {
+        method: "PATCH",
+        body: { baseUrl: connection.baseUrl.trim(), opKey: connection.opKey.trim() || undefined },
+      });
+      setConnection(null);
+      await load();
+      toast.success("母号连接已保存");
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setSavingConnection(false);
+    }
   }
 
   function editShares(row: MotherAccount) {
@@ -201,12 +221,12 @@ export default function GatewayAccountsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
+    <div className="flex flex-col gap-6">
+      {settings?.hasOpKey && rows.some(row => !row.hasOpKey) && <Card>
         <CardHeader>
-          <CardTitle>上游运营 Key</CardTitle>
+          <CardTitle>旧母号共用运营 Key</CardTitle>
           <CardDescription>
-            运营 Key 加密保存,保存后不会再显示。{settings?.hasOpKey ? `当前已配置(${settings.opKeyHint})。` : "当前未配置,添加母号前必须先配置。"}留空表示不修改。
+            供尚未设置独立运营 Key 的旧母号使用。当前已配置（{settings.opKeyHint}）。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">
@@ -215,18 +235,18 @@ export default function GatewayAccountsPage() {
             {savingSettings ? <Spinner /> : null}保存
           </Button>
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>
           <CardTitle>添加母号</CardTitle>
           <CardDescription>
-            账号名必须与上游 /teamclaude/status 中的名称完全一致。添加后系统自动向上游开 1 个私有 Key(占账号 100%),Key 加密保存,任何页面都不会显示。
+            账号名与上游一致。GFA 用该母号的运营 Key 开私有 Key 并同步额度。
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="flex flex-col items-start gap-4" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-            <FieldGroup className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <FieldGroup className="grid gap-4 md:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="mother-account-name">上游账号名</FieldLabel>
                 <Input id="mother-account-name" placeholder="如邮箱" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -240,8 +260,13 @@ export default function GatewayAccountsPage() {
                 <Input id="mother-base-url" type="url" placeholder="https://…" aria-describedby="mother-base-url-help" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
                 <FieldDescription id="mother-base-url-help">填写该母号的 HTTPS API 基址，留空使用系统默认地址。</FieldDescription>
               </Field>
+              <Field>
+                <FieldLabel htmlFor="mother-op-key">运营 Key</FieldLabel>
+                <Input id="mother-op-key" type="password" autoComplete="new-password" value={motherOpKey} onChange={(e) => setMotherOpKey(e.target.value)} required />
+                <FieldDescription>填写该母号的运营 Key。保存时会加密。</FieldDescription>
+              </Field>
             </FieldGroup>
-            <Button type="submit" disabled={adding || !name.trim()}>
+            <Button type="submit" disabled={adding || !name.trim() || !motherOpKey.trim()}>
               {adding ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}添加
             </Button>
           </form>
@@ -291,7 +316,8 @@ export default function GatewayAccountsPage() {
                       <TableCell>{r.accountType ?? "未知"}</TableCell>
                       <TableCell><Badge variant={st.variant}>{st.text}</Badge></TableCell>
                       <TableCell className="text-xs">
-                        <button className="underline-offset-2 hover:underline" onClick={() => editBaseUrl(r)}>{r.baseUrl}</button>
+                        <button type="button" className="underline-offset-2 hover:underline" onClick={() => setConnection({ id: r.id, accountName: r.accountName, baseUrl: r.baseUrl, opKey: "" })}>{r.baseUrl}</button>
+                        <div className="text-muted-foreground">{r.hasOpKey ? "独立运营 Key" : settings?.hasOpKey ? "共用运营 Key" : "待配置运营 Key"}</div>
                       </TableCell>
                       <TableCell className="text-xs">
                         <button className="underline-offset-2 hover:underline" onClick={() => editShares(r)}>
@@ -322,6 +348,35 @@ export default function GatewayAccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={connection !== null} onOpenChange={(open) => { if (!open && !savingConnection) setConnection(null); }}>
+        <DialogContent showCloseButton={!savingConnection}>
+          {connection && <>
+            <DialogHeader>
+              <DialogTitle>配置母号连接</DialogTitle>
+              <DialogDescription>{connection.accountName}</DialogDescription>
+            </DialogHeader>
+            <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void saveConnection(); }}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="edit-mother-base-url">调用地址</FieldLabel>
+                  <Input id="edit-mother-base-url" type="url" value={connection.baseUrl} onChange={(e) => setConnection({ ...connection, baseUrl: e.target.value })} required />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-mother-op-key">运营 Key</FieldLabel>
+                  <Input id="edit-mother-op-key" type="password" autoComplete="new-password" placeholder="留空保留当前配置" value={connection.opKey} onChange={(e) => setConnection({ ...connection, opKey: e.target.value })} />
+                </Field>
+              </FieldGroup>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setConnection(null)} disabled={savingConnection}>取消</Button>
+                <Button type="submit" disabled={savingConnection || !connection.baseUrl.trim()}>
+                  {savingConnection && <Spinner data-icon="inline-start" />}保存
+                </Button>
+              </DialogFooter>
+            </form>
+          </>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1025,6 +1025,7 @@ model GatewayMotherAccount {
   upstreamId     String?   // 上游稳定 accountId(可选,防误操作)
   requestId      String    @unique // 开 key 的幂等编号,创建时生成后不再变化
   keyCipher      String?   // base64(nonce|tag|ciphertext)
+  opKeyCipher    String?   // 母号自己的运营 Key，旧母号留空时使用共用配置
   keyHint        String?   // 脱敏尾号,如 ****a1b2
   enabled        Boolean   @default(true)
   status         String    @default("pending") // pending|ready|key_lost|error
