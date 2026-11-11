@@ -19,7 +19,7 @@ export function nextModelsRefreshDelayMs(random: () => number = Math.random): nu
 }
 const SETTING_BASE_URL = "gateway_upstream_base_url";
 const SETTING_OP_KEY = "gateway_upstream_op_key_cipher";
-const DEFAULT_BASE_URL = "https://pool.tk4me.com";
+const DEFAULT_BASE_URL = "https://pool1.tk4me.com";
 
 function parseModels(json: string | null | undefined): string[] {
   try {

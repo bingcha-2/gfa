@@ -1032,7 +1032,7 @@ model GatewayMotherAccount {
   usageJson      String?   // 上游用量快照(不含 key)
   usageSyncedAt  DateTime?
   lastSyncAt     DateTime?
-  baseUrl        String    @default("https://pool.tk4me.com") // 推理调用地址,每个母号可单独配置
+  baseUrl        String    @default("https://pool1.tk4me.com") // 推理调用地址,每个母号可单独配置
   totalShares    Int       @default(6)                         // 该母号分成多少份
   modelsJson     String?   // 该母号支持的模型 id 列表(JSON 数组)
   modelsSyncedAt DateTime?
