@@ -7,6 +7,7 @@ import { PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -76,6 +77,7 @@ export default function GatewayAccountsPage() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [upstreamId, setUpstreamId] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [settings, setSettings] = useState<UpstreamSettings | null>(null);
   const [opKeyInput, setOpKeyInput] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -127,13 +129,18 @@ export default function GatewayAccountsPage() {
     try {
       const created = await apiRequest<MotherAccount>("gateway-accounts", {
         method: "POST",
-        body: { accountName: name.trim(), upstreamId: upstreamId.trim() || undefined },
+        body: {
+          accountName: name.trim(),
+          upstreamId: upstreamId.trim() || undefined,
+          baseUrl: baseUrl.trim() || undefined,
+        },
       });
       toast[created.status === "ready" ? "success" : "warning"](
         created.status === "ready" ? "已添加并开出 Key" : `已添加,但开 Key 未成功:${created.lastError ?? created.status}`,
       );
       setName("");
       setUpstreamId("");
+      setBaseUrl("");
       await load();
     } catch (err) {
       toast.error(getErrorMessage(err));
@@ -217,12 +224,27 @@ export default function GatewayAccountsPage() {
             账号名必须与上游 /teamclaude/status 中的名称完全一致。添加后系统自动向上游开 1 个私有 Key(占账号 100%),Key 加密保存,任何页面都不会显示。
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Input className="w-72" placeholder="上游账号名(如邮箱)" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input className="w-72" placeholder="上游 accountId(可选,防误操作)" value={upstreamId} onChange={(e) => setUpstreamId(e.target.value)} />
-          <Button onClick={add} disabled={adding || !name.trim()}>
-            {adding ? <Spinner /> : <PlusIcon />}添加
-          </Button>
+        <CardContent>
+          <form className="flex flex-col items-start gap-4" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+            <FieldGroup className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <Field>
+                <FieldLabel htmlFor="mother-account-name">上游账号名</FieldLabel>
+                <Input id="mother-account-name" placeholder="如邮箱" value={name} onChange={(e) => setName(e.target.value)} required />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="mother-upstream-id">上游 accountId（选填）</FieldLabel>
+                <Input id="mother-upstream-id" value={upstreamId} onChange={(e) => setUpstreamId(e.target.value)} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="mother-base-url">调用地址（选填）</FieldLabel>
+                <Input id="mother-base-url" type="url" placeholder="https://…" aria-describedby="mother-base-url-help" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+                <FieldDescription id="mother-base-url-help">填写该母号的 HTTPS API 基址，留空使用系统默认地址。</FieldDescription>
+              </Field>
+            </FieldGroup>
+            <Button type="submit" disabled={adding || !name.trim()}>
+              {adding ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}添加
+            </Button>
+          </form>
         </CardContent>
       </Card>
 

@@ -21,6 +21,23 @@ const SETTING_BASE_URL = "gateway_upstream_base_url";
 const SETTING_OP_KEY = "gateway_upstream_op_key_cipher";
 const DEFAULT_BASE_URL = "https://pool1.tk4me.com";
 
+function parseMotherConfig(input: { baseUrl?: string; totalShares?: number }) {
+  const config: { baseUrl?: string; totalShares?: number } = {};
+  if (input.baseUrl !== undefined) {
+    const baseUrl = String(input.baseUrl).trim().replace(/\/+$/, "");
+    if (!/^https:\/\/[^\s]+$/i.test(baseUrl)) throw new BadRequestException("调用地址必须是 https:// 开头");
+    config.baseUrl = baseUrl;
+  }
+  if (input.totalShares !== undefined) {
+    const totalShares = Number(input.totalShares);
+    if (!Number.isSafeInteger(totalShares) || totalShares < 1 || totalShares > 1000) {
+      throw new BadRequestException("份数为 1–1000 的整数");
+    }
+    config.totalShares = totalShares;
+  }
+  return config;
+}
+
 function parseModels(json: string | null | undefined): string[] {
   try {
     const v = json ? JSON.parse(json) : [];
@@ -136,12 +153,10 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
   }
 
   /** 新母号的默认份数取后台设置 gateway_default_total_shares,没有则用表默认值 6。 */
-  private async applyDefaultShares(id: string) {
+  private async getDefaultShares() {
     const r = await this.prisma.siteSetting.findUnique({ where: { key: "gateway_default_total_shares" } });
     const n = Math.floor(Number(r?.value));
-    if (Number.isFinite(n) && n >= 1) {
-      await this.prisma.gatewayMotherAccount.update({ where: { id }, data: { totalShares: n } });
-    }
+    return Number.isFinite(n) && n >= 1 ? n : undefined;
   }
 
   private async upsertSetting(key: string, value: string) {
@@ -186,18 +201,7 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
   async setConfig(id: string, input: { baseUrl?: string; totalShares?: number }) {
     await this.prisma.$transaction(async (db) => {
       if (!(await db.gatewayMotherAccount.findUnique({ where: { id } }))) throw new NotFoundException("母号不存在");
-      const data: Record<string, unknown> = {};
-      if (input.baseUrl !== undefined) {
-        const b = String(input.baseUrl).trim().replace(/\/+$/, "");
-        if (!/^https:\/\/[^\s]+$/i.test(b)) throw new BadRequestException("调用地址必须是 https:// 开头");
-        data.baseUrl = b;
-      }
-      if (input.totalShares !== undefined) {
-        const n = Number(input.totalShares);
-        if (!Number.isSafeInteger(n) || n < 1 || n > 1000) throw new BadRequestException("份数为 1–1000 的整数");
-        data.totalShares = n;
-      }
-      await db.gatewayMotherAccount.update({ where: { id }, data });
+      await db.gatewayMotherAccount.update({ where: { id }, data: parseMotherConfig(input) });
     });
     return (await this.list()).find((x: any) => x.id === id);
   }
@@ -236,11 +240,17 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     const exists = await this.prisma.gatewayMotherAccount.findUnique({ where: { accountName: name } });
     if (exists) throw new BadRequestException("该母号已存在");
 
+    const config = parseMotherConfig({ baseUrl, totalShares });
+    const shares = config.totalShares ?? await this.getDefaultShares();
     const row = await this.prisma.gatewayMotherAccount.create({
-      data: { accountName: name, upstreamId: upstreamId?.trim() || null, requestId: `gw-${nanoid(24)}` },
+      data: {
+        accountName: name,
+        upstreamId: upstreamId?.trim() || null,
+        requestId: `gw-${nanoid(24)}`,
+        baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
+        totalShares: shares,
+      },
     });
-    if (baseUrl !== undefined || totalShares !== undefined) await this.setConfig(row.id, { baseUrl, totalShares });
-    else await this.applyDefaultShares(row.id);
     await this.ensureKey(row.id);
     await this.refreshModels(row.id, true);
     return toView(await this.mustGet(row.id));

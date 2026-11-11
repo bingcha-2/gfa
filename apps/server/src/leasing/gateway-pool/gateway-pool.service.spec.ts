@@ -4,6 +4,14 @@ vi.mock('./upstream-client', async (original) => ({ ...await original<typeof imp
 import { GatewayPoolService } from './gateway-pool.service';
 import { fetchAccountUsage, fetchModels, UpstreamError } from './upstream-client';
 
+it('rejects an invalid inference URL before creating a mother account', async () => {
+  const create = vi.fn();
+  const db = { gatewayMotherAccount: { findUnique: vi.fn().mockResolvedValue(null), create } };
+  const pool = new GatewayPoolService(db as any);
+  await expect(pool.add('mother@example.test', undefined, 'http://pool.example.test')).rejects.toThrow('调用地址必须是 https:// 开头');
+  expect(create).not.toHaveBeenCalled();
+});
+
 it.each([true, false])('refreshes account windows and resets only an observed new period: %s', async fresh => {
   const now = Date.now();
   const usage = { generatedAt: now, account: { id: 'up', name: 'test', enabled: true, windows: [
