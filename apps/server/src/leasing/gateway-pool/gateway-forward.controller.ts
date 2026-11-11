@@ -14,15 +14,48 @@ import { refreshModelPricing } from "../../shared/pricing/pricing.module";
 import { Controller, Get, Post, Req, Res, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 
 import { Public } from "../../shared/auth/public.decorator";
 import { GatewayPoolService } from "./gateway-pool.service";
 import { GatewayUserService, type UsageTokens, type UserState } from "./gateway-user.service";
+import { requestGatewayUpstream } from "./gateway-upstream";
 
 const MAX_INFLIGHT_PER_USER = 4;
 const UPSTREAM_TIMEOUT_MS = 10 * 60_000;
-// 只透传这几个请求头,其余(尤其是 authorization)一律换成母号 key。
-const PASS_HEADERS = ["anthropic-version", "anthropic-beta", "content-type", "accept"];
+// Preserve end-to-end CLI headers, including new SDK/beta headers. Credentials
+// belong to this gateway; framing and proxy-routing headers belong to this hop.
+const LOCAL_HEADERS = new Set([
+  "authorization", "x-api-key", "x-goog-api-key", "cookie", "cookie2",
+  "host", "content-length", "content-encoding",
+  "connection", "keep-alive", "proxy-connection", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade", "expect",
+  "forwarded", "x-real-ip",
+]);
+
+function upstreamHeaders(incoming: Record<string, string | string[] | undefined>, key: string) {
+  const connection = incoming.connection;
+  const hopHeaders = new Set((Array.isArray(connection) ? connection.join(",") : connection ?? "")
+    .split(",").map(name => name.trim().toLowerCase()));
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(incoming)) {
+    const lower = name.toLowerCase();
+    if (LOCAL_HEADERS.has(lower) || hopHeaders.has(lower) || lower.startsWith(":") ||
+      /^(x-forwarded-|x-gfa-|x-bcai-)/.test(lower) || value === undefined) continue;
+    headers[lower] = Array.isArray(value) ? value.join(", ") : value;
+  }
+  headers.authorization = `Bearer ${key}`;
+  headers["content-type"] ??= "application/json";
+  return headers;
+}
+
+function originalQuery(req: any): string {
+  const url = req.originalUrl ?? req.url ?? "";
+  const queryStart = url.indexOf("?");
+  // Preserve encoding, repeated values and ordering; never use the incoming
+  // host/path to choose the upstream destination.
+  return queryStart < 0 ? "" : url.slice(queryStart);
+}
 
 function errorBody(type: string, message: string) {
   return { type: "error", error: { type, message } };
@@ -103,6 +136,11 @@ export class GatewayForwardController {
   }
 
   private async forward(req: any, res: any, s: UserState, path: string, billed: boolean) {
+    // Parse for access/billing checks, but send the original bytes. Serializing
+    // req.body would alter escaping, whitespace and large numeric literals.
+    if (!Buffer.isBuffer(req.rawBody)) {
+      return void res.status(400).json(errorBody("invalid_request_error", "需要 JSON 请求正文"));
+    }
     const body: any = req.body;
     const model = String(body?.model || "");
     const pricingMode = body?.speed === "fast" || body?.service_tier === "priority" ? "priority" : "standard";
@@ -140,12 +178,7 @@ export class GatewayForwardController {
     // A quota/target await can allow another request to occupy the last slot.
     if (s.inflight >= MAX_INFLIGHT_PER_USER) return void res.status(429).json(errorBody("rate_limit_error", "并发请求过多,请稍后再试"));
     const requestId = randomUUID();
-    const headers: Record<string, string> = { authorization: `Bearer ${target.key}`, "x-request-id": requestId };
-    for (const h of PASS_HEADERS) {
-      const v = req.headers[h];
-      if (typeof v === "string") headers[h] = v;
-    }
-    headers["content-type"] = "application/json";
+    const headers = upstreamHeaders(req.headers, target.key);
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), UPSTREAM_TIMEOUT_MS);
@@ -154,23 +187,28 @@ export class GatewayForwardController {
     let tokens: UsageTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
     let status = 502;
     try {
-      const up = await fetch(`${target.baseUrl}${path}`, {
-        method: "POST",
+      const up = await requestGatewayUpstream(`${target.baseUrl}${path}${originalQuery(req)}`, {
         headers,
-        body: JSON.stringify(body),
+        rawHeaders: req.rawHeaders,
+        body: req.rawBody,
         signal: ctrl.signal,
       });
       status = up.status;
+      // Preserve retry/diagnostic semantics without exposing credentials or
+      // copying framing headers (the transport may have decompressed the body).
+      for (const name of ["request-id", "x-request-id", "retry-after", "retry-after-ms", "x-should-retry"]) {
+        const value = up.headers.get(name);
+        if (value !== null) res.setHeader(name, value);
+      }
       if (!up.ok) {
-        // 上游错误不透出,统一改写。
-        const code = up.status === 429 ? 429 : up.status === 401 || up.status === 403 ? 503 : up.status >= 500 ? 502 : 400;
+        // Keep private diagnostics out of the body, but do not turn permanent
+        // authentication failures into retryable 503 responses.
+        const code = up.status;
         let msg = up.status === 429 ? "服务繁忙,请稍后再试" : up.status === 400 ? "请求无效" : "服务暂不可用,请稍后再试";
         const upstreamError = await up.json().catch(() => null) as any;
         // Keep credentials/account diagnostics private, but do not conceal a
         // known provider admission failure behind a misleading generic message.
         if (up.status === 429) {
-          const retryAfter = up.headers.get("retry-after");
-          if (retryAfter && /^\d{1,5}$/.test(retryAfter)) res.setHeader("retry-after", retryAfter);
           if (upstreamError?.error?.code === "calibration_pending") {
             msg = "上游账号额度尚未完成校准，暂时无法调用；请联系服务方处理";
             return void res.status(429).json({
@@ -179,12 +217,13 @@ export class GatewayForwardController {
             });
           }
         }
-        return void res.status(code).json(errorBody(code === 429 ? "rate_limit_error" : "api_error", msg));
+        const type = code === 401 ? "authentication_error" : code === 403 ? "permission_error" :
+          code === 429 ? "rate_limit_error" : code === 400 ? "invalid_request_error" : "api_error";
+        return void res.status(code).json(errorBody(type, msg));
       }
 
       const ct = up.headers.get("content-type") || "application/json";
       res.status(up.status).setHeader("content-type", ct);
-      res.setHeader("x-gfa-request-id", requestId);
       if (!billed || !up.body) {
         res.send(Buffer.from(await up.arrayBuffer()));
         return;
@@ -193,31 +232,48 @@ export class GatewayForwardController {
       if (ct.includes("text/event-stream")) {
         res.setHeader("cache-control", "no-cache");
         let buf = "";
+        let terminal = false;
+        const decoder = new StringDecoder("utf8");
+        const observeLine = (line: string) => {
+          if (!line.startsWith("data:")) return;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") { terminal = true; return; }
+          try {
+            const ev = JSON.parse(data);
+            if (ev?.type === "message_stop" || ev?.type === "error") terminal = true;
+            if (ev?.type === "message_start") tokens = toTokens(ev.message?.usage, tokens);
+            else if (ev?.type === "message_delta") tokens = toTokens(ev.usage, tokens);
+          } catch { /* Observe only; never rewrite the original stream. */ }
+        };
         const readable = Readable.fromWeb(up.body as any);
         await new Promise<void>((resolve) => {
+          const resume = () => readable.resume();
+          const cleanup = () => res.off("drain", resume);
           readable.on("data", (chunk: Buffer) => {
-            res.write(chunk); // 原样透传,不缓冲
-            buf += chunk.toString("utf8");
+            if (!res.write(chunk)) {
+              readable.pause();
+              res.once("drain", resume);
+            }
+            buf += decoder.write(chunk);
             let i: number;
             while ((i = buf.indexOf("\n")) >= 0) {
               const line = buf.slice(0, i).trim();
               buf = buf.slice(i + 1);
-              if (!line.startsWith("data:") || !line.includes('"usage"')) continue;
-              try {
-                const ev = JSON.parse(line.slice(5));
-                if (ev?.type === "message_start") tokens = toTokens(ev.message?.usage, tokens);
-                else if (ev?.type === "message_delta") tokens = toTokens(ev.usage, tokens);
-              } catch {
-                /* 忽略不完整的行 */
-              }
+              observeLine(line);
             }
           });
           readable.on("end", () => {
-            res.end();
+            cleanup();
+            observeLine((buf + decoder.end()).trim());
+            if (terminal) res.end();
+            else res.destroy(); // A clean TCP EOF is not necessarily a complete Claude response.
             resolve();
           });
           readable.on("error", () => {
-            res.end();
+            cleanup();
+            // Ending normally would make a truncated stream look complete.
+            // Destroy without forwarding upstream error details to the client.
+            res.destroy();
             resolve();
           });
         });
@@ -232,7 +288,7 @@ export class GatewayForwardController {
       }
     } catch {
       if (!res.headersSent) res.status(ctrl.signal.aborted ? 499 : 502).json(errorBody("api_error", "服务暂不可用,请稍后再试"));
-      else res.end();
+      else res.destroy();
     } finally {
       clearTimeout(timer);
       s.inflight--;

@@ -11,19 +11,21 @@ import { existsSync, mkdirSync } from "fs";
 
 import { AppModule } from "./app.module";
 import { PrismaService } from "./shared/prisma/prisma.service";
+import { configureGatewayJsonParser } from "./leasing/gateway-pool/gateway-body-parser";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // Fire onModuleDestroy/onApplicationShutdown on SIGTERM/SIGINT so services
   // (e.g. TokenServerService) can flush buffered state before the process exits.
   app.enableShutdownHooks();
 
-  // Increase JSON body size limit for FAQ rich-text content with images
-  app.useBodyParser("json", { limit: "20mb" });
   // Parse form-encoded bodies so the epay (易支付) async callback, which posts
   // application/x-www-form-urlencoded, is read by the notify controller.
   app.useBodyParser("urlencoded", { extended: true });
+  // Increase JSON body size limit for FAQ rich-text content with images.
+  // Register after form parsing so raw buffers on other routes are released.
+  configureGatewayJsonParser(app);
 
   // Ensure faq-images directory exists and serve static files
   const faqImagesDir = join(process.cwd(), "data", "faq-images");
