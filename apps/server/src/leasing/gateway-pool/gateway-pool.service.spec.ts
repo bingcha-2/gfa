@@ -108,3 +108,17 @@ it('uses each mother account’s operations address and key to provision and syn
   }
   expect(db.siteSetting.findMany).not.toHaveBeenCalled();
 });
+
+it.each(['https://pool1.tk4me.com', 'https://configured.example'])('new mothers inherit the configured upstream: %s', async baseUrl => {
+  const row = { id: 'new-mother', modelsJson: '[]' };
+  const create = vi.fn().mockResolvedValue(row);
+  const db: any = {
+    siteSetting: { findMany: vi.fn().mockResolvedValue([{ key: 'gateway_upstream_base_url', value: baseUrl }]), findUnique: vi.fn().mockResolvedValue(null) },
+    gatewayMotherAccount: { findUnique: vi.fn().mockResolvedValueOnce(null).mockResolvedValue(row), create },
+  };
+  const pool = new GatewayPoolService(db);
+  vi.spyOn(pool as any, 'ensureKey').mockResolvedValue(undefined);
+  vi.spyOn(pool, 'refreshModels').mockResolvedValue([]);
+  await pool.add('new@example.test');
+  expect(create).toHaveBeenCalledWith({ data: expect.objectContaining({ accountName: 'new@example.test', baseUrl }) });
+});

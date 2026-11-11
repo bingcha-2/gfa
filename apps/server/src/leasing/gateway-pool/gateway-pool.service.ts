@@ -262,12 +262,13 @@ export class GatewayPoolService implements OnApplicationBootstrap, OnModuleDestr
     const config = parseMotherConfig({ baseUrl, totalShares });
     const opKey = String(rawOpKey ?? "").trim();
     const shares = config.totalShares ?? await this.getDefaultShares();
+    const defaultBaseUrl = config.baseUrl ?? (await this.getSettings()).baseUrl;
     const row = await this.prisma.gatewayMotherAccount.create({
       data: {
         accountName: name,
         upstreamId: upstreamId?.trim() || null,
         requestId: `gw-${nanoid(24)}`,
-        baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
+        baseUrl: defaultBaseUrl,
         opKeyCipher: opKey ? encryptKey(opKey) : undefined,
         totalShares: shares,
       },
