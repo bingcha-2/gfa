@@ -406,12 +406,11 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 		return
 	}
 
-	var responseBody io.Reader = resp.Body
-	if directImage {
-		responseBody = decodeCodexResponseStream(resp)
-	}
+	// Hosted image generation/editing can return compressed SSE too. Decode
+	// before scanning events, otherwise a valid image is mistaken for no output.
+	responseBody := decodeCodexResponseStream(resp)
 	data, readErr := io.ReadAll(responseBody)
-	if directImage && readErr != nil {
+	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = http.StatusBadGateway
 		audit.note = "failed to read image response: " + readErr.Error()
@@ -463,6 +462,7 @@ func (p *CodexProxy) ServeImages(w http.ResponseWriter, r *http.Request, card, d
 
 	if len(images) == 0 {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.status = http.StatusBadGateway
 		audit.note = "上游未返回图像输出"
 		p.sendJSONError(w, http.StatusBadGateway, "upstream did not return image output")
 		return
