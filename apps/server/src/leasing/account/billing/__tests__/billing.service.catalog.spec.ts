@@ -11,6 +11,7 @@ import * as crypto from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingService } from "../billing.service";
+import { CustomerAdminService } from "../../../console/customer-admin/customer-admin.service";
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 
 // V2 下单用商户私钥 RSA 签名 —— 生成一个测试私钥(裸 base64 PKCS#8)喂给 EPAY_MERCHANT_PRIVATE_KEY。
@@ -59,6 +60,7 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
     },
     // 绑定线下单前座位预检要读 DB ACTIVE 订阅的 config 算占用份额(默认无订阅)。
     subscription: { findMany: vi.fn().mockResolvedValue([]) },
+    gatewayMotherAccount: { findFirst: vi.fn().mockResolvedValue({ id: "gateway-mother" }) },
     ...overrides,
   };
   // $transaction:回调式 → 用同一 mock 当 tx;数组式 → Promise.all。
@@ -379,7 +381,7 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
 
   const bindSelection = {
     line: "bind",
-    items: [{ product: "anthropic", level: "max-20x" }],
+    items: [{ product: "codex", level: "plus" }],
     shareUsers: 2, // → weight 4
     deviceLimit: 1,
   };
@@ -389,9 +391,9 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
 
     expect(rosetta.hasAvailableSeatFromShares).toHaveBeenCalledOnce();
     const [product, weight, level, occupied, salesCapacity] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
-    expect(product).toBe("anthropic");
+    expect(product).toBe("codex");
     expect(weight).toBe(4); // capacity 8 / 2 人,与 config.weight 一致
-    expect(level).toBe("max-20x");
+    expect(level).toBe("plus");
     expect(occupied).toBeInstanceOf(Map);
     expect(salesCapacity).toBe(12); // ceil(基础 8 人 × 1.5 倍超卖)
     expect(prisma.planOrder.create).toHaveBeenCalledOnce();
@@ -436,9 +438,9 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
   });
 
   it("占用份额从 DB ACTIVE 订阅 config 算(按 product 汇总 weight),传给预检", async () => {
-    // 一条已绑 anthropic #7、weight 4 的 ACTIVE 订阅 → 该号已占 4 份。
+    // 一条已绑 codex #7、weight 4 的 ACTIVE 订阅 → 该号已占 4 份。
     prisma.subscription.findMany.mockResolvedValue([
-      { id: "sub-existing", config: JSON.stringify({ line: "bind", bindings: { anthropic: 7 }, weight: 4 }) },
+      { id: "sub-existing", config: JSON.stringify({ line: "bind", bindings: { codex: 7 }, weight: 4 }) },
     ]);
 
     await service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY");
@@ -456,9 +458,9 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
       {
         id: "sub-legacy",
         config: "{bad-json",
-        productEntitlements: JSON.stringify(["anthropic"]),
-        bindings: JSON.stringify({ anthropic: 7 }),
-        levels: JSON.stringify({ anthropic: "max-20x" }),
+        productEntitlements: JSON.stringify(["codex"]),
+        bindings: JSON.stringify({ codex: 7 }),
+        levels: JSON.stringify({ codex: "plus" }),
         weight: 4,
         deviceLimit: 1,
         weeklyTokenLimit: null,
@@ -504,6 +506,47 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(["createGrantOrder", "createActivationCodeOrder"] as const)(
+    "%s uses a ready third-party mother when the legacy Claude pool is empty",
+    async (method) => {
+      rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+      const selection = { line: "bind", items: [{ product: "anthropic", level: "pro" }], shareUsers: 2, deviceLimit: 1 };
+      await service[method]("cust-1", selection as any);
+      expect(prisma.gatewayMotherAccount.findFirst).toHaveBeenCalledWith({
+        where: { enabled: true, status: "ready", keyCipher: { not: null } },
+        select: { id: true },
+      });
+      expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled();
+      expect(prisma.planOrder.create).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("manual Claude grant reaches activation and gateway allocation with the real billing preflight", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    const subscriptions = {
+      activateForOrder: vi.fn(async (order: any) => ({ id: "new-sub", config: order.config })),
+    };
+    const gatewayUsers = {
+      ensureAssigned: vi.fn().mockResolvedValue({ created: true, enabled: true, motherAvailable: true }),
+    };
+    const admin = new CustomerAdminService(prisma, service, subscriptions as any, gatewayUsers as any);
+    const selection = { line: "bind", items: [{ product: "anthropic", level: "pro" }], shareUsers: 2, deviceLimit: 1 };
+    const result = await admin.grantCatalogSubscription("cust-1", selection as any);
+    expect(result).toMatchObject({ id: "new-sub", gatewayAllocation: { status: "ready" } });
+    expect(subscriptions.activateForOrder).toHaveBeenCalledOnce();
+    expect(gatewayUsers.ensureAssigned).toHaveBeenCalledWith("cust-1");
+    expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled();
+  });
+
+  it("a ready gateway mother does not bypass Codex availability in a mixed grant", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    const selection = { line: "bind", items: [
+      { product: "anthropic", level: "pro" }, { product: "codex", level: "plus" },
+    ], shareUsers: 2, deviceLimit: 1 };
+    await expect(service.createGrantOrder("cust-1", selection as any)).rejects.toThrow("codex(plus)暂无可用座位");
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
   it("号池授予 → ¥0、PAID、GRANT,带 config/selection/catalogVersion;号池不预检座位", async () => {
     const selection = { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 };
 
@@ -542,8 +585,8 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
     expect(cfg.weeklyBucketLimits).toBeUndefined();
   });
 
-  it("绑定授予 → 走座位预检(与付费同口径);无座位 → BadRequest,不建订单", async () => {
-    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+  it("Claude 绑定授予无第三方母号时拒绝建单", async () => {
+    prisma.gatewayMotherAccount.findFirst.mockResolvedValue(null);
     const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
 
     await expect(service.createGrantOrder("cust-1", selection as any)).rejects.toThrow(BadRequestException);
@@ -651,7 +694,7 @@ describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => 
   });
 
   it("作废发生在校验之后:绑定线无座位 → 不作废、不新建(BadRequest)", async () => {
-    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    prisma.gatewayMotherAccount.findFirst.mockResolvedValue(null);
     const bind = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
 
     await expect(service.createCatalogOrder("cust-1", bind as any, "WXPAY")).rejects.toThrow(BadRequestException);
@@ -715,13 +758,14 @@ describe("BillingService.createActivationCodeOrder(激活码兑换)", () => {
     // 29900 × 4/8 = 14950 + share[4] −7000 = 7950 分。
     expect(data.amountCents).toBe(7950);
     expect(data.payChannel).toBe("ACTIVATION_CODE");
-    expect(rosetta.hasAvailableSeatFromShares).toHaveBeenCalledOnce();
+    expect(prisma.gatewayMotherAccount.findFirst).toHaveBeenCalledOnce();
+    expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled();
     const cfg = JSON.parse(data.config);
     expect(cfg).toMatchObject({ line: "bind", products: ["anthropic"], levels: { anthropic: "max-20x" }, assignmentPolicy: "pinned" });
   });
 
   it("绑定激活无可用座位 → BadRequest,不建订单(激活码保持 UNUSED 的前提)", async () => {
-    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    prisma.gatewayMotherAccount.findFirst.mockResolvedValue(null);
     const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
 
     await expect(service.createActivationCodeOrder("cust-1", selection as any)).rejects.toThrow(BadRequestException);

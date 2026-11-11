@@ -490,8 +490,9 @@ export class BillingService {
   }
 
   /**
-   * 下单前座位预检(spec §10):仅对绑定线 config,逐 product 确认该等级还有可用座位
-   * (任一上游号剩 ≥ 本单 weight 份),无 → 抛 BadRequest 拒绝下单。占用份额从 DB ACTIVE
+   * 下单前座位预检:Claude 使用第三方母号;其他绑定产品按等级确认可用座位。
+   * 第三方池的 totalShares 是参考容量,实际分配允许超额,这里不另设硬上限。
+   * 其他产品无可用座位时抛 BadRequest 拒绝下单。占用份额从 DB ACTIVE
    * 订阅的 config 按 weight 汇总(单一真相源,不读 access-keys.json 文件,避免停写文件后
    * 从文件数会超卖的陷阱)。一次查全部 ACTIVE 订阅,逐 product 复算占用。号池线无座位概念,
    * 直接放行 —— 运行时由 selectAccount 动态调度。
@@ -528,6 +529,18 @@ export class BillingService {
       const level = String(levels[product] || "").trim();
       if (!level) {
         throw new BadRequestException(`绑定线缺少 ${product} 的会员等级,无法下单`);
+      }
+      if (product === "anthropic") {
+        // Claude activation no longer binds an OAuth pool account. Check the
+        // same third-party supply used by GatewayUserService instead.
+        const mother = await this.prisma.gatewayMotherAccount.findFirst({
+          where: { enabled: true, status: "ready", keyCipher: { not: null } },
+          select: { id: true },
+        });
+        if (!mother) {
+          throw new BadRequestException("暂无可用的 Claude 第三方母号，请先添加并启用已就绪的母号");
+        }
+        continue;
       }
       const occupied = occupiedSharesByAccount(configs, product);
       const salesCapacity = quotaSeatCapacityForProduct(config as SubConfig, product, Number(config.shareCapacity || 8));
